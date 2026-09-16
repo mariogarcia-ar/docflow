@@ -6,11 +6,13 @@ How each of the thirteen pipelines is called from the CLI, and how each of the t
 
 **Contents**
 
-- [Common shape](#common-shape) — the options every invocation shares
+- [Common shape](#common-shape) — the command, the three operations, and every flag
 - [Pipeline invocations](#m0--text-arrives-directly) — the thirteen, `M0-ErVR` through `M4-EpVR`
-- [Choosing without declaring](#choosing-without-declaring)
+- [Choosing without declaring](#choosing-without-declaring) — `--extractor` vs `--pipeline`
 - [Batch](#batch) — one file, several, a folder
+- [Output directory](#output-directory) — `run.json` and where progress lives
 - [Per-document ledger](#per-document-ledger) — what makes resume granular
+- [Forced reprocessing](#forced-reprocessing) — re-running what the ledger calls done
 - [Control](#control) — `stop` to see what is running, plus pause and resume
 - [Component invocations](#component-invocations) — the ten, runnable in isolation
 - [What every invocation returns](#what-every-invocation-returns)
@@ -21,7 +23,7 @@ How each of the thirteen pipelines is called from the CLI, and how each of the t
 
 ## Common shape
 
-Every invocation is the same command with a different `--pipeline` code:
+Every pipeline invocation is the same command with a different `--pipeline` code:
 
 ```bash
 docflow run --pipeline <CODE> <input> [options]
@@ -36,16 +38,98 @@ docflow run --pipeline <CODE> <input> [options]
 
 **There is no flag to skip validation.** The `V` in every primitive is invariant (`workflow.md`), so no `--no-validate` exists and no example below passes one.
 
-### Options used in these examples
+### Three operations
+
+The CLI has three ways to execute work, and the difference is **how much they trust the ledger**:
+
+| Operation | Re-runs | Trusts |
+|---|---|---|
+| `run` | Everything | Nothing — a fresh job |
+| `resume` | What the ledger says is incomplete | The ledger |
+| `rerun` | **What you name, even if the ledger says `done`** | Nothing — you assert it |
+
+`resume` is the incremental operation: it reads the per-document ledgers and does what is missing. `rerun` is its complement — it **ignores the ledger's completion claims** and re-executes the stages you specify.
+
+Neither replaces the other. `resume` answers "finish the run"; `rerun` answers "do this again, on purpose". See *Forced reprocessing*.
+
+### Naming the mode
+
+Every pipeline has a material prefix and an extractor mode. The two ways to name the mode, and when each applies:
+
+| Form | Mode comes from | Use |
+|---|---|---|
+| `--pipeline M1-ErpVR` | the code | When the pipeline is known — reproducible runs |
+| `--extractor rp` | a flag, material inferred | When the material varies across the corpus |
+
+`--extractor` takes `r`, `p` or `rp` and expects **Diagnosis to select the material per file**, which is what makes one pass work over a mixed folder. The two forms are alternatives; passing both is an error. See *Choosing without declaring*.
+
+### Options
+
+Every flag used anywhere in this document:
+
+**Input**
+
+| Flag | Meaning |
+|---|---|
+| `--schema` | Document-type schema, used by `validator` |
+| `--golden` | Golden set for tuning and comparison |
+
+**Models**
 
 | Flag | Meaning |
 |---|---|
 | `--model` | Local extraction model, e.g. `ollama:qwen2.5`. Used by `EpVR` and `ErpVR` |
 | `--validator` | Frontier LLM that governs escalation, e.g. `claude`, `deepseek`, `openai` |
-| `--golden` | Golden set for comparison and tuning |
-| `--jobs` | Concurrency for batch runs |
+
+**Output**
+
+| Flag | Meaning |
+|---|---|
 | `--out` | Output directory. Folder input mirrors its tree here |
-| `--report` | Output format: `json` (default), `md`, `html` |
+| `--work` | Where bookkeeping and artifacts go, when not inside `--out`. See *Output directory* |
+| `--format` | Result format: `json` (default), `md`, `html` |
+
+**Execution**
+
+| Flag | Meaning |
+|---|---|
+| `--jobs` | Concurrency for batch runs |
+| `--dry-run` | Report what would happen, run nothing |
+| `--force` | Stop without draining; with `rerun`, ignore the ledger. See *Control* and *Forced reprocessing* |
+
+**Resuming**
+
+| Flag | Meaning |
+|---|---|
+| `--only` | Restrict to a subset, e.g. `--only failed` |
+| `--from` | Start at a given stage onward, skipping earlier ones |
+
+**Re-running** — see *Forced reprocessing*
+
+| Flag | Meaning |
+|---|---|
+| `--stage` | The stage to re-execute, even if the ledger says `done` |
+| `--isolate` | Keep downstream artifacts, marked `stale`, instead of invalidating them |
+| `--keep-artifacts` | Keep the previous artifact as `.prev` instead of overwriting |
+
+**Component-specific** — the rest, grouped by where they appear
+
+| Flag | Component | Meaning |
+|---|---|---|
+| `--cut-confidence` | `segmenter` | Threshold for accepting a cut |
+| `--show-evidence` | `identifier` | Print the words or shapes that triggered the decision |
+| `--min-chars`, `--min-dpi` | `diagnosis` | Quality gate before routing |
+| `--ocr` | `reader` | Force an OCR engine |
+| `--correct` | `reader` | Enable OCR-text correction |
+| `--continuity-only` | `reconstructor` | Cross-page continuity without full layout |
+| `--tolerance-amounts` | `consistency` | Tolerance for amounts, in cents |
+| `--source` | `catalog` | External source to validate against |
+| `--retry-queue`, `--retry` | `catalog` | Inspect or retry unverified fields |
+| `--rebuild`, `--rebuild-index` | `ledger`, `run` | Recompute the index from artifacts |
+| `--state` | `ledger` | Filter documents by stage state |
+| `--verify` | `resume`, `status` | Reconcile the record against the filesystem |
+| `--rule`, `--new-type`, `--value` | `reviewer` | Promote a case to a rule, a type, or a corrected value |
+| `--failed` | `status` | Show only what escalated |
 
 ---
 
@@ -53,10 +137,12 @@ docflow run --pipeline <CODE> <input> [options]
 
 No acquisition step. The caller supplies the text, so the pipeline begins at the extractor. `workflow.md` calls this "the primitive with an empty prefix".
 
+**The positional input is text** — the pipeline code says so, so no separate flag is needed. A `.txt` file, a Markdown file, or `-` for stdin all work. Pointing M0 at a PDF is an error, not a silent conversion: if the material is a PDF, that is M1 or M2.
+
 ### M0-ErVR — text, regex
 
 ```bash
-docflow run --pipeline M0-ErVR --text-file cuerpo.txt --out out/
+docflow run --pipeline M0-ErVR cuerpo.txt --out out/
 ```
 
 ```bash
@@ -69,7 +155,7 @@ Deterministic read, invents nothing. **Blind spot:** a bad anchor is invisible t
 ### M0-EpVR — text, prompt
 
 ```bash
-docflow run --pipeline M0-EpVR --text-file cuerpo.txt \
+docflow run --pipeline M0-EpVR cuerpo.txt \
   --model ollama:qwen2.5 --out out/
 ```
 
@@ -78,7 +164,7 @@ Use when the wording varies and a pattern per variant is impractical. **Blind sp
 ### M0-ErpVR — text, both
 
 ```bash
-docflow run --pipeline M0-ErpVR --text-file cuerpo.txt \
+docflow run --pipeline M0-ErpVR cuerpo.txt \
   --model ollama:qwen2.5 --out out/
 ```
 
@@ -258,6 +344,124 @@ docflow run --pipeline M1-ErpVR documentos/ \
 
 ---
 
+## Output directory
+
+**Yes — two levels of progress, in two different files.** A batch-level manifest and a per-document ledger, both JSON, both inside the output directory.
+
+### Layout
+
+```
+out/
+  run.json                                   ← batch progress
+  .docflow/
+    ledger/2024/enero/factura-001.ledger.json   ← per-document progress
+    work/2024/enero/factura-001/
+      text.txt                                  ← intermediate artifacts
+      fields.r.json
+      fields.p.json
+  2024/enero/factura-001.json                ← final result
+  2024/enero/factura-002.json
+```
+
+**Bookkeeping is dot-prefixed; results are not.** The consumer points at `out/` and walks the tree, getting only documents. `.docflow/` holds everything that describes the run rather than being its output — so a consumer that does not care about progress never has to filter it out.
+
+`--work` overrides where the bookkeeping and artifacts go, for when the output is a mount the consumer owns:
+
+```bash
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --work work/ --jobs 8
+```
+
+### `run.json` — the batch
+
+One file per job, answering "how is the run doing" without reading eleven thousand ledgers:
+
+```json
+{
+  "job": "7f3a91c2",
+  "pipeline": "M1-ErpVR",
+  "root": "documentos",
+  "state": "running",
+  "started": "2026-09-16T14:02:11Z",
+  "updated": "2026-09-16T14:31:07Z",
+
+  "totals": {
+    "discovered": 11034,
+    "done": 4821,
+    "failed": 12,
+    "pending": 6201
+  },
+
+  "stages": {
+    "acquire":   4821,
+    "extract.r": 4821,
+    "extract.p": 4809,
+    "validate":  4702,
+    "report":    4702
+  },
+
+  "outcomes": {
+    "escalated": 34,
+    "to_review": 21,
+    "partial":   6
+  },
+
+  "inflight": [
+    { "path": "2024/marzo/factura-881.pdf", "stage": "extract.p", "started": "14:31:02Z" },
+    { "path": "2024/marzo/factura-882.pdf", "stage": "extract.p", "started": "14:31:03Z" }
+  ]
+}
+```
+
+| Field | Answers |
+|---|---|
+| `state` | `running` · `paused` · `stopped` · `finished` |
+| `totals` | How much is done, failed, still pending |
+| `stages` | **Where** the run is — a stage counter, not just a file counter |
+| `outcomes` | How many documents needed escalation, review, or emitted partially |
+| `inflight` | What is executing right now, and since when |
+
+`inflight` is the same information the `stop` command lists, which is why `stop` needs no separate state store.
+
+### `run.json` is derived, not authoritative
+
+The counters are a **cache over the ledgers**, and that distinction matters for the same reason it does everywhere else in this system.
+
+A batch manifest updated continuously can drift from the filesystem: a `--force` kill lands mid-write, a document's artifact is deleted, an input changes. If `run.json` were the truth, a stale count would report a run as complete when it is not — a silent error at the level of the whole batch.
+
+So the ledgers are authoritative and `run.json` is rebuildable:
+
+```bash
+# recompute run.json from the ledgers on disk
+docflow run --rebuild-index out/
+
+# what does it currently claim, and does it hold?
+docflow status 7f3a91c2 --verify
+```
+
+### Reading progress without the tool
+
+Both files are plain JSON, so a monitoring script does not need `docflow` installed:
+
+```bash
+jq '.totals' out/run.json
+```
+
+```bash
+# documents that failed, from the ledgers
+jq -r 'select(.outcome == "failed") | .input.path' out/.docflow/ledger/**/*.ledger.json
+```
+
+### What the two levels are for
+
+| Level | File | Answers | Granularity |
+|---|---|---|---|
+| **Batch** | `out/run.json` | How is the run doing, overall? | Counters and stages |
+| **Document** | `.docflow/ledger/…ledger.json` | Why did *this* file stop where it did? | Per stage, with artifacts |
+
+Neither replaces the other. `run.json` is what you poll; the ledger is what you open when a specific document needs explaining. A batch file that tried to answer "why" for every document would be eleven thousand ledgers in one file; a ledger that tried to answer "how is the run" would mean reading them all.
+
+---
+
 ## Per-document ledger
 
 A folder run over eleven thousand files cannot be resumed from a single job-level state. Pause it after four thousand and the question is not "where was the run" but **"which documents are done, and which stages of the ones that are not."**
@@ -265,11 +469,15 @@ A folder run over eleven thousand files cannot be resumed from a single job-leve
 The answer is a **ledger per document** — one file recording what has been produced and what has not.
 
 ```
-work/
-  2024/enero/factura-001.ledger.json
-  2024/enero/factura-002.ledger.json
-  2024/febrero/nota-014.ledger.json
+out/
+  .docflow/
+    ledger/
+      2024/enero/factura-001.ledger.json
+      2024/enero/factura-002.ledger.json
+      2024/febrero/nota-014.ledger.json
 ```
+
+With `--work work/`, the same tree appears under `work/ledger/` instead.
 
 ### What it holds
 
@@ -306,19 +514,25 @@ work/
 
 ### Stage states
 
-Five states, and the distinction between `done` and `running` is what makes a forced stop recoverable:
+Seven states. Two of them — `running` and `stale` — exist to record work that must not be trusted, and they are what make a forced stop and a forced re-run recoverable:
 
 | State | Meaning | Resumable? |
 |---|---|---|
-| `pending` | Not started | Yes — will run |
+| `pending` | Not started, or invalidated by a re-run | Yes — will run |
 | `running` | Started, not finished | **Yes — re-run.** A kill leaves it here |
 | `done` | Finished, artifact written | Only if the artifact verifies |
 | `failed` | Ran, produced a verdict that routes out | Yes — escalate or review |
 | `blocked` | Waiting on an earlier stage | Yes — will run once unblocked |
+| `stale` | Kept deliberately, but derived from an artifact that has since changed | **Only by choice** — see *Forced reprocessing* |
+| `skipped` | Not applicable to this pipeline | Never |
 
 `running` is written **when a stage starts**, not when it ends. That is deliberate: it is the state a forced kill leaves behind, and it is the reason the ledger can tell "never began" from "began and was cut off". Without it, a killed stage would look like one that never ran, and a resume would have no way to know an artifact might be partial.
 
-`blocked` and `pending` differ in cause, not in effect: `blocked` is waiting on a stage that has not produced its input; `pending` has its input but has not been dispatched.
+`stale` is the same idea for the other direction. A `rerun --isolate` keeps downstream artifacts that no longer match their inputs; marking them `stale` records that, where `done` would be a lie. `resume` re-runs `stale` stages, because their claim is that they are out of date.
+
+`skipped` and `blocked` differ in cause: `skipped` is a stage this pipeline never runs — the `not_applicable` list, promoted to a state per document — while `blocked` is waiting on a stage that has not produced its input.
+
+`blocked` and `pending` differ in cause, not in effect: `blocked` is waiting on an earlier stage; `pending` has its input but has not been dispatched, or was dispatched and invalidated.
 
 A different pipeline produces a different stage set. `M2-ErVR` has `acquire` split across two components (rasterize, then OCR) and no `extract.p`; `M4-EpVR` has a single `extract` with no separate `acquire`, because the model reads pixels directly.
 
@@ -367,6 +581,135 @@ docflow resume 7f3a91c2 --only failed
 # re-run from a given stage on, for every incomplete document
 docflow resume 7f3a91c2 --from validate
 ```
+
+---
+
+## Forced reprocessing
+
+`resume` trusts the ledger. That is what makes it cheap, and it is also its limit: **a ledger records completion, not validity.**
+
+A stage can be `done` and still be wrong, or right and no longer good enough:
+
+| Situation | Ledger says | Why `resume` cannot fix it |
+|---|---|---|
+| The extraction prompt improved | `extract.p` is `done` | The artifacts are valid; they are just from the older prompt |
+| A business rule was added to the Validator | `validate` is `done` | It passed the rules that existed at the time |
+| A bug was fixed in a component | everything is `done` | Completion was never in question |
+| A correction was promoted by the Reviewer | `report` is `done` | The output predates the rule |
+| An artifact is suspect | `done` | The stage claims success |
+
+In every one of these, `resume` does nothing — correctly, by its own definition. What is needed is the opposite operation: **re-execute a stage that the ledger already considers finished.**
+
+### `rerun`
+
+```bash
+docflow rerun 7f3a91c2 --stage extract.p
+```
+
+It **ignores the `done` state** and re-executes. The ledger is updated, not consulted.
+
+### Scope
+
+Same scoping as `resume`, applied to what gets re-executed:
+
+```bash
+# every document in the run
+docflow rerun 7f3a91c2 --stage validate
+```
+
+```bash
+# only the ones that failed, or only one path
+docflow rerun 7f3a91c2 --stage validate --only failed
+docflow rerun 7f3a91c2 --stage extract.p documentos/2024/enero/factura-001.pdf
+```
+
+```bash
+# what would be re-executed, without running anything
+docflow rerun 7f3a91c2 --stage extract.p --dry-run
+```
+
+### Downstream is invalidated by default
+
+This is the part that has to be right, and it is where a naive re-run becomes a silent error.
+
+Re-executing `extract.p` changes the fields. Everything after it — `validate`, `consistency`, `report` — was computed from the **previous** values. Leaving those artifacts in place produces an output where the fields are new and the verdicts describe the old ones. Nothing would flag it: every stage is `done`, every artifact verifies, and the result is inconsistent.
+
+So the default is to invalidate downstream:
+
+```bash
+docflow rerun 7f3a91c2 --stage extract.p
+```
+
+```
+re-running extract.p, and everything after it
+
+  2024/enero/factura-001   extract.p → validate → consistency → report
+  2024/enero/factura-002   extract.p → validate → consistency → report
+  …
+
+downstream invalidated: validate, consistency, report
+```
+
+```mermaid
+graph LR
+    A["extract.p<br/>re-executed"] --> B["validate<br/>invalidated"]
+    B --> C["consistency<br/>invalidated"]
+    C --> D["report<br/>invalidated"]
+```
+
+The ledger records `pending` for each invalidated stage, so a later `--verify` sees the truth rather than a stale `done`.
+
+### Isolating a stage
+
+Sometimes only one stage should re-run — measuring the OCR correction on its own, or re-deriving a layout without touching the reads. That is possible, and it is **opt-in because it produces a knowingly inconsistent state**:
+
+```bash
+docflow rerun 7f3a91c2 --stage reconstructor --isolate
+```
+
+```
+re-running reconstructor only
+
+  downstream artifacts kept, marked stale:
+    validate, consistency, report
+
+  ⚠ report was produced from the previous document.json.
+    re-run with --stage reconstructor to refresh it,
+    or accept that the output no longer matches the artifacts.
+```
+
+```mermaid
+graph LR
+    A["reconstructor<br/>re-executed"] --> B["validate<br/>STALE"]
+    B --> C["consistency<br/>STALE"]
+    C --> D["report<br/>STALE"]
+```
+
+The affected stages are marked `stale` rather than `done`, and the Contract reports it, so the inconsistency is **declared in the output instead of hidden in the artifacts**. That follows the same rule as everything else here: a field carries its verdicts, and a document carries the state of what produced it.
+
+### Artifacts
+
+By default a re-run overwrites the previous artifact, because keeping every version of every stage across eleven thousand documents is unbounded.
+
+```bash
+# keep the previous artifact as .prev, for diffing
+docflow rerun 7f3a91c2 --stage extract.p --keep-artifacts
+```
+
+Worth using when the point of the re-run is to compare — a new prompt, a new model — since the previous output is the only baseline available.
+
+### Cost
+
+`rerun` is the expensive operation, and by definition: it does work the ledger says is unnecessary. Two things bound it:
+
+- **Scope narrows it.** `--only failed`, a single path, or a document filter.
+- **`--stage` decides the floor.** Re-running `extract.p` re-executes everything downstream; re-running `report` alone touches nothing else.
+
+The order to reach for, cheapest first: `resume` for incomplete work, `rerun --stage <late stage>` to refresh derived output, `rerun --stage acquire` only when the acquisition itself is what changed.
+
+### Relationship to a forced stop
+
+They compose without special cases. A `rerun` is killed and recovered exactly like any other execution — the same `running` states, the same `--verify` before resuming, the same rule that at most one stage per in-flight document is repeated.
 
 ### Inspecting the ledger
 
@@ -823,9 +1166,9 @@ The output shape does not vary by pipeline — that is what makes the thirteen s
 
 | Pipeline | Command |
 |---|---|
-| `M0-ErVR` | `docflow run --pipeline M0-ErVR --text-file cuerpo.txt` |
-| `M0-EpVR` | `docflow run --pipeline M0-EpVR --text-file cuerpo.txt --model ollama:qwen2.5` |
-| `M0-ErpVR` | `docflow run --pipeline M0-ErpVR --text-file cuerpo.txt --model ollama:qwen2.5` |
+| `M0-ErVR` | `docflow run --pipeline M0-ErVR cuerpo.txt` |
+| `M0-EpVR` | `docflow run --pipeline M0-EpVR cuerpo.txt --model ollama:qwen2.5` |
+| `M0-ErpVR` | `docflow run --pipeline M0-ErpVR cuerpo.txt --model ollama:qwen2.5` |
 | `M1-ErVR` | `docflow run --pipeline M1-ErVR documentos/factura.pdf` |
 | `M1-EpVR` | `docflow run --pipeline M1-EpVR documentos/factura.pdf --model ollama:qwen2.5` |
 | `M1-ErpVR` | `docflow run --pipeline M1-ErpVR documentos/factura.pdf --model ollama:qwen2.5` |
