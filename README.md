@@ -2,6 +2,67 @@
 
 Pipeline para extraer datos estructurados de documentos heterogéneos: facturas, órdenes de compra, formularios, contratos, reportes.
 
+## Subflujos y componentes
+
+Los flujos principales comparten actividades que aparecen en más de uno. Se definen una vez acá y se referencian desde cada flujo, en lugar de repetirlas.
+
+| Componente | Qué resuelve | Lo usan |
+|---|---|---|
+| **Lectura nativa** | Extrae texto y estructura de formatos que ya la declaran (PDF con capa, Office, HTML) | Tradicional, AI sobre texto |
+| **OCR** | Lee páginas sin capa de texto y reconstruye texto legible | Tradicional, AI sobre texto |
+| **Estructurar** | Layout, tablas y orden de lectura | Tradicional |
+| **Esquema y validación** | Contrato de salida, chequeos deterministas | Los tres |
+
+### Componente: OCR
+
+Se usa cuando el documento no trae texto. A diferencia de la lectura nativa —donde los caracteres y las coordenadas son el registro fuente—, acá todo es estimado, así que el componente produce texto **y** su nivel de confianza.
+
+```mermaid
+graph LR
+    A["Imagen<br/>de página"] --> B["Preprocesar<br/>alinear · binarizar · contraste"]
+    B --> C["Reconocer<br/>caracteres + confianza"]
+    C --> D["Corregir<br/>léxico · contexto"]
+    D --> E["Registrar<br/>original → corregido"]
+    E --> F["Texto<br/>+ coordenadas + confianza"]
+```
+
+| # | Etapa | Qué hace | Salida |
+|---|-------|----------|--------|
+| 1 | **Preprocesar** | Endereza, recorta y normaliza la imagen antes de leer | Imagen limpia |
+| 2 | **Reconocer** | Motor OCR: caracteres con coordenadas y confianza por token | Texto crudo + confianza |
+| 3 | **Corregir** | Repara errores de lectura, con los límites de abajo | Texto corregido |
+| 4 | **Registrar** | Guarda cada par `original → corregido` con la razón | Traza de corrección |
+
+#### Corrección: tres tipos, no dos
+
+| Tipo | Cómo corrige | Ejemplo |
+|---|---|---|
+| **Palabra aislada** | Diccionario, tabla de confusiones del motor | `recibo` mal segmentado |
+| **Dependiente del contexto** | Modelo de lenguaje sobre la frase o el párrafo | `c0nteo` → `conteo` |
+| **Nivel campo** | Validación posterior a la extracción | suma que no cierra, dígito verificador |
+
+El tipo del medio es el que necesita semántica, y ninguno de los otros dos lo resuelve: un diccionario no tiene `c0nteo` (con cero) porque no distingue un error de una palabra desconocida, y si el término está en texto libre no hay campo que validar.
+
+**Se corrige lo que es prosa, no lo que es identificador.** El mismo mecanismo que arregla `c0nteo` puede arruinar un CUIT o un importe convirtiéndolo en un valor plausible pero falso. Medido en documentos de dominio técnico: un LLM sin restricciones sobre-corrige y empeora el texto por debajo del OCR original, por "alucinaciones de terminología" sobre códigos válidos.
+
+Por eso la corrección por contexto solo actúa con tres restricciones:
+
+1. **Léxico de dominio** — el texto corregido se compara contra términos conocidos, para no reemplazar términos válidos.
+2. **Conjuntos de confusión** — si la corrección propuesta no coincide con la tendencia esperada, se revierte.
+3. **Validación de formato por reglas** — patrones fijos (identificadores, importes, fechas) se verifican con regex, no con el modelo.
+
+**Nunca corregir en silencio.** Cada corrección se registra como par con su razón. Sin eso se pierde la trazabilidad, y se pierde la mejor señal de calidad de lectura que hay: el conteo de correcciones por tipo sobre el corpus dice más que cualquier accuracy global. Los valores más sensibles son importes, unidades y cifras, donde un cambio silencioso afecta directo el dato final.
+
+#### Interfaz
+
+El componente devuelve una forma única, más allá de cómo se implemente:
+
+```
+leer(imagen) → (texto, coordenadas por token, confianza por token, traza de corrección)
+```
+
+La diferencia con la lectura nativa está en la fidelidad, no en la forma: allí la confianza es 1.0 y las coordenadas son exactas. Misma salida, distinta procedencia — y por eso el ruteo entre ambas queda **dentro** del componente de lectura, no repetido en cada flujo.
+
 ## Flujo tradicional (determinista)
 
 Construido a mano: OCR, layout, reglas y plantillas por proveedor.
@@ -10,8 +71,8 @@ Construido a mano: OCR, layout, reglas y plantillas por proveedor.
 graph LR
     A["Documento<br/>PDF · Office · foto · escaneo"] --> B["Clasificar<br/>tipo y plantilla"]
     B --> C{"¿Trae texto<br/>embebido?"}
-    C -->|sí| D["Extraer texto<br/>sin OCR"]
-    C -->|no| E["OCR<br/>+ corrección"]
+    C -->|sí| D["Lectura nativa"]
+    C -->|no| E["Componente<br/>OCR"]
     D --> F["Estructurar<br/>layout · tablas · orden"]
     E --> F
     F --> G["Extraer campos<br/>reglas + modelos"]
@@ -26,7 +87,7 @@ graph LR
 | # | Etapa | Qué hace | Salida |
 |---|-------|----------|--------|
 | 1 | **Clasificar** | Identifica el tipo de documento y el ruteo | Tipo + confianza |
-| 2 | **Leer** | Extrae el texto: capa embebida si existe, OCR si es escaneo | Texto + coordenadas |
+| 2 | **Leer** | Rutea a lectura nativa u OCR según haya capa de texto | Texto + coordenadas + confianza |
 | 3 | **Estructurar** | Reconstruye layout, tablas y orden de lectura | Documento estructurado |
 | 4 | **Extraer** | Reglas con anclas semánticas, luego modelos para campos sin clave fija | Campos tentativos |
 | 5 | **Validar** | Aritmética, **estructura de la tabla**, fechas, formatos, catálogos | Campos verificados |
@@ -56,7 +117,7 @@ graph LR
 
 | # | Etapa | Qué hace | Salida |
 |---|-------|----------|--------|
-| 1 | **Clasificar y leer** | Tipo de documento y ruteo; texto embebido u OCR, paginado con índices | Tipo + texto indexado |
+| 1 | **Clasificar y leer** | Tipo y ruteo; lectura nativa u **componente OCR**, paginado con índices | Tipo + texto indexado |
 | 2 | **Definir esquema** | Campos `required` y `nullable`, con cita obligatoria por campo | Contrato de salida |
 | 3 | **Interpretar** | El LLM asigna cada campo a su fragmento por significado | Valor + cita literal |
 | 4 | **Verificar** | Busca el literal **y** comprueba que el valor sea el de la cita | Offset, o campo sospechoso |
@@ -114,7 +175,7 @@ La salida tiene que preservar la procedencia. **Markdown no sirve para esto**: d
 | Dimensión | Tradicional | AI sobre texto | AI sobre imagen |
 |---|---|---|---|
 | Qué recibe el modelo | Nada | Texto plano | Píxeles de la página |
-| Necesita OCR antes | Sí, si es escaneo | Sí, si es escaneo | No |
+| Usa el componente OCR | Sí, si no hay capa de texto | Sí, si no hay capa de texto | No |
 | Etapas que reemplaza | — | Extracción por reglas | Lectura + estructura + extracción |
 | Clasificación previa | Necesaria | Necesaria (+6,8 pp de F1 con ejemplos de contexto) | Necesaria (el error de tipo contamina el prompt) |
 | Plantillas por proveedor | Necesarias | Ninguna | Ninguna |
