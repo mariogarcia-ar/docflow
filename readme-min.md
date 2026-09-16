@@ -141,31 +141,41 @@ Recibe **varias páginas**, no una: el layout es local, pero la continuidad lo c
 ```mermaid
 graph LR
     A["Campo<br/>extraído"] --> B["Forma"]
-    B --> C["Tipo"]
-    C --> D["Contenido"]
-    D --> E["Dígito<br/>verificador"]
-    B -.falla.-> F["Reintentar<br/>otra ancla"]
-    C -.falla.-> G["Reintentar<br/>si no, revisión"]
-    D -.falla.-> H["Revisión"]
-    E -.falla.-> I["Rechazar"]
+    A --> C["Tipo"]
+    A --> D["Contenido"]
+    A --> E["Dígito<br/>verificador"]
+    B --> F["Veredicto<br/>por chequeo"]
+    C --> F
+    D --> F
+    E --> F
+    F --> G["Decidir<br/>según las fallas"]
 ```
 
-Cuatro chequeos, de más débil a más fuerte:
+Cuatro chequeos **independientes**: cada uno mira el mismo campo y emite su propio veredicto. No están encadenados — que la forma sea correcta no habilita al de tipo, ni al revés.
 
-| Chequeo | Pregunta | Falla → |
-|---|---|---|
-| **Forma** | ¿Tiene la forma esperada? | Reintentar con otra ancla |
-| **Tipo** | ¿Es del tipo que dice ser? | Reintentar, si no revisión |
-| **Contenido** | ¿Es admisible en el dominio? | Revisión |
-| **Dígito verificador** | ¿Es válido en sí mismo? | Rechazar |
+| Chequeo | Pregunta | Qué ve que los otros no | Falla → |
+|---|---|---|---|
+| **Forma** | ¿Tiene la forma esperada? | Que *algo* con la apariencia correcta está ahí | Reintentar con otra ancla |
+| **Tipo** | ¿Es del tipo que dice ser? | Que el valor es usable | Reintentar, si no revisión |
+| **Contenido** | ¿Es admisible en el dominio? | Que corresponde al negocio: único que conoce las reglas | Revisión |
+| **Dígito verificador** | ¿Es válido en sí mismo? | Garantía matemática: único sin falsos positivos | Rechazar |
 
-El orden no es arbitrario: **forma** descarta rápido, **contenido** es el único que conoce el negocio (un IVA de 17% pasa forma y tipo, y sigue siendo error), y **dígito verificador** es el único con garantía matemática — un número inventado no pasa salvo azar de 1 en 10.
+El orden de la tabla va de más débil a más fuerte, y **ese orden no describe ejecución**: los cuatro corren sobre el mismo campo y ninguno necesita el resultado de otro.
+
+Lo que sí cambia entre ellos es la fuerza de la evidencia:
+
+- **Forma** no dice si el valor es cierto. Un importe que matchea el patrón puede ser cualquier número.
+- **Tipo** confirma que es usable, no que sea correcto.
+- **Contenido** es el único que conoce el negocio: un IVA de 17% pasa forma y tipo, y sigue siendo error.
+- **Dígito verificador** es el único con garantía: un número inventado no pasa salvo azar de 1 en 10.
+
+La decisión final combina los veredictos, y la **falla más grave manda**: un campo puede pasar forma y tipo, fallar contenido, y derivar a revisión; o fallar dígito verificador y rechazarse aunque los otros tres pasen.
 
 Se reutiliza en cinco puntos: dentro del Lector, al corregir OCR, por campo, entre campos, y contra catálogos externos.
 
-La consistencia entre campos puede cruzar páginas: subtotal en una y total en otra.
+El de consistencia es el único que necesita **varios campos** —subtotal + impuestos = total— y puede cruzar páginas.
 
-Ningún chequeo detecta un valor **plausible pero falso**: un total de 15400 que era 1540 pasa las cuatro. Eso requiere comparar contra algo externo, y es una decisión aparte.
+Ningún chequeo detecta un valor **plausible pero falso**: un total de 15400 que era 1540 pasa los cuatro. Eso requiere comparar contra algo externo, y es una decisión aparte.
 
 ### Contrato
 
