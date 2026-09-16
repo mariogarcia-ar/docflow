@@ -427,6 +427,15 @@ Plan 3's §4 entry condition is this list and nothing else.
 - [ ] The frozen Plan 2 artefacts are named in Plan 3's §4: the verdict-vector shape, the trace shape, the `catalog` reason vocabulary, the component artifact chain, and the escalation policy's single ownership.
 - [ ] **Doc-sync:** `prd.md`, `sad.md`, `wbs.md`, `traceability.md` still agree with what was built. Every divergence is resolved in the docs **before Plan 3 starts**, and `traceability.md` §5 is re-checked so the stage close produces no orphan task.
 
+### The four tracks, ticked separately (§13)
+
+| Track | Tick when |
+|---|---|
+| **1 — Fast flow** | A real document closes the chain through `M1-ErpVR` — **on real adapters, nothing stubbed** — and the contrast case is reproduced end to end |
+| **2 — Golden set / tests** | Each golden claim of §13 Track 2 has a test that **fails when the claim is broken**, starting with `15400`/`1540` reading `consistency: disagreement` and not `ok` |
+| **3 — Code (for reuse)** | Plan 3 can wire the 13 codes onto this chain and emit the **frozen** verdict-vector and trace shapes unchanged for all 13 (`FR-33`) |
+| **4 — CLI (to probe)** | All 10 components run standalone from the previous component's artifact to their own; re-running one does not repeat the ones before it; no policy flag and no `--no-validate` exists |
+
 ---
 
 ## §12 Open decisions carried into this plan
@@ -444,3 +453,75 @@ Only the decisions that touch Stage 2. The first three are **load-bearing** and 
 | 7 | **Whether `pdftotext`'s dependency needs a stated fallback.** Today a missing binary is a typed `Reason` and never a fallback reader — which is the correct PoC answer | `01-pipelines.md` (open questions); `wbs.md` §9 | `S2-T05` | Resolved *by refusal* for the PoC: a fallback reader would reintroduce exactly the silent substitution the architecture forbids. Listed as open because the question of an operator-facing remedy message is not settled |
 
 **Handed to Plan 3, not resolved here:** the corpus-scale policy questions (slot and disk policy, throughput baseline, wording-variant strategy) are Plan 3 §12.
+
+---
+
+## §13 The four tracks of this layer
+
+Every layer is worked along four tracks at once (`plans/README.md` §6). **Track 1 closes the stage, Track 4 operates it, Track 2 proves it, Track 3 is what survives it.** This is the layer where the four diverge most, because the closing flow walks a chain that no pipeline runs over the corpus.
+
+| Track | This layer's instance | Task |
+|---|---|---|
+| **1 — Fast flow** | One **real** document through `M1-ErpVR`, walking the canonical chain to a verdict vector + trace — and reproducing the contrast case end to end | `S2-T17` (the gate) |
+| **2 — Golden set / tests** | The **contrast case** (`15400` that was really `1540`), the normalization case, the partial-failure case, the stale-invisible-layer case — each asserting a *verdict*, not a value | `S2-T11`, `S2-T14` |
+| **3 — Code (for reuse)** | `docflow/components/` + the **frozen verdict-vector shape**: the thing a consumer integrates against | `S2-T13`, `S2-T14` |
+| **4 — CLI (to probe)** | The 10 per-component subcommands forming the read/write artifact chain of `sad.md` §9.1 | `S2-T16` |
+
+### Track 1 — the fast flow, on real adapters this time
+
+Plan 1 was allowed to close over faked ports. **This one is not**: the gate says a real document, and `wbs.md` §4 requires the contrast case reproduced end to end. Nothing here is stubbed.
+
+| Runs for real | Requires | Consequence if it is not real |
+|---|---|---|
+| `pdftotext` | A pinned binary | A typed `Reason`, never a fallback reader (§12 #7) |
+| Docling (K4) | The adapter installed | The M2/M3 paths and OCR tokens are unproven |
+| Ollama (K5) | A model pulled, digest recorded | `EpVR` reads do not exist, so **no contrast** — and `ErpVR` is the gate |
+| A frontier provider (K6) | A key in the environment | The Validator has no governor |
+
+The chain is `M1-ErpVR` because **contrast is what the stage exists to prove**, and `M1` because a text PDF makes the acquisition path the cheap one — so the run fails for field reasons, not material reasons. `ErpVR` buys the disagreement signal that no first-order check reproduces.
+
+**Which components the closing flow walks, against which the pipelines run, are different questions** (`wbs.md` §6.2). Branch A (`S2-T01`–`S2-T03`) and `S2-T07`/`S2-T12` are on the path because the *demo* walks the canonical chain — not because a pipeline runs them over the 11k files. Collapsing those two produced defect #16 in `traceability.md` §7.3.
+
+### Track 2 — golden evidence, per kind of claim
+
+| Kind of claim | Golden artifact | Must fail when broken | Task |
+|---|---|---|---|
+| **Contrast catches what internal checks cannot** | A document whose `total` is `15400.00` and whose true value is `1540.00` | `consistency: ok` is emitted because shape, type and content all passed | `S2-T11` (**the gate's own case**) |
+| Normalize before comparing | `1.540,00` vs `1540.00` for the same field | They compare **unequal**, i.e. format is measured instead of value | `S2-T10` |
+| Arithmetic breaks the tie | A document where only one value closes `subtotal + taxes` | The ambiguity reaches the Reviewer when arithmetic could have resolved it | `S2-T11` |
+| Failure is partial | One illegible page inside a ten-page document | The whole document is discarded, or the page is omitted silently | `S2-T13` |
+| Quality, not presence | A PDF with a stale invisible OCR layer | It routes to conversion and drags the old OCR errors along | `S2-T04` |
+| Over-segment on doubt | A file holding more than one document | One merged document, whose fields contaminate each other — **silent, and no downstream check sees it** | `S2-T01` |
+| One pass of re-segmentation | A segment containing two document types | A third pass runs, or a loop without a cap | `S2-T03` |
+| Validator owns "could not" | An invalid field and a missing field | Escalation is decided in two places, so the ladder becomes a habit | `S2-T09` |
+| `unverified` ≠ invalid | A non-responding Catalog source | A rejection is emitted where `unverified` belongs | `S2-T12` |
+| Verdicts stay separate | Any emitted field | A single derived score appears — the shape a consumer would threshold on and be wrong | `S2-T14`, ADR-005 |
+
+**The golden set proper is deferred, and this is the layer where the reason is sharpest:** a golden set for *fields* would be graded by the same model that read them, which is circular (`wbs.md` §9). Contrast is the PoC's substitute — two independent reads disagreeing is gold that neither reader can issue alone. When the real golden set lands, the labeller runs **offline** and never shares a run with the governor.
+
+### Track 3 — the code that gets reused
+
+Stage 2 freezes the shape the consuming system integrates against — the one thing Plan 3 **may not change** (`plans/README.md` §3).
+
+| Frozen | What it looks like | Who consumes it |
+|---|---|---|
+| The verdict vector | Per field: `value`, `extractor`, `trace`, and `verdicts` with `shape`/`type`/`content`/`digit`/`consistency`/`catalog` — kept separate | The other system (`FR-33`), and Plan 3's 13 codes |
+| The trace | `(page, extractor)` **per field** — because with per-field escalation, provenance stops being single | The Reviewer, and an auditor |
+| The `catalog` reason vocabulary | `not_run` \| `source_unavailable` \| `pending_retry` | `S2-T13` — on every field, even where the Catalog never ran (`FR-23`, open decision §12 #1) |
+| The artifact chain | `.<step>.json` per component (`sad.md` §9.1) | `S2-T16`'s subcommands; Plan 3's ledger |
+
+The threshold that decides *what to do about* a verdict belongs to the consumer, who knows their use case — which is why no score is emitted (`ADR-005`).
+
+### Track 4 — the CLI, to probe one component at a time
+
+This surface is what `my_prompt.md` asked for **by name**: *"`docflow segmentador`", "`docflow identificador`"* — each component invocable on its own (`FR-12`, `S2-T16`). It is also the only practical way to debug a verdict: re-run `docflow consistency` alone over an existing artifact instead of re-walking the chain.
+
+| Property | Requirement | Why it matters here |
+|---|---|---|
+| One component, one step | Each of the 10 runs from the **previous component's artifact** to its own | Re-running one stage must not repeat the ones before it |
+| Standalone debugging | `docflow consistency work/<name>.validated.json` | Isolates a contrast failure from its acquisition |
+| No shortcut around validation | No `--no-validate` on any surface | A validation-free variant would emit fields with no verdicts, needing two shapes downstream (`FR-18`, ADR-002) |
+| No policy flag | No `--min-dpi`, `--cut-confidence`, `--min-chars`, `--tolerance-amounts` | Policy is registry data; a flag would change output without entering the cache key (ADR-009, `NFR-06a`) |
+| The pipeline surface stays separate | `docflow run --pipeline` belongs to Plan 3; these 10 belong to the components | Two surfaces, one operation layer beneath both |
+
+**Track 4 opens with the wave that builds the operation**, per `S2-T16`'s dependency on `S2-T14`. The chain of artifacts is the contract — which is why the subcommands and the code share a freeze, not just a release.

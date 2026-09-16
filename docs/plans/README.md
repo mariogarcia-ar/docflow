@@ -87,7 +87,7 @@ Both chains converge on `S1-T19`. The harness chain is shorter (3 links) and the
 
 ## 5. Reading order and status legend
 
-Read `plan-01-kernels.md` first: Plans 2 and 3 cite its frozen types by name and its entry conditions are Plan 1's exit checklist. Within each plan, §5 is the ordered work; §6 is the runbook to run when the work is nominally complete; §11 is what an operator ticks to declare the plan closed.
+Read `plan-01-kernels.md` first: Plans 2 and 3 cite its frozen types by name and its entry conditions are Plan 1's exit checklist. Within each plan, §5 is the ordered work; §6 is the runbook to run when the work is nominally complete; §11 is what an operator ticks to declare the plan closed; **§13 instantiates the four tracks of that layer** (§6 of this document).
 
 | Marker | Meaning |
 |---|---|
@@ -98,3 +98,74 @@ Read `plan-01-kernels.md` first: Plans 2 and 3 cite its frozen types by name and
 | `S` / `M` / `L` | Effort signal from `wbs.md` §7 — relative complexity of implementation **and verification**, not duration |
 
 **Unresolved decisions are not resolved here.** Every plan carries its own §12. A decision that belongs to a later stage is listed in the earlier plan only as a hand-off, and the plan that must act on it carries it in its own §12.
+
+---
+
+## 6. The four tracks per layer
+
+Every layer is worked along **four tracks at the same time**. They are not phases to be finished in order: Track 1 is what *closes* the stage, Track 4 is how you *operate* it, Track 2 is what *proves* the result, Track 3 is what you *keep*. The project is **library first, CLI as one caller** (`sad.md` ADR-008), so Track 3 is the deliverable and Tracks 1, 2 and 4 are how it is reached and exercised.
+
+| Track | The question it answers | What it produces | How you know it is done |
+|---|---|---|---|
+| **1 — Fast flow** | Does the end-to-end journey close? | The stage's closing flow (each plan's §3) | The gate task itself: `S1-T19` · `S2-T17` · `S3-T14` |
+| **2 — Golden set / tests** | Is the result *right*, and would a regression stay caught? | Per-layer golden evidence (see the table below) | The invariant tests that **fail when the invariant is broken** (each plan's §7b), not merely tests that pass |
+| **3 — Code (for reuse)** | Can another program consume this layer without the CLI? | The frozen contract its gate publishes (§3 of this document) | A consumer imports it and adds **no new type** |
+| **4 — CLI (to probe)** | Can one piece be run and inspected in isolation? | `docflow-kernel` (P1) · the 10 per-component subcommands (P2) · `docflow run` (P3) | Every command is 1:1 with an operation behind it — **no flag without a counterpart** |
+
+### The instance of each track, per layer
+
+| Layer | 1 — Fast flow | 2 — Golden set / tests | 3 — Code (for reuse) | 4 — CLI (to probe) |
+|---|---|---|---|---|
+| **Plan 1 — Kernels** | The synthetic 3-stage descriptor over faked ports | The 17-row silent-failure matrix, one committed fixture per row | `docflow/kernels/` + `docflow/ports/`: the frozen boundary types | `docflow-kernel`, one subcommand per port method |
+| **Plan 2 — Components** | One real document through `M1-ErpVR` | The contrast case (`1540` vs `15400`) + the documented demo | `docflow/components/` + the frozen verdict-vector shape | The 10 per-component subcommands forming the artifact chain |
+| **Plan 3 — Pipelines** | The corpus batch: one command, 11k files | Shape identity across all 13 codes + the first run's recorded baseline | Registry assets and the 13 descriptors — **no new code** | `docflow run --pipeline <CODE>`, `--extractor`, `--force` |
+
+```mermaid
+graph TB
+    subgraph L1["Layer 1 — Kernels"]
+        F1["1 · synthetic flow<br/>fake ports"]
+        G1["2 · 17-row matrix<br/>reason.code"]
+        C1["3 · kernels + ports<br/>boundary types"]
+        K1c["4 · docflow-kernel<br/>1:1 with ports"]
+    end
+    subgraph L2["Layer 2 — Components"]
+        F2["1 · one real document<br/>M1-ErpVR"]
+        G2["2 · contrast case<br/>+ demo"]
+        C2["3 · components<br/>+ verdict vector"]
+        K2c["4 · 10 subcommands<br/>artifact chain"]
+    end
+    subgraph L3["Layer 3 — Pipelines"]
+        F3["1 · corpus batch<br/>11k files"]
+        G3["2 · 13-code shape<br/>+ baseline"]
+        C3["3 · registry<br/>+ descriptors"]
+        K3c["4 · docflow run<br/>+ flags"]
+    end
+    F1 --> F2 --> F3
+    G1 --> G2 --> G3
+    C1 --> C2 --> C3
+    K1c --> K2c --> K3c
+    F3 --> DONE(["<b>PoC closed</b><br/>11k files, one command"])
+```
+
+Read it as **four parallel lanes, three layers deep** — not as sixteen sequential steps. A lane can be at a different depth than its neighbours: Plan 3's Track 2 can start while Plan 2's Track 4 is still filling in, because the surfaces are independent. What cannot move is the **layer**: no lane crosses a gate ahead of its own layer's Track 1.
+
+### The golden set proper is deferred — and that is deliberate
+
+Not for budget. A golden set graded by the model that produced it is **circular**, and the risk is already in the register (`wbs.md` §9); the origin sentence that asked for it is incomplete (`my_prompt.md`, recorded as deviation D4 in `traceability.md` §3.4). `--golden`, the labeller role and the comparator stay `# TODO: [MVP]`.
+
+What each layer has **instead** is golden evidence that cannot be self-graded:
+
+| Layer | The golden evidence | Why it cannot be self-graded |
+|---|---|---|
+| Plan 1 | The 17 committed fixtures, each named for the failure it provokes, each asserting a **`reason.code`** and never a message string | The assertion is on a closed vocabulary, not on a model's opinion |
+| Plan 2 | The contrast case and the documented demo — a `15400` that was really `1540` | Caught by **two independent readers disagreeing**, which no single reader can manufacture for itself |
+| Plan 3 | The shape-identity contract test over all 13 codes, plus the first full run's recorded baseline | A shape is compared against a documented shape, not scored by a model |
+
+When the golden set does land, the labeller role runs **offline**, writes read-only artefacts, and must not share a run with the governor role (`wbs.md` §9).
+
+### How the four tracks interleave with the waves
+
+- **Track 1 walks the longest chain, not the whole plan.** In Plan 1 that chain is the 9-link spine to `S1-T19`; the real K2–K6 adapters land in parallel and are *not* on it. In Plan 2 it is `B → C → D → E` (nine links from `S2-T04` to `S2-T17`). In Plan 3 it is descriptors → one code over a small folder → the corpus.
+- **The fakes that license Track 1 are exactly what Track 2 evicts.** A stage may close its flow over faked ports; it may not call itself *verified* over them. Every `now` row of the matrix runs against a real adapter, so Track 2 is what forces the adapters that Track 1 was allowed to defer.
+- **Track 4 opens in the same wave as the operation it exposes**, never later. A command surface added after the fact is a surface with no contract test, and `S1-T21`'s flag/port test only means something while the port signature is still in hand.
+- **Track 3 is judged at the gate, not during the wave.** A layer is reusable when its consumer can be written against the frozen contract — which is why §3 of this document is the thing each gate actually publishes.

@@ -373,6 +373,15 @@ An operator ticks this to declare Plan 1 closed. **Plan 2's §4 entry condition 
 - [ ] The boundary artefact set in §3 of `README.md` (Cross-plan contract table) is frozen and named in Plan 2's §4.
 - [ ] **Doc-sync:** `prd.md`, `sad.md`, `wbs.md`, `kernel-cli.md` and `traceability.md` still agree with what was built. Every divergence is resolved in the docs **before Plan 2 starts**, and `traceability.md` §5 is re-checked so the stage close produces no orphan task.
 
+### The four tracks, ticked separately (§13)
+
+| Track | Tick when |
+|---|---|
+| **1 — Fast flow** | The synthetic flow closes: run, pause, resume, `stop --force`, deleted artifact, crash at the rename boundary — all six steps of §6 observed |
+| **2 — Golden set / tests** | The 17-row matrix's `now` rows assert in CI against committed fixtures and target a `reason.code`; row 15 is **declared and gated**, not dropped; `--repeat` demonstrates the determinism classes |
+| **3 — Code (for reuse)** | Plan 2 can build its first component against the frozen types and ports **without adding a new kernel-boundary type**, and without importing an adapter from a port |
+| **4 — CLI (to probe)** | `docflow-kernel --list` is honest; every `now` command dispatches; every `MVP` command exits `4`; the flag/port contract test passes with no orphan flag |
+
 ---
 
 ## §12 Open decisions carried into this plan
@@ -390,3 +399,70 @@ Only the decisions that touch Stage 1. Each is unresolved **in the artifacts by 
 | 7 | **How many GPU slots exist, and whether the slot model is enough** | `02-arch-components.md` (open questions) | `S1-T09` (`gpu` bounded to 1 per device) | `gpu = 1` is a declared simplification: concurrent OCR and generation compete for VRAM on one device and the competition policy is undefined. It becomes load-bearing at Plan 3's corpus run, so the answer is needed before `S3-T11`, not before `S1-T19` |
 
 **Handed forward, not resolved here** (they belong to later plans and are carried there): whether `S2-T12` (Catalog) becomes a dependency of `S2-T17`, and the M0 escalation question — both in Plan 2 §12; the corpus-scale policy questions — Plan 3 §12.
+
+---
+
+## §13 The four tracks of this layer
+
+Every layer is worked along four tracks at once (`plans/README.md` §6). They are not phases: **Track 1 closes the stage, Track 4 operates it, Track 2 proves it, Track 3 is what survives it.**
+
+| Track | This layer's instance | Task |
+|---|---|---|
+| **1 — Fast flow** | `descriptors/synthetic-3stage.yaml`, three stages over a synthetic unit set, driven through orchestrator + store + ledger — with `S1-T11`'s **faked ports**, not Docling, not Ollama, not a provider | `S1-T19` (the gate) |
+| **2 — Golden set / tests** | The **17 committed fixtures**, one per row of the silent-failure matrix, each named for the failure it provokes and each asserting a **`reason.code`** — never a message string | `S1-T22` |
+| **3 — Code (for reuse)** | `docflow/kernels/` + `docflow/ports/` — the boundary types and the five port interfaces. Reusability is *tested*, not asserted: the import-isolation check plus a fake adapter satisfying each port | `S1-T01`–`S1-T17` |
+| **4 — CLI (to probe)** | `docflow-kernel`, a **package**, with one subcommand per port method and the 5-exit-code contract | `S1-T20`, `S1-T21` |
+
+**The flow is synthetic by decision.** The descriptor executes kernel ops only, so no domain noun reaches the lab surface (`kernel-cli.md` §9, open decision §12 #1). That is what makes Track 1 cheap enough to close early — and what makes Track 2 load-bearing, because the fakes it closes over are exactly what the matrix has to evict.
+
+### Track 1 — the fast flow, and what it deliberately fakes
+
+| Faked | By | Why acceptable at this stage | Paid back at |
+|---|---|---|---|
+| Docling (K4) | A test double behind `OcrEngine` | The port, not the engine, is what Stage 1 fixes (`wbs.md` §9) | `S1-T14` + matrix rows 9–11 |
+| Ollama (K5) | A test double behind `LlmEngine` | Same: the digest discipline, not the model, is the contract | `S1-T15` + rows 12–13 |
+| The frontier provider (K6) | A test double behind `LlmEngine` | `S1-T16` is explicitly stubbable until escalation needs it (`wbs.md` §6.2) | `S2-T09`, `S2-T11` — the escalation ladder |
+| `pdftotext`, real PDFs | A synthetic unit set | The graph, the ledger and resume do not depend on the bytes being a real invoice | Plan 2's Track 1 |
+
+**No fake is allowed to soften an invariant.** A faked adapter must still return a typed `Reason` on failure and still honour the determinism class, or the crash-recovery tests prove nothing. That is what the row-1/row-2 crash injections assert against.
+
+### Track 2 — golden evidence, per kind of claim
+
+| Kind of claim | Golden artifact | Where | Must fail when broken | Rows / AC |
+|---|---|---|---|---|
+| Crash recovery | The kill-injection fixture | `fixtures/` | `running` is absent and `done` present after a kill mid-stage | Rows 1, 2 |
+| Acquisition correctness | A stale-invisible-layer PDF; a 150 DPI scan | `fixtures/` | The stale layer reads as text; the scan reports a DPI it does not have | Rows 3, 4 |
+| Coordinate honesty | A crop fixture with a known source box | `fixtures/` | A crop's local box is reported as a page region | Row 8 |
+| Sampling discipline | `--repeat` over the same input | `tests/kernel_cli/` | Sequential hashes **differ** for a deterministic kernel, or are **identical** for a sampled one | Rows 3–10, 13 |
+| Manifest honesty | A run whose `run.json` is deleted | `tests/` | The rebuild does not reproduce it from the ledgers alone | Row 16 |
+| Resume cost | The forced-kill integration test | `S1-T19` | More than one stage re-runs per in-flight unit | AC *Resume after a forced kill* |
+| Mandatory verification | A deleted `done` artifact | `tests/` | The stage is skipped as complete with no flag passed | AC *Verification is not optional* |
+| Sampled-is-evidence | A deleted sampled artifact | `tests/` | A fresh sample is produced and reported `done` | AC *A sampled artifact is evidence, not a cache* |
+
+**The golden set proper is deferred here deliberately** (deviation D4 — the origin sentence is incomplete). What Stage 1 has instead is stronger for its purpose: an assertion per row that targets a **machine-checkable** `reason.code`, so it cannot be self-graded. Row 15 is the declared exception and is gated on `judge` landing — declared, not dropped.
+
+### Track 3 — the code that gets reused
+
+This is the layer whose entire justification is reuse: `ADR-004` requires kernels usable beyond this project, and 10 components × 13 pipelines all call the same 8 kernels. Reuse is verified by the **consumer test** — Plan 2 builds every component against these types and adds **no new kernel-boundary type** (`plans/README.md` §3).
+
+| Frozen | Path | Consumer test |
+|---|---|---|
+| `Token` · `KernelResult` · `Evidence` · `Reason` · `CallRecord` · `Bytes`/`Artifact` | `docflow/kernels/types.py` | A component constructs these without redefining them |
+| `PdfSource` · `OcrEngine` · `LlmEngine` · `ArtifactStore` · `Registry` | `docflow/ports/` | A component satisfies a port with a fake in its own tests, without importing an adapter |
+| The 7-term cache key, the 7 durable states, the determinism classes | `docflow/kernels/` | Plan 2's escalation ladder is expressed entirely in these terms |
+
+**Because the CLI is not the only surface, the code is the deliverable.** `my_prompt.md` asks for a library consumed as includes *and* as a CLI; `sad.md` ADR-008 settles the priority as **library first, CLI as one caller**, with the same names on both surfaces (`FR-12`).
+
+### Track 4 — the CLI, to probe one kernel at a time
+
+`docflow-kernel` exists because a kernel must be testable **before** the domain layer is built on it: the first time a kernel fails silently inside a component, the failure is attributed to the wrong layer (`kernel-cli.md` §1).
+
+| Property | Requirement | Guarded by |
+|---|---|---|
+| 1:1 with the ports | One command per port method; a flag with no counterpart fails the suite | `S1-T21`'s flag/port contract test |
+| No domain noun | No `--field`, `--invoice`, `--pipeline`, `--validator`, `--extractor` | Same test, forbidden vocabulary |
+| Exit contract | `0` ok · `2` typed `Reason` · `3` usage/unknown · `4` not implemented · `1` bug | `S1-T20`; stdout is valid JSON on `0`/`2`/`3` |
+| `MVP` commands | Exit `4` naming the operation unavailable — never a silent partial run | `S1-T21`, `kernel-cli.md` §9 status legend |
+| Not a product surface | `docflow run` never invokes `docflow-kernel`; `# TODO: [MVP]` a `[dev]` extra | `S1-T21`; the drift risk in §9 |
+
+**Track 4 opens in the wave of the operation it exposes** — `S1-T20` sits immediately after `S1-T01` because it consumes the boundary types, and `S1-T21` fills in as each adapter lands. A command surface added later has no port signature left to test against.

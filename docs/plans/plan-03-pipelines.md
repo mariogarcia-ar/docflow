@@ -366,6 +366,15 @@ This checklist closes not only Plan 3 but the PoC. It is the last gate in the se
 - [ ] The merged-document limitation is still declared in `README.md`, `prd.md` and `wbs.md` §10 — **never claimed solved**.
 - [ ] **Doc-sync:** `prd.md`, `sad.md`, `wbs.md`, `traceability.md` and `kernel-cli.md` still agree with what was built. Every divergence is resolved in the docs, and `traceability.md` §5 is re-checked so the PoC close produces no orphan task and no requirement with no task beyond the ones `§7.1` already declares.
 
+### The four tracks, ticked separately (§13)
+
+| Track | Tick when |
+|---|---|
+| **1 — Fast flow** | All three rungs of §13 Track 1 pass: 13 codes on single files, then a nested folder with empty directories, then the corpus interrupted and resumed |
+| **2 — Golden set / tests** | Shape identity holds across all 13 codes; invalid codes error rather than convert; the baseline is **recorded with no target asserted** against it; the golden-set deferral is still declared with its marker |
+| **3 — Code (for reuse)** | The layer added **no code** — registry assets and descriptors only — and the output layout the consuming system integrates against is frozen |
+| **4 — CLI (to probe)** | `docflow run` resolves all 13 codes and all three batch forms; there is **no `resume` verb** (resume is the same `run`); `--force`/`--stage`/`--only` work and are never settable by environment |
+
 ---
 
 ## §12 Open decisions carried into this plan
@@ -384,3 +393,73 @@ The final set: what remains unresolved when the PoC closes. Items 1–3 touch th
 | 8 | **Whether the 17-row silent-failure suite runs at all stages or only at Stage 1, and whether it is split** | `kernel-cli.md` §17; `plan-01-kernels.md` §12 #3 | indirectly `S3-T14` (an unsplit suite makes CI flaky, and a flaky gate is ignored) | Rows for K4–K6 need GPU, tokens and provider availability. The corpus run is where a flaky suite costs most, because it is the stage where a red CI would be blamed on scale rather than on the kernel |
 | 9 | **Where the Reviewer's cases live once the run is over**, and whether anything aggregates them | `02-arch-components.md` (open questions); `plan-02-components.md` §12 #6 | `S3-T07` (the ledger's shape and location) | At 11k documents the per-document ledger is the only home, and a Reviewer working from 11k ledgers has no queue. The PoC declares this; it is the first thing an MVP has to answer, because the return loop is what makes the system improve |
 | 10 | **Whether the mirrored tree survives the move to object storage.** Content addressing does; colocation of ledger and result is a filesystem property, and object storage has no equivalent of "beside" | `02-arch-components.md` (open questions); `sad.md` §13 | `S3-T06`, `S3-T07` | The PoC is filesystem-only and explicitly so. Recorded because `S3-T06`/`S3-T07` are the two tasks that would change shape, not merely backend, if this is ever revisited — the suffix rule and the mirrored tree are both filesystem affordances |
+
+---
+
+## §13 The four tracks of this layer
+
+Every layer is worked along four tracks at once (`plans/README.md` §6). **Track 1 closes the stage, Track 4 operates it, Track 2 proves it, Track 3 is what survives it.** Here the four converge on one command — which is the point of the layer.
+
+| Track | This layer's instance | Task |
+|---|---|---|
+| **1 — Fast flow** | The corpus batch: `docflow run --pipeline M1-ErpVR documentos/ --out out/ --jobs 8` — one command, 11k files, mirrored tree, interrupted and resumed | `S3-T14` (the gate) |
+| **2 — Golden set / tests** | **Shape identity across all 13 codes** + the error cases + the first run's recorded baseline | `S3-T13`, `S3-T02` |
+| **3 — Code (for reuse)** | Registry assets and the 13 descriptors — **configuration and data, no new code** (`wbs.md` §5) | `S3-T01`–`S3-T04` |
+| **4 — CLI (to probe)** | `docflow run` with `--pipeline`, `--extractor`, `--force`/`--stage`, `--only`, and the three batch forms | `S3-T02`, `S3-T05`–`S3-T08`, `S3-T12` |
+
+### Track 1 — the fast flow, at the scale the problem actually has
+
+**Sequence it in three rungs, and only the last one is the gate.** Each rung is cheap enough to fail fast, and the corpus is not what teaches you the pipeline is wrong — a small folder is.
+
+| Rung | Input | What it validates | Fails fast on |
+|---|---|---|---|
+| 1 | One file per code (13 commands, `§3` step 2) | Every code resolves; invalid codes error; the emitted shape | `S3-T02`, `S3-T13` |
+| 2 | A small folder with **nested and empty** subdirectories | The mirrored tree, the suffix rule, `run.json` | `S3-T06`, `S3-T07` |
+| 3 | The corpus, interrupted mid-run and resumed | Scale: slots, disk, per-document resume | `S3-T09`, `S3-T11`, `S3-T14` |
+
+**Rung 3 is where the deferrals get charged.** Faking is not available at this layer: `--jobs 8` over 11k files is the only thing that exercises the slot model, and the first full run is the only thing that produces a baseline (`NFR-11` — recorded, **no target asserted**).
+
+### Track 2 — golden evidence, per kind of claim
+
+| Kind of claim | Golden artifact | Must fail when broken | Task |
+|---|---|---|---|
+| One shape across all 13 codes | The contract test over every code | Two codes emit subtly different shapes — invisible until a consumer writes their second integration | `S3-T13` (**`FR-33`'s whole purpose**) |
+| `consistency` exactly where both reads ran | The 13 emitted results | `consistency` is non-null on a single-read code, or `null` on an `ErpVR` code | `S3-T13` |
+| `catalog` present with a reason on every field | Any emitted field | The verdict is absent, or `unverified` with no reason — collapsing *never attempted* with *the source was down* | `S3-T13`, `S2-T12` |
+| Invalid codes are errors | `M4-ErVR`, `M4-ErpVR`, `M0-*` at a PDF, unknown codes | A code **silently converts** — e.g. `M0-*` at a PDF read as `M1` | `S3-T02` |
+| The tree mirrors the input | A nested folder with empty directories | A flattened tree, or a dropped directory — the one thing `my_prompt.md` asks for by name | `S3-T06` |
+| Suffixes are unambiguous | `<name>.json` / `<name>.ledger.json` / `<name>.work/` | The result and the ledger are tellable apart only by opening them | `S3-T07` |
+| The manifest is derived | A deleted `run.json` | The rebuild does not reproduce it from the ledger tree alone | `S3-T10` |
+| Resume skips completed work | A kill at ~4,821 of ~11,034 documents | A completed document is re-read, or the in-flight one restarts at acquisition | `S3-T09` |
+| Forced stages re-pend downstream | A forced `extract.p` | `validate`/`consistency`/`report` stay `done` over **new** fields — every stage done, every artifact verifying, the output inconsistent | `S3-T08` |
+| Policy cannot come from the environment | A test setting `MIN_DPI` in the environment | A policy value changes output without entering the registry hash, so `done` is a claim nobody can check | `S3-T12` |
+| The baseline is recorded, not targeted | `run.json` totals and per-stage timings | A latency target is asserted against the first run (`NFR-11` forbids it) | `S3-T14` |
+
+**The golden set proper is deferred — and at this layer it is the most expensive deferral, so it is also the one most worth naming.** No pipeline runs the Catalog, so there is no external identity to check a value against, and 11k files is where a plausible-but-wrong value compounds at scale. The PoC's answer is contrast (Plan 2) plus shape identity (here), and the honest position is that field-level gold needs the labeller role that deviation D4 defers. The labeller runs **offline**, writes read-only artefacts, and must not share a run with the governor (`wbs.md` §9).
+
+### Track 3 — the code that gets reused (here: configuration, not code)
+
+**This layer adds no code.** `wbs.md` §5: *"largely data, not new code."* What it produces is the structure that makes the layer re-runnable — which is what a consuming system actually depends on being stable.
+
+| Reusable artifact | Path | Why it is the reusable part |
+|---|---|---|
+| Registry assets | `registry/patterns/`, `registry/prompts/`, `registry/schemas/`, `registry/policies/` | A wording variant is a **hash change, not a deployment** — and the registry hash is a cache-key term, so an improved prompt makes stale `done` claims *visibly* stale |
+| The 13 descriptors | `registry/pipelines/*.yaml` | A pipeline is configuration over one component chain, not a new design |
+| The policy/setting split | `.env.example` + `registry/policies/` | The boundary that keeps the cache key sound (`ADR-009`) |
+| The output layout | The mirrored tree + suffix rule + `run.json` | The shape the other system integrates against — the last thing frozen in the PoC |
+
+**The consumer test is the gate's own:** `S3-T14` is the first run whose output the consuming system can actually be built against.
+
+### Track 4 — the CLI, to probe a route
+
+Two surface forms over one operation layer, and the errors between them are part of the contract:
+
+| Command | Form | Constraint |
+|---|---|---|
+| `docflow run --pipeline <CODE> <input> --out <dir>` | The canonical route | All 13 codes resolve; invalid ones **error** (`S3-T02`) |
+| `docflow run --extractor r\|p\|rp <input> --out <dir>` | Material chosen per file by Diagnosis | Passing both `--extractor` and `--pipeline` is an **error**, never a precedence rule (`S3-T05`, `FR-26`) |
+| One file · several files · a folder | Batch | A folder mirrors its tree, **including empty directories** (`S3-T06`) |
+| `--force` / `--stage` / `--only` | Precise invalidation | Never settable by environment (`S3-T08`, `NFR-06`) |
+| `--jobs`, `DOCFLOW_*` | Operational settings | CLI → env → `.env` → default, and it governs **paths, slots, model and host only** (`S3-T12`) |
+
+The probe surface is also the recovery surface: **there is no `resume` verb** — resume is the same `run` again (`FR-01`), which is why Track 4 and Track 1 here are the same command. That is the sign the layer closed properly: operating it and closing it are not two different things.
