@@ -1,8 +1,20 @@
-# Pipeline invocations
+# CLI invocations
 
-How each of the thirteen pipelines is called from the CLI.
+How each of the thirteen pipelines is called from the CLI, and how each of the ten components is invoked on its own.
 
-**The CLI surface below is proposed, not specified.** No document in this workspace defines the command names, flags or job model — `my_prompt.md` states the requirements (library + CLI, per-component invocation, batch, stop with force, pause/resume) without fixing syntax. The examples are consistent with those requirements and with the pipeline codes in `workflow.md`, and should be treated as a design proposal to adjust.
+**The CLI surface below is proposed, not specified.** No document in this workspace defines the command names, flags or job model — `my_prompt.md` states the requirements (library + CLI, per-component invocation, batch, stop with force, pause/resume) without fixing syntax. The examples are consistent with those requirements, with the pipeline codes in `workflow.md`, and with the component names in `components.md`. Treat them as a design proposal to adjust.
+
+**Contents**
+
+- [Common shape](#common-shape) — the options every invocation shares
+- [Pipeline invocations](#m0--text-arrives-directly) — the thirteen, `M0-ErVR` through `M4-EpVR`
+- [Choosing without declaring](#choosing-without-declaring)
+- [Batch](#batch) — one file, several, a folder
+- [Control](#control) — pause, resume, forced stop
+- [Component invocations](#component-invocations) — the ten, runnable in isolation
+- [What every invocation returns](#what-every-invocation-returns)
+- [Quick reference](#quick-reference) — the thirteen pipelines
+- [Quick reference — components](#quick-reference--components) — the ten components
 
 ---
 
@@ -282,26 +294,252 @@ docflow jobs                          # all runs
 
 ---
 
-## Single components
+## Component invocations
 
-`my_prompt.md` requires each component to be invocable on its own, so a stage can be re-run without repeating the ones before it:
+`my_prompt.md` requires each component to be invocable on its own, so a stage can be re-run without repeating the ones before it.
 
-```bash
-docflow segmenter documentos/escaneo.pdf
-docflow identifier documentos/escaneo.pdf
-docflow diagnosis  documentos/escaneo.pdf
-docflow reader     documentos/escaneo.pdf
-docflow validator  out/factura-001.json
+Each component reads the previous one's artifact and writes its own, mirroring the chain in `components.md`:
+
+```mermaid
+graph LR
+    A["File"] --> B["segmenter"] --> C["identifier"] --> D["diagnosis"]
+    D --> E["reader"] --> F["reconstructor"] --> G["validator"]
+    G --> H["consistency"] --> I["catalog"] --> J["contract"]
+    J --> K["reviewer"]
 ```
 
-**This is what makes partial re-runs cheap.** If a document is misclassified, re-running `identifier` should not mean re-parsing the file — which matters at eleven thousand files, and matters more when the extraction model is the expensive step.
+### Artifacts
 
-The same components are available as a library:
+Every component takes an input and writes an artifact to `--out`. Passing artifacts between stages is what makes a single stage re-runnable:
+
+| Component | Reads | Writes |
+|---|---|---|
+| `segmenter` | `<name>.pdf` / `.jpg` / … | `<name>.segments.json` |
+| `identifier` | `<name>.segments.json` | `<name>.identity.json` |
+| `diagnosis` | `<name>.identity.json` | `<name>.diagnosis.json` |
+| `reader` | `<name>.diagnosis.json` | `<name>.tokens.json` |
+| `reconstructor` | `<name>.tokens.json` | `<name>.document.json` |
+| `validator` | `<name>.document.json` | `<name>.validated.json` |
+| `consistency` | `<name>.validated.json` | `<name>.consistency.json` |
+| `catalog` | `<name>.consistency.json` | `<name>.catalog.json` |
+| `contract` | `<name>.catalog.json` | the final output |
+| `reviewer` | routed cases | corrections |
+
+This is the shape the examples below follow: each stage names the artifact it consumes, so a run can be resumed at any point in the chain.
+
+---
+
+### segmenter
+
+Groups pages into logical documents. **The only component with no escape hatch** — its error is unrecoverable downstream, which is why it over-segments on a doubtful cut.
+
+```bash
+docflow segmenter documentos/escaneo.pdf --out work/
+```
+
+```bash
+# a folder, preserving the tree
+docflow segmenter documentos/ --out work/ --jobs 8
+```
+
+```bash
+# raise the bar for accepting a cut; doubtful ones split
+docflow segmenter documentos/escaneo.pdf --cut-confidence 0.7 --out work/
+```
+
+Over-splitting is on by default and there is no flag to disable it. Splitting too much is recoverable noise; merging too much is silent corruption.
+
+### identifier
+
+Determines the document type and the routing.
+
+```bash
+docflow identifier work/escaneo.segments.json --out work/
+```
+
+```bash
+# print which words or shapes triggered each decision
+docflow identifier work/escaneo.segments.json --show-evidence --out work/
+```
+
+Low confidence routes to review rather than guessing the most likely type. If the evidence shows **two types in one segment**, it returns the cut and forces re-segmentation — **once only**, and pages already read are reused.
+
+### diagnosis
+
+Detects what is there, measures whether it is processable, and adapts the input. Runs before reading.
+
+```bash
+docflow diagnosis work/escaneo.identity.json --out work/
+```
+
+```bash
+# tighten the quality gate
+docflow diagnosis work/escaneo.identity.json \
+  --min-chars 100 --min-dpi 200 --out work/
+```
+
+The gate is **quality, not presence** — a layer with 40 characters on an A4 sheet is not a text layer. Three outcomes: route to conversion, adapt then route to OCR, or route aside with a reason.
+
+### reader
+
+Extracts tokens by conversion or OCR, routed **per page**.
+
+```bash
+docflow reader work/escaneo.diagnosis.json --out work/
+```
+
+```bash
+# force an OCR engine, and enable OCR-text correction
+docflow reader work/escaneo.diagnosis.json \
+  --ocr tesseract --correct --out work/
+```
+
+Correction exists **only in the OCR path** — a converter does not read badly, it transcribes what is there. Output is **positioned tokens**, not ordered text: reading order is the Reconstructor's job.
+
+### reconstructor
+
+Layout, tables and reading order across pages.
+
+```bash
+docflow reconstructor work/escaneo.tokens.json --out work/
+```
+
+```bash
+# cross-page continuity only, for documents where each page stands alone
+docflow reconstructor work/escaneo.tokens.json \
+  --continuity-only --out work/
+```
+
+Receives **several pages**, not one: layout is local, continuity is not. A table whose header is on one page and whose rows continue on the next loses the association if pages are processed in isolation.
+
+### validator
+
+The four independent checks — shape, type, content, check digit — and the policy that governs escalation.
+
+```bash
+docflow validator work/escaneo.document.json --out work/
+```
+
+```bash
+# validate against a document-type schema
+docflow validator work/escaneo.document.json \
+  --schema schemas/factura.json --out work/
+```
+
+```bash
+# validate an existing output without re-running anything upstream
+docflow validator out/factura-001.json --schema schemas/factura.json
+```
+
+There is **no flag to skip validation** — the `V` is invariant across all thirteen pipelines. The four checks are independent, and the most severe failure governs the outcome.
+
+### consistency
+
+Cross-checks fields against each other, and compares extractors.
+
+```bash
+docflow consistency work/escaneo.validated.json --out work/
+```
+
+```bash
+# override the default tolerance for amounts, in cents
+docflow consistency work/escaneo.validated.json --tolerance-amounts 1 --out work/
+```
+
+Two levels: **between fields** (subtotal + taxes = total; issue ≤ due) and **across extractors** (the same field read by `r` and by `p`). Values are normalized before comparison — otherwise it measures format, not value. Where the two reads disagree, arithmetic arbitrates before a human is involved.
+
+### catalog
+
+Validates identity fields against something outside the document.
+
+```bash
+docflow catalog work/escaneo.consistency.json \
+  --source padron --out work/
+```
+
+```bash
+# inspect the retry queue for fields that could not be verified
+docflow catalog --retry-queue work/
+```
+
+```bash
+# retry with backoff
+docflow catalog --retry-queue work/ --retry --out work/
+```
+
+**Unavailability is not invalidity.** If the external source does not answer, the field is `unverified`, not rejected — and the Catalog owns the retry queue, so the state does not become a hole.
+
+### contract
+
+Assembles the output. A **barrier**: it waits for every page to resolve.
+
+```bash
+docflow contract work/escaneo.catalog.json --out out/
+```
+
+```bash
+# other report formats
+docflow contract work/escaneo.catalog.json --format md --out out/
+```
+
+Emits each field with its **verdict vector**, not a collapsed score, plus its `(page, extractor)` trace. Failure is partial: an illegible page is marked as such and the rest of the document is emitted.
+
+### reviewer
+
+Closes the loop. Takes what the other components routed out.
+
+```bash
+# what is waiting, grouped by case pattern
+docflow reviewer queue --out work/
+```
+
+```bash
+# fix a one-off
+docflow reviewer correct <case-id> --value 1540.00
+```
+
+```bash
+# a case that repeats becomes a rule and stops reaching review
+docflow reviewer promote <case-id> --rule reglas/cuit-proveedor.yaml
+```
+
+```bash
+# the "other" category accumulated cases: define a type and its route
+docflow reviewer promote <case-id> --new-type nota-de-credito
+```
+
+Three outputs — corrected datum, new rule, new type. **Without it the system does not improve**: corrections pile up in logs nobody reads and the same error returns in every batch.
+
+---
+
+### Re-running a single stage
+
+This is the practical payoff of invocability. A document misclassified does not need re-parsing:
+
+```bash
+docflow identifier work/escaneo.segments.json --out work/
+
+# the extraction model changed; re-run from the reader on
+docflow reader     work/escaneo.diagnosis.json --out work/ --correct
+docflow reconstructor work/escaneo.tokens.json --out work/
+docflow validator  work/escaneo.document.json --schema schemas/factura.json --out work/
+```
+
+At eleven thousand files this matters most when the expensive step is the model call, not the parse.
+
+### Library equivalent
+
+Every component is reachable from code with the same names:
 
 ```python
-from docflow import Pipeline
+from docflow import Pipeline, components
 
 result = Pipeline("M1-ErpVR", model="ollama:qwen2.5").run("documentos/factura.pdf")
+
+segments = components.segmenter("documentos/escaneo.pdf")
+identity = components.identifier(segments)
+tokens   = components.reader(components.diagnosis(identity))
+
 for field, verdicts in result.verdicts.items():
     print(field, verdicts)
 ```
@@ -353,3 +591,22 @@ The output shape does not vary by pipeline — that is what makes the thirteen s
 | `M4-EpVR` | `docflow run --pipeline M4-EpVR documentos/foto.jpg --model ollama:llava` |
 
 Add `--out out/` to any of them. Add `--jobs N` for a folder.
+
+---
+
+## Quick reference — components
+
+| Component | Command |
+|---|---|
+| `segmenter` | `docflow segmenter <file> --out work/` |
+| `identifier` | `docflow identifier work/<name>.segments.json --out work/` |
+| `diagnosis` | `docflow diagnosis work/<name>.identity.json --out work/` |
+| `reader` | `docflow reader work/<name>.diagnosis.json --out work/` |
+| `reconstructor` | `docflow reconstructor work/<name>.tokens.json --out work/` |
+| `validator` | `docflow validator work/<name>.document.json --out work/` |
+| `consistency` | `docflow consistency work/<name>.validated.json --out work/` |
+| `catalog` | `docflow catalog work/<name>.consistency.json --source padron` |
+| `contract` | `docflow contract work/<name>.catalog.json --out out/` |
+| `reviewer` | `docflow reviewer queue --out work/` |
+
+**No component can be invoked with validation disabled.** The `V` in every primitive is invariant, so there is no flag that would let a pipeline skip it.
