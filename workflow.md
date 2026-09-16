@@ -101,20 +101,21 @@ image → OCR → prompt → validate → report
 
 ### The primitive: EVR
 
-Every pipeline ends in one primitive:
+Every pipeline ends in one of three primitives. The `r`/`p`/`rp` is the extractor; the **V** and **R** are identical in all three, which is what makes them one family:
 
 ```mermaid
 graph LR
-    subgraph EVR["EVR"]
-        B["E — extractor<br/>r rules · p prompts · rp both"] --> C["V — validate"] --> D["R — report"]
-    end
+    ErVR["ErVR<br/>r — rules"] --> V
+    EpVR["EpVR<br/>p — prompts"] --> V
+    ErpVR["ErpVR<br/>rp — rules/prompts"] --> V
+    V["V — validate"] --> R["R — report"]
 ```
 
-A pipeline is this primitive plus a **prefix** that obtains the text:
+A pipeline is one of these plus a **prefix** that obtains the text:
 
 ```mermaid
 graph LR
-    A["Material prefix"] --> B["EVR"]
+    A["Material prefix"] --> B["ErVR<br/>EpVR<br/>ErpVR"]
 ```
 
 | Slot | Varies by | Applies to |
@@ -132,16 +133,16 @@ graph LR
 
 ## Material prefixes
 
-What each material prepends to the primitive. Nothing here changes the tail.
+What each material prepends to a primitive. Nothing here changes the tail, and the material does not decide the mode — that is a separate choice.
 
 ### M0 — no prefix
 
 ```mermaid
 graph LR
-    A["Text"] --> B["EVR"]
+    A["Text"] --> B["ErVR<br/>EpVR<br/>ErpVR"]
 ```
 
-The caller supplies the text and the primitive runs unchanged.
+The caller supplies the text and a primitive runs unchanged.
 
 **The traceability ceiling is set by the caller.** An offset is only meaningful against *the text that was actually processed*; if the caller's document and the text it passes differ, the offset points into the passed text and no further. The contract should record this.
 
@@ -151,7 +152,7 @@ The caller supplies the text and the primitive runs unchanged.
 
 ```mermaid
 graph LR
-    A["Text PDF"] --> B["Extract text<br/>pdftotext"] --> C["EVR"]
+    A["Text PDF"] --> B["Extract text<br/>pdftotext"] --> C["ErVR<br/>EpVR<br/>ErpVR"]
 ```
 
 Conversion needs no correction: a converter does not read badly, it transcribes what is there.
@@ -164,7 +165,7 @@ The cost is reading order. `pdftotext` is heuristic, so a table header is not as
 
 ```mermaid
 graph LR
-    A["Image PDF"] --> B["Convert to image"] --> C["OCR"] --> D["EVR"]
+    A["Image PDF"] --> B["Convert to image"] --> C["OCR"] --> D["ErVR<br/>EpVR<br/>ErpVR"]
 ```
 
 **Identical to M3 once rasterized**, so the two should share one implementation with a switch at the front. Six of the thirteen pipelines are three designs with a prefix; divergence would be an accident rather than a decision.
@@ -173,7 +174,7 @@ graph LR
 
 ```mermaid
 graph LR
-    A["Image"] --> B["OCR"] --> C["EVR"]
+    A["Image"] --> B["OCR"] --> C["ErVR<br/>EpVR<br/>ErpVR"]
 ```
 
 **Loses everything visual.** Layout, signatures, seals, checkboxes, logos — the Vision flow is the one that sees signatures and seals, and M3 by construction does not.
@@ -184,7 +185,7 @@ graph LR
 
 ```mermaid
 graph LR
-    A["Image"] --> B["EpVR<br/>p reads pixels directly"]
+    A["Image"] --> B["EpVR<br/>p reads pixels"]
 ```
 
 The extractor slot is filled by a multimodal model reading pixels. **This is the one material with a single primitive** — `EpVR` only, since there is no text for `r` to run on.
