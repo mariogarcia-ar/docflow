@@ -2,6 +2,22 @@
 
 Versión resumida. El detalle está en `README.md`.
 
+## Panorama
+
+Este sistema resuelve un problema: **extraer información de documentos mixtos con suficiente confianza** para automatizar procesos que lo requieren (facturación, compliance, auditoría).
+
+La confianza no viene de un solo método — viene de:
+1. **Tres flujos en cascada**: cada uno es más caro pero más preciso que el anterior
+2. **Validación interna**: aritmética, dígito verificador, reglas de negocio
+3. **Contraste entre flujos**: cuando dos métodos independientes ven lo mismo, aumenta la confianza
+4. **Consulta externa**: verificar identidad contra la realidad fuera del documento
+
+Sin contraste, el sistema ve errores lógicos (2+2=5). Sin consulta externa, no ve errores de identidad (CUIT válido pero empresa equivocada). Ambos se necesitan.
+
+---
+
+## Terminología clave
+
 Los **flujos** se nombran por qué recibe el extractor. Los **componentes**, por qué producen.
 
 | Flujo | Recibe |
@@ -22,6 +38,9 @@ Los **flujos** se nombran por qué recibe el extractor. Los **componentes**, por
 | **Catálogo** | Veredicto contra fuente externa |
 | **Contrato** | Forma de la salida |
 | **Revisor** | Correcciones + casos nuevos |
+
+---
+
 ## Niveles
 
 Un archivo no es un documento. Un PDF de 20 páginas puede contener una factura, o tres.
@@ -32,9 +51,47 @@ Un archivo no es un documento. Un PDF de 20 páginas puede contener una factura,
 | **Documento** | Una unidad con sentido propio dentro del archivo |
 | **Página** | La unidad física de procesamiento |
 
-## Componentes
+---
 
-Corren dentro de un flujo, entre flujos, o después de todos. La columna **Nivel** dice qué recibe cada uno y **Cuándo** dice dónde se ubica.
+## Arquitectura de decisión
+
+### Cascada
+
+El híbrido resuelve costo: cada etapa hace lo más barato y pasa al siguiente lo que no pudo.
+
+```mermaid
+graph LR
+    A["Conversión"] --> B["Reglas"] --> C["Interpretación"] --> D["Visión"]
+```
+
+- **Conversión**: ¿Hay texto usable en el PDF? Sí → entero el documento.
+- **Reglas**: ¿Puedo extraer con patrones predefinidos? Sí → termina.
+- **Interpretación**: ¿Un LLM sobre el texto reconstruido ve los campos? Sí → termina.
+- **Visión**: ¿Un VLM lee directamente los píxeles? Recurso último.
+
+Cada escalón está gobernado por el **Validador**: "no pudo" se define en un solo lugar.
+
+### Contraste
+
+Dos flujos sobre el mismo campo, comparados. Define la confianza.
+
+```mermaid
+graph LR
+    A["Campos<br/>críticos"] --> B["Reglas"]
+    A --> C["Visión"]
+    B --> D["Consistencia<br/>compara"]
+    C --> D
+    D --> E["Coinciden →<br/>confianza alta"]
+    D --> F["Difieren →<br/>revisión"]
+```
+
+**Sin contraste, el híbrido es solo fallback.** La validación interna no ve el error plausible-pero-falso: un total de 15400 que era 1540, con forma y tipo correctos. Pero si Reglas lee 1540 y Visión lee 15400, el desacuerdo aparece — y es la señal más fuerte disponible.
+
+El costo se acota contrastando **por campo crítico** (importes, identificadores) y no el documento entero.
+
+---
+
+## Componentes por nivel
 
 | Componente | Nivel | Cuándo | Qué hace | Reglas | Interp. | Visión |
 |---|---|---|---|:---:|:---:|:---:|
@@ -51,7 +108,9 @@ Corren dentro de un flujo, entre flujos, o después de todos. La columna **Nivel
 
 Visión no usa Diagnóstico ni Lector: le pasa píxeles al modelo, que lee y extrae en un paso. El ◐ del Reconstructor en Visión es por lo mismo: el VLM absorbe el layout de una página, pero la continuidad entre páginas sigue haciendo falta.
 
-**Barreras.** Tres componentes no pueden emitir hasta que otro terminó:
+### Barreras
+
+Tres componentes no pueden emitir hasta que otro terminó:
 
 | Barrera | Espera a |
 |---|---|
@@ -60,6 +119,10 @@ Visión no usa Diagnóstico ni Lector: le pasa píxeles al modelo, que lee y ext
 | **Contrato** | Todas las páginas resueltas |
 
 Los de nivel página son **paralelizables**. Consistencia entre campos no es barrera: opera dentro de un flujo, sobre campos ya extraídos.
+
+---
+
+## Componentes en profundidad
 
 ### Segmentador
 
@@ -87,6 +150,8 @@ De ahí la asimetría que gobierna su política:
 
 Ante corte dudoso, **sobre-segmentar**. Un documento de más es ruido recuperable; un documento de menos es corrupción silenciosa.
 
+---
+
 ### Identificador
 
 ```mermaid
@@ -106,13 +171,15 @@ graph LR
     K --> A
 ```
 
+Determina el tipo de documento y el ruteo (qué extractor lo procesa).
+
 Tres variantes según qué evidencia esté disponible: solo texto, solo imagen, o ambos. La diferencia no es de precisión sino de qué se puede observar.
 
 Devuelve la **evidencia** junto al tipo: qué palabras o formas dispararon la decisión. Sin eso, un documento mal clasificado es invisible y el error aparece recién al final, como un campo mal extraído.
 
 Confianza baja deriva a revisión en vez de elegir el tipo más probable. Y hace falta una categoría "otro" con ruta propia: de ahí salen los tipos nuevos.
 
-**Tiene una arista de vuelta al Segmentador, con tres límites.** Segmentar bien a veces requiere saber el tipo, e identificar requiere el segmento: es circular, y el sistema era estrictamente hacia adelante. Cuando la evidencia muestra **dos tipos distintos** en el mismo segmento, el Identificador no elige uno: devuelve el corte y fuerza re-segmentación. Pero un bucle sin condición de corte es un riesgo, así que:
+**Tiene una arista de vuelta al Segmentador, con tres límites.** Segmentar bien a veces requiere saber el tipo, e identificar requiere el segmento: es circular. Cuando la evidencia muestra **dos tipos distintos** en el mismo segmento, el Identificador no elige uno: devuelve el corte y fuerza re-segmentación. Pero un bucle sin condición de corte es un riesgo, así que:
 
 | Límite | Por qué |
 |---|---|
@@ -120,7 +187,9 @@ Confianza baja deriva a revisión en vez de elegir el tipo más probable. Y hace
 | **Reusar lo ya leído** | Diagnóstico y Lector son de nivel página y no dependen del corte: se conservan. Re-segmentar no implica releer |
 | **Alimentar la confianza de corte** | El caso se registra, y si se repite el mismo patrón, el Segmentador ajusta su umbral |
 
-Ese último punto cierra el solapamiento entre los dos mecanismos: **la duda parte, el error vuelve**. Si el Segmentador dudó, ya sobre-segmentó — el caso "dos tipos" no debería aparecer. Si aparece, es porque la confianza de corte dio alta y se equivocó, y esa señal es exactamente lo que el umbral necesita para corregirse. Los dos mecanismos no compiten: uno actúa antes y el otro alimenta al primero.
+Ese último punto cierra el solapamiento entre los dos mecanismos: **la duda parte, el error vuelve**. Si el Segmentador dudó, ya sobre-segmentó — el caso "dos tipos" no debería aparecer. Si aparece, es porque la confianza de corte dio alta y se equivocó, y esa señal es exactamente lo que el umbral necesita para corregirse.
+
+---
 
 ### Diagnóstico
 
@@ -143,6 +212,8 @@ No alcanza con preguntar si hay texto: hay que ver si es usable. Un PDF puede tr
 
 Legibilidad es distinto de resolución: una imagen puede tener DPI suficiente y estar desenfocada. Si no pasa, hay dos salidas válidas (preprocesar o derivar) y una inválida: pasarla al OCR igual y dejar que devuelva texto inventado indistinguible de una lectura real.
 
+---
+
 ### Lector
 
 ```mermaid
@@ -163,7 +234,9 @@ La corrección existe solo en OCR: un conversor no lee mal, transcribe lo que ha
 
 El ruteo es **por página**: un PDF mixto combina ambos caminos y los une al final.
 
-**Devuelve tokens, no texto.** La distinción importa y resuelve un problema del diseño anterior: si el Lector entregara texto ya ordenado, absorbería parte del Reconstructor y no haría falta ese componente. Entrega **tokens con coordenadas**, sin orden de lectura resuelto — así el Reconstructor tiene razón de existir y los dos flujos de texto lo necesitan por igual.
+**Devuelve tokens, no texto.** La distinción importa: si el Lector entregara texto ya ordenado, absorbería parte del Reconstructor y no haría falta ese componente. Entrega **tokens con coordenadas**, sin orden de lectura resuelto — así el Reconstructor tiene razón de existir y los dos flujos de texto lo necesitan por igual.
+
+---
 
 ### Reconstructor
 
@@ -184,7 +257,9 @@ Recibe **varias páginas**, no una: el layout es local, pero la continuidad lo c
 - Una tabla con encabezado en una página y filas que siguen en la siguiente pierde la asociación si cada página se procesa aislada.
 - Un encabezado repetido en las 5 páginas se captura 5 veces sin control de continuidad.
 
-**Corre en Reglas e Interpretación; en Visión solo la continuidad.** El diseño anterior lo dejaba únicamente en Reglas, lo cual era inconsistente: un documento multipágina aplanado a texto pierde orden de lectura y continuidad igual, y el LLM **rellena esa estructura inventándola**, que es su peor modo de falla. En Visión el ◐ se explica porque el VLM absorbe el layout de cada página, pero la continuidad entre páginas sigue haciendo falta.
+**Corre en Reglas e Interpretación; en Visión solo la continuidad.** El VLM absorbe el layout de cada página, pero la continuidad entre páginas sigue haciendo falta.
+
+---
 
 ### Validador
 
@@ -210,20 +285,13 @@ Cuatro chequeos **independientes**: cada uno mira el mismo campo y emite su prop
 | **Contenido** | ¿Es admisible en el dominio? | Que corresponde al negocio: único que conoce las reglas | Revisión |
 | **Dígito verificador** | ¿Es válido en sí mismo? | Garantía matemática: único sin falsos positivos | Rechazar |
 
-El orden de la tabla va de más débil a más fuerte, y **ese orden no describe ejecución**: los cuatro corren sobre el mismo campo y ninguno necesita el resultado de otro.
-
-Lo que sí cambia entre ellos es la fuerza de la evidencia:
-
-- **Forma** no dice si el valor es cierto. Un importe que matchea el patrón puede ser cualquier número.
-- **Tipo** confirma que es usable, no que sea correcto.
-- **Contenido** es el único que conoce el negocio: un IVA de 17% pasa forma y tipo, y sigue siendo error.
-- **Dígito verificador** es el único con garantía: un número inventado no pasa salvo azar de 1 en 10.
+El orden de la tabla va de más débil a más fuerte, pero **ese orden no describe ejecución**: los cuatro corren sobre el mismo campo y ninguno necesita el resultado de otro.
 
 La decisión final combina los veredictos, y la **falla más grave manda**: un campo puede pasar forma y tipo, fallar contenido, y derivar a revisión; o fallar dígito verificador y rechazarse aunque los otros tres pasen.
 
-**También es el que gobierna el escalamiento.** "No pudo" se define acá y en ningún otro lado. La política vivía dispersa en tres componentes —Identificador, Diagnóstico y Validador— sin que ninguno supiera de los otros; centralizarla acá es lo que la vuelve aplicable.
+**El Validador es el que gobierna el escalamiento.** "No pudo" se define acá y en ningún otro lado. La política vivía dispersa en tres componentes — Identificador, Diagnóstico y Validador — sin que ninguno supiera de los otros; centralizarla acá es lo que la vuelve aplicable.
 
-Y "no pudo" son **dos casos distintos**, que no pueden escalar igual:
+**Dos casos distintos escalan diferente:**
 
 | Caso | Qué hay | Cómo escala |
 |---|---|---|
@@ -232,7 +300,9 @@ Y "no pudo" son **dos casos distintos**, que no pueden escalar igual:
 
 La diferencia decide el costo. Un campo inválido tiene ubicación, así que Visión mira un recorte: barato y preciso. Un campo ausente no tiene dónde mirar, así que Visión tiene que releer el documento completo igual que si fuera el único flujo.
 
-Por eso **"reprocesa esos 2, no los 20" aplica solo al primer caso**. Si el escalamiento es mayoritariamente por campos ausentes, el ahorro no es de un orden de magnitud sino de ninguno. La cifra hay que medirla sobre la mezcla real de ambos casos, no suponerla.
+Por eso **"reprocesa esos 2, no los 20" aplica solo al primer caso**. Si el escalamiento es mayoritariamente por campos ausentes, el ahorro no es de un orden de magnitud sino de ninguno.
+
+---
 
 ### Consistencia
 
@@ -249,22 +319,18 @@ graph LR
     C -->|"sí"| F
 ```
 
-Compara valores entre sí. Opera en dos niveles con el mismo mecanismo:
+Compara valores entre sí en dos niveles:
 
 | Nivel | Qué compara | Ejemplo |
 |---|---|---|
 | **Entre campos** | Aritmética y orden dentro del documento | subtotal + impuestos = total; emisión ≤ vencimiento |
 | **Entre flujos** | El mismo campo extraído por dos caminos | total según Reglas vs. total según Visión |
 
-**El segundo nivel es la respuesta al hueco de plausible-pero-falso.** Un total de 15400 que era 1540 pasa forma, tipo, contenido y no tiene dígito verificador: ningún chequeo interno lo ve. Pero si Reglas lee 1540 y Visión lee 15400 sobre el mismo documento, el desacuerdo aparece — y es la señal más fuerte disponible en todo el sistema.
+**El nivel entre flujos es la respuesta al error plausible-pero-falso.** Un total de 15400 que era 1540 pasa forma, tipo, contenido y no tiene dígito verificador: ningún chequeo interno lo ve. Pero si Reglas lee 1540 y Visión lee 15400 sobre el mismo documento, el desacuerdo aparece — y es la señal más fuerte disponible en todo el sistema.
 
-Sin esto, el híbrido es solo fallback: cada flujo hace su parte y la arquitectura descarta la capacidad de contraste, que es justamente lo que la validación interna no puede dar.
+#### Cómo hacer el contraste usable
 
-#### Lo que hace falta para que el contraste sea usable
-
-Emitir `Difieren → revisión` a secas convierte cada diferencia de formato en un ítem de cola. A volumen alto, el contraste deja de costar cómputo y pasa a costar **tiempo de persona**, que es el recurso que limita el throughput. Tres decisiones, todas antes de comparar:
-
-**Normalizar primero.** Si no, se compara formato en vez de valor: `1.540,00` contra `1540.00`, un CUIT con espacios contra uno sin, una fecha `16/09/2026` contra `2026-09-16`. Hay que llevar ambos valores a forma canónica y **comparar los normalizados**, no los crudos.
+**Normalizar primero.** Si no, se compara formato en vez de valor: `1.540,00` contra `1540.00`, un CUIT con espacios contra uno sin. Hay que llevar ambos valores a forma canónica y **comparar los normalizados**, no los crudos.
 
 **Tolerancia por tipo de campo.**
 
@@ -274,13 +340,13 @@ Emitir `Difieren → revisión` a secas convierte cada diferencia de formato en 
 | Identificadores | **Exacta** | Un CUIT no tiene redondeo: un dígito distinto es un error |
 | Fechas | Exacta | No hay equivalente aproximado |
 
-**Que la aritmética arbitre.** Los dos niveles no son independientes y hoy no se hablan. Si los flujos difieren en el total pero solo uno de los dos valores cierra con `subtotal + impuestos` del propio documento, **Consistencia ya tiene la respuesta** y no hace falta un humano. El nivel aritmético desempata el nivel entre-flujos: es la única señal interna capaz de decidir cuál de los dos tiene razón, y es gratis.
+**Que la aritmética arbitre.** Los dos niveles no son independientes. Si los flujos difieren en el total pero solo uno de los dos valores cierra con `subtotal + impuestos` del propio documento, **Consistencia ya tiene la respuesta** y no hace falta un humano. El nivel aritmético desempata el nivel entre-flujos.
 
 Solo cuando ninguno de los dos cierra, o el campo es un identificador sin relación aritmética, el desacuerdo va a revisión.
 
-**Costo.** Correr dos flujos sobre todo es caro, así que el contraste se reserva: por campo crítico (importes, identificadores) y no por documento entero. La política de cuándo contrastar es una decisión explícita, no un efecto lateral.
+**Costo.** Correr dos flujos sobre todo es caro, así que el contraste se reserva: por campo crítico (importes, identificadores) y no por documento entero.
 
-El de consistencia aritmética también es el único chequeo que **agarra errores de dígito del OCR**: si dos cifras leídas mal no suman, el error se detecta sin comparar contra nada externo.
+---
 
 ### Catálogo
 
@@ -303,7 +369,9 @@ Distinto de Consistencia: aquel compara el documento contra sí mismo, este cont
 
 Por eso la falla por indisponibilidad no es un rechazo: si la fuente externa no responde, el campo queda **sin verificar**, no inválido. Confundir las dos cosas convierte una caída del servicio en una cola de rechazos.
 
-**`Sin verificar` tiene dueño: el propio Catálogo.** No basta con marcarlo, porque un campo sin verificar es deuda invisible — el documento se emite y nadie vuelve a mirarlo. Por eso mantiene su **cola de reintento** con backoff, y el estado es visible en la salida como campo pendiente, no como campo ausente. Sin reintento propio, el estado es un agujero por donde se van los documentos con identidad nunca confirmada.
+**`Sin verificar` tiene dueño: el propio Catálogo.** Mantiene su **cola de reintento** con backoff, y el estado es visible en la salida como campo pendiente, no como campo ausente. Sin reintento propio, el estado es un agujero por donde se van los documentos con identidad nunca confirmada.
+
+---
 
 ### Contrato
 
@@ -318,15 +386,15 @@ graph LR
 
 Emitir es una **barrera**: espera a que todas las páginas estén resueltas antes de producir la salida del documento.
 
-Une los campos que vinieron de páginas distintas, adjunta la traza `(página, traza)` por campo, y con ella la procedencia.
+Une los campos que vinieron de páginas distintas y adjunta la traza `(página, flujo)` por campo.
 
-**Maneja procedencia heterogénea.** Como el escalamiento es por campo, en un mismo documento conviven campos resueltos por Reglas con `offset exacto` y campos resueltos por Visión con `bbox aproximado`. El Contrato no puede asumir un origen único: cada campo declara su flujo y su tipo de traza, y eso es información de salida, no un detalle interno.
+**Maneja procedencia heterogénea.** Con escalamiento por campo, en un mismo documento conviven campos resueltos por Reglas con `offset exacto` y campos resueltos por Visión con `bbox aproximado`. El Contrato no puede asumir un origen único: cada campo declara su flujo y su tipo de traza.
 
-**Emite el vector de veredictos, no un score.** Hoy un campo acumula señales de cinco fuentes: confianza de corte, confianza del Lector, los cuatro veredictos del Validador, refuerzo o desacuerdo de Consistencia, y verificado/sin-verificar del Catálogo. Colapsarlas en un número repite el error que el Catálogo prohíbe: mezclar `sin verificar por caída del servicio` con `verificado y coincidente`.
+**Emite el vector de veredictos, no un score.** Un campo acumula señales de cinco fuentes: confianza de corte, confianza del Lector, los cuatro veredictos del Validador, refuerzo o desacuerdo de Consistencia, y verificado/sin-verificar del Catálogo. Colapsarlas en un número repite el error que el Catálogo prohíbe: mezclar `sin verificar por caída del servicio` con `verificado y coincidente`.
 
 Entonces cada campo se emite con sus veredictos separados:
 
-```
+```json
 {
   "total": {
     "valor": "15400.00",
@@ -344,9 +412,11 @@ Entonces cada campo se emite con sus veredictos separados:
 }
 ```
 
-**El umbral lo pone el consumidor.** No hay un número mágico único: para un caso de uso, `sin_verificar` en identidad es bloqueante; para otro, un importe con `contenido: dudoso` es aceptable. Un escalar obliga a elegir un umbral en el lugar equivocado — el productor, que no conoce el caso de uso.
+**El umbral lo pone el consumidor.** No hay un número mágico único: para un caso de uso, `sin_verificar` en identidad es bloqueante; para otro, un importe con `contenido: dudoso` es aceptable.
 
 El fallo es **parcial**: una página ilegible se marca como tal y el resto del documento se emite igual, con esa ausencia declarada.
+
+---
 
 ### Revisor
 
@@ -366,7 +436,7 @@ Cierra el bucle. Sin él, la arquitectura termina en "revisión" y todo lo que l
 
 Recibe lo que derivaron los demás: confianza baja del Identificador, ilegibles del Diagnóstico, fallas de contenido del Validador, desacuerdos de Consistencia, y la categoría "otro".
 
-Y tiene tres salidas, no una:
+Tiene tres salidas:
 
 | Salida | Cuándo |
 |---|---|
@@ -376,7 +446,9 @@ Y tiene tres salidas, no una:
 
 Es también el que cierra el bucle del Segmentador: cuando el Identificador devuelve dos tipos en un segmento, el caso vuelve acá y la re-segmentación se vuelve una regla si se repite.
 
-**Sin el Revisor, el sistema no mejora.** Las correcciones humanas se acumulan en logs que nadie lee y los mismos errores vuelven en cada lote: el mismo modo de falla que la revisión existía para resolver.
+**Sin el Revisor, el sistema no mejora.** Las correcciones humanas se acumulan en logs que nadie lee y los mismos errores vuelven en cada lote.
+
+---
 
 ## Los tres flujos
 
@@ -414,7 +486,9 @@ graph LR
 
 Los tres terminan en **Revisor**: lo que se deriva por cualquier motivo vuelve, se corrige, y se convierte en regla o en tipo nuevo.
 
-## Diferencias
+---
+
+## Comparativa de flujos
 
 | | Reglas | Interpretación | Visión |
 |---|---|---|---|
@@ -427,9 +501,7 @@ Los tres terminan en **Revisor**: lo que se deriva por cualquier motivo vuelve, 
 | Determinista | Sí | No | No |
 | Trazabilidad | Offset exacto | Cita + offset | bbox aproximado |
 
-**Los tres anclan mal.** Lo que cambia es el mecanismo y la frecuencia, no la existencia del problema: un regex se equivoca por cercanía, un LLM sobre tokens aplanados atribuye el total del bloque resumen al comprobante igual que el regex —cambia la causa, no el resultado—, y un VLM lee la fila equivocada de una tabla con frecuencia conocida. Poner "No" en dos de las tres columnas sería la misma sobreventa que corregimos al eliminar "No alucina".
-
-La diferencia útil no es *si* anclan mal, sino **cómo se detecta cada error**:
+**Los tres anclan mal.** Lo que cambia es el mecanismo y la frecuencia, no la existencia del problema. La diferencia útil no es *si* anclan mal, sino **cómo se detecta cada error**:
 
 | Error | Se detecta con |
 |---|---|
@@ -438,32 +510,9 @@ La diferencia útil no es *si* anclan mal, sino **cómo se detecta cada error**:
 | Ancla mal en Interpretación | Contraste, o cita que no sostiene el valor |
 | Ancla mal en Visión | Contraste, o bbox fuera de la región esperada |
 
-Esto refuerza lo mismo que el resto del documento: **el contraste no es una optimización, es el único mecanismo que ve la clase de error más silenciosa** — la que produce un valor válido en el lugar equivocado.
+Esto refuerza un punto central: **el contraste no es una optimización, es el único mecanismo que ve la clase de error más silenciosa** — la que produce un valor válido en el lugar equivocado.
 
-## Orden de ejecución
-
-El híbrido resuelve dos cosas distintas, y conviene no confundirlas.
-
-**Cascada** — cada etapa hace lo más barato y pasa al siguiente lo que no pudo. Define el costo.
-
-```mermaid
-graph LR
-    A["Conversión"] --> B["Reglas"] --> C["Interpretación"] --> D["Visión"]
-```
-
-**Contraste** — dos flujos sobre el mismo campo, comparados. Define la confianza, y es lo único que agarra el error plausible-pero-falso.
-
-```mermaid
-graph LR
-    A["Campos<br/>críticos"] --> B["Reglas"]
-    A --> C["Visión"]
-    B --> D["Consistencia<br/>compara"]
-    C --> D
-    D --> E["Coinciden →<br/>confianza alta"]
-    D --> F["Difieren →<br/>revisión"]
-```
-
-Sin contraste, el híbrido es solo fallback y la arquitectura descarta la única señal que la validación interna no puede dar. El costo se acota contrastando **por campo crítico** —importes, identificadores— y no el documento entero.
+---
 
 ## Invariantes
 
@@ -482,6 +531,8 @@ Aplican a los tres flujos:
 - **Sin bucle de retorno, el sistema no mejora.** Las correcciones que no vuelven al flujo son las que hacen que el mismo error se repita.
 - **Auditar no es normalizar.** Ver `d.md`.
 
+---
+
 ## Limitaciones conocidas
 
 Se declaran en lugar de suponerlas cubiertas:
@@ -493,4 +544,3 @@ Se declaran en lugar de suponerlas cubiertas:
 | Corte de segmentación dudoso | La sobre-segmentación mitiga, no elimina |
 | Fuente externa caída | Se reintenta, pero mientras tanto el campo queda sin verificar |
 | Campo ausente escalado | Sin ubicación previa, Visión relee el documento entero: no hay ahorro |
-
