@@ -8,32 +8,111 @@ Los flujos principales comparten actividades que aparecen en más de uno. Se def
 
 | Componente | Qué resuelve | Lo usan |
 |---|---|---|
-| **Lectura nativa** | Extrae texto y estructura de formatos que ya la declaran (PDF con capa, Office, HTML) | Tradicional, AI sobre texto |
-| **OCR** | Lee páginas sin capa de texto y reconstruye texto legible | Tradicional, AI sobre texto |
+| **Clasificación** | Determina qué es el documento y qué ruta toma | Los tres |
+| **Lectura** | Obtiene texto y estructura: por conversión determinista o por OCR | Tradicional, AI sobre texto |
 | **Estructurar** | Layout, tablas y orden de lectura | Tradicional |
 | **Esquema y validación** | Contrato de salida, chequeos deterministas | Los tres |
 
-### Componente: OCR
+### Componente: Clasificación
 
-Se usa cuando el documento no trae texto. A diferencia de la lectura nativa —donde los caracteres y las coordenadas son el registro fuente—, acá todo es estimado, así que el componente produce texto **y** su nivel de confianza.
+Corre primero y decide el ruteo: qué tipo de documento es y, con eso, qué plantilla, qué extractor y qué reglas se aplican. Se puede implementar sobre texto, sobre imagen, o sobre ambos.
 
 ```mermaid
 graph LR
-    A["Imagen<br/>de página"] --> B["Preprocesar<br/>alinear · binarizar · contraste"]
-    B --> C["Reconocer<br/>caracteres + confianza"]
-    C --> D["Corregir<br/>léxico · contexto"]
-    D --> E["Registrar<br/>original → corregido"]
-    E --> F["Texto<br/>+ coordenadas + confianza"]
+    A["Documento"] --> B{"¿Qué hay<br/>disponible?"}
+    B -->|"solo texto"| C["Clasificar por texto<br/>campos y palabras clave"]
+    B -->|"solo imagen"| D["Clasificar por imagen<br/>formas y marcas"]
+    B -->|"texto + imagen"| E["Clasificación mixta<br/>estructura + contenido"]
+    C --> F["Tipo + confianza"]
+    D --> F
+    E --> F
+    F --> G["Ruteo:<br/>plantilla · extractor · reglas"]
 ```
 
-| # | Etapa | Qué hace | Salida |
-|---|-------|----------|--------|
-| 1 | **Preprocesar** | Endereza, recorta y normaliza la imagen antes de leer | Imagen limpia |
-| 2 | **Reconocer** | Motor OCR: caracteres con coordenadas y confianza por token | Texto crudo + confianza |
-| 3 | **Corregir** | Repara errores de lectura, con los límites de abajo | Texto corregido |
-| 4 | **Registrar** | Guarda cada par `original → corregido` con la razón | Traza de corrección |
+#### Las tres variantes
+
+| Variante | En qué se basa | Ejemplo |
+|---|---|---|
+| **Solo texto** | Presencia y combinación de campos o palabras clave | Es factura si tiene fecha, importe y número de comprobante |
+| **Solo imagen** | Formas, marcas y símbolos gráficos | Es tipo A/B/C según el rectángulo con la letra en el encabezado |
+| **Mixto** | Estructura del layout **más** el contenido | Es factura si tiene encabezado, cuerpo de ítems y pie de totales, **y** esos bloques contienen fecha, importes y descripción |
+
+La diferencia entre las tres no es de precisión sino de **qué evidencia está disponible**:
+
+- **Solo texto** sirve cuando el documento ya trae texto legible y el tipo se distingue por su contenido. Es el más barato y el más fácil de auditar: la decisión se justifica mostrando las palabras que la dispararon.
+- **Solo imagen** sirve cuando lo distintivo es gráfico y no está escrito como texto interpretable. El caso del recuadro con la letra A/B/C es típico: hay que ver la forma y el símbolo, no leer una palabra.
+- **Mixto** es el más robusto cuando ninguno de los dos alcanza. Clasificar por texto solo puede fallar en documentos que dicen lo mismo pero se ven distintos; por imagen solo, en documentos que se ven igual pero difieren en el contenido.
+
+#### Por qué es un componente y no una etapa suelta
+
+Porque las tres variantes tienen la misma interfaz y el mismo rol: reciben el documento y devuelven **tipo + confianza**. El flujo no necesita saber cómo se decidió.
+
+```
+clasificar(documento) → (tipo, confianza, evidencia)
+```
+
+Y la evidencia importa tanto como el tipo: guardar qué palabras, formas o bloques dispararon la decisión permite auditar la clasificación y detectar tipos nuevos que empiezan a aparecer. Sin esa traza, un documento mal clasificado es invisible — se procesa con la plantilla equivocada y el error aparece recién al final, como un campo mal extraído.
+
+#### El error de clasificación contamina todo lo que sigue
+
+A diferencia de un error de lectura —que afecta un campo— un error de clasificación cambia el camino completo: se aplica la plantilla equivocada, el extractor equivocado y las reglas equivocadas. Todo el resto del pipeline trabaja con el supuesto incorrecto.
+
+Dos consecuencias de diseño:
+
+- **Confianza baja no debería decidir: debería derivar.** Si la clasificación no supera un umbral, conviene mandar a revisión en vez de elegir el tipo más probable y seguir.
+- **Los tipos nuevos necesitan una salida.** Un clasificador cerrado sobre las categorías conocidas va a forzar todo lo desconocido dentro de la categoría más parecida. Hace falta una categoría "otro" con su propia ruta, y un registro de esos casos, que es de donde salen las categorías nuevas.
+
+### Componente: Lectura
+
+Obtiene el texto del documento. Tiene dos caminos según **qué contiene** el archivo, y la diferencia entre ellos no es de calidad sino de naturaleza: uno extrae, el otro interpreta. La corrección solo aplica al segundo.
+
+```mermaid
+graph LR
+    A["Documento"] --> B{"¿Qué contiene?"}
+    B -->|"texto embebido"| C["Conversión<br/>pdftotext · ghostscript"]
+    B -->|"PDF con imagen"| D["Exportar<br/>la imagen"]
+    B -->|"imagen"| E["Imagen<br/>directa"]
+    D --> F["OCR<br/>reconocer caracteres"]
+    E --> F
+    F --> G["Corrección<br/>léxico · contexto"]
+    C --> H["Texto<br/>+ coordenadas"]
+    G --> H
+```
+
+#### Las tres variantes
+
+| Caso | Camino | Cómo | Corrección |
+|---|---|---|---|
+| **PDF con texto** | Conversión | `pdftotext`, `ghostscript` y similares extraen la capa existente | No |
+| **PDF con imagen** | Exportar + OCR | Se extrae la imagen embebida y se le aplica OCR | Sí |
+| **Imagen** | OCR | Se le aplica OCR directo | Sí |
+
+#### Por qué la corrección solo aplica a un camino
+
+**Un conversor no lee mal: extrae lo que está.** `pdftotext` no interpreta píxeles, no estima formas, no adivina caracteres. Toma la capa de texto que el archivo ya tiene y la transcribe. Si esa capa dice algo incorrecto, el problema está en el PDF —no en el conversor— y ninguna corrección léxica o contextual lo arregla. Aplicarle un modelo de lenguaje "por las dudas" solo puede introducir daño.
+
+**Un OCR sí interpreta, y por eso puede equivocarse.** Reconstruye caracteres a partir de píxeles, con confianza estimada y errores predecibles. Ahí sí tiene sentido corregir, y ahí está todo el cuidado que se describe abajo.
+
+De esta asimetría sale una regla simple: **la corrección pertenece al camino de imagen, nunca al de conversión.** El ruteo entre ambos es lo que decide si entra o no.
+
+#### El ruteo es por página, no por documento
+
+Un PDF puede tener texto en unas páginas e imágenes escaneadas en otras — es habitual en expedientes armados a mano. Decidir por documento fuerza un camino equivocado sobre la mitad del archivo. La verificación se hace **página por página**: si la capa de texto está vacía o es basura, esa página va a OCR; si no, va a conversión. Ambos caminos pueden convivir en un mismo documento y el resultado se une al final.
+
+#### Qué devuelve cada camino
+
+| | Conversión | OCR |
+|---|---|---|
+| Texto | Exacto | Estimado |
+| Coordenadas | Exactas, del registro fuente | Estimadas |
+| Confianza | 1.0, no aplica | Por token |
+| Traza de corrección | No existe | Par `original → corregido` |
+
+Misma forma de salida, distinta fidelidad. Esa propiedad es lo que permite que el flujo trate a los dos caminos como un solo componente.
 
 #### Corrección: tres tipos, no dos
+
+Aplica **solo** sobre la salida del OCR.
 
 | Tipo | Cómo corrige | Ejemplo |
 |---|---|---|
@@ -55,13 +134,13 @@ Por eso la corrección por contexto solo actúa con tres restricciones:
 
 #### Interfaz
 
-El componente devuelve una forma única, más allá de cómo se implemente:
+El componente devuelve una forma única, sin importar el camino que haya tomado:
 
 ```
-leer(imagen) → (texto, coordenadas por token, confianza por token, traza de corrección)
+leer(documento) → (texto, coordenadas por token, confianza por token, traza de corrección)
 ```
 
-La diferencia con la lectura nativa está en la fidelidad, no en la forma: allí la confianza es 1.0 y las coordenadas son exactas. Misma salida, distinta procedencia — y por eso el ruteo entre ambas queda **dentro** del componente de lectura, no repetido en cada flujo.
+En el camino de conversión la confianza es 1.0, las coordenadas son exactas y la traza está vacía. En el de OCR todo es estimado y la traza tiene contenido. El consumidor recibe siempre la misma estructura — y por eso el ruteo entre caminos queda **dentro** del componente, no repetido en cada flujo.
 
 ## Flujo tradicional (determinista)
 
@@ -69,25 +148,22 @@ Construido a mano: OCR, layout, reglas y plantillas por proveedor.
 
 ```mermaid
 graph LR
-    A["Documento<br/>PDF · Office · foto · escaneo"] --> B["Clasificar<br/>tipo y plantilla"]
-    B --> C{"¿Trae texto<br/>embebido?"}
-    C -->|sí| D["Lectura nativa"]
-    C -->|no| E["Componente<br/>OCR"]
-    D --> F["Estructurar<br/>layout · tablas · orden"]
-    E --> F
-    F --> G["Extraer campos<br/>reglas + modelos"]
-    G --> H["Validar<br/>+ estructura"]
-    H --> I["Confianza<br/>derivada"]
-    I --> J["JSON + trazabilidad"]
-    I -.baja.-> K["Revisión humana"]
+    A["Documento<br/>PDF · Office · foto · escaneo"] --> B["Componente<br/>Clasificación"]
+    B --> C["Componente<br/>Lectura"]
+    C --> D["Estructurar<br/>layout · tablas · orden"]
+    D --> E["Extraer campos<br/>reglas + modelos"]
+    E --> F["Validar<br/>+ estructura"]
+    F --> G["Confianza<br/>derivada"]
+    G --> H["JSON + trazabilidad"]
+    G -.baja.-> I["Revisión humana"]
 ```
 
 ### Etapas del flujo tradicional
 
 | # | Etapa | Qué hace | Salida |
 |---|-------|----------|--------|
-| 1 | **Clasificar** | Identifica el tipo de documento y el ruteo | Tipo + confianza |
-| 2 | **Leer** | Rutea a lectura nativa u OCR según haya capa de texto | Texto + coordenadas + confianza |
+| 1 | **Clasificar** | **Componente Clasificación**: tipo de documento y ruteo | Tipo + confianza + evidencia |
+| 2 | **Leer** | **Componente Lectura**: rutea internamente entre conversión y OCR | Texto + coordenadas + confianza |
 | 3 | **Estructurar** | Reconstruye layout, tablas y orden de lectura | Documento estructurado |
 | 4 | **Extraer** | Reglas con anclas semánticas, luego modelos para campos sin clave fija | Campos tentativos |
 | 5 | **Validar** | Aritmética, **estructura de la tabla**, fechas, formatos, catálogos | Campos verificados |
@@ -104,20 +180,22 @@ Le pasás texto ya extraído y el modelo interpreta qué hay. No ve la imagen: d
 
 ```mermaid
 graph LR
-    A["Documento"] --> B["Clasificar<br/>+ leer texto"]
-    B --> C["LLM<br/>interpreta"]
-    C --> D["Verificar<br/>cita y valor"]
-    D --> E["Validar<br/>+ estructura"]
-    E --> F["Confianza<br/>2ª pasada"]
-    F --> G["JSON + offset"]
-    F -.baja.-> H["Revisión humana"]
+    A["Documento"] --> B["Componente<br/>Clasificación"]
+    B --> C["Componente<br/>Lectura"]
+    C --> D["LLM<br/>interpreta"]
+    D --> E["Verificar<br/>cita y valor"]
+    E --> F["Validar<br/>+ estructura"]
+    F --> G["Confianza<br/>2ª pasada"]
+    G --> H["JSON + offset"]
+    G -.baja.-> I["Revisión humana"]
 ```
 
 ### Etapas del flujo AI sobre texto
 
 | # | Etapa | Qué hace | Salida |
 |---|-------|----------|--------|
-| 1 | **Clasificar y leer** | Tipo y ruteo; lectura nativa u **componente OCR**, paginado con índices | Tipo + texto indexado |
+| 1 | **Clasificar** | **Componente Clasificación** (variante texto) | Tipo + confianza |
+| 2 | **Leer** | **Componente Lectura**, paginado con índices | Texto indexado |
 | 2 | **Definir esquema** | Campos `required` y `nullable`, con cita obligatoria por campo | Contrato de salida |
 | 3 | **Interpretar** | El LLM asigna cada campo a su fragmento por significado | Valor + cita literal |
 | 4 | **Verificar** | Busca el literal **y** comprueba que el valor sea el de la cita | Offset, o campo sospechoso |
@@ -137,7 +215,7 @@ Le pasás la página como imagen y el modelo lee y extrae en el mismo paso. No h
 
 ```mermaid
 graph LR
-    A["Documento"] --> B["Clasificar<br/>+ alinear"]
+    A["Documento"] --> B["Componente<br/>Clasificación"]
     B --> C["Renderizar<br/>a resolución"]
     C --> D["VLM<br/>lee y extrae"]
     D --> E["Validar<br/>+ estructura"]
@@ -150,7 +228,7 @@ graph LR
 
 | # | Etapa | Qué hace | Salida |
 |---|-------|----------|--------|
-| 1 | **Clasificar y alinear** | Tipo de documento y rotación automática a horizontal | Tipo + imagen alineada |
+| 1 | **Clasificar y alinear** | **Componente Clasificación** (variante imagen o mixta) + rotación a horizontal | Tipo + imagen alineada |
 | 2 | **Renderizar** | Resolución elegida por el dato más chico a leer; recorte y centrado si está en el margen | Imagen normalizada |
 | 3 | **Definir esquema** | Campos `required` con evidencia obligatoria por campo | Contrato de salida |
 | 4 | **Leer y extraer** | El VLM lee la página y llena el esquema en un paso | Valor + evidencia |
@@ -175,9 +253,9 @@ La salida tiene que preservar la procedencia. **Markdown no sirve para esto**: d
 | Dimensión | Tradicional | AI sobre texto | AI sobre imagen |
 |---|---|---|---|
 | Qué recibe el modelo | Nada | Texto plano | Píxeles de la página |
-| Usa el componente OCR | Sí, si no hay capa de texto | Sí, si no hay capa de texto | No |
+| Usa el componente Lectura | Sí | Sí | No |
 | Etapas que reemplaza | — | Extracción por reglas | Lectura + estructura + extracción |
-| Clasificación previa | Necesaria | Necesaria (+6,8 pp de F1 con ejemplos de contexto) | Necesaria (el error de tipo contamina el prompt) |
+| Clasificación previa | Necesaria: variante texto | Necesaria: variante texto | Necesaria: variante imagen o mixta |
 | Plantillas por proveedor | Necesarias | Ninguna | Ninguna |
 | Layout nuevo | Regla nueva o reentrenar | Generaliza | Generaliza |
 | Ve firmas, sellos, casillas | Solo si lo modelaste | No | Sí |
