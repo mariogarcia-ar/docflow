@@ -114,6 +114,8 @@ The component thresholds are **environment settings, not flags**. They describe 
 
 They are in `.env.example`. Tuning one is a decision about the corpus, so it belongs in the configuration rather than retyped. None of them has a CLI flag in the first instance.
 
+**The OCR engine is not among them, and cannot be set.** It is Docling — one engine, fixed. An engine setting would make the OCR path a matrix of behaviours that the ledger's `config_hash` would have to track per document, and would buy a choice the architecture does not make: the engine is a stack decision, not a corpus decision.
+
 ### Deferred
 
 Designed, documented, and **not in the first instance**. Each is listed with what it would add:
@@ -128,7 +130,6 @@ Designed, documented, and **not in the first instance**. Each is listed with wha
 | `--keep-artifacts` | `run` | Keep the previous artifact as `.prev` | Retention policy, not needed to run |
 | `--show-evidence` | `identifier` | Print what triggered a decision | Triage aid |
 | `--continuity-only` | `reconstructor` | Skip the layout pass | Optimisation, not a capability |
-| `--ocr` | `reader` | Force an OCR engine | The default is chosen by Diagnosis |
 | `--source` | `catalog` | External source to validate against | No pipeline runs the Catalog yet |
 | `--failed`, `--state` | `status`, `ledger` | Filter a report | Inspection niceties |
 | `--retry-queue`, `--retry` | `catalog` | Inspect and retry unverified | Needs the Catalog running first |
@@ -237,7 +238,7 @@ docflow run --pipeline M1-ErpVR documentos/factura.pdf \
 
 ## M2 — image PDF
 
-Rasterize, then OCR. Identical to M3 once the image exists, so the two share one implementation with a switch at the front.
+Rasterize, then OCR. Identical to M3 once the image exists, so the two share one implementation with a switch at the front — **the rasterization is that switch, and Docling is the shared OCR engine.**
 
 ### M2-ErVR — image PDF, regex
 
@@ -265,7 +266,7 @@ docflow run --pipeline M2-ErpVR documentos/escaneo.pdf \
 
 ## M3 — image via OCR
 
-Page becomes a string first. Loses everything visual — layout, signatures, seals, checkboxes, logos.
+Page becomes a string first, and the engine that produces it is Docling. Loses everything visual — layout, signatures, seals, checkboxes, logos.
 
 ### M3-ErVR — image, regex
 
@@ -1055,10 +1056,12 @@ docflow reader work/escaneo.diagnosis.json --out work/
 ```
 
 ```bash
-# force an OCR engine, and enable OCR-text correction
+# enable OCR-text correction
 docflow reader work/escaneo.diagnosis.json \
-  --ocr tesseract --correct --out work/
+  --correct --out work/
 ```
+
+**The engine is Docling, and there is no flag to change it.** Diagnosis picks the *path* — conversion or OCR — never the engine. On the conversion path the reader is `pdftotext` and Docling does not apply; on the OCR path the reader is Docling. Rasterization is not a reader flag either: an image PDF is rasterized by the material prefix before the reader sees a page.
 
 Correction exists **only in the OCR path** — a converter does not read badly, it transcribes what is there. Output is **positioned tokens**, not ordered text: reading order is the Reconstructor's job.
 

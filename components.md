@@ -146,21 +146,29 @@ Legibility is not the same as resolution: an image may have enough DPI and still
 graph LR
     A["Page"] --> B["Diagnosis"] --> C{"Usable<br/>text?"}
     C -->|"yes"| D["Conversion"]
-    C -->|"no"| E["OCR"] --> F["Correction"]
-    D --> G["Positioned<br/>tokens"]
-    F --> G
+    C -->|"no"| E["Rasterize<br/>image PDF only"] --> F["OCR<br/>Docling"] --> G["Correction"]
+    D --> H["Positioned<br/>tokens"]
+    G --> H
 ```
 
-| Path | Input | Correction | Confidence |
-|---|---|:---:|---|
-| Conversion | Existing text layer | No | 1.0 |
-| OCR | Image | Yes | Estimated |
+| Path | Input | Engine | Correction | Confidence |
+|---|---|---|:---:|---|
+| Conversion | Existing text layer | `pdftotext` | No | 1.0 |
+| OCR | Image | **Docling** | Yes | Estimated |
+
+**The engine is unified: Docling is the OCR engine, and the only one.** There is no per-invocation engine choice, so the OCR path is one implementation rather than a dispatcher over interchangeable backends. Docling runs an OCR backend underneath, but which one is not the Reader's contract — the engine is Docling, and it is a stack decision, not a value a corpus sets.
+
+**Docling does not apply to the conversion path.** When Diagnosis finds a usable text layer, the reader is `pdftotext`: a native text PDF has its text already, and re-reading it through OCR can only degrade it. Docling applies **only** where the page is read from pixels.
+
+**An image PDF is rasterized first.** Docling reads an image, so an image PDF takes one step before it: render the page, then OCR. That prefix is the whole difference between M2 and M3 — and since both then read with the same engine, the two materials share one implementation.
 
 Correction exists only in OCR: a converter does not read badly, it transcribes what is there. Applying a language model to it "just in case" can only introduce damage.
 
 Routing is **per page**: a mixed PDF combines both paths and joins them at the end.
 
 **It returns tokens, not text.** The distinction matters: if the Reader delivered already-ordered text, it would absorb part of the Reconstructor and that component would not be needed. It delivers **tokens with coordinates**, with no reading order resolved — that way the Reconstructor has a reason to exist and both text modes need it equally.
+
+**Docling returns more than that, and the Reader does not pass it on.** A Docling result carries layout and table structure as well as text. Everything past the positioned tokens stays inside the OCR path: if the Reader forwarded it, the Reconstructor's layout pass would be redundant work over an answer already given, and Continuity — its remaining job — would be evaluated against structure that arrived from somewhere else. The boundary holds at the tokens.
 
 ---
 

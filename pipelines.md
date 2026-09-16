@@ -155,6 +155,8 @@ graph LR
     A["Text PDF"] --> B["Extract text<br/>pdftotext"] --> C["ErVR<br/>EpVR<br/>ErpVR"]
 ```
 
+**The OCR engine does not apply here.** M1 is the conversion path: Diagnosis found a usable text layer, so the reader is `pdftotext`, not Docling. A native text PDF sent through OCR would re-read clean text and could only degrade it.
+
 Conversion needs no correction: a converter does not read badly, it transcribes what is there.
 
 The cost is reading order. `pdftotext` is heuristic, so a table header is not associated with rows continuing on the next page, and a header repeated across five pages is not collapsed. That is the Reconstructor's job and it is not being done. Broken linear text still looks plausible, so the failure is quiet.
@@ -165,17 +167,23 @@ The cost is reading order. `pdftotext` is heuristic, so a table header is not as
 
 ```mermaid
 graph LR
-    A["Image PDF"] --> B["Convert to image"] --> C["OCR"] --> D["ErVR<br/>EpVR<br/>ErpVR"]
+    A["Image PDF"] --> B["Convert to image"] --> C["OCR<br/>Docling"] --> D["ErVR<br/>EpVR<br/>ErpVR"]
 ```
 
-**Identical to M3 once rasterized**, so the two should share one implementation with a switch at the front. Six of the thirteen pipelines are three designs with a prefix; divergence would be an accident rather than a decision.
+**The rasterization is not optional.** Docling reads an image, so an image PDF has one step before it. That step is the whole difference between M2 and M3.
+
+**Identical to M3 once rasterized**, so the two share one implementation with a switch at the front. Six of the thirteen pipelines are three designs with a prefix; divergence would be an accident rather than a decision. The unified engine is what makes the sharing literal: one OCR implementation serves M2 and M3, and it is Docling.
 
 ### M3 — `image → text`
 
 ```mermaid
 graph LR
-    A["Image"] --> B["OCR"] --> C["ErVR<br/>EpVR<br/>ErpVR"]
+    A["Image"] --> B["OCR<br/>Docling"] --> C["ErVR<br/>EpVR<br/>ErpVR"]
 ```
+
+**Docling is the engine, and the only one.** M2 and M3 reach the same OCR step from different inputs — an image PDF rasterized first, an image directly — and both read it with Docling.
+
+**It reads, it does not structure.** Docling returns layout and tables along with the text; the Reader keeps the tokens and drops the rest, because the Reconstructor is the component that resolves layout. The M2/M3 prefix ends at tokens, not at a structured document.
 
 **Loses everything visual.** Layout, signatures, seals, checkboxes, logos — the Vision flow is the one that sees signatures and seals, and M3 by construction does not.
 

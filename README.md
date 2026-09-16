@@ -49,6 +49,8 @@ Everything the system does reduces to two independent choices:
 | **Material** | How is the text obtained? | text in hand · extracted from a PDF · OCR · pixels only |
 | **Extractor** | How are values read from it? | `r` regex · `p` prompt |
 
+**The OCR engine is fixed: Docling.** It sits on the OCR materials only — M2 and M3. The extraction of a text PDF is not OCR and does not use it (`pdftotext`), and an image PDF is rasterized before Docling sees it. `components.md` develops the boundary.
+
 The mode is written inside the primitive — **EVR** = **E**xtractor → **V**alidate → **R**eport:
 
 | Primitive | Mode | Reads |

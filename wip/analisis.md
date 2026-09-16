@@ -52,7 +52,7 @@ El sistema extrae campos de comprobantes argentinos (CUIT, IVA, importes, fechas
 | **Fuente externa de identidad** | Padrón de proveedores, servicio del ente emisor, registro de un identificador. | Sí (*Catálogo*). **No** se nombra una fuente concreta ni su contrato. |
 | **Proveedor de LLM** | Ejecuta el flujo Interpretación sobre texto reconstruido. | Mencionado como "un LLM" sin proveedor, modelo ni presupuesto de contexto. |
 | **Proveedor de VLM** | Ejecuta el flujo Visión sobre píxeles. | Mencionado como "un VLM" sin especificación. |
-| **Motor OCR / conversor** | Camino de lectura según Diagnóstico. | Mencionado como "OCR" y "Conversión"; sin motor concreto. |
+| **Motor OCR / conversor** | Camino de lectura según Diagnóstico. | **Motor OCR definido: Docling** (único, sin flag ni setting). La conversión no lo usa: sigue siendo `pdftotext`. Un PDF imagen se rasteriza antes del OCR. |
 | **Servicio de corpus/documentos** | Entrega archivos al sistema. | **No especificado.** El README arranca en "Archivo". |
 
 ### 2.4 Requerimientos funcionales
