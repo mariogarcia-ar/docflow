@@ -84,6 +84,8 @@ graph LR
 
 **The one dotted edge.** `Consistency → Catalog` is dotted because the Catalog is a **declared step with no runnable implementation behind it in the PoC**: no pipeline invokes it (`prd.md` §4.2), so the Contract emits `catalog: unverified` with the reason `not_run` on every field rather than leaving the verdict absent (FR-23, `sad.md` ADR-009). It is drawn because it is where the step belongs — and because a reader is otherwise entitled to think the canonical chain in `sad.md` §9 is what runs today.
 
+**Read this diagram as build order, not as the production route.** Every solid arrow is "the head must exist before the tail closes", which is why `S2A (Segmenter · Identifier) → S2C` is solid: Stage 2's closing demo walks the canonical chain, so the Segmenter has to be built and tested to close the stage. Whether a *pipeline* invokes a component over the 11k files is a separate question, answered by the usage matrix in `01-pipelines.md` — and by that matrix, four components (`Segmenter`, `Identifier`, `Reconstructor`, `Catalog`) run in **no** pipeline. Collapsing those two questions is what produced the defect this note replaces: "no pipeline runs the Segmenter" was read as "the Segmenter does not gate Stage 2", and those are not the same claim.
+
 ## 3. Stage 1 — arch-components
 
 **Scope: the 8 kernels (K1–K8) plus the ports/adapters layer. No domain nouns.**
@@ -125,6 +127,8 @@ graph LR
 
 **Scope: the 10 domain components built on the Stage 1 kernels.**
 **Closing criterion: a real document traverses the canonical chain and emits a verdict vector + trace, with an `ErpVR` chain demonstrating contrast.**
+
+**"The canonical chain" is the closing criterion, not the production route.** `sad.md` §9 draws `File → Segmenter → Identifier → Diagnosis → …`, and Stage 2 must build that whole chain because the closing demo walks it. What the 13 pipelines do *not* do is run `Segmenter`, `Identifier`, `Reconstructor` and `Catalog` over the corpus (§5 of `01-pipelines.md`); that is the declared permanent limitation, and it is a statement about Stage 3, not about whether these tasks gate Stage 2. They do — see §6.2, branch A.
 
 | ID | Task | Depends on | Deliverable | Done when (verifiable) | Effort |
 |---|---|---|---|---|---|
@@ -177,6 +181,10 @@ graph LR
 
 The critical path is the chain that must be serial because each link fixes a contract the next one multiplies.
 
+**How this section is derived.** The path is the transitive closure of the `Depends on` column, computed — not hand-picked. A task is on the path when the closing flow of its stage waits on it, directly or through another task. The rule from §1 applies without exception: a task whose dependency set is serial joins the path even when the *pipeline* never runs it, because a **stage ends only when its flow closes**, and Stage 2's flow is the demo that traverses the canonical chain.
+
+### 6.1 The spine
+
 | Order | Task | Title | Why it is on the path |
 |---:|---|---|---|
 | 1 | `S1-T01` | Freeze kernel boundary types | Every kernel and every component exchanges these types |
@@ -189,20 +197,34 @@ The critical path is the chain that must be serial because each link fixes a con
 | 8 | `S1-T09` | Typed slots, barriers, unit-contained failure | The corpus run is impossible without them |
 | 9 | `S1-T18` | CLI shell: `run`, `pause`, `stop --force` | The surface that exercises resume |
 | 10 | `S1-T19` | **Stage 1 closing flow (synthetic)** | Stage 1 does not exist as "done" without it |
-| 11 | `S2-T05` | Reader: conversion + OCR paths | The acquisition half of every text pipeline |
-| 12 | `S2-T08` | Validator: 4 independent checks | Validation is invariant across all 13 codes |
-| 13 | `S2-T11` | Consistency across extractors (contrast) | The mechanism the PoC exists to prove |
-| 14 | `S2-T13` | Contract: barrier, provenance, trace | The output the consumer integrates against |
-| 15 | `S2-T14` | Contract: the verdict vector | The decision surface the consumer reads |
-| 16 | `S2-T17` | **Stage 2 closing flow (real document)** | Stage 2's closing criterion |
-| 17 | `S3-T02` | The 13 pipeline descriptors | Every CLI entry point |
-| 18 | `S3-T08` | `--force`/`--stage` with downstream invalidation | Prevents stale-verdict output |
-| 19 | `S3-T09` | Resume at corpus scale | 11k files is not a single pass |
-| 20 | `S3-T14` | **Stage 3 closing flow (corpus)** | The PoC's ultimate target |
+| 11 | `S2-T17` | **Stage 2 closing flow (real document)** | Stage 2's closing criterion |
+| 12 | `S3-T02` | The 13 pipeline descriptors | Every CLI entry point |
+| 13 | `S3-T08` | `--force`/`--stage` with downstream invalidation | Prevents stale-verdict output |
+| 14 | `S3-T09` | Resume at corpus scale | 11k files is not a single pass |
+| 15 | `S3-T14` | **Stage 3 closing flow (corpus)** | The PoC's ultimate target |
 
-**Not on the critical path — can slip without delaying a stage close:** `S1-T11` (ports can be introduced alongside the first adapter), `S1-T12`/`S1-T13` (K2/K3 thin ops can land after the store/orchestrator contract is fixed), `S1-T16` (K6 can be stubbed by a test double until escalation needs it), `S2-T02`/`S2-T03` (Identifier and the re-segmentation loop are not on the canonical chain — no pipeline runs them), `S2-T07` (Reconstructor beyond continuity), `S2-T12` (Catalog — no pipeline runs it), `S2-T15` (Reviewer), `S3-T06`/`S3-T07`/`S3-T10` (batch and layout can land in parallel with registry work), `S3-T12` (settings).
+### 6.2 The Stage 2 branches
 
-**The critical path is computed from the stage-level dependencies above, not hand-listed.** Each link is the task every other task in its stage waits for; a task joins the path when its own dependency set is serial. The 20 rows and the `Depends on` column are the same information — when one changes, both must.
+`S2-T17` waits on **five** dependencies, and each is the head of a chain. They run in parallel, so the lead time is the **longest** chain, not the sum.
+
+| Branch | Chain | Links | Required by `S2-T17` through |
+|---|---|:---:|---|
+| **A — segmentation** | `S2-T01 → S2-T02 → S2-T03` | 3 | direct |
+| **B — acquisition** | `S2-T04 → S2-T05 → S2-T06` | 3 | direct |
+| **C — reconstruction** | `S2-T05 → S2-T07 → S2-T08 → S2-T09` | 4 | direct |
+| **D — contrast** | `S2-T08 → S2-T10 → S2-T11` | 3 | direct |
+| **E — emission** | `S2-T11 → S2-T13 → S2-T14` | 3 | direct |
+
+The longest is **B → C → D → E**, nine links from `S2-T04` to `S2-T17`. Two consequences worth planning around:
+
+- **Branch A is mandatory but is not the schedule driver.** The Segmenter chain is three links against the longest chain's nine, so it can start later than `S2-T04` and still not delay the close. It cannot be *skipped*, and it cannot slip past `S2-T17` — the distinction that §6 previously lost.
+- **`S2-T08` (Validator) is the busiest node.** Branches C, D and E all pass through it, which is why its `# TODO: [MVP]` (the 6 deferred business-rule categories) must not become a blocker: the four universal checks are the PoC surface, and they land at `S2-T08` regardless.
+
+**The dependency this exposes:** the canonical chain in `sad.md` §9 (`File → Segmenter → Identifier → Diagnosis → …`) is the close of Stage 2 — not a description of what runs over the 11k files. Those are two different things and the artifacts previously stated the second where they meant the first.
+
+**Not on the critical path — can slip without delaying a stage close:** `S1-T11` (ports can be introduced alongside the first adapter), `S1-T12`/`S1-T13` (K2/K3 thin ops can land after the store/orchestrator contract is fixed), `S1-T16` (K6 can be stubbed by a test double until escalation needs it), `S2-T15` (Reviewer), `S2-T16` (per-component CLI subcommands), `S3-T06`/`S3-T07`/`S3-T10` (batch and layout can land in parallel with registry work), `S3-T12` (settings).
+
+**One task is deliberately *not* in this list and is not yet on the path: `S2-T12` (Catalog).** The dependency diagram marks it with a dotted edge because no pipeline runs it — but `FR-23` obliges the Contract to emit a `catalog` verdict with the reason `not_run` on **every field**, and that value is `S2-T12`'s to define. So either `S2-T17` gains `S2-T12` as a dependency (moving the Catalog onto the path) or the `not_run` reason is defined somewhere the Contract can reach without the Catalog existing. Recorded as an open decision in `traceability.md` §7.2 rather than resolved here, because resolving it changes the dependency table, which is the thing this section is derived from.
 
 ### The parallel harness chain
 

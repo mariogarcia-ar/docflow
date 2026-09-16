@@ -101,7 +101,6 @@ This document is the missing link. It has four jobs:
 | D7 | `run.json` and its rebuild were claimed by two tasks (`S1-T06`, `S3-T07`/`S3-T10`) with no stated division | **Clarification** | `S1-T06` owns the **mechanism** (`rebuild_index()`); `S3-T07` owns the manifest's **shape and location**. K1 is the sole authority; K7's `rebuild_manifest()` delegates |
 
 D5–D7 were ambiguities **inside** the artifacts rather than departures from the origin; each is now stated rather than implied. D1–D4 are genuine departures from `my_prompt.md` and are the ones worth arguing about.
-
 ---
 
 ## 4. Requirement → task
@@ -222,6 +221,7 @@ These are unresolved in the artifacts **by design**, and each is an input to the
 | Whether `registry hash` is per-asset | `kernel-cli.md` §17 | One hash means a prompt tweak invalidates a schema version — coarse but never wrong |
 | What M0's targeted escalation means | `01-pipelines.md` §393 | No page and no image, so "render the region" is meaningless; M0 escalation is unresolved |
 | Whether M0's trace carries a hash of the processed text | `01-pipelines.md` §395 | Without it, an offset into supplied text points at a string that may not exist in that form |
+| **Whether `S2-T12` (Catalog) is a dependency of `S2-T17`** | `wbs.md` §6.2 | `FR-23` obliges the Contract to emit `catalog` with the reason `not_run` on every field, and that value is the Catalog's to define — yet the dependency diagram marks the Catalog unreachable. Either `S2-T17` gains the dependency (Catalog moves onto the path) or `not_run` is defined where the Contract can reach it without the Catalog existing. Unresolved; it changes the dependency table |
 
 **One of these is load-bearing for the PoC and should be settled before Stage 2:** the M0 escalation question. `S2-T09` builds the escalation ladder and `M0-*` is three of the thirteen codes; discovering at `S3-T13` that M0 breaks an assumption the other ten materials share would invalidate the shape-identity test (`FR-33`) rather than one pipeline.
 
@@ -246,6 +246,7 @@ Recorded so the reasoning survives the edit:
 | 13 | `.env.example` called nine settings "nine flags" | Rewritten; the policy section now states the reason it is empty |
 | 14 | Row 15's assertion matched a prose message | `role_conflict` added; exit reconciled to `3` so the envelope rule holds |
 | 15 | `--out` was used but not in the allowed flag vocabulary | Added, with the `--out` vs `--root` boundary stated |
+| 16 | **The Segmenter/Identifier were listed as non-critical while `S2-T17` depended on `S2-T03`.** `wbs.md` §6 said `S2-T02`/`S2-T03` "are not on the canonical chain — no pipeline runs them", but the same section's dependency table made `S2-T17` — Stage 2's closing criterion — depend on `S2-T03`, and `sad.md` §9 draws `File → Segmenter → Identifier → …` as the chain the close walks. Root cause: two different claims collapsed into one — *no pipeline invokes the Segmenter over the corpus* (true, and the declared permanent limitation) versus *the Segmenter task does not gate Stage 2* (false). A planner reading §6 would have under-estimated the Stage 2 close, which is the class of error this document set exists to prevent. | Rebuilt §6 by **computing** the path from the `Depends on` column instead of hand-listing it. `S2-T01`/`S2-T02`/`S2-T03` are on the path; §6.2 now shows `S2-T17`'s five dependency branches and identifies the longest, so both the obligation and the schedule driver are visible. Two further instances of the same collapse were found and fixed while verifying: `S2-T07` (Reconstructor — Stage 2's criterion requires the reading order it produces) and `S2-T12` (Catalog — now recorded as an open decision, §7.2). |
 
 ---
 
