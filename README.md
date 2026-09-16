@@ -11,7 +11,8 @@ Los flujos principales comparten actividades que aparecen en más de uno. Se def
 | **Clasificación** | Determina qué es el documento y qué ruta toma | Los tres |
 | **Lectura** | Obtiene texto y estructura: por conversión determinista o por OCR | Tradicional, AI sobre texto |
 | **Estructurar** | Layout, tablas y orden de lectura | Tradicional |
-| **Esquema y validación** | Contrato de salida, chequeos deterministas | Los tres |
+| **Validación** | Cuatro chequeos sobre un valor: forma, tipo, consistencia, dominio | Los tres, en varios puntos |
+| **Esquema** | Contrato de salida de los datos | Los tres |
 
 ### Componente: Clasificación
 
@@ -142,6 +143,69 @@ leer(documento) → (texto, coordenadas por token, confianza por token, traza de
 
 En el camino de conversión la confianza es 1.0, las coordenadas son exactas y la traza está vacía. En el de OCR todo es estimado y la traza tiene contenido. El consumidor recibe siempre la misma estructura — y por eso el ruteo entre caminos queda **dentro** del componente, no repetido en cada flujo.
 
+### Componente: Validación
+
+Corre en varios puntos del pipeline y sobre distintos objetos: un token de la lectura, un campo extraído, un conjunto de campos relacionados. Lo que cambia entre variantes es **qué pregunta responde**, no el mecanismo.
+
+| Variante | Pregunta que responde | Ejemplo |
+|---|---|---|
+| **Forma** | ¿El texto tiene la forma esperada? | Un patrón regex con anclas: el importe después de "total a pagar" |
+| **Tipo** | ¿El valor es del tipo que dice ser? | El precio es un número, la fecha es una fecha |
+| **Contenido** | ¿El valor es admisible según el dominio? | El IVA es 10% o 21%, no 17% |
+| **Dígito verificador** | ¿El identificador es válido en sí mismo? | El CUIT argentino cierra su dígito verificador |
+
+#### Por qué son cuatro y no una
+
+Cada variante detecta un error que las otras no ven, y el orden en que corren importa:
+
+- **Forma** es la más débil: confirma que *algo* con la apariencia correcta está ahí. No dice si el valor es cierto. Un importe que matchea el patrón puede ser cualquier número.
+- **Tipo** confirma que el valor es usable. Una fecha que no parsea no sirve, aunque tenga la forma esperada. Es el chequeo que evita que un valor inválido llegue a la base.
+- **Contenido** confirma que el valor tiene sentido en el dominio. Es el único de los cuatro que **conoce el negocio**: un IVA de 17% es un número válido, es un tipo válido, y aun así es un error, porque en el dominio solo existen ciertas alícuotas.
+- **Dígito verificador** es el más fuerte de todos, y el único que da una garantía matemática: si el dígito cierra, el identificador es válido por construcción. No hay falso positivo posible — un número inventado no pasa el chequeo salvo por azar de 1 en 10.
+
+De ahí el orden natural: forma primero (descarta rápido), después tipo, después contenido, y dígito verificador cuando el campo lo tiene. Los cuatro son baratos, así que corren todos.
+
+#### Dónde se reutilizan
+
+El mismo conjunto de chequeos se aplica en puntos distintos, con distinto objeto:
+
+| Punto del pipeline | Qué se valida |
+|---|---|
+| Dentro de la lectura | Que el texto salido del OCR tenga forma de texto: ratio de caracteres alfabéticos, longitud, coherencia |
+| Al corregir OCR | Que una corrección propuesta no rompa un identificador ni un importe |
+| Al extraer un campo | Forma, tipo, contenido y dígito verificador del campo individual |
+| Entre campos | Consistencia: subtotal + impuestos = total, fecha de emisión ≤ vencimiento |
+| Contra catálogos externos | Que el emisor exista en el padrón de proveedores conocidos |
+
+Esto es lo que hace que valga como componente: **los mismos cuatro chequeos, aplicados en cinco lugares del pipeline.** Definirlos una vez evita tener cuatro implementaciones de "validar CUIT" con reglas que se van desincronizando.
+
+#### Qué NO puede hacer esta capa
+
+Ninguna de las cuatro variantes detecta un valor **plausible pero falso**. Un total de 15400.00 que en realidad era 1540.00 tiene forma válida, tipo válido, y si no hay otra cifra con la que cruzarlo, no hay contenido ni dígito verificador que lo delate.
+
+Para eso hace falta comparar contra algo externo: un padrón, un servicio del ente emisor, o el mismo dato por otra vía. Es una etapa distinta y más costosa, y conviene tenerla como decisión explícita en vez de suponer que la validación ya la cubre.
+
+#### Cuándo derivar y cuándo rechazar
+
+Con cuatro variantes hace falta una política de qué hacer con cada falla:
+
+| Falla en | Gravedad | Acción |
+|---|---|---|
+| Forma | El valor puede estar en otra parte del documento | Reintentar extracción con otra ancla |
+| Tipo | El dato no es usable como está | Reintentar, si no, revisión |
+| Contenido | El dato es usable pero no corresponde | Revisión humana: puede ser un caso legítimo no contemplado |
+| Dígito verificador | El identificador es inválido | Rechazar, salvo error de lectura recuperable |
+
+La distinción importa porque no todas las fallas significan lo mismo: contenido suele indicar una regla de negocio incompleta, mientras que dígito verificador indica un dato mal leído o mal inventado.
+
+#### Interfaz
+
+```
+validar(valor, contexto) → (válido, variante_fallida, mensaje)
+```
+
+`contexto` es lo que permite que la misma función sirva en los cinco puntos: recibe el tipo de campo esperado, las reglas de dominio aplicables y el catálogo contra el que comparar. Devolver **qué variante falló** —no solo si es válido— es lo que alimenta la métrica por tipo de error y la política de derivación.
+
 ## Flujo tradicional (determinista)
 
 Construido a mano: OCR, layout, reglas y plantillas por proveedor.
@@ -166,7 +230,7 @@ graph LR
 | 2 | **Leer** | **Componente Lectura**: rutea internamente entre conversión y OCR | Texto + coordenadas + confianza |
 | 3 | **Estructurar** | Reconstruye layout, tablas y orden de lectura | Documento estructurado |
 | 4 | **Extraer** | Reglas con anclas semánticas, luego modelos para campos sin clave fija | Campos tentativos |
-| 5 | **Validar** | Aritmética, **estructura de la tabla**, fechas, formatos, catálogos | Campos verificados |
+| 5 | **Validar** | **Componente Validación**: forma, tipo, contenido, dígito verificador, consistencia | Campos verificados |
 | 6 | **Confianza** | Derivada de la evidencia: tipo de match, validaciones, ambigüedad | Score por campo |
 | 7 | **Trazabilidad** | Origen del dato: offset de texto o bounding box | JSON auditable |
 
@@ -196,12 +260,12 @@ graph LR
 |---|-------|----------|--------|
 | 1 | **Clasificar** | **Componente Clasificación** (variante texto) | Tipo + confianza |
 | 2 | **Leer** | **Componente Lectura**, paginado con índices | Texto indexado |
-| 2 | **Definir esquema** | Campos `required` y `nullable`, con cita obligatoria por campo | Contrato de salida |
-| 3 | **Interpretar** | El LLM asigna cada campo a su fragmento por significado | Valor + cita literal |
-| 4 | **Verificar** | Busca el literal **y** comprueba que el valor sea el de la cita | Offset, o campo sospechoso |
-| 5 | **Validar** | Aritmética, estructura de tabla, fechas, formatos | Campos verificados |
-| 6 | **Confianza** | Segunda pasada con distinto orden del texto: la discrepancia es la señal | Score por campo |
-| 7 | **Trazabilidad** | Valor + offset + regla aplicada | JSON auditable |
+| 3 | **Definir esquema** | Campos `required` y `nullable`, con cita obligatoria por campo | Contrato de salida |
+| 4 | **Interpretar** | El LLM asigna cada campo a su fragmento por significado | Valor + cita literal |
+| 5 | **Verificar** | Busca el literal **y** comprueba que el valor sea el de la cita | Offset, o campo sospechoso |
+| 6 | **Validar** | **Componente Validación**: forma, tipo, contenido, dígito verificador | Campos verificados |
+| 7 | **Confianza** | Segunda pasada con distinto orden del texto: la discrepancia es la señal | Score por campo |
+| 8 | **Trazabilidad** | Valor + offset + regla aplicada | JSON auditable |
 
 **La cita no alcanza.** Una cita literal y verificable es *grounding*, no correctitud: es ortogonal al valor. Un modelo puede citar texto real y asignarle el importe equivocado. Por eso la etapa 4 verifica dos cosas — que el literal exista en el texto **y** que el valor extraído sea el que ese literal contiene. Sin lo segundo, medís grounding y creés que medís acierto.
 
@@ -232,7 +296,7 @@ graph LR
 | 2 | **Renderizar** | Resolución elegida por el dato más chico a leer; recorte y centrado si está en el margen | Imagen normalizada |
 | 3 | **Definir esquema** | Campos `required` con evidencia obligatoria por campo | Contrato de salida |
 | 4 | **Leer y extraer** | El VLM lee la página y llena el esquema en un paso | Valor + evidencia |
-| 5 | **Validar** | Aritmética, estructura de tabla, fechas, formatos | Campos verificados |
+| 5 | **Validar** | **Componente Validación**: forma, tipo, contenido, dígito verificador | Campos verificados |
 | 6 | **Confianza** | Segunda pasada o recorte de la zona en conflicto | Score por campo |
 | 7 | **Trazabilidad** | bbox aproximado, cruzado con la capa de texto si existe | JSON auditable |
 
