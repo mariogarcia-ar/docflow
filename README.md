@@ -1,240 +1,240 @@
-# Extracción de documentos
+# Document extraction
 
-Versión resumida. El detalle está en `README.md`.
+Summary version. Details are in `README.md`.
 
-## Panorama
+## Overview
 
-Este sistema resuelve un problema: **extraer información de documentos mixtos con suficiente confianza** para automatizar procesos que lo requieren (facturación, compliance, auditoría).
+This system solves one problem: **extracting information from mixed documents with enough confidence** to automate processes that require it (invoicing, compliance, auditing).
 
-La confianza no viene de un solo método — viene de:
-1. **Tres flujos en cascada**: cada uno es más caro pero más preciso que el anterior
-2. **Validación interna**: aritmética, dígito verificador, reglas de negocio
-3. **Contraste entre flujos**: cuando dos métodos independientes ven lo mismo, aumenta la confianza
-4. **Consulta externa**: verificar identidad contra la realidad fuera del documento
+Confidence does not come from a single method — it comes from:
+1. **Three cascading flows**: each one is more expensive but more accurate than the previous
+2. **Internal validation**: arithmetic, check digit, business rules
+3. **Contrast between flows**: when two independent methods see the same thing, confidence rises
+4. **External lookup**: verifying identity against reality outside the document
 
-Sin contraste, el sistema ve errores lógicos (2+2=5). Sin consulta externa, no ve errores de identidad (CUIT válido pero empresa equivocada). Ambos se necesitan.
-
----
-
-## Terminología clave
-
-Los **flujos** se nombran por qué recibe el extractor. Los **componentes**, por qué producen.
-
-| Flujo | Recibe |
-|---|---|
-| **Reglas** | Nada |
-| **Interpretación** | Texto |
-| **Visión** | Píxeles |
-
-| Componente | Produce |
-|---|---|
-| **Segmentador** | Documentos lógicos + confianza de corte |
-| **Identificador** | Tipo de documento + evidencia |
-| **Diagnóstico** | Ruta y advertencias de entrada |
-| **Lector** | Tokens posicionados + confianza |
-| **Reconstructor** | Documento estructurado |
-| **Validador** | Veredicto por campo |
-| **Consistencia** | Veredicto entre campos y entre flujos |
-| **Catálogo** | Veredicto contra fuente externa |
-| **Contrato** | Forma de la salida |
-| **Revisor** | Correcciones + casos nuevos |
+Without contrast, the system sees logical errors (2+2=5). Without external lookup, it does not see identity errors (a valid CUIT but the wrong company). Both are needed.
 
 ---
 
-## Niveles
+## Key terminology
 
-Un archivo no es un documento. Un PDF de 20 páginas puede contener una factura, o tres.
+**Flows** are named by what the extractor receives. **Components**, by what they produce.
 
-| Nivel | Qué es |
+| Flow | Receives |
 |---|---|
-| **Archivo** | Lo que entra al sistema |
-| **Documento** | Una unidad con sentido propio dentro del archivo |
-| **Página** | La unidad física de procesamiento |
+| **Rules** | Nothing |
+| **Interpretation** | Text |
+| **Vision** | Pixels |
+
+| Component | Produces |
+|---|---|
+| **Segmenter** | Logical documents + cut confidence |
+| **Identifier** | Document type + evidence |
+| **Diagnosis** | Route and input warnings |
+| **Reader** | Positioned tokens + confidence |
+| **Reconstructor** | Structured document |
+| **Validator** | Per-field verdict |
+| **Consistency** | Verdict across fields and across flows |
+| **Catalog** | Verdict against an external source |
+| **Contract** | Shape of the output |
+| **Reviewer** | Corrections + new cases |
 
 ---
 
-## Arquitectura de decisión
+## Levels
 
-### Cascada
+A file is not a document. A 20-page PDF may contain one invoice, or three.
 
-El híbrido resuelve costo: cada etapa hace lo más barato y pasa al siguiente lo que no pudo.
+| Level | What it is |
+|---|---|
+| **File** | What enters the system |
+| **Document** | A unit with a meaning of its own inside the file |
+| **Page** | The physical unit of processing |
+
+---
+
+## Decision architecture
+
+### Cascade
+
+The hybrid resolves cost: each stage does the cheapest thing and hands the next one what it could not do.
 
 ```mermaid
 graph LR
-    A["Conversión"] --> B["Reglas"] --> C["Interpretación"] --> D["Visión"]
+    A["Conversion"] --> B["Rules"] --> C["Interpretation"] --> D["Vision"]
 ```
 
-- **Conversión**: ¿Hay texto usable en el PDF? Sí → entero el documento.
-- **Reglas**: ¿Puedo extraer con patrones predefinidos? Sí → termina.
-- **Interpretación**: ¿Un LLM sobre el texto reconstruido ve los campos? Sí → termina.
-- **Visión**: ¿Un VLM lee directamente los píxeles? Recurso último.
+- **Conversion**: Is there usable text in the PDF? Yes → the whole document.
+- **Rules**: Can I extract with predefined patterns? Yes → stop.
+- **Interpretation**: Does an LLM over the reconstructed text see the fields? Yes → stop.
+- **Vision**: Does a VLM read the pixels directly? Last resort.
 
-Cada escalón está gobernado por el **Validador**: "no pudo" se define en un solo lugar.
+Each step is governed by the **Validator**: "could not" is defined in a single place.
 
-### Contraste
+### Contrast
 
-Dos flujos sobre el mismo campo, comparados. Define la confianza.
+Two flows over the same field, compared. This defines confidence.
 
 ```mermaid
 graph LR
-    A["Campos<br/>críticos"] --> B["Reglas"]
-    A --> C["Visión"]
-    B --> D["Consistencia<br/>compara"]
+    A["Critical<br/>fields"] --> B["Rules"]
+    A --> C["Vision"]
+    B --> D["Consistency<br/>compares"]
     C --> D
-    D --> E["Coinciden →<br/>confianza alta"]
-    D --> F["Difieren →<br/>revisión"]
+    D --> E["They agree →<br/>high confidence"]
+    D --> F["They differ →<br/>review"]
 ```
 
-**Sin contraste, el híbrido es solo fallback.** La validación interna no ve el error plausible-pero-falso: un total de 15400 que era 1540, con forma y tipo correctos. Pero si Reglas lee 1540 y Visión lee 15400, el desacuerdo aparece — y es la señal más fuerte disponible.
+**Without contrast, the hybrid is just a fallback.** Internal validation does not see the plausible-but-false error: a total of 15400 that was 1540, with the correct shape and type. But if Rules reads 1540 and Vision reads 15400, the disagreement appears — and it is the strongest signal available.
 
-El costo se acota contrastando **por campo crítico** (importes, identificadores) y no el documento entero.
+Cost is bounded by contrasting **per critical field** (amounts, identifiers) and not the whole document.
 
 ---
 
-## Componentes por nivel
+## Components by level
 
-| Componente | Nivel | Cuándo | Qué hace | Reglas | Interp. | Visión |
+| Component | Level | When | What it does | Rules | Interp. | Vision |
 |---|---|---|---|:---:|:---:|:---:|
-| **Segmentador** | Archivo | Dentro | Agrupa páginas en documentos lógicos | ✓ | ✓ | ✓ |
-| **Identificador** | Documento | Dentro | Determina el tipo y el ruteo | ✓ | ✓ | ✓ |
-| **Diagnóstico** | Página | Dentro | Detecta contenido, mide calidad, adecúa | ✓ | ✓ | — |
-| **Lector** | Página | Dentro | Extrae tokens por conversión u OCR | ✓ | ✓ | — |
-| **Reconstructor** | Páginas | Dentro | Layout, tablas, orden de lectura | ✓ | ✓ | ◐ |
-| **Validador** | Campo | Dentro | Forma, tipo, contenido, dígito verificador | ✓ | ✓ | ✓ |
-| **Catálogo** | Documento | Dentro | Valida contra fuentes externas | ✓ | ✓ | ✓ |
-| **Consistencia** | Documento | **Entre** | Cruza campos y compara flujos | ✓ | ✓ | ✓ |
-| **Contrato** | Documento | **Después** | Forma canónica de la salida | ✓ | ✓ | ✓ |
-| **Revisor** | Todos | **Después** | Cierra el bucle con correcciones humanas | ✓ | ✓ | ✓ |
+| **Segmenter** | File | Inside | Groups pages into logical documents | ✓ | ✓ | ✓ |
+| **Identifier** | Document | Inside | Determines the type and the routing | ✓ | ✓ | ✓ |
+| **Diagnosis** | Page | Inside | Detects content, measures quality, adapts | ✓ | ✓ | — |
+| **Reader** | Page | Inside | Extracts tokens by conversion or OCR | ✓ | ✓ | — |
+| **Reconstructor** | Pages | Inside | Layout, tables, reading order | ✓ | ✓ | ◐ |
+| **Validator** | Field | Inside | Shape, type, content, check digit | ✓ | ✓ | ✓ |
+| **Catalog** | Document | Inside | Validates against external sources | ✓ | ✓ | ✓ |
+| **Consistency** | Document | **Between** | Cross-checks fields and compares flows | ✓ | ✓ | ✓ |
+| **Contract** | Document | **After** | Canonical shape of the output | ✓ | ✓ | ✓ |
+| **Reviewer** | All | **After** | Closes the loop with human corrections | ✓ | ✓ | ✓ |
 
-Visión no usa Diagnóstico ni Lector: le pasa píxeles al modelo, que lee y extrae en un paso. El ◐ del Reconstructor en Visión es por lo mismo: el VLM absorbe el layout de una página, pero la continuidad entre páginas sigue haciendo falta.
+Vision uses neither Diagnosis nor Reader: it hands pixels to the model, which reads and extracts in a single step. The ◐ for Reconstructor under Vision is for the same reason: the VLM absorbs one page's layout, but continuity across pages is still needed.
 
-### Barreras
+### Barriers
 
-Tres componentes no pueden emitir hasta que otro terminó:
+Three components cannot emit until another has finished:
 
-| Barrera | Espera a |
+| Barrier | Waits for |
 |---|---|
-| **Segmentador** | Todas las páginas leídas |
-| **Consistencia entre flujos** | Los dos flujos sobre el mismo campo |
-| **Contrato** | Todas las páginas resueltas |
+| **Segmenter** | All pages read |
+| **Consistency across flows** | Both flows over the same field |
+| **Contract** | All pages resolved |
 
-Los de nivel página son **paralelizables**. Consistencia entre campos no es barrera: opera dentro de un flujo, sobre campos ya extraídos.
+Page-level components are **parallelizable**. Consistency across fields is not a barrier: it operates inside one flow, over already-extracted fields.
 
 ---
 
-## Componentes en profundidad
+## Components in depth
 
-### Segmentador
+### Segmenter
 
 ```mermaid
 graph LR
-    A["Archivo<br/>20 páginas"] --> B["Detectar cortes<br/>continuidad · numeración"]
-    B --> C["Confianza<br/>por corte"]
-    C -->|"alta"| D["Doc 1<br/>págs 1-7"]
-    C -->|"alta"| E["Doc 2<br/>págs 8-12"]
-    C -->|"dudosa"| F["Sobre-segmentar<br/>págs 13-14 · 15-20"]
+    A["File<br/>20 pages"] --> B["Detect cuts<br/>continuity · numbering"]
+    B --> C["Confidence<br/>per cut"]
+    C -->|"high"| D["Doc 1<br/>pages 1-7"]
+    C -->|"high"| E["Doc 2<br/>pages 8-12"]
+    C -->|"doubtful"| F["Over-segment<br/>pages 13-14 · 15-20"]
 ```
 
-Agrupa las páginas en documentos lógicos antes del Identificador. Sin él, un PDF con tres facturas se procesa como una sola y los campos se mezclan entre comprobantes.
+It groups the pages into logical documents before the Identifier. Without it, a PDF with three invoices is processed as one and the fields get mixed between documents.
 
-Las señales de corte son la numeración de página reiniciada, un encabezado de documento nuevo, o la ausencia de continuidad en tablas abiertas.
+Cut signals are restarted page numbering, a new document header, or the absence of continuity in open tables.
 
-**Es el único componente sin escape.** Todos los demás tienen salida ante la duda: el Identificador deriva, el Diagnóstico deriva con motivo, el Contrato emite parcial. El Segmentador decide primero y su error es **irrecuperable aguas abajo**: si une dos documentos, los campos del segundo pisan los del primero y no hay chequeo posterior que lo note.
+**It is the only component without an escape hatch.** All the others have a way out when in doubt: the Identifier routes aside, the Diagnosis routes aside with a reason, the Contract emits partially. The Segmenter decides first and its error is **unrecoverable downstream**: if it merges two documents, the second document's fields overwrite the first's and no later check notices.
 
-De ahí la asimetría que gobierna su política:
+Hence the asymmetry that governs its policy:
 
-| Error | Consecuencia | Se detecta después |
+| Error | Consequence | Detected later |
 |---|---|---|
-| **Partir de más** | Dos documentos donde había uno | Sí: el Identificador da el mismo tipo dos veces y el Contrato ve campos faltantes en ambos |
-| **Unir de más** | Un documento donde había dos | **No**: los campos se mezclan en silencio |
+| **Over-splitting** | Two documents where there was one | Yes: the Identifier returns the same type twice and the Contract sees missing fields in both |
+| **Over-merging** | One document where there were two | **No**: the fields are mixed silently |
 
-Ante corte dudoso, **sobre-segmentar**. Un documento de más es ruido recuperable; un documento de menos es corrupción silenciosa.
+When a cut is doubtful, **over-segment**. One extra document is recoverable noise; one missing document is silent corruption.
 
 ---
 
-### Identificador
+### Identifier
 
 ```mermaid
 graph LR
-    A["Documento<br/>lógico"] --> B{"¿Qué evidencia<br/>hay?"}
-    B -->|"texto"| C["Por campos<br/>y palabras clave"]
-    B -->|"imagen"| D["Por formas<br/>y marcas"]
-    B -->|"ambos"| E["Mixto<br/>estructura + contenido"]
-    C --> F["Tipo + confianza<br/>+ evidencia"]
+    A["Logical<br/>document"] --> B{"What evidence<br/>is there?"}
+    B -->|"text"| C["By fields<br/>and keywords"]
+    B -->|"image"| D["By shapes<br/>and marks"]
+    B -->|"both"| E["Mixed<br/>structure + content"]
+    C --> F["Type + confidence<br/>+ evidence"]
     D --> F
     E --> F
-    F --> G{"¿Confianza<br/>suficiente?"}
-    G -->|"sí"| H["Ruteo:<br/>plantilla · extractor"]
-    G -->|"baja"| I["Revisión"]
-    G -->|"dos tipos"| J["Re-segmentar<br/>una sola vez"]
-    J --> K["Páginas ya<br/>leídas: reusar"]
+    F --> G{"Enough<br/>confidence?"}
+    G -->|"yes"| H["Routing:<br/>template · extractor"]
+    G -->|"low"| I["Review"]
+    G -->|"two types"| J["Re-segment<br/>once only"]
+    J --> K["Pages already<br/>read: reuse"]
     K --> A
 ```
 
-Determina el tipo de documento y el ruteo (qué extractor lo procesa).
+It determines the document type and the routing (which extractor processes it).
 
-Tres variantes según qué evidencia esté disponible: solo texto, solo imagen, o ambos. La diferencia no es de precisión sino de qué se puede observar.
+Three variants depending on which evidence is available: text only, image only, or both. The difference is not one of accuracy but of what can be observed.
 
-Devuelve la **evidencia** junto al tipo: qué palabras o formas dispararon la decisión. Sin eso, un documento mal clasificado es invisible y el error aparece recién al final, como un campo mal extraído.
+It returns the **evidence** alongside the type: which words or shapes triggered the decision. Without that, a misclassified document is invisible and the error only shows up at the end, as a badly extracted field.
 
-Confianza baja deriva a revisión en vez de elegir el tipo más probable. Y hace falta una categoría "otro" con ruta propia: de ahí salen los tipos nuevos.
+Low confidence routes to review instead of picking the most likely type. And an "other" category with its own route is needed: that is where new types come from.
 
-**Tiene una arista de vuelta al Segmentador, con tres límites.** Segmentar bien a veces requiere saber el tipo, e identificar requiere el segmento: es circular. Cuando la evidencia muestra **dos tipos distintos** en el mismo segmento, el Identificador no elige uno: devuelve el corte y fuerza re-segmentación. Pero un bucle sin condición de corte es un riesgo, así que:
+**It has an edge back to the Segmenter, with three limits.** Segmenting well sometimes requires knowing the type, and identifying requires the segment: it is circular. When the evidence shows **two different types** in the same segment, the Identifier does not pick one: it returns the cut and forces re-segmentation. But a loop without a stopping condition is a risk, so:
 
-| Límite | Por qué |
+| Limit | Why |
 |---|---|
-| **Una sola re-segmentación** | Si la segunda pasada vuelve a dar dos tipos, va a revisión. No hay tercera |
-| **Reusar lo ya leído** | Diagnóstico y Lector son de nivel página y no dependen del corte: se conservan. Re-segmentar no implica releer |
-| **Alimentar la confianza de corte** | El caso se registra, y si se repite el mismo patrón, el Segmentador ajusta su umbral |
+| **A single re-segmentation** | If the second pass again yields two types, it goes to review. There is no third |
+| **Reuse what was already read** | Diagnosis and Reader are page-level and do not depend on the cut: they are kept. Re-segmenting does not mean re-reading |
+| **Feed the cut confidence** | The case is recorded, and if the same pattern repeats, the Segmenter adjusts its threshold |
 
-Ese último punto cierra el solapamiento entre los dos mecanismos: **la duda parte, el error vuelve**. Si el Segmentador dudó, ya sobre-segmentó — el caso "dos tipos" no debería aparecer. Si aparece, es porque la confianza de corte dio alta y se equivocó, y esa señal es exactamente lo que el umbral necesita para corregirse.
+That last point closes the overlap between the two mechanisms: **doubt splits, error returns**. If the Segmenter was in doubt, it already over-segmented — the "two types" case should not appear. If it does appear, it is because the cut confidence came back high and it got it wrong, and that signal is exactly what the threshold needs in order to correct itself.
 
 ---
 
-### Diagnóstico
+### Diagnosis
 
 ```mermaid
 graph LR
-    A["Página"] --> B{"¿Qué<br/>contiene?"}
-    B -->|"capa de texto"| C["Medir<br/>proporción · alfabéticos"]
-    B -->|"imagen"| D["Medir<br/>DPI · peso · legibilidad"]
-    C --> E{"¿Usable?"}
+    A["Page"] --> B{"What does<br/>it contain?"}
+    B -->|"text layer"| C["Measure<br/>proportion · alphabetic"]
+    B -->|"image"| D["Measure<br/>DPI · weight · legibility"]
+    C --> E{"Usable?"}
     D --> E
-    E -->|"sí"| F["Ruta:<br/>conversión"]
-    E -->|"no"| G["Adecuar<br/>reescalar · comprimir"]
-    G --> H["Ruta:<br/>OCR"]
-    E -->|"ilegible"| I["Derivar<br/>con motivo"]
+    E -->|"yes"| F["Route:<br/>conversion"]
+    E -->|"no"| G["Adapt<br/>rescale · compress"]
+    G --> H["Route:<br/>OCR"]
+    E -->|"illegible"| I["Route aside<br/>with reason"]
 ```
 
-Corre antes de leer y hace tres cosas: **detecta** qué hay, **mide** si es procesable, y **adecúa** la entrada.
+It runs before reading and does three things: it **detects** what is there, **measures** whether it is processable, and **adapts** the input.
 
-No alcanza con preguntar si hay texto: hay que ver si es usable. Un PDF puede traer una capa de OCR vieja y mala; el ruteo por presencia lo manda a conversión y arrastra esos errores sin que nadie los revise. El chequeo es de proporción y calidad — una capa con 40 caracteres en una A4 es basura.
+Asking whether text exists is not enough: you have to see whether it is usable. A PDF may carry an old, bad OCR layer; routing by presence sends it to conversion and drags those errors along without anyone reviewing them. The check is one of proportion and quality — a layer with 40 characters on an A4 sheet is garbage.
 
-Legibilidad es distinto de resolución: una imagen puede tener DPI suficiente y estar desenfocada. Si no pasa, hay dos salidas válidas (preprocesar o derivar) y una inválida: pasarla al OCR igual y dejar que devuelva texto inventado indistinguible de una lectura real.
+Legibility is not the same as resolution: an image may have enough DPI and still be out of focus. If it fails, there are two valid outcomes (preprocess or route aside) and one invalid one: passing it to OCR anyway and letting it return invented text indistinguishable from a real reading.
 
 ---
 
-### Lector
+### Reader
 
 ```mermaid
 graph LR
-    A["Página"] --> B["Diagnóstico"] --> C{"¿Texto<br/>usable?"}
-    C -->|"sí"| D["Conversión"]
-    C -->|"no"| E["OCR"] --> F["Corrección"]
-    D --> G["Tokens<br/>posicionados"]
+    A["Page"] --> B["Diagnosis"] --> C{"Usable<br/>text?"}
+    C -->|"yes"| D["Conversion"]
+    C -->|"no"| E["OCR"] --> F["Correction"]
+    D --> G["Positioned<br/>tokens"]
     F --> G
 ```
 
-| Camino | Entrada | Corrección | Confianza |
+| Path | Input | Correction | Confidence |
 |---|---|:---:|---|
-| Conversión | Capa de texto existente | No | 1.0 |
-| OCR | Imagen | Sí | Estimada |
+| Conversion | Existing text layer | No | 1.0 |
+| OCR | Image | Yes | Estimated |
 
-La corrección existe solo en OCR: un conversor no lee mal, transcribe lo que hay. Aplicarle un modelo de lenguaje "por las dudas" solo puede introducir daño.
+Correction exists only in OCR: a converter does not read badly, it transcribes what is there. Applying a language model to it "just in case" can only introduce damage.
 
-El ruteo es **por página**: un PDF mixto combina ambos caminos y los une al final.
+Routing is **per page**: a mixed PDF combines both paths and joins them at the end.
 
-**Devuelve tokens, no texto.** La distinción importa: si el Lector entregara texto ya ordenado, absorbería parte del Reconstructor y no haría falta ese componente. Entrega **tokens con coordenadas**, sin orden de lectura resuelto — así el Reconstructor tiene razón de existir y los dos flujos de texto lo necesitan por igual.
+**It returns tokens, not text.** The distinction matters: if the Reader delivered already-ordered text, it would absorb part of the Reconstructor and that component would not be needed. It delivers **tokens with coordinates**, with no reading order resolved — that way the Reconstructor has a reason to exist and both text flows need it equally.
 
 ---
 
@@ -242,324 +242,324 @@ El ruteo es **por página**: un PDF mixto combina ambos caminos y los une al fin
 
 ```mermaid
 graph LR
-    A["Páginas<br/>1-7"] --> B["Layout<br/>por página"]
-    B --> C["Continuidad<br/>cruzar páginas"]
-    C --> D["Tablas<br/>encabezado + filas"]
-    C --> E["Encabezados<br/>colapsar repetidos"]
-    C --> F["Orden<br/>de lectura"]
-    D --> G["Documento<br/>estructurado"]
+    A["Pages<br/>1-7"] --> B["Layout<br/>per page"]
+    B --> C["Continuity<br/>across pages"]
+    C --> D["Tables<br/>header + rows"]
+    C --> E["Headings<br/>collapse repeated"]
+    C --> F["Reading<br/>order"]
+    D --> G["Structured<br/>document"]
     E --> G
     F --> G
 ```
 
-Recibe **varias páginas**, no una: el layout es local, pero la continuidad lo cruza.
+It receives **several pages**, not one: layout is local, but continuity crosses pages.
 
-- Una tabla con encabezado en una página y filas que siguen en la siguiente pierde la asociación si cada página se procesa aislada.
-- Un encabezado repetido en las 5 páginas se captura 5 veces sin control de continuidad.
+- A table with a header on one page and rows that continue on the next loses the association if each page is processed in isolation.
+- A header repeated across all 5 pages is captured 5 times without continuity control.
 
-**Corre en Reglas e Interpretación; en Visión solo la continuidad.** El VLM absorbe el layout de cada página, pero la continuidad entre páginas sigue haciendo falta.
+**It runs in Rules and Interpretation; in Vision only the continuity part.** The VLM absorbs each page's layout, but continuity across pages is still needed.
 
 ---
 
-### Validador
+### Validator
 
 ```mermaid
 graph LR
-    A["Campo<br/>extraído"] --> B["Forma"]
-    A --> C["Tipo"]
-    A --> D["Contenido"]
-    A --> E["Dígito<br/>verificador"]
-    B --> F["Veredicto<br/>por chequeo"]
+    A["Extracted<br/>field"] --> B["Shape"]
+    A --> C["Type"]
+    A --> D["Content"]
+    A --> E["Check<br/>digit"]
+    B --> F["Verdict<br/>per check"]
     C --> F
     D --> F
     E --> F
-    F --> G["Decidir<br/>según las fallas"]
+    F --> G["Decide<br/>according to failures"]
 ```
 
-Cuatro chequeos **independientes**: cada uno mira el mismo campo y emite su propio veredicto. No están encadenados — que la forma sea correcta no habilita al de tipo, ni al revés.
+Four **independent** checks: each one looks at the same field and issues its own verdict. They are not chained — a correct shape does not enable the type check, nor the other way around.
 
-| Chequeo | Pregunta | Qué ve que los otros no | Falla → |
+| Check | Question | What it sees that the others do not | Failure → |
 |---|---|---|---|
-| **Forma** | ¿Tiene la forma esperada? | Que *algo* con la apariencia correcta está ahí | Reintentar con otra ancla |
-| **Tipo** | ¿Es del tipo que dice ser? | Que el valor es usable | Reintentar, si no revisión |
-| **Contenido** | ¿Es admisible en el dominio? | Que corresponde al negocio: único que conoce las reglas | Revisión |
-| **Dígito verificador** | ¿Es válido en sí mismo? | Garantía matemática: único sin falsos positivos | Rechazar |
+| **Shape** | Does it have the expected shape? | That *something* with the correct appearance is there | Retry with another anchor |
+| **Type** | Is it of the type it claims to be? | That the value is usable | Retry, otherwise review |
+| **Content** | Is it admissible in the domain? | That it matches the business: the only one that knows the rules | Review |
+| **Check digit** | Is it valid in itself? | Mathematical guarantee: the only one with no false positives | Reject |
 
-El orden de la tabla va de más débil a más fuerte, pero **ese orden no describe ejecución**: los cuatro corren sobre el mismo campo y ninguno necesita el resultado de otro.
+The table order goes from weakest to strongest, but **that order does not describe execution**: all four run over the same field and none needs another's result.
 
-La decisión final combina los veredictos, y la **falla más grave manda**: un campo puede pasar forma y tipo, fallar contenido, y derivar a revisión; o fallar dígito verificador y rechazarse aunque los otros tres pasen.
+The final decision combines the verdicts, and **the most severe failure governs**: a field can pass shape and type, fail content, and route to review; or fail the check digit and be rejected even though the other three pass.
 
-**El Validador es el que gobierna el escalamiento.** "No pudo" se define acá y en ningún otro lado. La política vivía dispersa en tres componentes — Identificador, Diagnóstico y Validador — sin que ninguno supiera de los otros; centralizarla acá es lo que la vuelve aplicable.
+**The Validator is the one that governs escalation.** "Could not" is defined here and nowhere else. The policy used to live scattered across three components — Identifier, Diagnosis and Validator — with none of them aware of the others; centralizing it here is what makes it applicable.
 
-**Dos casos distintos escalan diferente:**
+**Two different cases escalate differently:**
 
-| Caso | Qué hay | Cómo escala |
+| Case | What is there | How it escalates |
 |---|---|---|
-| **Campo inválido** | Valor, página y offset | **Targeted**: se renderiza esa región y se pregunta por ese campo |
-| **Campo ausente** | Nada: no encontró el ancla | **Documento entero**: no hay región que apuntar |
+| **Invalid field** | Value, page and offset | **Targeted**: that region is rendered and that field is asked about |
+| **Missing field** | Nothing: it did not find the anchor | **Whole document**: there is no region to point at |
 
-La diferencia decide el costo. Un campo inválido tiene ubicación, así que Visión mira un recorte: barato y preciso. Un campo ausente no tiene dónde mirar, así que Visión tiene que releer el documento completo igual que si fuera el único flujo.
+The difference decides the cost. An invalid field has a location, so Vision looks at a crop: cheap and precise. A missing field has nowhere to look, so Vision has to re-read the entire document just as if it were the only flow.
 
-Por eso **"reprocesa esos 2, no los 20" aplica solo al primer caso**. Si el escalamiento es mayoritariamente por campos ausentes, el ahorro no es de un orden de magnitud sino de ninguno.
+That is why **"reprocess those 2, not the 20" applies only to the first case**. If escalation is mostly due to missing fields, the saving is not one order of magnitude but none at all.
 
-#### Reglas de negocio pendientes
+#### Pending business rules
 
-El Validador ejecuta hoy 4 chequeos universales (Forma, Tipo, Contenido, Dígito). Pero el dominio tiene reglas adicionales que aún no están formalizadas.
+The Validator currently runs 4 universal checks (Shape, Type, Content, Digit). But the domain has additional rules that are not yet formalized.
 
-**Categorías de reglas que faltan:**
+**Categories of missing rules:**
 
-| Categoría | Ejemplos | Estado |
+| Category | Examples | Status |
 |---|---|---|
-| **Validaciones de rango** | Importe > 0; fecha no futura; porcentaje entre 0-100 | ⏳ Pendiente definir |
-| **Relaciones entre campos** | Fecha emisión ≤ fecha vencimiento; subtotal ≤ total | ⏳ Pendiente definir |
-| **Reglas condicionales** | Si impuesto=IVA entonces debe estar alícuota; si es factura A entonces debe tener CUIT | ⏳ Pendiente definir |
-| **Validaciones estructurales** | Cantidad de líneas > 0; tabla tiene encabezado | ⏳ Pendiente definir |
-| **Reglas de negocio específicas** | Importes respetan redondeo de moneda; CUIT válido según provincia | ⏳ Pendiente definir |
-| **Cruces inter-documento** | Si hay débito, debe haber comprobante origen | ⏳ Pendiente definir |
+| **Range validations** | Amount > 0; date not in the future; percentage between 0-100 | ⏳ Pending definition |
+| **Relations between fields** | Issue date ≤ due date; subtotal ≤ total | ⏳ Pending definition |
+| **Conditional rules** | If tax=VAT then a rate must be present; if it is an invoice A then it must have a CUIT | ⏳ Pending definition |
+| **Structural validations** | Number of lines > 0; table has a header | ⏳ Pending definition |
+| **Domain-specific business rules** | Amounts respect currency rounding; CUIT valid by province | ⏳ Pending definition |
+| **Cross-document checks** | If there is a debit, there must be a source voucher | ⏳ Pending definition |
 
-**Cómo se integran:** Cada regla nueva sigue el mismo modelo que los 4 chequeos — emite su propio veredicto y la falla más grave manda. Se ejecutan en paralelo, no encadenadas. La decisión de qué reglas aplican por tipo de documento es responsabilidad del Identificador (al rutear).
+**How they integrate:** Each new rule follows the same model as the 4 checks — it issues its own verdict and the most severe failure governs. They run in parallel, not chained. The decision of which rules apply per document type is the Identifier's responsibility (when routing).
 
-**Dónde se definen:** Las reglas concretas irán en un archivo separado (p.ej. `reglas-negocio.md` o `d.md`) con formato: Tipo de documento → Campos → Reglas → Cómo falla → Qué escala.
+**Where they are defined:** The concrete rules will go in a separate file (e.g. `reglas-negocio.md` or `d.md`) with the format: Document type → Fields → Rules → How it fails → What escalates.
 
 ---
 
-### Consistencia
+### Consistency
 
 ```mermaid
 graph LR
-    A["Campos<br/>validados"] --> N["Normalizar<br/>formato común"]
-    N --> B{"¿Cierran<br/>entre sí?"}
-    N --> C{"¿Coinciden<br/>entre flujos?"}
-    B -->|"no"| D["Marcar<br/>campos implicados"]
-    C -->|"no"| G{"¿Aritmética<br/>desempata?"}
-    G -->|"sí"| H["Resolver<br/>sin humano"]
-    G -->|"no"| E["Desacuerdo<br/>→ revisión"]
-    B -->|"sí"| F["Refuerzo<br/>de confianza"]
-    C -->|"sí"| F
+    A["Validated<br/>fields"] --> N["Normalize<br/>common format"]
+    N --> B{"Do they close<br/>with each other?"}
+    N --> C{"Do they agree<br/>across flows?"}
+    B -->|"no"| D["Mark<br/>involved fields"]
+    C -->|"no"| G{"Does arithmetic<br/>break the tie?"}
+    G -->|"yes"| H["Resolve<br/>without a human"]
+    G -->|"no"| E["Disagreement<br/>→ review"]
+    B -->|"yes"| F["Confidence<br/>reinforcement"]
+    C -->|"yes"| F
 ```
 
-Compara valores entre sí en dos niveles:
+It compares values against each other at two levels:
 
-| Nivel | Qué compara | Ejemplo |
+| Level | What it compares | Example |
 |---|---|---|
-| **Entre campos** | Aritmética y orden dentro del documento | subtotal + impuestos = total; emisión ≤ vencimiento |
-| **Entre flujos** | El mismo campo extraído por dos caminos | total según Reglas vs. total según Visión |
+| **Between fields** | Arithmetic and ordering inside the document | subtotal + taxes = total; issue ≤ due |
+| **Across flows** | The same field extracted by two paths | total according to Rules vs. total according to Vision |
 
-**El nivel entre flujos es la respuesta al error plausible-pero-falso.** Un total de 15400 que era 1540 pasa forma, tipo, contenido y no tiene dígito verificador: ningún chequeo interno lo ve. Pero si Reglas lee 1540 y Visión lee 15400 sobre el mismo documento, el desacuerdo aparece — y es la señal más fuerte disponible en todo el sistema.
+**The across-flows level is the answer to the plausible-but-false error.** A total of 15400 that was 1540 passes shape, type and content and has no check digit: no internal check sees it. But if Rules reads 1540 and Vision reads 15400 on the same document, the disagreement appears — and it is the strongest signal available in the whole system.
 
-#### Cómo hacer el contraste usable
+#### How to make contrast usable
 
-**Normalizar primero.** Si no, se compara formato en vez de valor: `1.540,00` contra `1540.00`, un CUIT con espacios contra uno sin. Hay que llevar ambos valores a forma canónica y **comparar los normalizados**, no los crudos.
+**Normalize first.** Otherwise you compare format instead of value: `1.540,00` against `1540.00`, a CUIT with spaces against one without. Both values have to be brought to canonical form and **the normalized ones compared**, not the raw ones.
 
-**Tolerancia por tipo de campo.**
+**Tolerance by field type.**
 
-| Tipo | Tolerancia | Por qué |
+| Type | Tolerance | Why |
 |---|---|---|
-| Importes | Centavos | El redondeo entre caminos es legítimo |
-| Identificadores | **Exacta** | Un CUIT no tiene redondeo: un dígito distinto es un error |
-| Fechas | Exacta | No hay equivalente aproximado |
+| Amounts | Cents | Rounding between paths is legitimate |
+| Identifiers | **Exact** | A CUIT has no rounding: a different digit is an error |
+| Dates | Exact | There is no approximate equivalent |
 
-**Que la aritmética arbitre.** Los dos niveles no son independientes. Si los flujos difieren en el total pero solo uno de los dos valores cierra con `subtotal + impuestos` del propio documento, **Consistencia ya tiene la respuesta** y no hace falta un humano. El nivel aritmético desempata el nivel entre-flujos.
+**Let arithmetic arbitrate.** The two levels are not independent. If the flows differ on the total but only one of the two values closes with the document's own `subtotal + taxes`, **Consistency already has the answer** and no human is needed. The arithmetic level breaks the tie at the across-flows level.
 
-Solo cuando ninguno de los dos cierra, o el campo es un identificador sin relación aritmética, el desacuerdo va a revisión.
+Only when neither of the two closes, or the field is an identifier with no arithmetic relation, does the disagreement go to review.
 
-**Costo.** Correr dos flujos sobre todo es caro, así que el contraste se reserva: por campo crítico (importes, identificadores) y no por documento entero.
+**Cost.** Running two flows over everything is expensive, so contrast is reserved: per critical field (amounts, identifiers) and not per whole document.
 
 ---
 
-### Catálogo
+### Catalog
 
 ```mermaid
 graph LR
-    A["Campo de<br/>identidad"] --> B["Consultar<br/>fuente externa"]
-    B --> C{"¿Existe y<br/>coincide?"}
-    C -->|"sí"| D["Verificado"]
-    C -->|"no"| E["Revisión"]
-    C -->|"sin respuesta"| F["Sin verificar"]
-    F --> G["Cola de<br/>reintento"]
+    A["Identity<br/>field"] --> B["Query<br/>external source"]
+    B --> C{"Does it exist and<br/>does it match?"}
+    C -->|"yes"| D["Verified"]
+    C -->|"no"| E["Review"]
+    C -->|"no response"| F["Unverified"]
+    F --> G["Retry<br/>queue"]
     G --> B
 ```
 
-Valida contra algo que existe fuera del documento: un padrón de proveedores, el servicio del ente emisor, el registro de un identificador.
+It validates against something that exists outside the document: a supplier registry, the issuing authority's service, an identifier's registry.
 
-**Es el único que cierra el hueco para campos de identidad.** Un CUIT puede tener dígito verificador correcto y pertenecer a una empresa que no emitió el documento. Ningún chequeo interno lo distingue; consultarlo contra la fuente, sí.
+**It is the only one that closes the gap for identity fields.** A CUIT can have a correct check digit and belong to a company that did not issue the document. No internal check distinguishes it; querying it against the source does.
 
-Distinto de Consistencia: aquel compara el documento contra sí mismo, este contra la realidad externa. Y distinto del Validador en que **no es determinista** — depende de disponibilidad y latencia de un tercero.
+Different from Consistency: that one compares the document against itself, this one against external reality. And different from the Validator in that **it is not deterministic** — it depends on a third party's availability and latency.
 
-Por eso la falla por indisponibilidad no es un rechazo: si la fuente externa no responde, el campo queda **sin verificar**, no inválido. Confundir las dos cosas convierte una caída del servicio en una cola de rechazos.
+That is why failure due to unavailability is not a rejection: if the external source does not respond, the field remains **unverified**, not invalid. Confusing the two turns a service outage into a queue of rejections.
 
-**`Sin verificar` tiene dueño: el propio Catálogo.** Mantiene su **cola de reintento** con backoff, y el estado es visible en la salida como campo pendiente, no como campo ausente. Sin reintento propio, el estado es un agujero por donde se van los documentos con identidad nunca confirmada.
+**`Unverified` has an owner: the Catalog itself.** It keeps its **retry queue** with backoff, and the state is visible in the output as a pending field, not as a missing field. Without its own retry, the state is a hole through which documents with never-confirmed identity leak away.
 
 ---
 
-### Contrato
+### Contract
 
 ```mermaid
 graph LR
-    A["Documentos<br/>validados"] --> B["Unir<br/>campos por documento"]
-    B --> C["Adjuntar<br/>procedencia por campo"]
-    C --> D["Adjuntar<br/>vector de veredictos"]
-    D --> E["JSON<br/>+ trazabilidad"]
-    F["Página<br/>ilegible"] -.-> E
+    A["Validated<br/>documents"] --> B["Join<br/>fields per document"]
+    B --> C["Attach<br/>provenance per field"]
+    C --> D["Attach<br/>verdict vector"]
+    D --> E["JSON<br/>+ traceability"]
+    F["Illegible<br/>page"] -.-> E
 ```
 
-Emitir es una **barrera**: espera a que todas las páginas estén resueltas antes de producir la salida del documento.
+Emitting is a **barrier**: it waits until all pages are resolved before producing the document's output.
 
-Une los campos que vinieron de páginas distintas y adjunta la traza `(página, flujo)` por campo.
+It joins the fields that came from different pages and attaches the `(page, flow)` trace per field.
 
-**Maneja procedencia heterogénea.** Con escalamiento por campo, en un mismo documento conviven campos resueltos por Reglas con `offset exacto` y campos resueltos por Visión con `bbox aproximado`. El Contrato no puede asumir un origen único: cada campo declara su flujo y su tipo de traza.
+**It handles heterogeneous provenance.** With per-field escalation, one document holds fields resolved by Rules with an `exact offset` alongside fields resolved by Vision with an `approximate bbox`. The Contract cannot assume a single origin: each field declares its flow and its trace type.
 
-**Emite el vector de veredictos, no un score.** Un campo acumula señales de cinco fuentes: confianza de corte, confianza del Lector, los cuatro veredictos del Validador, refuerzo o desacuerdo de Consistencia, y verificado/sin-verificar del Catálogo. Colapsarlas en un número repite el error que el Catálogo prohíbe: mezclar `sin verificar por caída del servicio` con `verificado y coincidente`.
+**It emits the verdict vector, not a score.** A field accumulates signals from five sources: cut confidence, Reader confidence, the Validator's four verdicts, Consistency's reinforcement or disagreement, and the Catalog's verified/unverified. Collapsing them into a number repeats the mistake the Catalog prohibits: mixing `unverified due to service outage` with `verified and matching`.
 
-Entonces cada campo se emite con sus veredictos separados:
+So each field is emitted with its verdicts kept separate:
 
 ```json
 {
   "total": {
-    "valor": "15400.00",
-    "flujo": "reglas",
-    "traza": { "pagina": 3, "offset": [412, 424] },
-    "veredictos": {
-      "forma": "ok",
-      "tipo": "ok",
-      "contenido": "ok",
-      "digito": null,
-      "consistencia": "ok",
-      "catalogo": "sin_verificar"
+    "value": "15400.00",
+    "flow": "rules",
+    "trace": { "page": 3, "offset": [412, 424] },
+    "verdicts": {
+      "shape": "ok",
+      "type": "ok",
+      "content": "ok",
+      "digit": null,
+      "consistency": "ok",
+      "catalog": "unverified"
     }
   }
 }
 ```
 
-**El umbral lo pone el consumidor.** No hay un número mágico único: para un caso de uso, `sin_verificar` en identidad es bloqueante; para otro, un importe con `contenido: dudoso` es aceptable.
+**The threshold is set by the consumer.** There is no single magic number: for one use case, `unverified` on identity is blocking; for another, an amount with `content: doubtful` is acceptable.
 
-El fallo es **parcial**: una página ilegible se marca como tal y el resto del documento se emite igual, con esa ausencia declarada.
+Failure is **partial**: an illegible page is marked as such and the rest of the document is still emitted, with that absence declared.
 
 ---
 
-### Revisor
+### Reviewer
 
 ```mermaid
 graph LR
-    A["Casos<br/>derivados"] --> B["Corrección<br/>humana"]
-    B --> C["Registrar<br/>par original → corregido"]
-    C --> D["Agrupar<br/>casuística"]
-    D --> E["¿Se repite?<br/>sí → regla"]
-    E --> F["Nueva regla<br/>o plantilla"]
-    E --> G["Nuevo tipo<br/>en Identificador"]
-    F --> H["Volver<br/>al flujo"]
+    A["Routed<br/>cases"] --> B["Human<br/>correction"]
+    B --> C["Record<br/>original → corrected pair"]
+    C --> D["Group<br/>by case pattern"]
+    D --> E["Does it repeat?<br/>yes → rule"]
+    E --> F["New rule<br/>or template"]
+    E --> G["New type<br/>in Identifier"]
+    F --> H["Back<br/>to the flow"]
     G --> H
 ```
 
-Cierra el bucle. Sin él, la arquitectura termina en "revisión" y todo lo que la revisión produce se pierde.
+It closes the loop. Without it, the architecture ends at "review" and everything review produces is lost.
 
-Recibe lo que derivaron los demás: confianza baja del Identificador, ilegibles del Diagnóstico, fallas de contenido del Validador, desacuerdos de Consistencia, y la categoría "otro".
+It receives what the others routed out: low Identifier confidence, illegible pages from Diagnosis, content failures from the Validator, Consistency disagreements, and the "other" category.
 
-Tiene tres salidas:
+It has three outputs:
 
-| Salida | Cuándo |
+| Output | When |
 |---|---|
-| **Dato corregido** | El caso era puntual: se arregla y sigue |
-| **Regla nueva** | El caso se repite: pasa a Reglas y deja de llegar a revisión |
-| **Tipo nuevo** | La categoría "otro" acumula casos: se define un tipo y su ruta |
+| **Corrected datum** | The case was a one-off: it is fixed and moves on |
+| **New rule** | The case repeats: it goes to Rules and stops reaching review |
+| **New type** | The "other" category accumulates cases: a type and its route are defined |
 
-Es también el que cierra el bucle del Segmentador: cuando el Identificador devuelve dos tipos en un segmento, el caso vuelve acá y la re-segmentación se vuelve una regla si se repite.
+It is also the one that closes the Segmenter's loop: when the Identifier returns two types in one segment, the case comes back here and the re-segmentation becomes a rule if it repeats.
 
-**Sin el Revisor, el sistema no mejora.** Las correcciones humanas se acumulan en logs que nadie lee y los mismos errores vuelven en cada lote.
-
----
-
-## Los tres flujos
-
-Cada uno resuelve lo que puede y pasa al siguiente lo que no. El escalamiento lo gobierna el Validador.
-
-### Reglas
-
-```mermaid
-graph LR
-    A["Archivo"] --> B["Segmentador"] --> C["Identificador"] --> D["Lector"]
-    D --> E["Reconstructor"] --> F["Extraer<br/>anclas + regex"] --> G["Validador"]
-    G --> H["Consistencia"] --> I["Catálogo"] --> J["Contrato"]
-    C -.->|"dos tipos"| B
-    G -.->|"no pudo"| K["Escalar<br/>por campo"]
-```
-
-### Interpretación
-
-```mermaid
-graph LR
-    A["Archivo"] --> B["Segmentador"] --> C["Identificador"] --> D["Lector"]
-    D --> E["Reconstructor"] --> F["LLM<br/>interpreta"] --> G["Verificar<br/>cita = valor"]
-    G --> H["Validador"] --> I["Consistencia"] --> J["Catálogo"] --> K["Contrato"]
-    H -.->|"no pudo"| L["Escalar<br/>por campo"]
-```
-
-### Visión
-
-```mermaid
-graph LR
-    A["Archivo"] --> B["Segmentador"] --> C["Identificador"] --> D["Renderizar"]
-    D --> E["VLM<br/>lee y extrae"] --> F["Continuidad<br/>entre páginas"]
-    F --> G["Validador"] --> H["Consistencia"] --> I["Catálogo"] --> J["Contrato"]
-```
-
-Los tres terminan en **Revisor**: lo que se deriva por cualquier motivo vuelve, se corrige, y se convierte en regla o en tipo nuevo.
+**Without the Reviewer, the system does not improve.** Human corrections pile up in logs nobody reads and the same errors return in every batch.
 
 ---
 
-## Comparativa de flujos
+## The three flows
 
-| | Reglas | Interpretación | Visión |
+Each resolves what it can and hands the next one what it could not. Escalation is governed by the Validator.
+
+### Rules
+
+```mermaid
+graph LR
+    A["File"] --> B["Segmenter"] --> C["Identifier"] --> D["Reader"]
+    D --> E["Reconstructor"] --> F["Extract<br/>anchors + regex"] --> G["Validator"]
+    G --> H["Consistency"] --> I["Catalog"] --> J["Contract"]
+    C -.->|"two types"| B
+    G -.->|"could not"| K["Escalate<br/>per field"]
+```
+
+### Interpretation
+
+```mermaid
+graph LR
+    A["File"] --> B["Segmenter"] --> C["Identifier"] --> D["Reader"]
+    D --> E["Reconstructor"] --> F["LLM<br/>interprets"] --> G["Verify<br/>quote = value"]
+    G --> H["Validator"] --> I["Consistency"] --> J["Catalog"] --> K["Contract"]
+    H -.->|"could not"| L["Escalate<br/>per field"]
+```
+
+### Vision
+
+```mermaid
+graph LR
+    A["File"] --> B["Segmenter"] --> C["Identifier"] --> D["Render"]
+    D --> E["VLM<br/>reads and extracts"] --> F["Continuity<br/>across pages"]
+    F --> G["Validator"] --> H["Consistency"] --> I["Catalog"] --> J["Contract"]
+```
+
+All three end at the **Reviewer**: whatever is routed out for any reason comes back, is corrected, and becomes a rule or a new type.
+
+---
+
+## Flow comparison
+
+| | Rules | Interpretation | Vision |
 |---|---|---|---|
-| Recibe | Nada | Texto | Píxeles |
-| Ve firmas, sellos | Si se modeló | No | Sí |
-| Costo | Bajo | Medio | Alto |
-| **Inventa valores** | No | Sí | Sí |
-| **Ancla mal** | Sí: proximidad textual | Sí: confusión semántica | Sí: fila o región equivocada |
-| Cómo se equivoca | Toma un valor real del bloque vecino | Atribuye un valor real al campo equivocado | Lee la fila que no era |
-| Determinista | Sí | No | No |
-| Trazabilidad | Offset exacto | Cita + offset | bbox aproximado |
+| Receives | Nothing | Text | Pixels |
+| Sees signatures, seals | If modeled | No | Yes |
+| Cost | Low | Medium | High |
+| **Invents values** | No | Yes | Yes |
+| **Anchors badly** | Yes: textual proximity | Yes: semantic confusion | Yes: wrong row or region |
+| How it errs | Takes a real value from the neighboring block | Attributes a real value to the wrong field | Reads the row that was not |
+| Deterministic | Yes | No | No |
+| Traceability | Exact offset | Quote + offset | Approximate bbox |
 
-**Los tres anclan mal.** Lo que cambia es el mecanismo y la frecuencia, no la existencia del problema. La diferencia útil no es *si* anclan mal, sino **cómo se detecta cada error**:
+**All three anchor badly.** What changes is the mechanism and the frequency, not the existence of the problem. The useful difference is not *whether* they anchor badly, but **how each error is detected**:
 
-| Error | Se detecta con |
+| Error | Detected with |
 |---|---|
-| Valor inventado | Aritmética, dígito verificador |
-| Ancla mal en Reglas | **Solo contraste entre flujos**: el valor existe, tiene forma y tipo correctos |
-| Ancla mal en Interpretación | Contraste, o cita que no sostiene el valor |
-| Ancla mal en Visión | Contraste, o bbox fuera de la región esperada |
+| Invented value | Arithmetic, check digit |
+| Bad anchor in Rules | **Only cross-flow contrast**: the value exists and has the correct shape and type |
+| Bad anchor in Interpretation | Contrast, or a quote that does not support the value |
+| Bad anchor in Vision | Contrast, or a bbox outside the expected region |
 
-Esto refuerza un punto central: **el contraste no es una optimización, es el único mecanismo que ve la clase de error más silenciosa** — la que produce un valor válido en el lugar equivocado.
+This reinforces a central point: **contrast is not an optimization, it is the only mechanism that sees the most silent class of error** — the one that produces a valid value in the wrong place.
 
 ---
 
-## Invariantes
+## Invariants
 
-Aplican a los tres flujos:
+They apply to all three flows:
 
-- **Ante duda en el Segmentador, sobre-segmentar.** Partir de más se detecta después; unir de más es silencioso y contamina campos de documentos ajenos.
-- **El bucle de re-segmentación corre una sola vez.** Un bucle sin tope es un riesgo; la segunda pasada es final.
-- **El modelo nunca reemplaza al Validador.** La aritmética atrapa la alucinación en importes.
-- **La cita prueba procedencia, no acierto.** Verificar el literal y el valor por separado.
-- **La estructura se valida aparte.** Una columna desplazada tiene importes reales y pasa cualquier chequeo de valores.
-- **Normalizar antes de comparar.** Sin eso se mide formato en vez de valor, y la cola de revisión se llena de diferencias de escritura.
-- **La emisión es un vector de veredictos, no un score.** El umbral lo pone el consumidor, que conoce su caso de uso.
-- **La traza declara página y flujo.** Con escalamiento por campo, la procedencia deja de ser única.
-- **El fallo es parcial.** Una página ilegible marca esa página; no descarta el documento entero.
-- **`Sin verificar` no es un estado final.** Necesita dueño y cola de reintento, o es deuda invisible.
-- **Sin bucle de retorno, el sistema no mejora.** Las correcciones que no vuelven al flujo son las que hacen que el mismo error se repita.
-- **Auditar no es normalizar.** Ver `d.md`.
+- **When the Segmenter is in doubt, over-segment.** Splitting too much is detected later; merging too much is silent and contaminates fields from other documents.
+- **The re-segmentation loop runs once only.** A loop without a cap is a risk; the second pass is final.
+- **The model never replaces the Validator.** Arithmetic catches hallucination in amounts.
+- **The quote proves provenance, not correctness.** Verify the literal and the value separately.
+- **Structure is validated separately.** A shifted column has real amounts and passes any value check.
+- **Normalize before comparing.** Otherwise you measure format instead of value, and the review queue fills with spelling differences.
+- **Emission is a verdict vector, not a score.** The threshold is set by the consumer, who knows their use case.
+- **The trace declares page and flow.** With per-field escalation, provenance stops being single.
+- **Failure is partial.** An illegible page marks that page; it does not discard the whole document.
+- **`Unverified` is not a final state.** It needs an owner and a retry queue, or it is invisible debt.
+- **Without a return loop, the system does not improve.** The corrections that do not go back into the flow are the ones that make the same error repeat.
+- **Auditing is not normalizing.** See `d.md`.
 
 ---
 
-## Limitaciones conocidas
+## Known limitations
 
-Se declaran en lugar de suponerlas cubiertas:
+They are declared rather than assumed covered:
 
-| Limitación | Por qué no se resuelve adentro |
+| Limitation | Why it is not solved inside |
 |---|---|
-| Valor plausible pero falso | Necesita contraste entre flujos o fuente externa; ningún chequeo interno lo ve |
-| Ancla mal en cualquiera de los tres flujos | El valor es real y del tipo correcto; solo el contraste lo detecta |
-| Corte de segmentación dudoso | La sobre-segmentación mitiga, no elimina |
-| Fuente externa caída | Se reintenta, pero mientras tanto el campo queda sin verificar |
-| Campo ausente escalado | Sin ubicación previa, Visión relee el documento entero: no hay ahorro |
+| Plausible but false value | Needs cross-flow contrast or an external source; no internal check sees it |
+| Bad anchor in any of the three flows | The value is real and of the correct type; only contrast detects it |
+| Doubtful segmentation cut | Over-segmentation mitigates, it does not eliminate |
+| External source down | It is retried, but meanwhile the field stays unverified |
+| Missing field escalated | With no prior location, Vision re-reads the whole document: there is no saving |
