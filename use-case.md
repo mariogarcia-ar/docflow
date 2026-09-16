@@ -114,8 +114,7 @@ The exception is deliberate: flags that decide *what to repeat* are not settable
 
 | Flag | Meaning |
 |---|---|
-| `--out` | Output directory. Folder input mirrors its tree here |
-| `--work` | Where bookkeeping and artifacts go, when not inside `--out`. See *Output directory* |
+| `--out` | Output directory. Results, ledgers and intermediates all live here, and a folder input mirrors its tree |
 | `--format` | Result format: `json` (default), `md`, `html` |
 
 **Execution**
@@ -364,30 +363,58 @@ docflow run --pipeline M1-ErpVR documentos/ \
 
 ## Output directory
 
-**Yes — two levels of progress, in two different files.** A batch-level manifest and a per-document ledger, both JSON, both inside the output directory.
+**Yes — two levels of progress, in two kinds of file.** A batch manifest at the root, and a ledger beside each document.
 
 ### Layout
 
 ```
 out/
-  run.json                                   ← batch progress
-  .docflow/
-    ledger/2024/enero/factura-001.ledger.json   ← per-document progress
-    work/2024/enero/factura-001/
-      text.txt                                  ← intermediate artifacts
+  run.json                          ← batch progress
+  2024/enero/
+    factura-001.json                ← result
+    factura-001.ledger.json         ← this document's progress
+    factura-001.work/               ← its intermediates, needed to continue
+      text.txt
       fields.r.json
       fields.p.json
-  2024/enero/factura-001.json                ← final result
-  2024/enero/factura-002.json
+    factura-002.json
+    factura-002.ledger.json
+    factura-002.work/
 ```
 
-**Bookkeeping is dot-prefixed; results are not.** The consumer points at `out/` and walks the tree, getting only documents. `.docflow/` holds everything that describes the run rather than being its output — so a consumer that does not care about progress never has to filter it out.
+**Everything about a document lives beside it.** The ledger is not in a parallel tree — it sits next to the result it describes, in the same directory. That is what makes continuing a run coherent: walking the tree gives the result and its progress together, so a decision per document needs one lookup, not two trees to reconcile.
 
-`--work` overrides where the bookkeeping and artifacts go, for when the output is a mount the consumer owns:
+**One folder per document that has intermediates.** No wrapper directory, no second mirror of the input structure.
+
+### Telling results from bookkeeping
+
+The suffix is the rule:
+
+| File | Is |
+|---|---|
+| `<name>.json` | A result |
+| `<name>.ledger.json` | Its progress |
+| `<name>.work/` | Its intermediates |
+
+A consumer reading `out/` wants results:
 
 ```bash
-docflow run --pipeline M1-ErpVR documentos/ --out out/ --work work/ --jobs 8
+# every result, nothing else
+find out -name '*.json' ! -name '*.ledger.json'
 ```
+
+```bash
+# or, if the consumer can glob
+out/**/*.json excluding *.ledger.json
+```
+
+**This is the price of colocation**, and it is worth stating plainly: results and bookkeeping share a tree, so the consumer filters by suffix rather than walking a directory that contains only results. The suffix is unambiguous, but it is one rule to apply instead of none.
+
+### One directory
+
+There is no separate work directory: everything lives under `--out`. The suffix is what tells the three kinds apart.
+
+**Deleting `out/` means the run can no longer be continued** — the ledgers are the only record of what was done. That is the trade for one directory instead of two: nothing to configure, and state travels with the results.
 
 ### `run.json` — the batch
 
@@ -466,7 +493,7 @@ jq '.totals' out/run.json
 
 ```bash
 # documents that failed, from the ledgers
-jq -r 'select(.outcome == "failed") | .input.path' out/.docflow/ledger/**/*.ledger.json
+jq -r 'select(.outcome == "failed") | .input.path' out/**/*.ledger.json
 ```
 
 ### What the two levels are for
@@ -474,7 +501,7 @@ jq -r 'select(.outcome == "failed") | .input.path' out/.docflow/ledger/**/*.ledg
 | Level | File | Answers | Granularity |
 |---|---|---|---|
 | **Batch** | `out/run.json` | How is the run doing, overall? | Counters and stages |
-| **Document** | `.docflow/ledger/…ledger.json` | Why did *this* file stop where it did? | Per stage, with artifacts |
+| **Document** | `<name>.ledger.json` | Why did *this* file stop where it did? | Per stage, with artifacts |
 
 Neither replaces the other. `run.json` is what you poll; the ledger is what you open when a specific document needs explaining. A batch file that tried to answer "why" for every document would be eleven thousand ledgers in one file; a ledger that tried to answer "how is the run" would mean reading them all.
 
@@ -488,14 +515,12 @@ The answer is a **ledger per document** — one file recording what has been pro
 
 ```
 out/
-  .docflow/
-    ledger/
-      2024/enero/factura-001.ledger.json
-      2024/enero/factura-002.ledger.json
-      2024/febrero/nota-014.ledger.json
+  2024/enero/factura-001.ledger.json
+  2024/enero/factura-002.ledger.json
+  2024/febrero/nota-014.ledger.json
 ```
 
-With `--work work/`, the same tree appears under `work/ledger/` instead.
+Each sits beside the result it describes, so continuing a run needs one lookup rather than reconciling two trees.
 
 ### What it holds
 
@@ -935,7 +960,7 @@ graph LR
 
 ### Artifacts
 
-Every component takes an input and writes an artifact to `--out`. Passing artifacts between stages is what makes a single stage re-runnable:
+Every component takes an input and writes its artifact to `--out`. Passing artifacts between stages is what makes a single stage re-runnable:
 
 | Component | Reads | Writes |
 |---|---|---|
@@ -947,10 +972,12 @@ Every component takes an input and writes an artifact to `--out`. Passing artifa
 | `validator` | `<name>.document.json` | `<name>.validated.json` |
 | `consistency` | `<name>.validated.json` | `<name>.consistency.json` |
 | `catalog` | `<name>.consistency.json` | `<name>.catalog.json` |
-| `contract` | `<name>.catalog.json` | the final output |
+| `contract` | `<name>.catalog.json` | the emitted result |
 | `reviewer` | routed cases | corrections |
 
-This is the shape the examples below follow: each stage names the artifact it consumes, so a run can be continued at any point in the chain.
+Run standalone, each component writes where `--out` points — there is no pipeline, so nothing distinguishes an intermediate from a result. Under `run`, the intermediates land in `out/<name>.work/` and only `contract`'s output is what the consumer reads.
+
+The examples below follow that: each stage names the artifact it consumes, so a run can be continued at any point in the chain.
 
 ---
 
@@ -1222,7 +1249,7 @@ Add `--out out/` to any of them. Add `--jobs N` for a folder.
 ## Quick reference — components
 
 | Component | Command |
-|---|---|
+|---|---|---|
 | `segmenter` | `docflow segmenter <file> --out work/` |
 | `identifier` | `docflow identifier work/<name>.segments.json --out work/` |
 | `diagnosis` | `docflow diagnosis work/<name>.identity.json --out work/` |
@@ -1230,7 +1257,7 @@ Add `--out out/` to any of them. Add `--jobs N` for a folder.
 | `reconstructor` | `docflow reconstructor work/<name>.tokens.json --out work/` |
 | `validator` | `docflow validator work/<name>.document.json --out work/` |
 | `consistency` | `docflow consistency work/<name>.validated.json --out work/` |
-| `catalog` | `docflow catalog work/<name>.consistency.json --source padron` |
+| `catalog` | `docflow catalog work/<name>.consistency.json --source padron --out work/` |
 | `contract` | `docflow contract work/<name>.catalog.json --out out/` |
 | `reviewer` | `docflow reviewer queue --out work/` |
 
