@@ -4,14 +4,15 @@ How the direct circuits are built out of the components defined in `components.m
 
 `components.md` defines the **components** (named by what they produce) and `README.md` the **three general flows** (Rules, Interpretation, Vision — named by what the extractor receives). This document defines the **direct circuits** (named by what the input is) and maps each one onto those components.
 
-The two decompositions are orthogonal, not competing:
+Three things vary independently, and conflating them is the main source of confusion here:
 
-| Decomposition | Named by | Answers |
-|---|---|---|
-| **General flows** (`README.md`) | Extraction method | *How do we read the values?* |
-| **Direct circuits** (this file) | Input type | *How much machinery does this file need?* |
+| Axis | Named by | Answers | Fixed by |
+|---|---|---|---|
+| **General flows** (`README.md`) | Extraction method | *How do we read the values?* | The extractor chosen |
+| **Circuits** (this file) | Input type | *How do we obtain something readable?* | The input document |
+| **Extractor** (per circuit) | Method | *Regex or prompt?* | A routing decision inside the circuit |
 
-A circuit always resolves to one of the general flows for its extraction step. What changes is how much of the surrounding component set runs.
+A circuit fixes how readable material is obtained. It does **not** fix how values are read from it — that is a separate choice, and in the text circuits both regex and prompt are available. See **The extraction axis** below.
 
 ---
 
@@ -37,6 +38,40 @@ That is also why the circuits keep a piece of Diagnosis even when they skip near
 
 ---
 
+## The extraction axis
+
+Obtaining readable material and reading values out of it are **two separate decisions**. Conflating them is the main source of confusion in these circuits.
+
+| Axis | Question | Options |
+|---|---|---|
+| **Circuit** | How do we obtain something readable? | linear text, OCR text, pixels |
+| **Extractor** | How do we read values from it? | regex (Rules), prompt (Interpretation), fused into the model (Vision) |
+
+They are orthogonal. `pdftotext` yields a text stream — that fact says nothing about how the values get read from it, and neither does the text OCR produces. The available combinations:
+
+| Circuit | Material | regex | prompt | fused |
+|---|---|:---:|:---:|:---:|
+| **A — Text PDF** | linear text | ✓ | ✓ | — |
+| **B — Image-only PDF** | OCR text | ✓ | ✓ | — |
+| **C — Image** | pixels | — | — | ✓ |
+
+**A and B are text circuits, so both extractors apply.** Regex first with a prompt fallback, prompt first with regex as a check, or a split by field or document type — all legitimate. Which one to use is a **routing decision inside the circuit**, not a property of the circuit.
+
+**C has no extractor choice.** With no text intermediate, the model reads the pixels and emits fields in one pass, so regex never has a string to run on. That is the same reason `README.md` says Vision uses neither Diagnosis nor Reader.
+
+### This recovers contrast cheaply
+
+`components.md` reserves cross-flow contrast because running two full flows is expensive — each one re-acquires the document. In a text circuit the acquisition is **already paid for**: the text is in hand, so running both a regex and a prompt over it costs one extra model call on critical fields, not a second pass over the document.
+
+| Circuit | Contrast available |
+|---|---|
+| **A, B** | **Yes** — regex vs prompt over the same text, cheap on critical fields |
+| **C** | No — one fused read, nothing to contrast against |
+
+This is the strongest argument for keeping a regex path even when a prompt is the primary extractor: it is not a fallback, it is the second opinion that catches a plausible-but-false value.
+
+---
+
 ## Component usage
 
 Which components each route runs, relative to the general cascade.
@@ -56,6 +91,8 @@ Which components each route runs, relative to the general cascade.
 
 ✓ runs in full · ◐ runs partially or in a reduced form · — does not run
 
+**The extraction step varies along two axes, the surrounding contract does not.** The Reader row is ◐ in A and B because both route to conversion or OCR rather than the component's full per-page routing. Then, per the extraction axis above, A and B each choose regex or prompt, while C fuses reading and extraction into a single model call. All three then run the same Validator and Contract.
+
 **Two components run in every route.**
 
 - **Validator** — it does not care how a value was obtained. Schema, type, content and check-digit checks apply unchanged whatever produced the field. Dropping validation is what would make a circuit a fork of the system rather than a route through it.
@@ -71,7 +108,7 @@ Which components each route runs, relative to the general cascade.
 graph LR
     A["PDF"] --> B["Diagnosis<br/>text layer usable?"]
     B --> C["pdftotext<br/>linear text"]
-    C --> D["Rules<br/>anchors + regex"]
+    C --> D{{"Extractor<br/>regex · prompt"}}
     D --> E["Validator"]
     E --> F["Contract<br/>emit"]
     B -.->|"not usable"| G["Circuit B<br/>or cascade"]
@@ -81,7 +118,7 @@ graph LR
 |---|---|---|
 | Text layer check | Diagnosis | Proportion and quality of the layer |
 | `pdftotext` | Reader (conversion) + Reconstructor | Emits a linear text stream |
-| Anchors + regex | Rules extraction | Locates the value by anchor and captures it |
+| Extractor | Rules **or** Interpretation | Regex or a prompt over the linear text |
 | Schema, type, arithmetic | Validator | Unchanged |
 | Verdict vector | Contract | Unchanged |
 
@@ -89,7 +126,26 @@ graph LR
 
 **Where the reduction is a trade.** `pdftotext` produces reading order, but it does so heuristically: it does not associate a table header with rows continuing on the next page, and it does not collapse a header repeated across five pages. That is the Reconstructor's job and it is not being done. Linear text with a broken table is still plausible-looking text, so the failure is quiet.
 
-Its trace is the **exact offset** into the text stream, the strongest traceability any circuit offers.
+### Choosing the extractor
+
+Both extractors run over the same linear text, so the choice is open and costs nothing to revisit:
+
+| | Regex (Rules) | Prompt (Interpretation) |
+|---|---|---|
+| Invented values | **No** — captures what is there or fails | **Yes** — can produce a value nobody wrote |
+| Bad anchor | Textual proximity: a real value from the neighboring block | Semantic confusion: a real value attributed to the wrong field |
+| Deterministic | Yes | No |
+| Handles wording variation | Needs a pattern per variant | Tolerates it |
+| Cost | Negligible | One model call |
+| Trace | Exact offset | Quote + offset |
+
+Neither dominates, and the sensible use is **both**:
+
+- **Regex where the field is stable** — identifiers, dates, amounts with a known format. Deterministic, free, and it invents nothing.
+- **Prompt where the wording varies** — supplier names, descriptions, fields whose anchor differs per issuer. At 11k files the variants are unknown, and a pattern per variant is what makes pure-regex brittle.
+- **Both on critical fields** — the contrast described in the extraction axis above. This is the cheapest place in the whole system to get a second opinion, because the text is already in hand.
+
+The trace depends on which ran: a regex match yields an **exact offset**, a prompt yields a **quote plus offset**. Both are offsets into a text stream, which keeps traceability stronger here than in the vision route regardless.
 
 ---
 
@@ -103,7 +159,7 @@ graph LR
     B --> C["Adapt<br/>rasterize · rescale"]
     C --> D["Reader<br/>OCR"]
     D --> E["Correction<br/>OCR-text cleanup"]
-    E --> F["Interpretation<br/>extraction prompt"]
+    E --> F{{"Extractor<br/>regex · prompt"}}
     F --> G["Validator"]
     G --> H["Contract<br/>emit"]
     B -.->|"illegible"| I["Route aside<br/>with reason"]
@@ -117,7 +173,7 @@ This is the general cascade **minus segmentation, identification, reconstruction
 | Rasterize, rescale, compress | Diagnosis (adapt) | Prepares the input for OCR |
 | OCR | Reader (OCR path) | Extracts tokens, with estimated confidence |
 | OCR correction | Reader (correction) | The only path where correction is legitimate |
-| Extraction prompt | Interpretation | An LLM finds the fields in the corrected text |
+| Extractor | Rules **or** Interpretation | Regex or a prompt over the corrected text |
 | Validation | Validator | Unchanged |
 | Emit | Contract | Unchanged |
 
@@ -125,7 +181,9 @@ This is the general cascade **minus segmentation, identification, reconstruction
 
 **What the correction step needs.** It is the highest-risk step in the circuit: it is a model editing text, so it can silently change a value. Correction must be scoped to characters and spacing, never to digits, and the raw OCR output has to be retained alongside the corrected text for audit. `d.md`'s rule applies directly — auditing is not normalizing, and the raw value is what diagnostics are built from.
 
-**Where the reduction is a trade.** No Reconstructor means no table reconstruction, so the extraction prompt sees text whose row structure may already be broken. `README.md` warns that structure has to be validated separately, because a shifted column has real amounts and passes every value check.
+**The extractor choice is the same as in circuit A**, with one addition: OCR error is present in the text, so a pattern has to tolerate the misreads OCR actually produces. That cuts both ways — a regex can be written to accept `O` for `0` in a known position, while a prompt handles unfamiliar corruption better but may quietly repair a digit it should have flagged.
+
+**Where the reduction is a trade.** No Reconstructor means no table reconstruction, so the extractor sees text whose row structure may already be broken. `components.md` warns that structure has to be validated separately, because a shifted column has real amounts and passes every value check.
 
 ---
 
@@ -166,12 +224,18 @@ Grouped by the component removed, since `components.md` already states each cons
 | **Segmenter** | Assumes one file = one document. Fields from a second document overwrite the first's | **No** — `components.md` calls this unrecoverable and silent |
 | **Identifier** | No type, so no template routing and no evidence record. A misrouted document is invisible | Only as a badly extracted field, at the end |
 | **Reconstructor** | No cross-page table continuity, no header collapsing, no reading order | Partially: as missing or misattributed fields |
-| **Cross-flow contrast** | No second read of a critical field. A plausible-but-false value (15400 vs. 1540) passes every internal check | **No** — `components.md` calls contrast the only mechanism that sees this |
 | **Catalog** | Identity fields never checked externally. A valid CUIT on the wrong company is undetected | Only by a human eventually noticing |
 
-**The two silent ones are the Segmenter and the contrast.** Every other reduction degrades into something visible — a missing field, a low confidence, an arithmetic failure. Those two produce output that looks correct.
+**Contrast is not on that list, and that is the correction.** An earlier reading of these circuits treated cross-flow contrast as given up — true only if each circuit commits to a single extractor. Since a text circuit can run **regex and prompt over the same text** (see the extraction axis), A and B keep contrast on critical fields for one extra call. Only **C** genuinely gives it up, because its single fused read leaves nothing to compare against.
 
-This is the cost of a circuit, stated plainly: it is not merely cheaper, it is cheaper *by removing the checks that catch silent errors*. A circuit is sound exactly as long as its input assumption holds, which is why the gate matters more than the speed.
+So the silent losses are narrower than they first appear:
+
+| Circuit | Silent losses |
+|---|---|
+| **A, B** | The **Segmenter** only |
+| **C** | The **Segmenter** and **contrast** |
+
+**The Segmenter is the one gap no circuit closes.** Every other reduction degrades into something visible — a missing field, a low confidence, an arithmetic failure. A merge error produces output that looks correct, which is why the gate matters more than the speed.
 
 ---
 
@@ -186,7 +250,7 @@ graph LR
     B -->|"no: invalid field"| D["Targeted<br/>render the region"]
     B -->|"no: missing field"| E["Whole document<br/>re-read"]
     D --> F["Contrast against<br/>the circuit's value"]
-    E --> G["Cascade<br/>from Diagnóstico"]
+    E --> G["Cascade<br/>from Diagnosis"]
     F --> C
     G --> C
 ```
@@ -210,15 +274,17 @@ A circuit routinely has *less* to point at than the cascade, because without the
 
 Every route emits through the **Contract**, so outputs are shape-identical and the consumer needs no per-circuit logic.
 
-The verdict vector is what makes this honest rather than merely convenient. A field from a circuit will typically carry *weaker* verdicts than one from the cascade — no `consistency` reinforcement, `catalogo: sin_verificar` — and the Contract reports that instead of hiding it. The consumer threshold does the rest.
+The verdict vector is what makes this honest rather than merely convenient. A field from a circuit will typically carry *weaker* verdicts than one from the cascade — no `consistency` reinforcement, `catalog: unverified` — and the Contract reports that instead of hiding it. The consumer threshold does the rest.
 
 | Verdict | Cascade | Circuit A | Circuit B | Circuit C |
 |---|---|---|---|---|
-| `forma` / `tipo` / `contenido` / `digito` | From Validator | Same | Same | Same |
-| `consistencia` | Reinforcement or disagreement | `null` | `null` | `null` |
-| `catalogo` | Verified / unverified | `sin_verificar` | `sin_verificar` | `sin_verificar` |
+| `shape` / `type` / `content` / `digit` | From Validator | Same | Same | Same |
+| `consistency` | Reinforcement or disagreement | `null`, unless both extractors ran | `null`, unless both extractors ran | `null` |
+| `catalog` | Verified / unverified | `unverified` | `unverified` | `unverified` |
 
-**This is the argument for the verdict vector over a score.** With a single confidence number, a circuit's output and the cascade's would have to be collapsed to the same scale and the difference would vanish — a field nobody cross-checked would look the same as one that survived contrast. Kept separate, the consumer can require `consistencia` for critical fields and accept `null` for the rest.
+Note the A and B qualifier: when the circuit runs **both** extractors over its text — regex and prompt on a critical field — it produces a genuine cross-extractor contrast, and `consistency` reflects it. That is the one case where a direct circuit reaches the confidence of the cascade without paying for a second acquisition of the document.
+
+**This is the argument for the verdict vector over a score.** With a single confidence number, a circuit's output and the cascade's would have to be collapsed to the same scale and the difference would vanish — a field nobody cross-checked would look the same as one that survived contrast. Kept separate, the consumer can require `consistency` for critical fields and accept `null` for the rest.
 
 ---
 
@@ -230,3 +296,7 @@ The verdict vector is what makes this honest rather than merely convenient. A fi
 - **Whether the MoE in circuit C is the general cascade's Vision model** or a cheaper specialist. It decides whether tuning and the golden set carry over between them.
 - **Whether the OCR correction step is validated against this circuit's own output.** Since it edits text, it should be measured on the golden set like any other extraction step.
 - **`pdftotext` is a poppler dependency** (external binary). It needs a stated version and a fallback, or circuit A silently depends on whatever the host has.
+- **What decides regex vs prompt, and per what.** Per field, per document type, or first regex then prompt on failure. The choice is cheap to change per file but has to be expressed somewhere, and this document does not say where.
+- **What the extraction prompt is built from.** Whether it is per document type, derived from the schema, or shared with the general Interpretation flow. If shared, the tuning carries over; if not, there are two prompt sets to maintain.
+- **Whether running both extractors is the default or reserved for critical fields.** Both over the whole document doubles cost on a route chosen to be cheap, so the likely answer is critical fields only — but that needs a definition of "critical", which today only exists as the contrast policy in `components.md`.
+- **Whether a text PDF with a bad text layer falls through to circuit B.** The gate rejects it, but the next step is stated as "B or cascade" and nothing decides which.
