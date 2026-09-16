@@ -104,7 +104,7 @@ Rationale: contracts must be fixed before they are multiplied (10 components × 
 | FR-20 | Consistency **normalizes before comparing** (otherwise it measures format, not value), applies tolerance by field type (amounts: cents; identifiers and dates: exact), and uses arithmetic to break a tie before a human is involved. |
 | FR-21 | Consistency compares across extractors. This is the **only** mechanism that detects a plausible-but-false value, and it is available only where two reads exist. |
 | FR-22 | The Catalog validates identity fields against an external source. Unavailability is **not** invalidity: the field stays `unverified`, never rejected, and the Catalog owns its retry queue. |
-| FR-23 | The Contract emits a **verdict vector per field**, never a single confidence score, with `consistency` set only where both reads ran and `null` elsewhere, plus a per-field `(page, extractor)` trace. |
+| FR-23 | The Contract emits a **verdict vector per field**, never a single confidence score, with `consistency` set only where both reads ran and `null` elsewhere, plus a per-field `(page, extractor)` trace. `catalog` is present on every field even when no pipeline runs the Catalog: it is set to `unverified` with the reason recorded as `not_run`, so "never attempted" is distinguishable from "the source was down" (ADR-009, §11 of `sad.md`). |
 | FR-24 | Failure is **partial**: an illegible page is marked as such and the rest of the document is still emitted, with the absence declared. |
 
 ### 5.3 Stage 3 — pipelines (routes)
@@ -131,6 +131,7 @@ Rationale: contracts must be fixed before they are multiplied (10 components × 
 | NFR-04 | `--jobs`/`DOCFLOW_JOBS` bounds CPU work; GPU work is serialized to one in-flight generation per device. | Enforced by typed slots |
 | NFR-05 | Secrets (`ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, `DOCFLOW_OLLAMA_HOST`) come from the environment only — never a flag. | Environment-only |
 | NFR-06 | Configuration precedence is CLI flag → environment → `.env` → built-in default. `--force`, `--stage` and `--only` are **never settable** by environment. | Implemented at Stage 1 |
+| NFR-06a | **Corpus policy is registry data, not configuration.** Thresholds (`CUT_CONFIDENCE`, `MIN_CHARS`, `MIN_DPI`, `CORRECT`, `TOLERANCE_AMOUNTS`) live in K8 assets and are **not settable** by a CLI flag or an environment variable at any stage — see ADR-009. NFR-06's precedence chain governs **operational** settings only (paths, slots, model, host). | Enforced by the registry hash, which is a mandatory cache-key term |
 | NFR-07 | Every field's trace points at the right pixels: a crop's coordinates are mapped back to source page coordinates before leaving the image kernel. | Contract-level correctness |
 | NFR-08 | Structured output is grammar-constrained where the provider supports it; truncation is detected and mapped to a typed error, never parsed as complete. | Local + frontier |
 | NFR-09 | Observability is the ledger and `run.json`, readable with `jq` without the tool installed. | Metric dashboards and tracing are `# TODO: [RELEASE]` |
@@ -142,7 +143,8 @@ Rationale: contracts must be fixed before they are multiplied (10 components × 
 
 | Deferred item | Marker | Source |
 |---|---|---|
-| `--dry-run`, `--format`, `--schema`, `--golden`, `--isolate`, `--keep-artifacts`, `--show-evidence`, `--continuity-only`, `--source`, `--failed`, `--state`, `--retry-queue`, `--retry`, `--rebuild`, `--rebuild-index`, `--rule`, `--new-type`, `--value` | `# TODO: [MVP]` | `03-cli.md` deferred flags |
+| `--dry-run`, `--format`, `--schema`, `--golden`, `--isolate`, `--keep-artifacts`, `--show-evidence`, `--continuity-only`, `--source`, `--failed`, `--state`, `--retry-queue`, `--retry`, `--rebuild`, `--rule`, `--new-type`, `--value` | `# TODO: [MVP]` | `03-cli.md` deferred flags |
+| `--rebuild-index` as a **flag** (`rebuild_index()` itself is a Stage 1 library operation, `S1-T06`) | `# TODO: [MVP]` | `03-cli.md` deferred flags |
 | 6 categories of Validator business rules: range, relations between fields, conditional, structural, domain-specific, cross-document | `# TODO: [MVP]` | `02-components.md` pending business rules |
 | Golden-set comparator and its labeller role | `# TODO: [MVP]` | `--golden`, deferred |
 | Object-storage / database artifact backends | `# TODO: [RELEASE]` | K7 reusability |

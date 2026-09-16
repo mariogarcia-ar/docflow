@@ -102,7 +102,9 @@ docflow run --pipeline M1-ErpVR documentos/ --out out/ --force --stage extract.p
 
 ### Everything else is set, not passed
 
-The component thresholds are **environment settings, not flags**. They describe a corpus — how strict the quality gate is, how much tolerance amounts get — and a corpus does not change per invocation:
+> **Superseded — see `../artifacts/sad.md` ADR-009.** This section proposed the component thresholds as **environment settings**. They are now **registry policy** (`registry/policies/thresholds.yaml`) with no environment variable and no flag. The reason the position reversed is worth keeping: the registry hash is a mandatory cache-key term, so a threshold arriving from the environment would change a stage's output **without entering the key** — the ledger would read `done` about a result produced under a setting nothing recorded. That is the same silent-staleness class the design exists to catch. The table below is retained as the earlier position; the values are unchanged, only their home moved.
+
+The component thresholds were **environment settings, not flags**. They describe a corpus — how strict the quality gate is, how much tolerance amounts get — and a corpus does not change per invocation:
 
 | Setting | Component | Default |
 |---|---|---|
@@ -112,7 +114,7 @@ The component thresholds are **environment settings, not flags**. They describe 
 | `DOCFLOW_CORRECT` | `reader` | `false` |
 | `DOCFLOW_TOLERANCE_AMOUNTS` | `consistency` | `1` |
 
-They are in `.env.example`. Tuning one is a decision about the corpus, so it belongs in the configuration rather than retyped. None of them has a CLI flag in the first instance.
+The instinct behind them still holds — tuning one is a decision about the corpus, not a per-invocation choice, so it should not be retyped. The error was thinking *"not a flag"* implied *"an environment variable"*: those are three surfaces (flag, environment, registry), not two, and only the registry is covered by the hash. None of the five has a CLI flag, in the first instance or since.
 
 **The OCR engine is not among them, and cannot be set.** It is Docling — one engine, fixed. An engine setting would make the OCR path a matrix of behaviours that the ledger's `config_hash` would have to track per document, and would buy a choice the architecture does not make: the engine is a stack decision, not a corpus decision.
 
@@ -163,7 +165,7 @@ Precedence, highest first:
 | **`.env`** | `DOCFLOW_JOBS=8` |
 | Built-in default | — |
 
-The flag name maps to the variable predictably — `--jobs` → `DOCFLOW_JOBS`, `--cut-confidence` → `DOCFLOW_CUT_CONFIDENCE`.
+The flag name maps to the variable predictably — `--jobs` → `DOCFLOW_JOBS`. That mapping covers **operational** settings only. It does **not** extend to the five corpus thresholds above: there is no `--cut-confidence`, and no variable behind it (ADR-009).
 
 **`--force` and `--stage` are never settable.** A default would reprocess done work on every run, which is the one thing the ledger exists to prevent. The same applies to `--only`: persisting a scope would silently narrow every later run.
 

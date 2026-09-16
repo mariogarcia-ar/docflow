@@ -10,12 +10,17 @@ Eleven thousand documents. Extract structured information from them and expose i
 |---|---|
 | `docs/idea/01-pipelines.md` | The thirteen input pipelines, from material to output |
 | `docs/idea/02-components.md` | The ten components — what each produces, its diagram, its failure modes |
-| `02-docs/idea/arch-components.md` | The eight kernels underneath them — the reusable engines (orchestrator, PDF, image, OCR, local LLM, frontier LLM, store, registry) |
+| `docs/idea/02-arch-components.md` | The eight kernels underneath them — the reusable engines (orchestrator, PDF, image, OCR, local LLM, frontier LLM, store, registry) |
 | `docs/idea/03-cli.md` | How to invoke them: commands, flags, batch, resume |
-| `my_prompt.md` | The original specification — requirements and constraints |
 | `docs/idea/04-storytelling.md` | Why the architecture has this shape, as a narrative |
+| `docs/artifacts/prd.md` | The PoC requirements: 33 functional, 13 non-functional, 6 acceptance scenarios |
+| `docs/artifacts/sad.md` | The architecture: 4 layers, K1–K8, the cache key, 9 ADRs, the stage mapping |
+| `docs/artifacts/wbs.md` | The build plan: 53 tasks across 3 stages, critical path, DoR/DoD |
+| `docs/artifacts/kernel-cli.md` | The Stage 1 acceptance harness: exit codes, the 17-row silent-failure matrix |
+| `docs/artifacts/traceability.md` | Requirement → pipeline → task → test, including the deviations from `my_prompt.md` |
+| `my_prompt.md` | The original specification — requirements and constraints |
 
-Start with `docs/idea/04-storytelling.md` for the reasoning, or `docs/idea/03-cli.md` if you need to run something.
+Start with `docs/idea/04-storytelling.md` for the reasoning, or `docs/idea/03-cli.md` if you need to run something. The `docs/artifacts/` set is the specification the PoC is built against; where an artifact and an `idea/` document disagree, the artifact is the decision and the `idea/` document is the exploration that led to it.
 
 ---
 

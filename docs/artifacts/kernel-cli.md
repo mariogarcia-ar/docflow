@@ -52,9 +52,19 @@ Every subcommand dispatches to exactly one operation on a port or kernel. If a f
 
 The test that enforces it: introspect the port signature and compare its parameter set against the command's declared flag set. A flag with no counterpart fails the test. *(`# TODO: [MVP]` — implement as a contract test.)*
 
-### Guardrail 2 — Never emit a verdict, a confidence score, or a routing decision.
+### Guardrail 2 — Never emit a verdict, a score, or a routing decision.
 
-Those belong to the domain layer and the registry (`02-arch-components.md`, "What the kernels never do"). The CLI prints the raw `KernelResult` — tokens, measurements, `Evidence`, `Reason`. It never says `"usable"`, `"illegible"`, `"route to OCR"`, or `"confidence: 0.87"`.
+The line is between an **observation** and a **decision**, and it is worth stating precisely because three of the seventeen rows below assert on kernel-reported words:
+
+| The kernel may report | The kernel may never report |
+|---|---|
+| **Measurements** — `laplacian_variance: 41.2`, `contrast: 0.18`, `skew_estimate: 1.4`, character counts, effective DPI | A **score** that aggregates them — `confidence: 0.87`, `quality: 4/5` |
+| **Reason codes** for its own failure — `illegible`, `blank_page`, `truncated_output` — from the closed set in §5 | A **routing decision** — `"usable"`, `"route to OCR"`, `"escalate to p"`, `"convert"` |
+| **Page status** it directly observed — `read`, `blank`, `unreadable` (§9, K4) | Any word from the **Validator's verdict vocabulary** — `shape`, `type`, `content`, `digit`, `consistency`, `catalog` |
+
+Those belong to the domain layer and the registry (`02-arch-components.md`, "What the kernels never do"). The CLI prints the raw `KernelResult` — tokens, measurements, `Evidence`, `Reason`.
+
+**The threshold is never the kernel's.** A reason code is a fact about the bytes (`legibility` measured below the value the *caller* supplied); the gate decision is `Diagnosis`'s, and it is taken against `registry/policies/thresholds.yaml` — registry policy, not code, and never a constant inside K3 or K4 (`prd.md` FR-15). A kernel that reads its own threshold from a hardcoded constant has made a routing decision whether or not it prints one.
 
 ### Guardrail 3 — No silent fallback.
 
@@ -107,6 +117,8 @@ registry        deterministic  filesystem           yes
 
 `available` is `no` when the adapter's precondition is unmet — a missing binary, an unpulled model, a missing provider key. An unavailable adapter is reported here and **never** silently replaced.
 
+`--list` reports at the **kernel** level. Which *commands* are implemented in Stage 1 is §9's status column (`now` vs `MVP`), and the two are deliberately separate: an adapter can be available while an operation on it is still `MVP`.
+
 ---
 
 ## 5. Exit code contract
@@ -117,9 +129,11 @@ The kernel contract has no third state: *"A kernel either returns a value with e
 |---:|---|---|
 | `0` | A value was produced | `value` + `evidence`, `reason: null` |
 | `2` | **No value, with a typed `Reason`** — a legitimate, expected outcome | `value: null`, `reason` populated |
-| `3` | Precondition unmet — missing binary, model not pulled, asset invalid, no provider key | typed error naming the remedy |
-| `4` | Usage error — unknown kernel/operation, bad flag, malformed range | usage message on stderr |
-| `1` | Unexpected internal error | traceback on stderr |
+| `3` | The call could not legitimately be made — missing binary, model not pulled, unknown model/provider, asset invalid or missing, no provider key, a request the kernel refuses | `value: null`, `reason` populated |
+| `4` | Usage error — unknown kernel/operation, bad flag, malformed range, an operation marked `MVP` in §9 | usage message on stderr, no `KernelResult` |
+| `1` | Unexpected internal error | traceback on stderr, no `KernelResult` |
+
+**Two things this table is careful about.** `2` is *the document's* answer; `3` is *the call's* precondition. And exits `0`, `2` and `3` all emit the envelope — the machine contract is the same JSON in all three, and only the code differs. `4` and `1` cannot, because by then there is no `KernelResult` to emit.
 
 **Why `2` is distinct from `3`, and why both are distinct from `1`.** Without the distinction, *"this image is illegible"* (an expected outcome with a `Reason`), *"the document is missing"* and *"the code has a bug"* are indistinguishable to a script. That is the same class of collapse the architecture refuses everywhere else — a diagnosis is not a crash, and an outage is not a rejection.
 
@@ -128,7 +142,28 @@ The kernel contract has no third state: *"A kernel either returns a value with e
 docflow-kernel image legibility borroso.png > /dev/null; [ $? -eq 2 ]
 ```
 
-**Stable reason codes.** The `reason.code` values are a closed set, so assertions target a code, never a message string. Initial set: `illegible`, `insufficient_effective_resolution`, `blank_page`, `truncated_output`, `model_not_pulled`, `engine_unavailable`, `provider_unavailable`, `artifact_missing`, `evidence_missing`, `asset_invalid`, `encrypted`, `unsupported_format`.
+**Stable reason codes.** The `reason.code` values are a closed set, so assertions target a code, never a message string. This is load-bearing: §16 and `S1-T22` both forbid asserting on a message, so a failure path with no code is untestable.
+
+| Code | Exit | Raised by | Meaning |
+|---|:---:|---|---|
+| `illegible` | 2 | K3 | Legibility measured below the caller's threshold |
+| `insufficient_effective_resolution` | 2 | K2 | The requested DPI exceeds what the source pixels hold; no upscale performed |
+| `blank_page` | 2 | K2, K4 | The page carries no content — not "a page with no text" |
+| `truncated_output` | 2 | K5, K6 | Generation cut by `num_ctx` or the provider's limit; never parsed as complete |
+| `model_not_pulled` | 3 | K5 | The model is absent locally; the remedy names `ollama pull <model>` |
+| `model_unknown` | 3 | K5, K6 | The name resolves to no known model; **no default is substituted** |
+| `provider_unknown` | 3 | K6 | The prefix names no configured provider |
+| `engine_unavailable` | 3 | K4 | The OCR engine cannot be started |
+| `provider_unavailable` | 3 | K6 | The provider is unreachable or persists in failing |
+| `asset_invalid` | 3 | K8 | An asset failed schema validation |
+| `asset_missing` | 3 | K8 | An asset is absent; never defaulted to an empty one |
+| `artifact_missing` | 2 | K7 | The artifact a ledger claims does not exist |
+| `evidence_missing` | 2 | K1, K7 | A sampled artifact's evidence is gone; the stage is `failed`, never re-sampled |
+| `encrypted` | 2 | K2 | The PDF refuses to open without a password |
+| `unsupported_format` | 2 | K2, K3 | The bytes are not a format the adapter accepts |
+| `role_conflict` | 3 | K6 | `judge` asked to grade samples the same model produced — the labeller/governor prohibition (§11 row 15) |
+
+`model_unknown` and `provider_unknown` are what make "there is no fallback" assertable rather than merely stated: the failure path exists, it is typed, and a test can reach it. `role_conflict` exists for row 15, whose assertion would otherwise have to match a sentence.
 
 ---
 
@@ -233,8 +268,12 @@ $ docflow-kernel llm.local structured \
 ```bash
 # an unknown name must fail fast, naming the model
 $ docflow-kernel llm.local structured --model ollama:nope --resolve-only
-# exit 3, stderr: unknown model "ollama:nope". available: qwen2.5, llava
+# exit 3
+# stdout: {"value": null, "reason": {"code": "model_unknown",
+#          "message": "unknown model \"ollama:nope\". available: qwen2.5, llava"}}
 ```
+
+The code is in `stdout` because exit `3` still emits a `KernelResult` — the same JSON envelope as exit `0`, with `value: null` and a `Reason`. Exits `0`, `2` and `3` all emit the envelope; only exit `4` (usage) and exit `1` (internal error) do not, because by then there is no `KernelResult` to report.
 
 There is no `--fallback`, no `--default-model`, and no environment variable that substitutes a model.
 
@@ -244,18 +283,29 @@ There is no `--fallback`, no `--default-model`, and no environment variable that
 
 Each table maps a command to exactly one operation from `02-arch-components.md`. All flags are operation parameters. **No domain noun appears in any flag.**
 
+### What Stage 1 implements, and what waits
+
+`02-arch-components.md` describes a **target** kernel surface; Stage 1 implements only the operations Stage 2 actually calls (`prd.md` §4.1, `sad.md` §3). Those two statements are about different sets, and §9 lists both — so every command below carries an explicit status:
+
+| Status | Meaning |
+|---|---|
+| **`now`** | Implemented in Stage 1. Its command dispatches, and if it also appears in §11 its row is part of the Stage 1 CI gate. |
+| **`MVP`** | Documented target, **not** implemented in Stage 1 (`# TODO: [MVP]`). The command does not dispatch: it exits `4` with a usage error naming the operation as not yet available. The flag/port contract test covers it the moment it lands. |
+
+A command marked `MVP` is not a gap in the design — it is the same deliberate thinness `wbs.md` §3 declares, made visible in one place. `S1-T21`'s done-when criterion therefore asserts on the `now` set only. **One consequence is worth naming:** an `MVP` command that exits `4` is observable, so "the surface has not drifted" and "the operation is not built yet" stay distinguishable.
+
 ### K1 — `orchestrator`
 
-| Command | Port operation | Key flags |
-|---|---|---|
-| `orchestrator plan <descriptor>` | `submit(spec)` — validate only | `--out` |
-| `orchestrator run <descriptor> --out <dir>` | `submit(spec)` | `--jobs`, `--slots cpu=n,gpu=n,remote=n` |
-| `orchestrator status <job-id>` | `status(job_id)` | — |
-| `orchestrator jobs` | — (run discovery) | — |
-| `orchestrator pause <job-id>` / `resume <job-id>` | `pause` / `resume` | — |
-| `orchestrator stop <job-id>` | `stop(job_id, force)` | `--force` |
-| `orchestrator ledger-read <unit-dir>` | `verify(unit)` | — |
-| `orchestrator manifest-rebuild <out-dir>` | `rebuild_index()` | — |
+| St. | Command | Port operation | Key flags |
+|:---:|---|---|---|
+| `now` | `orchestrator plan <descriptor>` | `submit(spec)` — validate only | `--out` |
+| `now` | `orchestrator run <descriptor> --out <dir>` | `submit(spec)` | `--jobs`, `--slots cpu=n,gpu=n,remote=n` |
+| `now` | `orchestrator status <job-id>` | `status(job_id)` | — |
+| `now` | `orchestrator jobs` | — (run discovery) | — |
+| `now` | `orchestrator pause <job-id>` / `resume <job-id>` | `pause` / `resume` | — |
+| `now` | `orchestrator stop <job-id>` | `stop(job_id, force)` | `--force` |
+| `now` | `orchestrator ledger-read <unit-dir>` | `verify(unit)` | — |
+| `now` | `orchestrator manifest-rebuild <out-dir>` | `rebuild_index()` | — |
 
 **Two details that are deliberate.**
 
@@ -287,67 +337,68 @@ This is what makes `S1-T19` invocable from a shell before any domain component e
 
 ### K2 — `pdf`
 
-| Command | Port operation | Key flags |
-|---|---|---|
-| `pdf probe <file>` | `probe(path)` | — |
-| `pdf facts <file>` | `page_facts(page)` | `--page N` |
-| `pdf classify <file>` | `classify(page)` | `--page N` |
-| `pdf tokens <file>` | `extract_tokens(pages)` | `--pages 1-3`, `--dpi` |
-| `pdf render <file>` | `render(pages, dpi)` | `--pages`, `--dpi`, `--save` |
-| `pdf images <file>` | `embedded_images(page)` | `--page N`, `--save` |
-| `pdf split <file>` | `split(ranges)` | `--pages 1-7`, `--save` |
+| St. | Command | Port operation | Key flags |
+|:---:|---|---|---|
+| `now` | `pdf probe <file>` | `probe(path)` | — |
+| `MVP` | `pdf facts <file>` | `page_facts(page)` | `--page N` |
+| `now` | `pdf classify <file>` | `classify(page)` | `--page N` |
+| `now` | `pdf tokens <file>` | `extract_tokens(pages)` | `--pages 1-3`, `--dpi` |
+| `now` | `pdf render <file>` | `render(pages, dpi)` | `--pages`, `--dpi`, `--save` |
+| `MVP` | `pdf images <file>` | `embedded_images(page)` | `--page N`, `--save` |
+| `now` | `pdf split <file>` | `split(ranges)` | `--pages 1-7`, `--save` |
 
 `pages` accepts `1-3`, `1,4,7`, `all`. `render` **never upscales** — requesting 300 DPI on a 150 DPI scan returns exit `2` with `reason.code: insufficient_effective_resolution`, never a larger file reported as a satisfied gate.
 
 ### K3 — `image`
 
-| Command | Port operation | Key flags |
-|---|---|---|
-| `image info <file>` | `load(source)` | — |
-| `image legibility <file>` | `legibility(bitmap)` | — |
-| `image rescale <file>` | `rescale(bitmap, target)` | `--target-dpi`, `--save` |
-| `image deskew <file>` | `deskew(bitmap)` | `--save` |
-| `image crop <file>` | `crop(bitmap, region)` | `--region x,y,w,h`, `--save` |
-| `image phash <file>` | `phash(bitmap)` | — |
-| `image tile <file>` | `tile(bitmap, max_pixels)` | `--max-pixels`, `--save` |
+| St. | Command | Port operation | Key flags |
+|:---:|---|---|---|
+| `now` | `image info <file>` | `load(source)` | — |
+| `now` | `image legibility <file>` | `legibility(bitmap)` | — |
+| `now` | `image rescale <file>` | `rescale(bitmap, target)` | `--target-dpi`, `--save` |
+| `MVP` | `image deskew <file>` | `deskew(bitmap)` | `--save` |
+| `now` | `image crop <file>` | `crop(bitmap, region)` | `--region x,y,w,h`, `--save` |
+| `MVP` | `image phash <file>` | `phash(bitmap)` | — |
+| `MVP` | `image tile <file>` | `tile(bitmap, max_pixels)` | `--max-pixels`, `--save` |
 
 `info` reports the EXIF orientation and whether it was applied. `legibility` returns a **measurement plus a reason**, never a bare boolean: `{ "laplacian_variance": 41.2, "contrast": 0.18, "skew_estimate": 1.4 }`. `crop` returns the crop **together with its inverse map**, so the source-coordinate contract is checkable by hand.
 
 ### K4 — `ocr`
 
-| Command | Port operation | Key flags |
-|---|---|---|
-| `ocr capabilities` | `capabilities()` | — |
-| `ocr engine-info` | `engine_info()` | — |
-| `ocr read <file…>` | `read(pages, options)` | `--pages`, `--dpi`, `--lang`, `--correct` |
+| St. | Command | Port operation | Key flags |
+|:---:|---|---|---|
+| `now` | `ocr capabilities` | `capabilities()` | — |
+| `now` | `ocr engine-info` | `engine_info()` | — |
+| `now` | `ocr read <file…>` | `read(pages, options)` | `--pages`, `--dpi`, `--lang`, `--correct` |
 
 Returns positioned tokens with **no reading order resolved**, plus per-page status (`read` with zero tokens vs `blank` vs `unreadable`). Docling's layout and table output is **dropped at the boundary** — the tokens are the contract. Confidence is `float | null`, and `null` is never reported as `1.0`.
 
 There is **no `--engine` flag**. The engine is Docling and only Docling; a per-corpus choice would make the OCR path a matrix of behaviours.
 
-`--correct` is lab-only and corresponds to the `DOCFLOW_CORRECT` environment setting on the product surface. It gates the *corrected* artifact only; the raw tokens are always retained.
+`--correct` is lab-only and corresponds to `reader.correct` in `registry/policies/thresholds.yaml` — a policy value, not an environment setting and not a product flag (ADR-009). It gates the *corrected* artifact only; the raw tokens are always retained.
 
 ### K5 — `llm.local`
 
-| Command | Port operation | Key flags |
-|---|---|---|
-| `llm.local capabilities` | `capabilities(model)` | `--model` |
-| `llm.local ps` / `warm` / `pull` | `ps()` / `warm(model)` / `pull(model)` | `--model` |
-| `llm.local generate` | `generate(model, prompt, **params)` | `--model`, `--prompt-file` |
-| `llm.local structured` | `structured(model, prompt, schema)` | `--model`, `--prompt-file`, `--schema-file` |
-| `llm.local vision` | `vision(model, prompt, images, schema)` | `--model`, `--prompt-file`, `--image`, `--schema-file` |
+| St. | Command | Port operation | Key flags |
+|:---:|---|---|---|
+| `now` | `llm.local capabilities` | `capabilities(model)` | `--model` |
+| `now` | `llm.local warm` | `warm(model)` | `--model` |
+| `MVP` | `llm.local ps` / `pull` | `ps()` / `pull(model)` | `--model` |
+| `MVP` | `llm.local generate` | `generate(model, prompt, **params)` | `--model`, `--prompt-file` |
+| `now` | `llm.local structured` | `structured(model, prompt, schema)` | `--model`, `--prompt-file`, `--schema-file` |
+| `now` | `llm.local vision` | `vision(model, prompt, images, schema)` | `--model`, `--prompt-file`, `--image`, `--schema-file` |
 
 Reports the **model digest**, never the tag alone — `qwen2.5` is a moving tag and the digest is the identity. Truncation maps to exit `2`, `reason.code: truncated_output`, and is **never** parsed as if complete.
 
 ### K6 — `llm.frontier`
 
-| Command | Port operation | Key flags |
-|---|---|---|
-| `llm.frontier capabilities` | `capabilities(model)` | `--model` |
-| `llm.frontier count-tokens` | `count_tokens(text)` | `--model`, `--text-file` |
-| `llm.frontier structured` | `structured(model, prompt, schema)` | `--model`, `--prompt-file`, `--schema-file` |
-| `llm.frontier vision` | `vision(model, prompt, images, schema)` | `--model`, `--prompt-file`, `--image`, `--schema-file` |
-| `llm.frontier judge` | `judge(model, rubric, samples)` | `--model`, `--rubric-file`, `--samples-file` |
+| St. | Command | Port operation | Key flags |
+|:---:|---|---|---|
+| `now` | `llm.frontier capabilities` | `capabilities(model)` | `--model` |
+| `MVP` | `llm.frontier count-tokens` | `count_tokens(text)` | `--model`, `--text-file` |
+| `now` | `llm.frontier structured` | `structured(model, prompt, schema)` | `--model`, `--prompt-file`, `--schema-file` |
+| `now` | `llm.frontier vision` | `vision(model, prompt, images, schema)` | `--model`, `--prompt-file`, `--image`, `--schema-file` |
+| `MVP` | `llm.frontier judge` | `judge(model, rubric, samples)` | `--model`, `--rubric-file`, `--samples-file` |
 
 **The raw completion and the parsed structure are returned separately**, and the raw one is what `--save` persists first — *"the raw completion is persisted before anything coerces it."* `call_record` is always populated.
 
@@ -355,26 +406,28 @@ Secrets come from the environment only. There is no `--api-key` flag.
 
 ### K7 — `store`
 
-| Command | Port operation | Key flags |
-|---|---|---|
-| `store put <file>` | `put(bytes, media_type)` | `--media-type`, `--root` |
-| `store get <sha256>` | `get(artifact)` | `--save`, `--root` |
-| `store verify <sha256>` | `verify(artifact)` | `--root` |
-| `store ls` | — (index) | `--prefix`, `--root` |
-| `store ledger-read <unit-dir>` | `read_ledger(unit)` | `--root` |
-| `store ledger-begin` / `ledger-commit` / `ledger-fail` | `begin` / `commit` / `fail` | `--stage`, `--unit` |
-| `store manifest-rebuild <out-dir>` | `rebuild_manifest()` | — |
+| St. | Command | Port operation | Key flags |
+|:---:|---|---|---|
+| `now` | `store put <file>` | `put(bytes, media_type)` | `--media-type`, `--root` |
+| `now` | `store get <sha256>` | `get(artifact)` | `--save`, `--root` |
+| `now` | `store verify <sha256>` | `verify(artifact)` | `--root` |
+| `now` | `store ls` | — (index) | `--prefix`, `--root` |
+| `now` | `store ledger-read <unit-dir>` | `read_ledger(unit)` | `--root` |
+| `now` | `store ledger-begin` / `ledger-commit` / `ledger-fail` | `begin` / `commit` / `fail` | `--stage`, `--unit` |
+| `now` | `store manifest-rebuild <out-dir>` | `rebuild_manifest()` | — |
 
 `get` on a miss raises — it **never returns empty**. `verify` returns a bool as a *value*, so a failed verification is exit `0` with `value: false`, not exit `2`: the question was answered.
 
+**One operation, one authority.** Rebuilding the manifest is `K1`'s operation — `rebuild_index()` — because it reads every ledger and knows what a manifest is. K7's port method is `rebuild_manifest()` and *delegates to it*: K7 owns the bytes and the ledger files, not the meaning of a run (`sad.md` §3). `store manifest-rebuild` and `orchestrator manifest-rebuild` are therefore the same operation reached from two sides, and both return what `rebuild_index()` returned. The product surface exposes it as a **library call** in the PoC; the `--rebuild-index` flag stays deferred (`prd.md` §7).
+
 ### K8 — `registry`
 
-| Command | Port operation | Key flags |
-|---|---|---|
-| `registry validate` | load + schema-validate | `--root` |
-| `registry hash` | — | `--root` |
-| `registry show` | — | `--asset`, `--key`, `--root` |
-| `registry ls` | — | `--asset`, `--root` |
+| St. | Command | Port operation | Key flags |
+|:---:|---|---|---|
+| `now` | `registry validate` | load + schema-validate | `--root` |
+| `now` | `registry hash` | — | `--root` |
+| `now` | `registry show` | — | `--asset`, `--key`, `--root` |
+| `now` | `registry ls` | — | `--asset`, `--root` |
 
 A malformed asset stops the run. A missing asset is never defaulted: *"a missing asset silently substituted with an empty one produces a run that completes and extracts nothing, which is indistinguishable from a corpus with no extractable fields."*
 
@@ -394,7 +447,9 @@ A malformed asset stops the run. A missing asset is never defaulted: *"a missing
 | `--format json` | all | Default and only machine format |
 | `--verbose` | all | More on stderr; never changes stdout |
 
-**Allowed flag vocabulary** — asset and call parameters: `--model`, `--schema-file`, `--prompt-file`, `--rubric-file`, `--dpi`, `--page`, `--pages`, `--region`, `--lang`, `--media-type`, `--root`, `--save`, `--correct`, `--jobs`, `--slots`, `--force`, `--repeat`, `--resolve-only`, `--timeout`.
+**Allowed flag vocabulary** — asset and call parameters: `--model`, `--schema-file`, `--prompt-file`, `--rubric-file`, `--dpi`, `--page`, `--pages`, `--region`, `--lang`, `--media-type`, `--root`, `--out`, `--save`, `--correct`, `--jobs`, `--slots`, `--force`, `--repeat`, `--resolve-only`, `--timeout`.
+
+`--out` and `--root` are both allowed and are not synonyms: `--out` is **where a run's artifacts go** (`orchestrator run`), `--root` is **which store or registry a kernel reads** (`store`, `registry`). K1 receives an `--out`; K7 and K8 receive a `--root`. A command that needs both is a sign the boundary has been crossed, and the contract test in `S1-T21` is what notices.
 
 **Forbidden flag vocabulary** — anything naming a document concept: `--field`, `--invoice`, `--cuit`, `--total`, `--document-type`, `--pipeline`, `--validator`, `--extractor`, `--golden`. The presence of any of these is the signal that the surface has drifted into the domain layer.
 
@@ -402,7 +457,7 @@ A malformed asset stops the run. A missing asset is never defaulted: *"a missing
 
 ## 11. The silent-failure matrix
 
-The 17 rows of `02-arch-components.md`'s closing table, each with the command that exercises it and the assertion that proves it.
+The 17 rows of `02-arch-components.md`'s closing table, each with the command that exercises it and the assertion that proves it. Row 15 is the one whose command is `MVP` (§9), so it is declared here and gated in CI — the other sixteen are the Stage 1 gate.
 
 | # | Kernel | Silent failure | Command | Assertion |
 |---:|---|---|---|---|
@@ -420,11 +475,13 @@ The 17 rows of `02-arch-components.md`'s closing table, each with the command th
 | 12 | K5 | Output cut by `num_ctx`, parsed as complete | `llm.local structured --model ollama:qwen2.5 --schema-file s.json` with an oversized prompt | Exit `2`, `reason.code: truncated_output`; never a parsed partial |
 | 13 | K5 | A model swapped under a moving tag mid-run | `llm.local capabilities --model ollama:qwen2.5` twice across a `pull` | The digest differs and the change is visible in `evidence` |
 | 14 | K6 | The model's absence, `null` and a default collapsed into one | `llm.frontier structured … --save O` | The raw completion is saved **before** the parse; absent, `null` and present stay distinguishable |
-| 15 | K6 | A golden set graded by the model that produced it | `llm.frontier judge` with the **governor model** and a golden file | The run is refused: the labeller role must not share a run with the governor role |
+| 15 | K6 | A golden set graded by the model that produced it | `llm.frontier judge` with the **governor model** and a golden file | Exit `3`, `reason.code: role_conflict`: the labeller role must not share a run with the governor role |
 | 16 | K7 | A manifest reporting a finished run that is not finished | `orchestrator manifest-rebuild O` after `rm O/run.json` | The manifest is reconstructed from ledgers alone |
 | 17 | K8 | A missing asset defaulted, producing a run that extracts nothing | `registry validate --root R` with one asset removed | Exit `3`, naming the missing asset; no default substituted |
 
 **This matrix is the Stage 1 acceptance suite.** A row is closed when its assertion runs in CI against a committed fixture.
+
+**Sixteen of the seventeen rows are in the Stage 1 CI gate.** Row 15 is the exception: its command (`llm.frontier judge`) is marked `MVP` in §9, so the row stays **declared and unasserted** until `judge` lands — which is the honest state, and exactly why §9 marks it rather than leaving the contradiction implicit. Rows 1–14, 16 and 17 exercise only `now` commands. (`--repeat` on rows 3–10, 13 doubles as the determinism-class proof for K2/K3 and the non-reproducibility demonstration for K4/K5.)
 
 ---
 
@@ -432,18 +489,26 @@ The 17 rows of `02-arch-components.md`'s closing table, each with the command th
 
 Each row above needs a committed input. The fixture set is small and named for the failure it provokes:
 
-| Fixture | Provokes |
-|---|---|
-| `synthetic-3stage.yaml` | K1 rows 1, 2; the Stage 1 closing flow |
-| `scan-hidden-layer.pdf` | K2 row 3 — a scan with a 2009 OCR layer planted under it |
-| `scan150.pdf` | K2 row 4 — a genuine 150 DPI scan |
-| `three-invoices.pdf` | K2 row 5; later the Segmenter's over-merge fixture |
-| `rotated.jpg` | K3 row 6 — EXIF orientation 6 |
-| `blurry.jpg` | K3 row 7 — high DPI, low Laplacian variance |
-| `blank.png` | K4 row 9 |
-| `lowconf.png` | K4 row 10 — a page where the engine reports no confidence |
-| `large.pdf` | K4 row 11 — more pages than one OCR call accepts |
-| `oversized-prompt.txt` | K5 row 12 — a prompt that overflows `num_ctx` |
+| Fixture | Provokes | Row |
+|---|---|:---:|
+| `synthetic-3stage.yaml` | K1 — a killed stage, and a `done` whose artifact is partial; the Stage 1 closing flow | 1, 2 |
+| `scan-hidden-layer.pdf` | K2 — a scan with a stale invisible OCR layer planted under it | 3 |
+| `scan150.pdf` | K2 — a genuine 150 DPI scan | 4 |
+| `three-invoices.pdf` | K2 — a split range; later the Segmenter's over-merge fixture | 5 |
+| `rotated.jpg` | K3 — EXIF orientation 6 | 6 |
+| `blurry.jpg` | K3 — high DPI, low Laplacian variance | 7 |
+| `page.png` | K3 — a crop whose inverse map must land back in page coordinates | 8 |
+| `blank.png` | K4 — an empty page | 9 |
+| `lowconf.png` | K4 — a page where the engine reports no confidence | 10 |
+| `large.pdf` | K4 — more pages than one OCR call accepts | 11 |
+| `oversized-prompt.txt` | K5 — a prompt that overflows `num_ctx` | 12 |
+| `model-swap.md` | K5 — a recipe, not a document: `capabilities`, `--model ollama:qwen2.5 pull`, `capabilities` again, comparing digests | 13 |
+| *(no fixture)* | K6 row 14 needs an **unreachable provider**: point `DOCFLOW_*_HOST` at a closed port. The absence/`null`/present distinction is asserted with a live provider for the first two. | 14 |
+| `golden-samples.json` + governor model | K6 — the labeller/governor conflict | 15 |
+| *(no fixture)* | K7 row 16 is `rm O/run.json` between two invocations | 16 |
+| `registry-broken/` | K8 — the same registry with one asset removed | 17 |
+
+Four rows need no committed document (13, 14, 16 and row 1–2's generator): they are **procedures** over the artifacts the other rows already produce. Two of them (14, 16) assert a difference between two invocations rather than a property of one, which is why `--repeat` cannot express them and the suite drives the CLI twice instead.
 
 `# TODO: [MVP]` — generate these synthetically where possible rather than committing real documents. `scan-hidden-layer.pdf` and `rotated.jpg` can both be produced by a fixture generator, which keeps the repo free of corpus data.
 
@@ -455,10 +520,10 @@ The kernel CLI is the **Stage 1 acceptance harness**, not an add-on. Three tasks
 
 | ID | Task | Depends on | Deliverable | Done when (verifiable) | Effort |
 |---|---|---|---|---|---|
-| **S1-T20** | `docflow-kernel` entry point: subcommand dispatch, `--list`, the exit-code contract, the `KernelResult` JSON envelope, `--save` through K7 | T01 | `docflow/kernel_cli.py`, `docflow/kernel_cli/__init__.py` | The five exit codes are reachable and unit-tested; stdout is valid JSON for every reachable path; `--list` shows the 8 kernels with determinism class and adapter availability | M |
-| **S1-T21** | Per-kernel subcommands, 1:1 with port methods, filled in as each adapter lands | T20, and each of T12–T17 as it completes | `docflow/kernel_cli/{pdf,image,ocr,llm,store,registry,orchestrator}.py` | Every command in §9 dispatches; a contract test compares each command's flag set against its port signature and fails on any flag with no counterpart | L |
-| **S1-T22** | Silent-failure suite: one assertion per row of §11, with fixtures from §12 | T21 | `tests/kernel_cli/` + `fixtures/` | All 17 assertions run in CI; `--repeat` proves identical hashes for the deterministic kernels and differing hashes for the sampled ones | L |
-| **S1-T19** | **Stage 1 closing flow (synthetic)** — now depends on T20–T22 in addition to T09, T10, T18 | T09, T10, T18, **T22** | Integration test + demo script | Unchanged from `wbs.md`, **plus**: the flow is invocable as `docflow-kernel orchestrator run descriptors/synthetic-3stage.yaml --out O`, and the pause/resume/`stop --force` recovery is observable via `orchestrator ledger-read` | L |
+| **S1-T20** | `docflow-kernel` entry point: subcommand dispatch, `--list`, the exit-code contract, the `KernelResult` JSON envelope, `--save` through K7 | `S1-T01` | `docflow/kernel_cli/__init__.py`, `docflow/kernel_cli/main.py` (one **package**, never a `kernel_cli.py` module beside it) | The five exit codes are reachable and unit-tested; stdout is valid JSON on every path that emits a `KernelResult`; stderr never carries anything a script parses; `--list` shows the 8 kernels with determinism class and adapter availability | M |
+| **S1-T21** | Per-kernel subcommands, 1:1 with port methods, filled in as each adapter lands | `S1-T20`, and each of `S1-T12`–`S1-T17` as it completes | `docflow/kernel_cli/{orchestrator,store,registry,pdf,image,ocr,llm}.py` | Every command in §9 **not marked `MVP`** dispatches, and every `MVP` command exits `4` naming the operation as unavailable; a contract test compares each dispatched command's flag set against its port signature and fails on any flag with no counterpart | L |
+| **S1-T22** | Silent-failure suite: one assertion per row of §11, with fixtures from §12 | `S1-T21` | `tests/kernel_cli/` + `fixtures/` | The **16** rows whose commands are `now` assert in CI against a committed fixture and target a `reason.code`, never a message string; row 15 is declared and gated until `judge` lands; `--repeat` proves identical hashes for the deterministic kernels and differing hashes for the sampled ones (`# TODO: [MVP]` — fixture generator instead of committed documents; split into a fast subset and a gated subset for K4–K6) | L |
+| **S1-T19** | **Stage 1 closing flow (synthetic)** — now depends on `S1-T20`–`S1-T22` in addition to `S1-T09`, `S1-T10`, `S1-T18` | `S1-T09`, `S1-T10`, `S1-T18`, **`S1-T22`** | Integration test + demo script | Unchanged from `wbs.md`, **plus**: the flow is invocable as `docflow-kernel orchestrator run descriptors/synthetic-3stage.yaml --out O`, and the pause/resume/`stop --force` recovery is observable via `orchestrator ledger-read` | L |
 
 `# TODO: [MVP]` for this surface: move `docflow-kernel` into a `[dev]` extra so it is not installed with the release package; add `--format yaml`; a fixture generator to replace committed fixtures.
 

@@ -69,7 +69,7 @@ graph TB
 
 **Two kernels are not engines.** K7 and K8 mechanize *state* and *configuration* — where an artifact lives and how it is verified, and where a corpus's tunable decisions live and how they are versioned.
 
-**Stage 1 implements only the operations Stage 2 calls.** Kernels such as K3's `phash`, K2's `merge`/`embedded_images`/`page_facts` beyond classification, and K6's `judge`/`count_tokens`/batch roles are documented targets, not PoC scope. `# TODO: [MVP]`.
+**Stage 1 implements only the operations Stage 2 calls.** Kernels such as K3's `phash`, K2's `merge`/`embedded_images`/`page_facts` beyond classification, and K6's `judge`/`count_tokens`/batch roles are documented targets, not PoC scope. `# TODO: [MVP]`. `kernel-cli.md` §9 carries the per-command status and is the authority on which of them a command surface exposes; `sad.md` states the scope, `kernel-cli.md` enumerates it.
 
 ## 4. Determinism contract
 
@@ -98,6 +98,12 @@ $$key = H(\;\text{input hash} \;\|\; \text{kernel id} \;\|\; \text{kernel versio
 | **model revision** | Ollama digest, provider model string | `qwen2.5` is a **moving tag**; the digest is the identity |
 
 **The last two are the ones usually missing**, and they are the ones that produce the failure this design exists to prevent: a stage that is `done` and no longer correct. With them, an improved prompt changes the registry hash, every `extract.p` key changes, and the ledger's completion claims become *visibly stale* instead of quietly wrong — which is what gives `--force --stage extract.p` something precise to invalidate.
+
+### 5.1 Why the registry hash only works if policy cannot be overridden
+
+The registry hash is a cache-key term, so it is only sound if **the registry is the sole source of every value the hash covers**. A threshold that arrived from the environment would change a stage's output without ever entering the key — the ledger would say `done` about a result produced under a setting nothing recorded. That is the same class of silent error as a missing registry term, one layer up.
+
+It follows that corpus policy and operational settings are **two surfaces, not one chain** (ADR-009): operational settings have the CLI → environment → `.env` → default precedence, and policy has no precedence at all.
 
 ## 6. Kernel boundary types
 
@@ -292,6 +298,8 @@ graph LR
 | `consistency` | Consistency across extractors | `null` | set — both reads compared |
 | `catalog` | Catalog | `unverified` | `unverified` |
 
+**`unverified` needs a reason attached.** No pipeline runs the Catalog yet, so on every pipeline today `catalog: unverified` means *never attempted* — and a source that was unreachable would produce the same word. Collapsing the two is the mistake the Catalog exists to prevent, so the Contract records **why** (`not_run`, `source_unavailable`, `pending_retry`) beside the verdict, and the retry queue has an owner from the first document rather than after an incident. `unverified` stays `unverified`: never a rejection (FR-22), and never silently upgraded to `ok`.
+
 **Why a single score is refused.** A field accumulates signals from five sources — cut confidence, Reader confidence, the four Validator verdicts, Consistency's reinforcement or disagreement, and the Catalog's state. Collapsing them repeats the mistake the Catalog exists to prevent: it mixes `unverified because the service was down` with `verified and matching`. With one number, a field nobody cross-checked would look identical to one that survived contrast. **The threshold is the consumer's** — the system's obligation is to make the difference visible, not to guess which difference matters.
 
 **`consistency: null` is information**, not a gap: it tells the consumer this pipeline could not contrast that field, which is exactly what is needed to choose a pipeline per document type. **Failure is partial**: an illegible page is marked as such and the rest of the document is still emitted, with the absence declared.
@@ -345,6 +353,13 @@ graph LR
 - **Context / options:** `my_prompt.md` requires both an include-able library and a CLI, with each component invocable alone. Considered: a CLI with a library underneath; a library with the CLI as one caller among others.
 - **Decision:** Library first, with identical names across both surfaces — `Pipeline("M1-ErpVR", model="ollama:qwen2.5").run(path)` and `docflow run --pipeline M1-ErpVR`.
 - **Consequences:** No logic lives in argument parsing. Batch, resume and the ledger are library capabilities the CLI merely exposes.
+
+### ADR-009 — Corpus policy lives in K8, never in a flag or the environment
+
+- **Context / options:** Component thresholds (`CUT_CONFIDENCE`, `MIN_CHARS`, `MIN_DPI`, `CORRECT`, `TOLERANCE_AMOUNTS`) are corpus-wide facts. Considered: environment settings with the same precedence chain as `DOCFLOW_JOBS`; registry assets with no override; registry assets that the environment can override per deployment.
+- **Decision:** **Registry assets, with no override.** A threshold is a versioned document in `registry/policies/`, and the registry hash stores it.
+- **Consequences:** A threshold change invalidates exactly the stages that read it, which is what makes the ledger's `done` claims verifiable rather than merely recorded (§5.1). The cost is that a per-deployment threshold tweak requires a registry change rather than an environment variable — accepted deliberately, because an out-of-band tweak would change output without changing the key. The environment keeps paths, slots, model and host; nothing in §11 of `kernel-cli.md` reports a threshold as callable.
+- **Historical names, kept so a grep still lands here.** The five values were documented as environment variables — `DOCFLOW_CUT_CONFIDENCE`, `DOCFLOW_MIN_CHARS`, `DOCFLOW_MIN_DPI`, `DOCFLOW_CORRECT`, `DOCFLOW_TOLERANCE_AMOUNTS` — and `03-cli.md` derives a flag name from each (`--cut-confidence`). None of those names is live: they are registry key paths now, and there is no flag. `03-cli.md` is marked superseded on that point rather than rewritten, because it is a design proposal and the reversal is the interesting part.
 ## 13. Risks
 
 | Risk | Type | Stage | Mitigation |
@@ -379,7 +394,7 @@ graph LR
 | **Reconstructor** | — | ✓ minimal (layout + continuity) | reused |
 | **Validator** | — | ✓ (4 checks + escalation policy) | reused |
 | **Consistency** | — | ✓ (normalize, tolerance, arithmetic tie-break, cross-extractor) | only in the `ErpVR` codes |
-| **Catalog** | — | ✓ minimal (unverified + retry queue) | described, no pipeline runs it |
+| **Catalog** | — | ✓ minimal (unverified + retry queue) | described, no pipeline runs it — every field carries `catalog: unverified` with a recorded reason |
 | **Contract** | — | ✓ (verdict vector, trace, partial emission) | reused — shape-identical output |
 | **Reviewer** | — | ✓ minimal (`queue`, `correct`, `promote`) | reused |
 | **Pipelines** | — | 1 canonical `ErpVR` code exercised | **all 13 codes** |
