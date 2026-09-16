@@ -1,8 +1,8 @@
 # Workflows
 
-How the direct circuits are built out of the components defined in `README.md`.
+How the direct circuits are built out of the components defined in `components.md`.
 
-`README.md` defines **components** (what they produce) and **three general flows** (Rules, Interpretation, Vision — named by what the extractor receives). This document defines the **direct circuits** (named by what the input is) and maps each one onto those components.
+`components.md` defines the **components** (named by what they produce) and `README.md` the **three general flows** (Rules, Interpretation, Vision — named by what the extractor receives). This document defines the **direct circuits** (named by what the input is) and maps each one onto those components.
 
 The two decompositions are orthogonal, not competing:
 
@@ -29,11 +29,11 @@ A circuit is the same pipeline with the components whose job is already known to
 
 Circuits are not a separate architecture — they are the routes **Diagnosis** already computes.
 
-`README.md` has Diagnosis running before the read, detecting what is there, measuring whether it is processable, and adapting the input. Its own routing table is what separates a text layer from an image. A circuit is Diagnosis's verdict carried to its conclusion instead of merging back into the shared path.
+`components.md` has Diagnosis running before the read, detecting what is there, measuring whether it is processable, and adapting the input. Its own routing table is what separates a text layer from an image. A circuit is Diagnosis's verdict carried to its conclusion instead of merging back into the shared path.
 
 That is also why the circuits keep a piece of Diagnosis even when they skip nearly everything else: without the detection step there is no gate, and the circuit's input assumption is unchecked.
 
-**The gate must be quality, not presence.** `README.md` is explicit that a PDF can carry an old, bad OCR layer, and that routing by presence sends it to conversion and drags its errors along unreviewed. The check is proportion and quality — a layer with 40 characters on an A4 sheet is not a text PDF.
+**The gate must be quality, not presence.** `components.md` is explicit that a PDF can carry an old, bad OCR layer, and that routing by presence sends it to conversion and drags its errors along unreviewed. The check is proportion and quality — a layer with 40 characters on an A4 sheet is not a text PDF.
 
 ---
 
@@ -85,7 +85,7 @@ graph LR
 | Schema, type, arithmetic | Validator | Unchanged |
 | Verdict vector | Contract | Unchanged |
 
-**Where the reduction is honest.** Conversion has no correction step — `README.md` is clear that a converter does not read badly, it transcribes what is there, and that applying a language model "just in case" can only introduce damage. A text PDF genuinely does not need OCR or correction.
+**Where the reduction is honest.** Conversion has no correction step — `components.md` is clear that a converter does not read badly, it transcribes what is there, and that applying a language model "just in case" can only introduce damage. A text PDF genuinely does not need OCR or correction.
 
 **Where the reduction is a trade.** `pdftotext` produces reading order, but it does so heuristically: it does not associate a table header with rows continuing on the next page, and it does not collapse a header repeated across five pages. That is the Reconstructor's job and it is not being done. Linear text with a broken table is still plausible-looking text, so the failure is quiet.
 
@@ -109,7 +109,7 @@ graph LR
     B -.->|"illegible"| I["Route aside<br/>with reason"]
 ```
 
-This is the general cascade **minus segmentation, identification, reconstruction and contrast** — the sequence `README.md` already describes for the image path, terminated after extraction.
+This is the general cascade **minus segmentation, identification, reconstruction and contrast** — the sequence `components.md` already describes for the image path, terminated after extraction.
 
 | Step | Component it stands in for | What it does |
 |---|---|---|
@@ -121,7 +121,7 @@ This is the general cascade **minus segmentation, identification, reconstruction
 | Validation | Validator | Unchanged |
 | Emit | Contract | Unchanged |
 
-**Legibility is the gate, and it is not resolution.** `README.md` distinguishes the two: an image can have enough DPI and still be out of focus. Passing a blurred page to OCR anyway is the one invalid outcome it names — OCR returns invented text indistinguishable from a real reading. This circuit therefore inherits both valid exits from Diagnosis (preprocess, or route aside with a reason) and must not add a third.
+**Legibility is the gate, and it is not resolution.** `components.md` distinguishes the two: an image can have enough DPI and still be out of focus. Passing a blurred page to OCR anyway is the one invalid outcome it names — OCR returns invented text indistinguishable from a real reading. This circuit therefore inherits both valid exits from Diagnosis (preprocess, or route aside with a reason) and must not add a third.
 
 **What the correction step needs.** It is the highest-risk step in the circuit: it is a model editing text, so it can silently change a value. Correction must be scoped to characters and spacing, never to digits, and the raw OCR output has to be retained alongside the corrected text for audit. `d.md`'s rule applies directly — auditing is not normalizing, and the raw value is what diagnostics are built from.
 
@@ -149,24 +149,24 @@ graph LR
 | Validation | Validator | Unchanged |
 | Emit | Contract | Unchanged |
 
-**This is the shortest route and the only one with no separate read step.** `README.md` notes that Vision uses neither Diagnosis nor Reader: it hands pixels to the model, which reads and extracts in one step. This circuit is that observation taken literally, with only the treatment half of Diagnosis retained because a photo needs geometric correction before any model sees it.
+**This is the shortest route and the only one with no separate read step.** `components.md` notes that Vision uses neither Diagnosis nor Reader: it hands pixels to the model, which reads and extracts in one step. This circuit is that observation taken literally, with only the treatment half of Diagnosis retained because a photo needs geometric correction before any model sees it.
 
 **Diagnosis is partial here, and that is the risk.** With the detection half gone, nothing measures whether the image is legible before the MoE is asked to read it — so the model is the first thing to see the pixels, and a low-quality input surfaces as low-confidence extraction rather than as a routing decision. The treatment step is the only defense, and it corrects, it does not reject.
 
-**No continuity step.** The general Vision flow still needs cross-page continuity (`README.md` marks it ◐ there for exactly that reason). A single-page image has no page boundary, so the circuit does not drop this step — the step has nothing to do.
+**No continuity step.** The general Vision flow still needs cross-page continuity (`components.md` marks it ◐ there for exactly that reason). A single-page image has no page boundary, so the circuit does not drop this step — the step has nothing to do.
 
 ---
 
 ## What every circuit gives up
 
-Grouped by the component removed, since `README.md` already states each consequence.
+Grouped by the component removed, since `components.md` already states each consequence.
 
 | Removed | Consequence | Detectable downstream? |
 |---|---|---|
-| **Segmenter** | Assumes one file = one document. Fields from a second document overwrite the first's | **No** — `README.md` calls this unrecoverable and silent |
+| **Segmenter** | Assumes one file = one document. Fields from a second document overwrite the first's | **No** — `components.md` calls this unrecoverable and silent |
 | **Identifier** | No type, so no template routing and no evidence record. A misrouted document is invisible | Only as a badly extracted field, at the end |
 | **Reconstructor** | No cross-page table continuity, no header collapsing, no reading order | Partially: as missing or misattributed fields |
-| **Cross-flow contrast** | No second read of a critical field. A plausible-but-false value (15400 vs. 1540) passes every internal check | **No** — `README.md` calls contrast the only mechanism that sees this |
+| **Cross-flow contrast** | No second read of a critical field. A plausible-but-false value (15400 vs. 1540) passes every internal check | **No** — `components.md` calls contrast the only mechanism that sees this |
 | **Catalog** | Identity fields never checked externally. A valid CUIT on the wrong company is undetected | Only by a human eventually noticing |
 
 **The two silent ones are the Segmenter and the contrast.** Every other reduction degrades into something visible — a missing field, a low confidence, an arithmetic failure. Those two produce output that looks correct.
@@ -191,7 +191,7 @@ graph LR
     G --> C
 ```
 
-`README.md` makes the Validator the single place where "could not" is defined, and this is why: a circuit failure is not a new kind of failure, it is the existing escalation with a lower starting point.
+`components.md` makes the Validator the single place where "could not" is defined, and this is why: a circuit failure is not a new kind of failure, it is the existing escalation with a lower starting point.
 
 **The two escalation kinds cost differently**, and a circuit is more likely to produce the second:
 
