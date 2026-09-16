@@ -2,7 +2,20 @@
 
 The component reference for the document extraction system.
 
-Components are named by **what they produce**. The method flows that use them are named by **what the extractor receives** — see `README.md` for the three general flows (Rules, Interpretation, Vision) and `workflow.md` for the thirteen input pipelines (coded `M<material>.<extractor>`).
+Components are named by **what they produce**.
+
+Two other decompositions exist and are orthogonal to this one:
+
+| Axis | Named by | Where |
+|---|---|---|
+| **Material** | How the text is obtained | `workflow.md` — five materials, `M0`–`M4` |
+| **Extractor** | How values are read | `r` regex · `p` prompt, written inside the primitive |
+
+A primitive is **EVR** = **E**xtractor → **V**alidate → **R**eport, named `ErVR`, `EpVR` or `ErpVR`. A pipeline is a material prefix plus a primitive — thirteen in total, defined in `workflow.md`.
+
+The traditional flow names (Rules, Interpretation, Vision) are aliases for the extractor modes: Rules is `ErVR`; Interpretation and Vision are both `EpVR`, on text and on pixels respectively. See `README.md`.
+
+**In this document, "flow" means one extractor run.** Where Consistency compares two runs, that is a comparison of extractors.
 
 ---
 
@@ -17,7 +30,7 @@ Components are named by **what they produce**. The method flows that use them ar
 | **Reconstructor** | Pages | Inside | Layout, tables, reading order | ✓ | ✓ | ◐ |
 | **Validator** | Field | Inside | Shape, type, content, check digit | ✓ | ✓ | ✓ |
 | **Catalog** | Document | Inside | Validates against external sources | ✓ | ✓ | ✓ |
-| **Consistency** | Document | **Between** | Cross-checks fields and compares flows | ✓ | ✓ | ✓ |
+| **Consistency** | Document | **Between** | Cross-checks fields and compares extractors | ✓ | ✓ | ✓ |
 | **Contract** | Document | **After** | Canonical shape of the output | ✓ | ✓ | ✓ |
 | **Reviewer** | All | **After** | Closes the loop with human corrections | ✓ | ✓ | ✓ |
 
@@ -30,10 +43,10 @@ Three components cannot emit until another has finished:
 | Barrier | Waits for |
 |---|---|
 | **Segmenter** | All pages read |
-| **Consistency across flows** | Both flows over the same field |
+| **Consistency across extractors** | Both reads over the same field |
 | **Contract** | All pages resolved |
 
-Page-level components are **parallelizable**. Consistency across fields is not a barrier: it operates inside one flow, over already-extracted fields.
+Page-level components are **parallelizable**. Consistency across fields is not a barrier: it operates inside one extractor run, over already-extracted fields.
 
 ---
 
@@ -147,7 +160,7 @@ Correction exists only in OCR: a converter does not read badly, it transcribes w
 
 Routing is **per page**: a mixed PDF combines both paths and joins them at the end.
 
-**It returns tokens, not text.** The distinction matters: if the Reader delivered already-ordered text, it would absorb part of the Reconstructor and that component would not be needed. It delivers **tokens with coordinates**, with no reading order resolved — that way the Reconstructor has a reason to exist and both text flows need it equally.
+**It returns tokens, not text.** The distinction matters: if the Reader delivered already-ordered text, it would absorb part of the Reconstructor and that component would not be needed. It delivers **tokens with coordinates**, with no reading order resolved — that way the Reconstructor has a reason to exist and both text modes need it equally.
 
 ---
 
@@ -211,7 +224,7 @@ The final decision combines the verdicts, and **the most severe failure governs*
 | **Invalid field** | Value, page and offset | **Targeted**: that region is rendered and that field is asked about |
 | **Missing field** | Nothing: it did not find the anchor | **Whole document**: there is no region to point at |
 
-The difference decides the cost. An invalid field has a location, so Vision looks at a crop: cheap and precise. A missing field has nowhere to look, so Vision has to re-read the entire document just as if it were the only flow.
+The difference decides the cost. An invalid field has a location, so Vision looks at a crop: cheap and precise. A missing field has nowhere to look, so the pixel read has to re-run over the entire document just as if it were the only extractor.
 
 That is why **"reprocess those 2, not the 20" applies only to the first case**. If escalation is mostly due to missing fields, the saving is not one order of magnitude but none at all.
 
@@ -242,7 +255,7 @@ The Validator currently runs 4 universal checks (Shape, Type, Content, Digit). B
 graph LR
     A["Validated<br/>fields"] --> N["Normalize<br/>common format"]
     N --> B{"Do they close<br/>with each other?"}
-    N --> C{"Do they agree<br/>across flows?"}
+    N --> C{"Do they agree<br/>across extractors?"}
     B -->|"no"| D["Mark<br/>involved fields"]
     C -->|"no"| G{"Does arithmetic<br/>break the tie?"}
     G -->|"yes"| H["Resolve<br/>without a human"]
@@ -256,9 +269,9 @@ It compares values against each other at two levels:
 | Level | What it compares | Example |
 |---|---|---|
 | **Between fields** | Arithmetic and ordering inside the document | subtotal + taxes = total; issue ≤ due |
-| **Across flows** | The same field extracted by two paths | total according to Rules vs. total according to Vision |
+| **Across extractors** | The same field read by two paths | total by `r` vs. total by `p` |
 
-**The across-flows level is the answer to the plausible-but-false error.** A total of 15400 that was 1540 passes shape, type and content and has no check digit: no internal check sees it. But if Rules reads 1540 and Vision reads 15400 on the same document, the disagreement appears — and it is the strongest signal available in the whole system.
+**The across-extractors level is the answer to the plausible-but-false error.** A total of 15400 that was 1540 passes shape, type and content and has no check digit: no internal check sees it. But if `r` reads 1540 and `p` reads 15400 on the same document, the disagreement appears — and it is the strongest signal available in the whole system.
 
 ### How to make contrast usable
 
@@ -272,11 +285,13 @@ It compares values against each other at two levels:
 | Identifiers | **Exact** | A CUIT has no rounding: a different digit is an error |
 | Dates | Exact | There is no approximate equivalent |
 
-**Let arithmetic arbitrate.** The two levels are not independent. If the flows differ on the total but only one of the two values closes with the document's own `subtotal + taxes`, **Consistency already has the answer** and no human is needed. The arithmetic level breaks the tie at the across-flows level.
+**Let arithmetic arbitrate.** The two levels are not independent. If the reads differ on the total but only one of the two values closes with the document's own `subtotal + taxes`, **Consistency already has the answer** and no human is needed. The arithmetic level breaks the tie at the across-flows level.
 
 Only when neither of the two closes, or the field is an identifier with no arithmetic relation, does the disagreement go to review.
 
-**Cost.** Running two flows over everything is expensive, so contrast is reserved: per critical field (amounts, identifiers) and not per whole document.
+**Cost.** Running two reads over everything is expensive, so contrast is reserved: per critical field (amounts, identifiers) and not per whole document.
+
+**Cheapest when the text is already in hand.** The acquisition is paid once, so a second read costs one extra call on critical fields rather than a second pass over the document. That makes `ErpVR` the only primitive whose characteristic failure is detectable. See `workflow.md`.
 
 ---
 
@@ -318,9 +333,9 @@ graph LR
 
 Emitting is a **barrier**: it waits until all pages are resolved before producing the document's output.
 
-It joins the fields that came from different pages and attaches the `(page, flow)` trace per field.
+It joins the fields that came from different pages and attaches the `(page, extractor)` trace per field.
 
-**It handles heterogeneous provenance.** With per-field escalation, one document holds fields resolved by Rules with an `exact offset` alongside fields resolved by Vision with an `approximate bbox`. The Contract cannot assume a single origin: each field declares its flow and its trace type.
+**It handles heterogeneous provenance.** With per-field escalation, one document holds fields resolved by `r` with an `exact offset` alongside fields resolved by `p` on pixels with an `approximate bbox`. The Contract cannot assume a single origin: each field declares its extractor and its trace type.
 
 **It emits the verdict vector, not a score.** A field accumulates signals from five sources: cut confidence, Reader confidence, the Validator's four verdicts, Consistency's reinforcement or disagreement, and the Catalog's verified/unverified. Collapsing them into a number repeats the mistake the Catalog prohibits: mixing `unverified due to service outage` with `verified and matching`.
 
@@ -330,7 +345,7 @@ So each field is emitted with its verdicts kept separate:
 {
   "total": {
     "value": "15400.00",
-    "flow": "rules",
+    "extractor": "r",
     "trace": { "page": 3, "offset": [412, 424] },
     "verdicts": {
       "shape": "ok",
@@ -360,7 +375,7 @@ graph LR
     D --> E["Does it repeat?<br/>yes → rule"]
     E --> F["New rule<br/>or template"]
     E --> G["New type<br/>in Identifier"]
-    F --> H["Back<br/>to the flow"]
+    F --> H["Back<br/>to the pipeline"]
     G --> H
 ```
 
