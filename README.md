@@ -10,6 +10,7 @@ Los flujos principales comparten actividades que aparecen en más de uno. Se def
 |---|---|---|
 | **Clasificación** | Determina qué es el documento y qué ruta toma | Los tres |
 | **Lectura** | Obtiene texto y estructura: por conversión determinista o por OCR | Tradicional, AI sobre texto |
+| ↳ *Preparación* | Detecta qué contiene, mide su calidad y lo adecúa antes de leer | Los dos anteriores |
 | **Estructurar** | Layout, tablas y orden de lectura | Tradicional |
 | **Validación** | Cuatro chequeos sobre un valor: forma, tipo, consistencia, dominio | Los tres, en varios puntos |
 | **Esquema** | Contrato de salida de los datos | Los tres |
@@ -65,27 +66,48 @@ Dos consecuencias de diseño:
 
 ### Componente: Lectura
 
-Obtiene el texto del documento. Tiene dos caminos según **qué contiene** el archivo, y la diferencia entre ellos no es de calidad sino de naturaleza: uno extrae, el otro interpreta. La corrección solo aplica al segundo.
+Obtiene el texto del documento. Antes de leer, un subcomponente **prepara** el archivo: mide qué contiene y en qué estado, y adecúa la entrada. Después rutea al camino que corresponda, y la diferencia entre caminos no es de calidad sino de naturaleza: uno extrae, el otro interpreta. La corrección solo aplica al segundo.
 
 ```mermaid
 graph LR
-    A["Documento"] --> B{"¿Qué contiene?"}
-    B -->|"texto embebido"| C["Conversión<br/>pdftotext · ghostscript"]
-    B -->|"PDF con imagen"| D["Exportar<br/>la imagen"]
-    B -->|"imagen"| E["Imagen<br/>directa"]
-    D --> F["OCR<br/>reconocer caracteres"]
-    E --> F
+    A["Documento"] --> B["Preparación<br/>detectar · medir · adecuar"]
+    B --> C{"¿Trae texto<br/>usable?"}
+    C -->|"sí"| D["Conversión<br/>pdftotext · ghostscript"]
+    C -->|"no"| E["Exportar<br/>o usar imagen"]
+    E --> F["OCR<br/>reconocer caracteres"]
     F --> G["Corrección<br/>léxico · contexto"]
-    C --> H["Texto<br/>+ coordenadas"]
+    D --> H["Texto<br/>+ coordenadas"]
     G --> H
 ```
 
-#### Las tres variantes
+#### Subcomponente: Preparación
+
+Corre antes de cualquier lectura y hace tres cosas: **detecta** qué hay en el archivo, **mide** si es procesable, y **adecúa** la entrada para que la lectura tenga chance.
+
+| Chequeo | Qué mira | Qué decide |
+|---|---|---|
+| **PDF · proporción de texto** | Cuánta capa de texto hay por página, y si es usable | Conversión o exportar imagen |
+| **DOCX · contenido** | Si el cuerpo es texto estructurado o imágenes embebidas | Parsear el marcado o exportar imagen |
+| **Imagen · resolución** | DPI y dimensiones | Leer como está, reescalar o rechazar |
+| **Imagen · peso** | Bytes y tamaño del lienzo | Comprimir o dividir antes de procesar |
+| **Imagen · legibilidad** | Nitidez, contraste, inclinación | Procesar, preprocesar o derivar |
+
+**No alcanza con preguntar si hay texto: hay que ver si es usable.** Un PDF escaneado puede traer una capa de OCR de una pasada anterior, mala. El archivo "tiene texto", así que el ruteo por presencia lo manda a conversión — y arrastra los errores de esa capa vieja sin que nadie los revise. Por eso el chequeo es de **proporción y calidad**, no de existencia: cuántos caracteres por página, qué proporción son alfabéticos, si la longitud es coherente con el área de la página. Una capa con 40 caracteres en una página A4, o llena de símbolos sueltos, es basura y corresponde tratarla como imagen.
+
+**Las medidas son por página, no por documento.** Un expediente armado a mano mezcla páginas digitales con escaneos, y el porcentaje global no dice nada útil sobre ninguna de las dos. Cada página se mide y se rutea por separado.
+
+**El DPI se adecúa, no solo se mide.** Por debajo de cierto umbral el OCR falla de forma sistemática, y el umbral depende del cuerpo de texto: letra chica necesita más resolución que letra grande. Un valor orientativo para texto de cuerpo normal es ~300 DPI; muy por debajo de eso conviene reescalar y registrar que se hizo, porque el reescalado mejora la lectura pero no recupera información que nunca se capturó.
+
+**Legibilidad es distinto de resolución.** Una imagen puede tener DPI suficiente y aun así no ser procesable: desenfocada, con contraste plano, o muy inclinada. Los indicadores habituales son la varianza del laplaciano para nitidez, el rango dinámico para contraste, y el ángulo detectado para inclinación. Si el archivo no pasa, hay dos salidas válidas —preprocesar o derivar a revisión— y una inválida: pasarlo al OCR igual y dejar que devuelva texto inventado que después nadie puede distinguir de una lectura real.
+
+**Cuando se rechaza, se registra el motivo.** Un documento ilegible derivado con la razón explícita es información: puede indicar que el escáner está mal configurado, que el origen manda fotos de baja calidad, o que hace falta pedir el documento de nuevo. Sin el motivo, es solo un archivo que no se procesó.
+
+#### Ruteo
 
 | Caso | Camino | Cómo | Corrección |
 |---|---|---|---|
-| **PDF con texto** | Conversión | `pdftotext`, `ghostscript` y similares extraen la capa existente | No |
-| **PDF con imagen** | Exportar + OCR | Se extrae la imagen embebida y se le aplica OCR | Sí |
+| **Trae texto usable** | Conversión | `pdftotext`, `ghostscript` y similares extraen la capa existente | No |
+| **PDF sin texto usable** | Exportar + OCR | Se extrae la imagen embebida y se le aplica OCR | Sí |
 | **Imagen** | OCR | Se le aplica OCR directo | Sí |
 
 #### Por qué la corrección solo aplica a un camino
