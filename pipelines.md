@@ -1,10 +1,10 @@
-# Workflows
+# Pipelines
 
 The thirteen input pipelines, built out of the components defined in `components.md`.
 
 `components.md` defines the **components** (named by what they produce). `README.md` defines the **three method flows** (Rules, Interpretation, Vision — named by what the extractor receives). This document defines the **thirteen input pipelines** and maps each one onto those components.
 
-**Terminology note.** The source notes in `my_prompt.md` call these "flujos"; `README.md` uses that word for the method flows. To keep the two apart, this document calls the input-routed ones **pipelines**, coded `<material>-<primitive>`.
+**Terminology note.** The source notes in `spec.md` call these "flujos"; `README.md` uses that word for the method flows. To keep the two apart, this document calls the input-routed ones **pipelines**, coded `<material>-<primitive>`.
 
 ---
 
@@ -68,7 +68,7 @@ Seen across all five materials, the axis is not really *what the input is* but *
 
 **M0 is the floor, and it makes the rest of the model legible.** With acquisition cost at zero, M0 is nothing but *extraction → validation → reporting*. Every other material is that same pipeline with work prepended to obtain the text. The pipeline is extraction plus verification; the materials are five ways of arriving at its input.
 
-**M0 is a first-class case.** `my_prompt.md` describes a library consumed as includes or as a CLI, and a caller that already holds text is a natural consumer — text from a web form, a database field, an upstream system, or an OCR step run elsewhere.
+**M0 is a first-class case.** `spec.md` describes a library consumed as includes or as a CLI, and a caller that already holds text is a natural consumer — text from a web form, a database field, an upstream system, or an OCR step run elsewhere.
 
 ---
 

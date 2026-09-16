@@ -1,6 +1,14 @@
 # Document extraction
 
-Architecture overview. Component details are in `components.md`, the input-specific routes in `workflow.md`, and the product spec in `my_prompt.md`.
+Architecture overview.
+
+| Document | What it covers |
+|---|---|
+| `components.md` | The ten components — what each produces, its diagram, its failure modes |
+| `pipelines.md` | The thirteen input pipelines, from material to output |
+| `cli.md` | How to invoke them: commands, flags, batch, resume |
+| `spec.md` | The original specification — requirements and constraints |
+| `storytelling.md` | Why the architecture has this shape, as a narrative |
 
 ## Overview
 
@@ -40,7 +48,7 @@ The extractor mode is written inside the primitive — **EVR** = **E**xtractor �
 | **Interpretation** | `EpVR` on text | prompt over text |
 | **Vision** | `EpVR` on pixels | prompt over pixels |
 
-**Interpretation and Vision are the same extractor mode on different materials.** The distinction is real — one sees text, the other sees pixels — but it is a difference of *material*, not of method. `workflow.md` develops this fully.
+**Interpretation and Vision are the same extractor mode on different materials.** The distinction is real — one sees text, the other sees pixels — but it is a difference of *material*, not of method. `pipelines.md` develops this fully.
 
 **Components** are named by what they produce:
 
@@ -109,7 +117,7 @@ graph LR
 
 **Without contrast, the hybrid is just a fallback.** Internal validation does not see the plausible-but-false error: a total of 15400 that was 1540, with the correct shape and type. But if `r` reads 1540 and `p` reads 15400, the disagreement appears — and it is the strongest signal available.
 
-**Contrast needs text.** Two independent reads are only cheap when the text is already in hand — one extra call on critical fields, not a second acquisition. That is what makes `ErpVR` the only primitive whose characteristic failure is detectable, and why M4 (pixels, one fused read) cannot contrast at all. See `workflow.md`.
+**Contrast needs text.** Two independent reads are only cheap when the text is already in hand — one extra call on critical fields, not a second acquisition. That is what makes `ErpVR` the only primitive whose characteristic failure is detectable, and why M4 (pixels, one fused read) cannot contrast at all. See `pipelines.md`.
 
 Cost is bounded by contrasting **per critical field** (amounts, identifiers) and not the whole document.
 
@@ -148,13 +156,13 @@ Multiplying the two axes gives **thirteen pipelines** — a material prefix plus
 | **M3** | image → OCR | ✓ | ✓ | ✓ |
 | **M4** | image → pixels only | — | ✓ | — |
 
-Every pipeline ends in **EVR**, so validation and reporting are uniform across all thirteen. `workflow.md` defines the pipelines, the reduction each one makes, and the residual blind spot it carries.
+Every pipeline ends in **EVR**, so validation and reporting are uniform across all thirteen. `pipelines.md` defines the pipelines, the reduction each one makes, and the residual blind spot it carries.
 
 ---
 
 ## The three flow names
 
-The names below are the traditional ones for the extractor modes. They are shown in their **full-cascade** form — with segmentation, identification and reconstruction — which is the general path. The direct pipelines in `workflow.md` skip most of those components.
+The names below are the traditional ones for the extractor modes. They are shown in their **full-cascade** form — with segmentation, identification and reconstruction — which is the general path. The direct pipelines in `pipelines.md` skip most of those components.
 
 Each resolves what it can and hands the next one what it could not. Escalation is governed by the Validator.
 

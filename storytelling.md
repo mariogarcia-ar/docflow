@@ -1,6 +1,6 @@
 # The story of a document
 
-A narrative companion to `components.md` and `workflow.md`. Those two are reference documents — one lists what the parts do, the other lists the routes. This one explains *why* the architecture has the shape it does.
+A narrative companion to `components.md` and `pipelines.md`. Those two are reference documents — one lists what the parts do, the other lists the routes. This one explains *why* the architecture has the shape it does.
 
 It is not a summary. Everything here is drawn from those two files; if you need a table or a specification, go there. This is the reasoning behind the tables.
 
@@ -96,7 +96,7 @@ There are **two independent decisions**, not one:
 | **Material** | How do we obtain something readable? |
 | **Extractor** | How do we read values from it? |
 
-Getting text and reading values from it are different problems. `workflow.md` states the consequence: `pdftotext` yields a text stream, and **that fact says nothing about how the values get read from it.** Nor does the text that OCR produces.
+Getting text and reading values from it are different problems. `pipelines.md` states the consequence: `pdftotext` yields a text stream, and **that fact says nothing about how the values get read from it.** Nor does the text that OCR produces.
 
 So the combinations multiply rather than add. Four materials can produce text, and each admits three extractor modes:
 
@@ -108,7 +108,7 @@ The single `+1` is the interesting term. **M4 is the one material where the choi
 
 ## The five ways to get text
 
-The material axis looks like a taxonomy of file types. `workflow.md` makes a better observation: **it is not really what the input is, it is what has to happen before there is text.**
+The material axis looks like a taxonomy of file types. `pipelines.md` makes a better observation: **it is not really what the input is, it is what has to happen before there is text.**
 
 | Material | Steps before text exists | Cost |
 |---|---|---|
@@ -296,7 +296,7 @@ Two things follow, and they are the actionable conclusions:
 
 ## Where the story is not finished
 
-An honest narrative names its open threads. These are live in `workflow.md`, and several are load-bearing.
+An honest narrative names its open threads. These are live in `pipelines.md`, and several are load-bearing.
 
 **Who chooses the pipeline?** Nothing yet says whether the caller declares it or the system infers it. This bites hardest at two places: M0, which is a caller *assertion* with no artifact to diagnose, and the M3-versus-M4 fork, where both are valid and the choice is a genuine cost-versus-verification trade rather than a technicality.
 
