@@ -80,7 +80,7 @@ Each plan can be decomposed into **capability epics** whose issues are one-per-`
 | Plan | Decomposition | Epics | Issues |
 |---|---|---:|---:|
 | **Plan 1 — Kernels** | [`issues/plan-01-kernels/README.md`](issues/plan-01-kernels/README.md) | 8 | 22 |
-| Plan 2 — Components | *not yet decomposed* | — | (17) |
+| **Plan 2 — Components** | [`issues/plan-02-components/README.md`](issues/plan-02-components/README.md) | 9 | 17 |
 | Plan 3 — Pipelines | *not yet decomposed* | — | (14) |
 
 **Plan 3 adds configuration and data only.** No new kernel, no new component, no new type: `wbs.md` §5 states Stage 3 is "largely data, not new code".
