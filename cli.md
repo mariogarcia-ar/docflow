@@ -2,7 +2,7 @@
 
 How each of the thirteen pipelines is called from the CLI, and how each of the ten components is invoked on its own.
 
-**The CLI surface below is proposed, not specified.** No document in this workspace defines the command names, flags or job model — `spec.md` states the requirements (library + CLI, per-component invocation, batch, stop with force, pause/resume) without fixing syntax. The examples are consistent with those requirements, with the pipeline codes in `pipelines.md`, and with the component names in `components.md`. Treat them as a design proposal to adjust.
+**The CLI surface below is proposed, not specified.** No document in this workspace defines the command names, flags or job model — `my_prompt.md` states the requirements (library + CLI, per-component invocation, batch, stop with force, pause/resume) without fixing syntax. The examples are consistent with those requirements, with the pipeline codes in `pipelines.md`, and with the component names in `components.md`. Treat them as a design proposal to adjust.
 
 **Contents**
 
@@ -328,7 +328,7 @@ docflow run --extractor rp documentos/ --dry-run
 
 ## Batch
 
-The batch requirement from `spec.md`: one file, several files, or a folder. Folder input **mirrors its tree** in the output.
+The batch requirement from `my_prompt.md`: one file, several files, or a folder. Folder input **mirrors its tree** in the output.
 
 ### One file
 
@@ -371,7 +371,7 @@ docflow run --extractor rp documentos/ --out out/ --jobs 8
 
 ### With a golden set
 
-`spec.md` describes the golden set as serving two jobs: tuning the local models, and comparing the pipelines against each other on equal terms. The second is why the flag exists at run time:
+`my_prompt.md` describes the golden set as serving two jobs: tuning the local models, and comparing the pipelines against each other on equal terms. The second is why the flag exists at run time:
 
 ```bash
 docflow run --pipeline M1-ErpVR documentos/ \
@@ -832,7 +832,7 @@ The ledger therefore records the pipeline code and the config hash, not just a c
 
 ## Control
 
-A folder run over eleven thousand files will be interrupted, and sometimes it has to be interrupted **now**. `spec.md` requires a forced stop, plus pause and resume.
+A folder run over eleven thousand files will be interrupted, and sometimes it has to be interrupted **now**. `my_prompt.md` requires a forced stop, plus pause and resume.
 
 The forced stop is not only a kill switch. It is the **general command for finding out what is running** — because to stop something safely you first have to know it exists, what it is doing, and what it will leave behind.
 
@@ -960,7 +960,7 @@ docflow jobs                          # all runs, including finished
 
 ## Component invocations
 
-`spec.md` requires each component to be invocable on its own, so a stage can be re-run without repeating the ones before it.
+`my_prompt.md` requires each component to be invocable on its own, so a stage can be re-run without repeating the ones before it.
 
 Each component reads the previous one's artifact and writes its own, mirroring the chain in `components.md`:
 

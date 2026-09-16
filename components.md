@@ -245,7 +245,7 @@ The Validator currently runs 4 universal checks (Shape, Type, Content, Digit). B
 
 **How they integrate:** Each new rule follows the same model as the 4 checks — it issues its own verdict and the most severe failure governs. They run in parallel, not chained. The decision of which rules apply per document type is the Identifier's responsibility (when routing).
 
-**Where they are defined:** The concrete rules will go in a separate file (e.g. `reglas-negocio.md` or `d.md`) with the format: Document type → Fields → Rules → How it fails → What escalates.
+**Where they are defined:** The concrete rules will go in a separate file (e.g. `reglas-negocio.md`) with the format: Document type → Fields → Rules → How it fails → What escalates.
 
 ---
 
@@ -285,7 +285,7 @@ It compares values against each other at two levels:
 | Identifiers | **Exact** | A CUIT has no rounding: a different digit is an error |
 | Dates | Exact | There is no approximate equivalent |
 
-**Let arithmetic arbitrate.** The two levels are not independent. If the reads differ on the total but only one of the two values closes with the document's own `subtotal + taxes`, **Consistency already has the answer** and no human is needed. The arithmetic level breaks the tie at the across-flows level.
+**Let arithmetic arbitrate.** The two levels are not independent. If the reads differ on the total but only one of the two values closes with the document's own `subtotal + taxes`, **Consistency already has the answer** and no human is needed. The arithmetic level breaks the tie at the across-extractors level.
 
 Only when neither of the two closes, or the field is an identifier with no arithmetic relation, does the disagreement go to review.
 

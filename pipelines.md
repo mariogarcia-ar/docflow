@@ -2,9 +2,9 @@
 
 The thirteen input pipelines, built out of the components defined in `components.md`.
 
-`components.md` defines the **components** (named by what they produce). `README.md` defines the **three method flows** (Rules, Interpretation, Vision — named by what the extractor receives). This document defines the **thirteen input pipelines** and maps each one onto those components.
+`components.md` defines the **components** (named by what they produce). `README.md` introduces the **two axes** — material and extractor — that generate the routes. This document defines the **thirteen input pipelines** and maps each one onto those components.
 
-**Terminology note.** The source notes in `spec.md` call these "flujos"; `README.md` uses that word for the method flows. To keep the two apart, this document calls the input-routed ones **pipelines**, coded `<material>-<primitive>`.
+**Terminology note.** The source notes in `my_prompt.md` call these "flujos". This document calls the input-routed ones **pipelines**, coded `<material>-<primitive>` — distinct from the *extractor modes* (`r`, `p`, `rp`) they are built from.
 
 ---
 
@@ -68,7 +68,7 @@ Seen across all five materials, the axis is not really *what the input is* but *
 
 **M0 is the floor, and it makes the rest of the model legible.** With acquisition cost at zero, M0 is nothing but *extraction → validation → reporting*. Every other material is that same pipeline with work prepended to obtain the text. The pipeline is extraction plus verification; the materials are five ways of arriving at its input.
 
-**M0 is a first-class case.** `spec.md` describes a library consumed as includes or as a CLI, and a caller that already holds text is a natural consumer — text from a web form, a database field, an upstream system, or an OCR step run elsewhere.
+**M0 is a first-class case.** `my_prompt.md` describes a library consumed as includes or as a CLI, and a caller that already holds text is a natural consumer — text from a web form, a database field, an upstream system, or an OCR step run elsewhere.
 
 ---
 
@@ -125,7 +125,7 @@ graph LR
 | **V**alidate | — never | all thirteen |
 | **R**eport | — never | all thirteen |
 
-**No pipeline skips validation**, including the rules-only ones. A regex match proves a value was **captured**, not that it is **correct** — a bad anchor in Rules is detected only by cross-flow contrast, because the value is real and carries the correct shape and type. Acquisition quality is not a factor: `M0-ErVR` and `M1-ErVR` are the same read, differing only in where the text came from.
+**No pipeline skips validation**, including the rules-only ones. A regex match proves a value was **captured**, not that it is **correct** — a bad anchor in Rules is detected only by contrast, because the value is real and carries the correct shape and type. Acquisition quality is not a factor: `M0-ErVR` and `M1-ErVR` are the same read, differing only in where the text came from.
 
 **What the primitive guarantees.** A field always arrives with the four check verdicts and a trace, whatever route produced it, which is what makes the pipelines substitutable rather than merely similar.
 
@@ -213,7 +213,7 @@ What the mode letter names. All three read the text from the material prefix —
 Cheapest and deterministic; it either captures a value that is there or fails.
 
 - One pattern per wording variant, and at 11k files the variants are unknown.
-- **An anchor error is invisible.** A bad anchor in Rules is detected only by cross-flow contrast, because the value is real and carries the correct shape and type. With no second read, `r` cannot notice it took the value from the neighboring block.
+- **An anchor error is invisible.** A bad anchor in Rules is detected only by contrast, because the value is real and carries the correct shape and type. With no second read, `r` cannot notice it took the value from the neighboring block.
 
 ### EpVR — prompts
 
@@ -228,7 +228,7 @@ Runs `r` and/or `p` over the **same text**, and when both run, Consistency compa
 
 **The only mode that can produce contrast**, and contrast is the one mechanism that catches a plausible-but-false value: a total of 15400 that was 1540 passes shape, type and content, and has no check digit. Nothing internal sees it. A disagreement between two reads does.
 
-**Cheap, because the acquisition is already paid.** `components.md` reserves cross-flow contrast because each method flow re-acquires the document; here the text is in hand, so a second read costs one extra call on critical fields.
+**Cheap, because the acquisition is already paid.** `components.md` reserves contrast because each extractor mode re-acquires the document; here the text is in hand, so a second read costs one extra call on critical fields.
 
 **Not available in M4**, because there is no text for a regex to run on.
 
@@ -272,7 +272,7 @@ Runs `r` and/or `p` over the **same text**, and when both run, Consistency compa
 
 ## Contrast is cheapest at M0
 
-`components.md` reserves cross-flow contrast because running two method flows is expensive — each re-acquires the document. Acquisition cost is zero at M0 and already paid at M1, M2 and M3:
+`components.md` reserves contrast because running two extractor modes is expensive — each re-acquires the document. Acquisition cost is zero at M0 and already paid at M1, M2 and M3:
 
 | Pipelines | Contrast available | Incremental cost |
 |---|---|---|
