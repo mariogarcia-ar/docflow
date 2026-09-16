@@ -302,6 +302,25 @@ La diferencia decide el costo. Un campo inválido tiene ubicación, así que Vis
 
 Por eso **"reprocesa esos 2, no los 20" aplica solo al primer caso**. Si el escalamiento es mayoritariamente por campos ausentes, el ahorro no es de un orden de magnitud sino de ninguno.
 
+#### Reglas de negocio pendientes
+
+El Validador ejecuta hoy 4 chequeos universales (Forma, Tipo, Contenido, Dígito). Pero el dominio tiene reglas adicionales que aún no están formalizadas.
+
+**Categorías de reglas que faltan:**
+
+| Categoría | Ejemplos | Estado |
+|---|---|---|
+| **Validaciones de rango** | Importe > 0; fecha no futura; porcentaje entre 0-100 | ⏳ Pendiente definir |
+| **Relaciones entre campos** | Fecha emisión ≤ fecha vencimiento; subtotal ≤ total | ⏳ Pendiente definir |
+| **Reglas condicionales** | Si impuesto=IVA entonces debe estar alícuota; si es factura A entonces debe tener CUIT | ⏳ Pendiente definir |
+| **Validaciones estructurales** | Cantidad de líneas > 0; tabla tiene encabezado | ⏳ Pendiente definir |
+| **Reglas de negocio específicas** | Importes respetan redondeo de moneda; CUIT válido según provincia | ⏳ Pendiente definir |
+| **Cruces inter-documento** | Si hay débito, debe haber comprobante origen | ⏳ Pendiente definir |
+
+**Cómo se integran:** Cada regla nueva sigue el mismo modelo que los 4 chequeos — emite su propio veredicto y la falla más grave manda. Se ejecutan en paralelo, no encadenadas. La decisión de qué reglas aplican por tipo de documento es responsabilidad del Identificador (al rutear).
+
+**Dónde se definen:** Las reglas concretas irán en un archivo separado (p.ej. `reglas-negocio.md` o `d.md`) con formato: Tipo de documento → Campos → Reglas → Cómo falla → Qué escala.
+
 ---
 
 ### Consistencia
