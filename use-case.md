@@ -94,12 +94,28 @@ The exception is deliberate: flags that decide *what to repeat* are not settable
 | `--only` | Scope is a per-run decision |
 | `--dry-run` | A default would make every run a no-op |
 
+**A second group is not settable either, for a different reason.** These are arguments to inspection subcommands rather than to `run` — `docflow status --failed`, `docflow ledger --state failed`, `docflow reviewer promote --rule`. A default for them would change what a *report* returns, not how work is done, and a persisted `--state failed` would silently filter every later query:
+
+| Flag | Subcommand | Why no default |
+|---|---|---|
+| `--failed` | `status` | A filter on a report |
+| `--state` | `ledger` | A filter on a report |
+| `--retry-queue`, `--retry` | `catalog` | Inspection, not configuration |
+| `--rebuild`, `--rebuild-index` | `ledger`, `run` | An explicit repair action |
+| `--rule`, `--new-type`, `--value` | `reviewer` | A one-off correction |
+
+**Two component flags are settable despite looking similar** — `--show-evidence` and `--continuity-only`, alongside `--correct` and `--ocr`. They select *how a component operates*, which is exactly what a corpus-wide default is for. The line is not "component flag" versus "run flag"; it is whether the flag describes how work is done, or what to do about work already done.
+
 **Secrets live in `.env`, never in a flag.** Provider API keys for the frontier validator have no CLI form — `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY` — so they cannot end up in shell history or a process listing. `.env` is git-ignored.
+
+`DOCFLOW_OLLAMA_HOST` is the same kind of setting: an endpoint, not a per-invocation choice, so it is environment-only as well.
 
 **Input**
 
 | Flag | Meaning |
 |---|---|
+| `--pipeline` | The pipeline code. One of the thirteen in `workflow.md`. See *Naming the mode* |
+| `--extractor` | The mode, with the material inferred per file: `r` \| `p` \| `rp`. Alternative to `--pipeline` |
 | `--schema` | Document-type schema, used by `validator` |
 | `--golden` | Golden set for tuning and comparison |
 
