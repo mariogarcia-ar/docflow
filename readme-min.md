@@ -6,33 +6,51 @@ Los **flujos** se nombran por qué recibe el extractor. Los **componentes**, por
 
 | Flujo | Recibe | | Componente | Produce |
 |---|---|---:|---|---|
-| **Reglas** | Nada | | **Identificador** | Tipo de documento |
-| **Interpretación** | Texto | | **Diagnóstico** | Ruta y advertencias |
-| **Visión** | Píxeles | | **Lector** | Texto + coordenadas + confianza |
+| **Reglas** | Nada | | **Segmentador** | Documentos lógicos |
+| **Interpretación** | Texto | | **Identificador** | Tipo de documento |
+| **Visión** | Píxeles | | **Diagnóstico** | Ruta y advertencias |
+| | | | **Lector** | Texto + coordenadas + confianza |
 | | | | **Reconstructor** | Documento estructurado |
 | | | | **Validador** | Veredicto por campo |
 | | | | **Contrato** | Forma de la salida |
 
+## Niveles
+
+Un archivo no es un documento. Un PDF de 20 páginas puede contener una factura, o tres.
+
+| Nivel | Qué es |
+|---|---|
+| **Archivo** | Lo que entra al sistema |
+| **Documento** | Una unidad con sentido propio dentro del archivo |
+| **Página** | La unidad física de procesamiento |
+
 ## Componentes
 
-Corren dentro de los flujos, no en paralelo.
+Corren dentro de los flujos, no en paralelo. La columna **Nivel** dice qué recibe cada uno.
 
-| Componente | Qué hace | Reglas | Interpretación | Visión |
-|---|---|:---:|:---:|:---:|
-| **Identificador** | Determina el tipo y el ruteo | ✓ | ✓ | ✓ |
-| **Diagnóstico** | Detecta contenido, mide calidad, adecúa | ✓ | ✓ | — |
-| **Lector** | Extrae texto por conversión u OCR | ✓ | ✓ | — |
-| **Reconstructor** | Layout, tablas, orden de lectura | ✓ | — | — |
-| **Validador** | Forma, tipo, contenido, dígito verificador | ✓ | ✓ | ✓ |
-| **Contrato** | Forma canónica de la salida | ✓ | ✓ | ✓ |
+| Componente | Nivel | Qué hace | Reglas | Interp. | Visión |
+|---|---|---|:---:|:---:|:---:|
+| **Segmentador** | Archivo | Agrupa páginas en documentos lógicos | ✓ | ✓ | ✓ |
+| **Identificador** | Documento | Determina el tipo y el ruteo | ✓ | ✓ | ✓ |
+| **Diagnóstico** | Página | Detecta contenido, mide calidad, adecúa | ✓ | ✓ | — |
+| **Lector** | Página | Extrae texto por conversión u OCR | ✓ | ✓ | — |
+| **Reconstructor** | Páginas | Layout, tablas, orden de lectura | ✓ | — | — |
+| **Validador** | Campo | Forma, tipo, contenido, dígito verificador | ✓ | ✓ | ✓ |
+| **Contrato** | Documento | Forma canónica de la salida | ✓ | ✓ | ✓ |
 
-Visión no usa Lector ni Diagnóstico: le pasa píxeles al modelo, que lee y extrae en un paso.
+Visión no usa Diagnóstico ni Lector: le pasa píxeles al modelo, que lee y extrae en un paso.
+
+Los de nivel página son **paralelizables**. El Segmentador y el Contrato son **barreras**: el Contrato no emite hasta que estén todas las páginas.
+
+### Segmentador
+
+Agrupa las páginas en documentos lógicos antes del Identificador. Sin él, un PDF con tres facturas se procesa como una sola y los campos se mezclan entre comprobantes.
 
 ### Lector
 
 ```mermaid
 graph LR
-    A["Documento"] --> B["Diagnóstico"] --> C{"¿Texto<br/>usable?"}
+    A["Página"] --> B["Diagnóstico"] --> C{"¿Texto<br/>usable?"}
     C -->|"sí"| D["Conversión"]
     C -->|"no"| E["OCR"] --> F["Corrección"]
     D --> G["Texto"]
@@ -48,6 +66,13 @@ La corrección existe solo en OCR: un conversor no lee mal, transcribe lo que ha
 
 El ruteo es **por página**: un PDF mixto combina ambos caminos y los une al final.
 
+### Reconstructor
+
+Recibe **varias páginas**, no una: el layout es local, pero la continuidad lo cruza.
+
+- Una tabla con encabezado en una página y filas que siguen en la siguiente pierde la asociación si cada página se procesa aislada.
+- Un encabezado repetido en las 5 páginas se captura 5 veces sin control de continuidad.
+
 ### Validador
 
 Cuatro chequeos, de más débil a más fuerte:
@@ -61,30 +86,32 @@ Cuatro chequeos, de más débil a más fuerte:
 
 Se reutiliza en cinco puntos: dentro del Lector, al corregir OCR, por campo, entre campos, y contra catálogos externos.
 
+La consistencia entre campos puede cruzar páginas: subtotal en una y total en otra.
+
 ## Los tres flujos
 
 ### Reglas
 
 ```mermaid
 graph LR
-    A["Documento"] --> B["Identificador"] --> C["Lector"] --> D["Reconstructor"]
-    D --> E["Extraer<br/>anclas + regex"] --> F["Validador"] --> G["Contrato"]
+    A["Archivo"] --> B["Segmentador"] --> C["Identificador"] --> D["Lector"]
+    D --> E["Reconstructor"] --> F["Extraer<br/>anclas + regex"] --> G["Validador"] --> H["Contrato"]
 ```
 
 ### Interpretación
 
 ```mermaid
 graph LR
-    A["Documento"] --> B["Identificador"] --> C["Lector"] --> D["LLM<br/>interpreta"]
-    D --> E["Verificar<br/>cita = valor"] --> F["Validador"] --> G["Contrato"]
+    A["Archivo"] --> B["Segmentador"] --> C["Identificador"] --> D["Lector"]
+    D --> E["LLM<br/>interpreta"] --> F["Verificar<br/>cita = valor"] --> G["Validador"] --> H["Contrato"]
 ```
 
 ### Visión
 
 ```mermaid
 graph LR
-    A["Documento"] --> B["Identificador"] --> C["Renderizar"] --> D["VLM<br/>lee y extrae"]
-    D --> E["Validador"] --> F["Contrato"]
+    A["Archivo"] --> B["Segmentador"] --> C["Identificador"] --> D["Renderizar"]
+    D --> E["VLM<br/>lee y extrae"] --> F["Validador"] --> G["Contrato"]
 ```
 
 ## Diferencias
@@ -115,6 +142,8 @@ Aplican a los tres flujos:
 - **La cita prueba procedencia, no acierto.** Verificar el literal y el valor por separado.
 - **La estructura se valida aparte.** Una columna desplazada tiene importes reales y pasa cualquier chequeo de valores.
 - **La confianza se deriva, no se pide.** Señales verificables, no el score autodeclarado del modelo.
+- **La traza es `(página, offset)`.** Un offset suelto no identifica nada en un documento de 20 páginas.
+- **El fallo es parcial.** Una página ilegible marca esa página; no descarta el documento entero.
 - **Auditar no es normalizar.** Ver `d.md`.
 
 ## Documentos
