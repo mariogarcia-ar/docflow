@@ -1,8 +1,8 @@
 # Pipelines
 
-The thirteen input pipelines, built out of the components defined in `components.md`.
+The thirteen input pipelines, built out of the components defined in `02-components.md`.
 
-`components.md` defines the **components** (named by what they produce). `README.md` introduces the **two axes** — material and extractor — that generate the routes. This document defines the **thirteen input pipelines** and maps each one onto those components.
+`02-components.md` defines the **components** (named by what they produce). `README.md` introduces the **two axes** — material and extractor — that generate the routes. This document defines the **thirteen input pipelines** and maps each one onto those components.
 
 **Terminology note.** The source notes in `my_prompt.md` call these "flujos". This document calls the input-routed ones **pipelines**, coded `<material>-<primitive>` — distinct from the *extractor modes* (`r`, `p`, `rp`) they are built from.
 
@@ -236,7 +236,7 @@ Runs `r` and/or `p` over the **same text**, and when both run, Consistency compa
 
 **The only mode that can produce contrast**, and contrast is the one mechanism that catches a plausible-but-false value: a total of 15400 that was 1540 passes shape, type and content, and has no check digit. Nothing internal sees it. A disagreement between two reads does.
 
-**Cheap, because the acquisition is already paid.** `components.md` reserves contrast because each extractor mode re-acquires the document; here the text is in hand, so a second read costs one extra call on critical fields.
+**Cheap, because the acquisition is already paid.** `02-components.md` reserves contrast because each extractor mode re-acquires the document; here the text is in hand, so a second read costs one extra call on critical fields.
 
 **Not available in M4**, because there is no text for a regex to run on.
 
@@ -280,7 +280,7 @@ Runs `r` and/or `p` over the **same text**, and when both run, Consistency compa
 
 ## Contrast is cheapest at M0
 
-`components.md` reserves contrast because running two extractor modes is expensive — each re-acquires the document. Acquisition cost is zero at M0 and already paid at M1, M2 and M3:
+`02-components.md` reserves contrast because running two extractor modes is expensive — each re-acquires the document. Acquisition cost is zero at M0 and already paid at M1, M2 and M3:
 
 | Pipelines | Contrast available | Incremental cost |
 |---|---|---|
@@ -312,7 +312,7 @@ Running both costs one extra call on critical fields, not a second acquisition. 
 
 **M0 runs no acquisition component at all** — no Diagnosis, no Reader. It is the primitive with an empty prefix: Validate and Report, with nothing before the extractor.
 
-**Diagnosis selects where it can.** Choosing M1 over M2 asks whether the PDF has a usable text layer — exactly Diagnosis's question in `components.md`, including its warning that the check must be **quality, not presence**, because an old bad OCR layer is not a text layer. Choosing M0 is a caller assertion rather than a detection: there is no artifact to diagnose, only text handed over. So M0 also moves the most trust onto the caller.
+**Diagnosis selects where it can.** Choosing M1 over M2 asks whether the PDF has a usable text layer — exactly Diagnosis's question in `02-components.md`, including its warning that the check must be **quality, not presence**, because an old bad OCR layer is not a text layer. Choosing M0 is a caller assertion rather than a detection: there is no artifact to diagnose, only text handed over. So M0 also moves the most trust onto the caller.
 
 **Validate and Report run in all thirteen.** The Validator does not care how a value was obtained, so schema, type, content and check-digit checks apply unchanged. The Contract is what makes the thirteen substitutable: the consumer receives the same output shape whichever route a file took.
 
@@ -322,7 +322,7 @@ Running both costs one extra call on critical fields, not a second acquisition. 
 
 | Removed | Consequence | Detectable downstream? |
 |---|---|---|
-| **Segmenter** | Assumes one file = one document. Fields from a second document overwrite the first's | **No** — `components.md` calls this unrecoverable and silent |
+| **Segmenter** | Assumes one file = one document. Fields from a second document overwrite the first's | **No** — `02-components.md` calls this unrecoverable and silent |
 | **Identifier** | No type, so no template routing and no evidence record | Only as a badly extracted field, at the end |
 | **Reconstructor** | No cross-page table continuity, no header collapsing, no reading order | Partially: as missing or misattributed fields |
 | **Catalog** | Identity fields never checked against an external source | Only by a human eventually noticing |
@@ -355,7 +355,7 @@ graph LR
     G --> C
 ```
 
-`components.md` makes the Validator the single place where "could not" is defined: a pipeline failure is not a new kind of failure, it is the existing escalation with a lower starting point.
+`02-components.md` makes the Validator the single place where "could not" is defined: a pipeline failure is not a new kind of failure, it is the existing escalation with a lower starting point.
 
 | Kind | What is there | Cost |
 |---|---|---|
@@ -394,9 +394,9 @@ Every pipeline reports through the **Contract**, so outputs have the same shape 
 - **Which pipeline, and who decides.** The thirteen are keyed by material and mode, but nothing says whether the caller declares the pipeline or the system infers it. This is sharpest at M0 and at M3-vs-M4: M0 is an assertion with nothing to diagnose, and for an image, M3 and M4 are both valid with a real cost/verification trade between them.
 - **Whether `ErpVR` is the default for text materials.** It is the only primitive that catches its own characteristic failure, and the extra cost is one call on critical fields rather than a re-read. The argument for ever choosing `ErVR` or `EpVR` alone needs stating.
 - **What decides `r` vs `p` inside `ErpVR` when both run and disagree.** Consistency can break a tie by arithmetic, but only for fields with an arithmetic relation. For an identifier, disagreement has no tie-breaker.
-- **What defines a "critical field".** Both the contrast policy and the target of escalation depend on it, and today it exists only as an expression in `components.md`.
-- **Whether OCR correction is inside the OCR step.** `components.md` has the Reader correcting OCR output (scoped to characters and spacing, never digits, raw text retained for audit). The M2 and M3 prefixes are written as a single `OCR` step, so correction is either inside it or absent.
-- **Whether the M2 and M3 prefixes include preprocessing.** Both are written as `OCR` alone, yet `components.md` has input adaptation (rescale, compress) and treats legibility as distinct from resolution. A blurred photo passed straight to OCR is the outcome it calls invalid.
+- **What defines a "critical field".** Both the contrast policy and the target of escalation depend on it, and today it exists only as an expression in `02-components.md`.
+- **Whether OCR correction is inside the OCR step.** `02-components.md` has the Reader correcting OCR output (scoped to characters and spacing, never digits, raw text retained for audit). The M2 and M3 prefixes are written as a single `OCR` step, so correction is either inside it or absent.
+- **Whether the M2 and M3 prefixes include preprocessing.** Both are written as `OCR` alone, yet `02-components.md` has input adaptation (rescale, compress) and treats legibility as distinct from resolution. A blurred photo passed straight to OCR is the outcome it calls invalid.
 - **Whether the Segmenter is needed after all.** It is the only silent gap. A cheap continuity check — page numbering, header recurrence — may be enough to keep it, though M0 gives it nothing to inspect.
 - **Whether M4's model is the same one the cascade's Vision flow uses**, or a cheaper specialist. It decides whether tuning and the golden set carry over.
 - **What the extraction prompt is built from.** Per document type, derived from the schema, or shared with the general Interpretation flow. If shared, tuning carries over; if not, there are two prompt sets to maintain.

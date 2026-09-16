@@ -2,7 +2,7 @@
 
 How each of the thirteen pipelines is called from the CLI, and how each of the ten components is invoked on its own.
 
-**The CLI surface below is proposed, not specified.** No document in this workspace defines the command names, flags or job model — `my_prompt.md` states the requirements (library + CLI, per-component invocation, batch, stop with force, pause/resume) without fixing syntax. The examples are consistent with those requirements, with the pipeline codes in `pipelines.md`, and with the component names in `components.md`. Treat them as a design proposal to adjust.
+**The CLI surface below is proposed, not specified.** No document in this workspace defines the command names, flags or job model — `my_prompt.md` states the requirements (library + CLI, per-component invocation, batch, stop with force, pause/resume) without fixing syntax. The examples are consistent with those requirements, with the pipeline codes in `01-pipelines.md`, and with the component names in `02-components.md`. Treat them as a design proposal to adjust.
 
 **Contents**
 
@@ -32,11 +32,11 @@ docflow run --pipeline <CODE> <input> [options]
 | Part | Meaning |
 |---|---|
 | `run` | Execute a pipeline end to end. Sibling subcommands exist for single components (see below) |
-| `--pipeline` | One of the thirteen codes from `pipelines.md` |
+| `--pipeline` | One of the thirteen codes from `01-pipelines.md` |
 | `<input>` | A file, several files, a folder, or `-` for stdin |
 | `--out` | Output directory |
 
-**There is no flag to skip validation.** The `V` in every primitive is invariant (`pipelines.md`), so no `--no-validate` exists and no example below passes one.
+**There is no flag to skip validation.** The `V` in every primitive is invariant (`01-pipelines.md`), so no `--no-validate` exists and no example below passes one.
 
 ### `run` is idempotent
 
@@ -173,7 +173,7 @@ The flag name maps to the variable predictably — `--jobs` → `DOCFLOW_JOBS`, 
 
 ## M0 — text arrives directly
 
-No acquisition step. The caller supplies the text, so the pipeline begins at the extractor. `pipelines.md` calls this "the primitive with an empty prefix".
+No acquisition step. The caller supplies the text, so the pipeline begins at the extractor. `01-pipelines.md` calls this "the primitive with an empty prefix".
 
 **The positional input is text** — the pipeline code says so, so no separate flag is needed. A `.txt` file, a Markdown file, or `-` for stdin all work. Pointing M0 at a PDF is an error, not a silent conversion: if the material is a PDF, that is M1 or M2.
 
@@ -323,7 +323,7 @@ docflow run --extractor rp documentos/ --model ollama:qwen2.5 --out out/
 docflow run --extractor rp documentos/ --dry-run
 ```
 
-**Whether this is allowed is an open question in `pipelines.md`** — nothing yet says whether the caller declares the pipeline or the system infers it. It is sharpest in two places: M0 is a caller *assertion* with no artifact to diagnose, and for an image both M3 and M4 are valid.
+**Whether this is allowed is an open question in `01-pipelines.md`** — nothing yet says whether the caller declares the pipeline or the system infers it. It is sharpest in two places: M0 is a caller *assertion* with no artifact to diagnose, and for an image both M3 and M4 are valid.
 
 ---
 
@@ -574,7 +574,7 @@ Each sits beside the result it describes, so continuing a run needs one lookup r
 }
 ```
 
-**The stages recorded are the ones the pipeline actually runs.** `M1-ErpVR` does not segment, identify, reconstruct or query the Catalog — `pipelines.md`'s component-usage table is explicit that no pipeline runs those. Listing them as stages would be a false record of work that never happened, so they go in `not_applicable` instead, which also documents *why* a stage is absent rather than leaving it ambiguous.
+**The stages recorded are the ones the pipeline actually runs.** `M1-ErpVR` does not segment, identify, reconstruct or query the Catalog — `01-pipelines.md`'s component-usage table is explicit that no pipeline runs those. Listing them as stages would be a false record of work that never happened, so they go in `not_applicable` instead, which also documents *why* a stage is absent rather than leaving it ambiguous.
 
 ### Stage states
 
@@ -602,7 +602,7 @@ A different pipeline produces a different stage set. `M2-ErVR` has `acquire` spl
 
 ### The stage set follows the primitive
 
-The ledger does not need a bespoke stage list per pipeline, because every pipeline has the same structure — `pipelines.md`'s primitive:
+The ledger does not need a bespoke stage list per pipeline, because every pipeline has the same structure — `01-pipelines.md`'s primitive:
 
 ```
 [material prefix] → extractor → validate → report
@@ -615,7 +615,7 @@ The ledger does not need a bespoke stage list per pipeline, because every pipeli
 | `validate` | the `V` | never |
 | `report` | the `R` | never |
 
-The two invariant stages are the two the ledger can rely on always being present. That is the same guarantee `pipelines.md` makes about the pipelines themselves: whatever route a document takes, it is validated and reported, so those two rows always exist to be tracked.
+The two invariant stages are the two the ledger can rely on always being present. That is the same guarantee `01-pipelines.md` makes about the pipelines themselves: whatever route a document takes, it is validated and reported, so those two rows always exist to be tracked.
 
 Three things this buys that a job-level state cannot:
 
@@ -963,7 +963,7 @@ docflow jobs                          # all runs, including finished
 
 `my_prompt.md` requires each component to be invocable on its own, so a stage can be re-run without repeating the ones before it.
 
-Each component reads the previous one's artifact and writes its own, mirroring the chain in `components.md`:
+Each component reads the previous one's artifact and writes its own, mirroring the chain in `02-components.md`:
 
 ```mermaid
 graph LR
@@ -1217,7 +1217,7 @@ for field, verdicts in result.verdicts.items():
 
 ## What every invocation returns
 
-The output shape does not vary by pipeline — that is what makes the thirteen substitutable (`pipelines.md`). Every field carries its verdicts separately rather than a collapsed score:
+The output shape does not vary by pipeline — that is what makes the thirteen substitutable (`01-pipelines.md`). Every field carries its verdicts separately rather than a collapsed score:
 
 ```json
 {

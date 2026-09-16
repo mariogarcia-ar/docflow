@@ -1,6 +1,6 @@
 # The story of a document
 
-A narrative companion to `components.md` and `pipelines.md`. Those two are reference documents — one lists what the parts do, the other lists the routes. This one explains *why* the architecture has the shape it does.
+A narrative companion to `02-components.md` and `01-pipelines.md`. Those two are reference documents — one lists what the parts do, the other lists the routes. This one explains *why* the architecture has the shape it does.
 
 It is not a summary. Everything here is drawn from those two files; if you need a table or a specification, go there. This is the reasoning behind the tables.
 
@@ -32,9 +32,9 @@ Name the enemy precisely, because the architecture is a response to it.
 
 **The plausible-but-false value.** A total of 15400 that was really 1540. It has the correct shape. It is the correct type. If it is an amount, it has no check digit to catch it. Every internal check the system can run, it passes. Nothing in the document itself contradicts it.
 
-**The bad anchor.** A value that is completely real, correctly formatted, correctly typed — and taken from the wrong place. `components.md` names the mechanism in Rules: textual proximity. The regex found ⟨some number⟩ near ⟨some label⟩, and both were genuinely in the document. It just took the neighbouring block's value. There is nothing wrong with the value except where it came from.
+**The bad anchor.** A value that is completely real, correctly formatted, correctly typed — and taken from the wrong place. `02-components.md` names the mechanism in Rules: textual proximity. The regex found ⟨some number⟩ near ⟨some label⟩, and both were genuinely in the document. It just took the neighbouring block's value. There is nothing wrong with the value except where it came from.
 
-**The merged document.** This is the worst one. `components.md` is blunt about it: the Segmenter "decides first and its error is **unrecoverable downstream**." If two invoices in one PDF are read as one invoice, the second document's fields overwrite the first's, and *no later check notices*. Every field that survives is real, well-formed, correctly typed, and belongs to a different document than the one it is reported under.
+**The merged document.** This is the worst one. `02-components.md` is blunt about it: the Segmenter "decides first and its error is **unrecoverable downstream**." If two invoices in one PDF are read as one invoice, the second document's fields overwrite the first's, and *no later check notices*. Every field that survives is real, well-formed, correctly typed, and belongs to a different document than the one it is reported under.
 
 Against these three, validation is not enough. That is the discovery that shapes everything else.
 
@@ -42,7 +42,7 @@ Against these three, validation is not enough. That is the discovery that shapes
 
 ## Why validation alone loses
 
-The instinct is to build a better validator. `components.md` has one, and it is good: four independent checks on every field, each with a distinct role.
+The instinct is to build a better validator. `02-components.md` has one, and it is good: four independent checks on every field, each with a distinct role.
 
 | Check | What it sees that the others cannot |
 |---|---|
@@ -96,7 +96,7 @@ There are **two independent decisions**, not one:
 | **Material** | How do we obtain something readable? |
 | **Extractor** | How do we read values from it? |
 
-Getting text and reading values from it are different problems. `pipelines.md` states the consequence: `pdftotext` yields a text stream, and **that fact says nothing about how the values get read from it.** Nor does the text that OCR produces.
+Getting text and reading values from it are different problems. `01-pipelines.md` states the consequence: `pdftotext` yields a text stream, and **that fact says nothing about how the values get read from it.** Nor does the text that OCR produces.
 
 So the combinations multiply rather than add. Four materials can produce text, and each admits three extractor modes:
 
@@ -108,7 +108,7 @@ The single `+1` is the interesting term. **M4 is the one material where the choi
 
 ## The five ways to get text
 
-The material axis looks like a taxonomy of file types. `pipelines.md` makes a better observation: **it is not really what the input is, it is what has to happen before there is text.**
+The material axis looks like a taxonomy of file types. `01-pipelines.md` makes a better observation: **it is not really what the input is, it is what has to happen before there is text.**
 
 | Material | Steps before text exists | Cost |
 |---|---|---|
@@ -126,7 +126,7 @@ Which means: the pipeline is *extraction plus verification*, and the materials a
 
 None of them is free, and each cost is different in kind.
 
-**M1's price is reading order.** Conversion needs no correction — `components.md` notes a converter does not read badly, it transcribes what is there, so applying a language model to its output "just in case" can only introduce damage. But `pdftotext` is heuristic. A table header is not associated with rows continuing on the next page; a header repeated across five pages is not collapsed. Broken linear text still reads plausibly, so this failure is quiet.
+**M1's price is reading order.** Conversion needs no correction — `02-components.md` notes a converter does not read badly, it transcribes what is there, so applying a language model to its output "just in case" can only introduce damage. But `pdftotext` is heuristic. A table header is not associated with rows continuing on the next page; a header repeated across five pages is not collapsed. Broken linear text still reads plausibly, so this failure is quiet.
 
 **M3's price is everything visual.** Layout, signatures, seals, checkboxes, logos — all gone once the page becomes a string. It also inherits OCR error, which cuts two ways: a pattern can be written to tolerate the specific misreads OCR produces, while a prompt handles unfamiliar corruption better but may quietly "repair" a digit it should have flagged.
 
@@ -148,7 +148,7 @@ The extractor axis is where the character of the system lives.
 
 ### Why `rp` is cheaper than it sounds
 
-`components.md` treats contrast as expensive and rations it — per critical field, never the whole document. That rationing exists because a second read would otherwise have to *re-acquire the document*.
+`02-components.md` treats contrast as expensive and rations it — per critical field, never the whole document. That rationing exists because a second read would otherwise have to *re-acquire the document*.
 
 Then the observation that changes the economics: **in a text pipeline, the acquisition is already paid.**
 
@@ -167,7 +167,7 @@ graph LR
     C --> D["EVR<br/>validate → report"]
 ```
 
-**First: is there usable text?** This is the Diagnosis question, and `components.md` insists it is a question of **quality, not presence**. A PDF may carry an old, bad OCR layer, and routing by presence sends it to conversion and drags those errors along unreviewed. The test is proportion and quality — a layer with 40 characters on an A4 sheet is not a text layer.
+**First: is there usable text?** This is the Diagnosis question, and `02-components.md` insists it is a question of **quality, not presence**. A PDF may carry an old, bad OCR layer, and routing by presence sends it to conversion and drags those errors along unreviewed. The test is proportion and quality — a layer with 40 characters on an A4 sheet is not a text layer.
 
 Quality, not presence. That distinction is what stands between the system and a silent error at the very first step.
 
@@ -296,7 +296,7 @@ Two things follow, and they are the actionable conclusions:
 
 ## Where the story is not finished
 
-An honest narrative names its open threads. These are live in `pipelines.md`, and several are load-bearing.
+An honest narrative names its open threads. These are live in `01-pipelines.md`, and several are load-bearing.
 
 **Who chooses the pipeline?** Nothing yet says whether the caller declares it or the system infers it. This bites hardest at two places: M0, which is a caller *assertion* with no artifact to diagnose, and the M3-versus-M4 fork, where both are valid and the choice is a genuine cost-versus-verification trade rather than a technicality.
 
@@ -308,7 +308,7 @@ An honest narrative names its open threads. These are live in `pipelines.md`, an
 
 **Whether the Segmenter is needed after all.** It is the only silent gap that no pipeline closes. A cheap continuity check — page numbering, header recurrence — might be enough to keep it, though M0 gives it nothing to inspect.
 
-Alongside these, `components.md` lists six categories of **business rules not yet formalized**: range checks, relations between fields, conditional rules, structural validations, domain-specific rules, and cross-document checks. Each will follow the same model as the four existing checks — its own verdict, most severe failure governs, all in parallel.
+Alongside these, `02-components.md` lists six categories of **business rules not yet formalized**: range checks, relations between fields, conditional rules, structural validations, domain-specific rules, and cross-document checks. Each will follow the same model as the four existing checks — its own verdict, most severe failure governs, all in parallel.
 
 ---
 

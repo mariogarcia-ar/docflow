@@ -8,13 +8,13 @@ Eleven thousand documents. Extract structured information from them and expose i
 
 | Document | What it covers |
 |---|---|
-| `components.md` | The ten components — what each produces, its diagram, its failure modes |
-| `pipelines.md` | The thirteen input pipelines, from material to output |
-| `cli.md` | How to invoke them: commands, flags, batch, resume |
+| `02-components.md` | The ten components — what each produces, its diagram, its failure modes |
+| `01-pipelines.md` | The thirteen input pipelines, from material to output |
+| `03-cli.md` | How to invoke them: commands, flags, batch, resume |
 | `my_prompt.md` | The original specification — requirements and constraints |
-| `storytelling.md` | Why the architecture has this shape, as a narrative |
+| `04-storytelling.md` | Why the architecture has this shape, as a narrative |
 
-Start with `storytelling.md` for the reasoning, or `cli.md` if you need to run something.
+Start with `04-storytelling.md` for the reasoning, or `03-cli.md` if you need to run something.
 
 ---
 
@@ -49,7 +49,7 @@ Everything the system does reduces to two independent choices:
 | **Material** | How is the text obtained? | text in hand · extracted from a PDF · OCR · pixels only |
 | **Extractor** | How are values read from it? | `r` regex · `p` prompt |
 
-**The OCR engine is fixed: Docling.** It sits on the OCR materials only — M2 and M3. The extraction of a text PDF is not OCR and does not use it (`pdftotext`), and an image PDF is rasterized before Docling sees it. `components.md` develops the boundary.
+**The OCR engine is fixed: Docling.** It sits on the OCR materials only — M2 and M3. The extraction of a text PDF is not OCR and does not use it (`pdftotext`), and an image PDF is rasterized before Docling sees it. `02-components.md` develops the boundary.
 
 The mode is written inside the primitive — **EVR** = **E**xtractor → **V**alidate → **R**eport:
 
@@ -61,7 +61,7 @@ The mode is written inside the primitive — **EVR** = **E**xtractor → **V**al
 
 The traditional names — Rules, Interpretation, Vision — are aliases: Rules is `ErVR`; Interpretation and Vision are both `EpVR`, on text and on pixels. **They are the same method on different materials.**
 
-Multiplying the axes gives the thirteen pipelines. `pipelines.md` develops them fully.
+Multiplying the axes gives the thirteen pipelines. `01-pipelines.md` develops them fully.
 
 ---
 
@@ -76,7 +76,7 @@ graph LR
     C -->|"could not"| D["EpVR on pixels<br/>no text stage"]
 ```
 
-**The Validator governs the whole ladder.** "Could not" is defined in exactly one place — see `components.md` — which is what makes escalation a policy rather than a habit spread across three components.
+**The Validator governs the whole ladder.** "Could not" is defined in exactly one place — see `02-components.md` — which is what makes escalation a policy rather than a habit spread across three components.
 
 ### Contrast, and why it is not an optimization
 

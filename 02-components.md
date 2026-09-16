@@ -8,10 +8,10 @@ Two other decompositions exist and are orthogonal to this one:
 
 | Axis | Named by | Where |
 |---|---|---|
-| **Material** | How the text is obtained | `pipelines.md` — five materials, `M0`–`M4` |
+| **Material** | How the text is obtained | `01-pipelines.md` — five materials, `M0`–`M4` |
 | **Extractor** | How values are read | `r` regex · `p` prompt, written inside the primitive |
 
-A primitive is **EVR** = **E**xtractor → **V**alidate → **R**eport, named `ErVR`, `EpVR` or `ErpVR`. A pipeline is a material prefix plus a primitive — thirteen in total, defined in `pipelines.md`.
+A primitive is **EVR** = **E**xtractor → **V**alidate → **R**eport, named `ErVR`, `EpVR` or `ErpVR`. A pipeline is a material prefix plus a primitive — thirteen in total, defined in `01-pipelines.md`.
 
 The traditional flow names (Rules, Interpretation, Vision) are aliases for the extractor modes: Rules is `ErVR`; Interpretation and Vision are both `EpVR`, on text and on pixels respectively. See `README.md`.
 
@@ -299,7 +299,7 @@ Only when neither of the two closes, or the field is an identifier with no arith
 
 **Cost.** Running two reads over everything is expensive, so contrast is reserved: per critical field (amounts, identifiers) and not per whole document.
 
-**Cheapest when the text is already in hand.** The acquisition is paid once, so a second read costs one extra call on critical fields rather than a second pass over the document. That makes `ErpVR` the only primitive whose characteristic failure is detectable. See `pipelines.md`.
+**Cheapest when the text is already in hand.** The acquisition is paid once, so a second read costs one extra call on critical fields rather than a second pass over the document. That makes `ErpVR` the only primitive whose characteristic failure is detectable. See `01-pipelines.md`.
 
 ---
 
