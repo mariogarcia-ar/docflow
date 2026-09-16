@@ -20,6 +20,7 @@ Eleven thousand documents. Extract structured information from them and expose i
 | `docs/artifacts/traceability.md` | Requirement → pipeline → task → test, including the deviations from `my_prompt.md` |
 | `docs/plans/README.md` | The gate model — how the three plans relate, what each one freezes, what can slip |
 | `docs/plans/plan-01-kernels.md` | Stage 1: the 22 kernel and ports/adapters tasks, closing on the synthetic flow |
+| `docs/plans/issues/plan-01-kernels/` | Stage 1 split into 8 capability epics and 22 issues, with acceptance criteria and test evidence |
 | `docs/plans/plan-02-components.md` | Stage 2: the 17 domain-component tasks, closing on a real document |
 | `docs/plans/plan-03-pipelines.md` | Stage 3: the 14 pipeline tasks, closing on the 11k-file corpus |
 | `my_prompt.md` | The original specification — requirements and constraints |

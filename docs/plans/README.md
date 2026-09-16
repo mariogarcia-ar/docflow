@@ -73,6 +73,16 @@ Each plan **freezes** a set of artefacts. The next plan consumes them and may no
 | **Plan 2** | The verdict-vector shape and the per-field trace shape (`sad.md` §11, `prd.md` FR-23); the `catalog` reason vocabulary (`not_run` \| `source_unavailable` \| `pending_retry`); the component artifact chain `.<step>.json` (`sad.md` §9.1); the escalation policy's single ownership (Validator); the `not_applicable` list emitted by the ledger writer | Plan 3 wires the 13 codes onto this chain and emits this shape unchanged for all 13 (`FR-33`, `S3-T13`) |
 | **Plan 3** | The 13 descriptors and their stage sets; the registry assets (patterns, prompts, schemas, policies); `.env.example` and the policy/setting split; the mirrored-tree and the three-artifact layout; `run.json`'s shape and location | Nothing follows in the PoC. A shape change here is a shape change for the consuming system |
 
+### Epic/issue decompositions
+
+Each plan can be decomposed into **capability epics** whose issues are one-per-`wbs.md`-task. The cut is orthogonal to the waves: the epic is *what an issue is part of*, the wave is *when it runs*. An epic/issue set adds acceptance criteria, test evidence and out-of-scope lists — it never adds work.
+
+| Plan | Decomposition | Epics | Issues |
+|---|---|---:|---:|
+| **Plan 1 — Kernels** | [`issues/plan-01-kernels/README.md`](issues/plan-01-kernels/README.md) | 8 | 22 |
+| Plan 2 — Components | *not yet decomposed* | — | (17) |
+| Plan 3 — Pipelines | *not yet decomposed* | — | (14) |
+
 **Plan 3 adds configuration and data only.** No new kernel, no new component, no new type: `wbs.md` §5 states Stage 3 is "largely data, not new code".
 
 ## 4. Ordering note — what can slip and what cannot
