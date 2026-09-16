@@ -6,13 +6,13 @@ How each of the thirteen pipelines is called from the CLI, and how each of the t
 
 **Contents**
 
-- [Common shape](#common-shape) — the command, the three operations, and every flag
+- [Common shape](#common-shape) — the command, idempotent `run`, and every flag
 - [Pipeline invocations](#m0--text-arrives-directly) — the thirteen, `M0-ErVR` through `M4-EpVR`
 - [Choosing without declaring](#choosing-without-declaring) — `--extractor` vs `--pipeline`
 - [Batch](#batch) — one file, several, a folder
 - [Output directory](#output-directory) — `run.json` and where progress lives
-- [Per-document ledger](#per-document-ledger) — what makes resume granular
-- [Forced reprocessing](#forced-reprocessing) — re-running what the ledger calls done
+- [Per-document ledger](#per-document-ledger) — what makes resuming granular
+- [Forced reprocess](#what-force-means) — `--force` for what the ledger calls done
 - [Control](#control) — `stop` to see what is running, plus pause and resume
 - [Component invocations](#component-invocations) — the ten, runnable in isolation
 - [What every invocation returns](#what-every-invocation-returns)
@@ -38,19 +38,20 @@ docflow run --pipeline <CODE> <input> [options]
 
 **There is no flag to skip validation.** The `V` in every primitive is invariant (`workflow.md`), so no `--no-validate` exists and no example below passes one.
 
-### Three operations
+### `run` is idempotent
 
-The CLI has three ways to execute work, and the difference is **how much they trust the ledger**:
+`run` is the only execution verb, and repeating it is safe:
 
-| Operation | Re-runs | Trusts |
-|---|---|---|
-| `run` | Everything | Nothing — a fresh job |
-| `resume` | What the ledger says is incomplete | The ledger |
-| `rerun` | **What you name, even if the ledger says `done`** | Nothing — you assert it |
+| Situation | What `run` does |
+|---|---|
+| Fresh output directory | Runs everything |
+| A run already finished | **Skips the whole batch** — nothing to do |
+| A run interrupted, paused or killed | **Reads the ledger, skips what is done, continues what is not** |
+| Any of the above, with `--force` | **Ignores the ledger and reprocesses** |
 
-`resume` is the incremental operation: it reads the per-document ledgers and does what is missing. `rerun` is its complement — it **ignores the ledger's completion claims** and re-executes the stages you specify.
+There is no separate `resume`. Running the same command again **is** resuming: the ledger is read, finished work is skipped, and incomplete work continues. That is what makes a folder run over eleven thousand files interruptible without a second verb to remember.
 
-Neither replaces the other. `resume` answers "finish the run"; `rerun` answers "do this again, on purpose". See *Forced reprocessing*.
+`--force` is the only override, and it means one thing: **do not trust the ledger.**
 
 ### Naming the mode
 
@@ -94,23 +95,12 @@ Every flag used anywhere in this document:
 | Flag | Meaning |
 |---|---|
 | `--jobs` | Concurrency for batch runs |
-| `--dry-run` | Report what would happen, run nothing |
-| `--force` | Stop without draining; with `rerun`, ignore the ledger. See *Control* and *Forced reprocessing* |
-
-**Resuming**
-
-| Flag | Meaning |
-|---|---|
-| `--only` | Restrict to a subset, e.g. `--only failed` |
-| `--from` | Start at a given stage onward, skipping earlier ones |
-
-**Re-running** — see *Forced reprocessing*
-
-| Flag | Meaning |
-|---|---|
-| `--stage` | The stage to re-execute, even if the ledger says `done` |
-| `--isolate` | Keep downstream artifacts, marked `stale`, instead of invalidating them |
+| `--force` | Ignore the ledger and reprocess. On `stop`: kill without draining |
+| `--stage` | With `--force`, the stage to start reprocessing from |
+| `--isolate` | With `--force --stage`, keep downstream artifacts marked `stale` |
 | `--keep-artifacts` | Keep the previous artifact as `.prev` instead of overwriting |
+| `--only` | Restrict to a subset, e.g. `--only failed` |
+| `--dry-run` | Report what would happen, run nothing |
 
 **Component-specific** — the rest, grouped by where they appear
 
@@ -127,7 +117,7 @@ Every flag used anywhere in this document:
 | `--retry-queue`, `--retry` | `catalog` | Inspect or retry unverified fields |
 | `--rebuild`, `--rebuild-index` | `ledger`, `run` | Recompute the index from artifacts |
 | `--state` | `ledger` | Filter documents by stage state |
-| `--verify` | `resume`, `status` | Reconcile the record against the filesystem |
+| `--verify` | `run`, `status` | Reconcile the record against the filesystem |
 | `--rule`, `--new-type`, `--value` | `reviewer` | Promote a case to a rule, a type, or a corrected value |
 | `--failed` | `status` | Show only what escalated |
 
@@ -523,12 +513,12 @@ Seven states. Two of them — `running` and `stale` — exist to record work tha
 | `done` | Finished, artifact written | Only if the artifact verifies |
 | `failed` | Ran, produced a verdict that routes out | Yes — escalate or review |
 | `blocked` | Waiting on an earlier stage | Yes — will run once unblocked |
-| `stale` | Kept deliberately, but derived from an artifact that has since changed | **Only by choice** — see *Forced reprocessing* |
+| `stale` | Kept deliberately, but derived from an artifact that has since changed | **Only by choice** — see *Isolating a stage* |
 | `skipped` | Not applicable to this pipeline | Never |
 
-`running` is written **when a stage starts**, not when it ends. That is deliberate: it is the state a forced kill leaves behind, and it is the reason the ledger can tell "never began" from "began and was cut off". Without it, a killed stage would look like one that never ran, and a resume would have no way to know an artifact might be partial.
+`running` is written **when a stage starts**, not when it ends. That is deliberate: it is the state a forced kill leaves behind, and it is the reason the ledger can tell "never began" from "began and was cut off". Without it, a killed stage would look like one that never ran, and a later `run` would have no way to know an artifact might be partial.
 
-`stale` is the same idea for the other direction. A `rerun --isolate` keeps downstream artifacts that no longer match their inputs; marking them `stale` records that, where `done` would be a lie. `resume` re-runs `stale` stages, because their claim is that they are out of date.
+`stale` is the same idea for the other direction. `--force --stage … --isolate` keeps downstream artifacts that no longer match their inputs; marking them `stale` records that, where `done` would be a lie. A later `run` re-runs `stale` stages, because their claim is that they are out of date — no `--force` needed.
 
 `skipped` and `blocked` differ in cause: `skipped` is a stage this pipeline never runs — the `not_applicable` list, promoted to a state per document — while `blocked` is waiting on a stage that has not produced its input.
 
@@ -561,94 +551,116 @@ Three things this buys that a job-level state cannot:
 
 **It is the natural outbox for the Reviewer.** Cases routed out — low confidence, illegible pages, content failures, disagreements — are per-document facts, and they belong next to the document's own history rather than in a global review queue with no provenance.
 
-### Resuming
+### Continuing an interrupted run
+
+No separate verb. Run it again:
 
 ```bash
-docflow resume 7f3a91c2
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --jobs 8
+```
+
+```
+found 11034 documents, 4821 complete
+
+  skipping   4821
+  continuing 6201
+
+  resuming job 7f3a91c2
+```
+
+The ledger decides what "complete" means — including partial progress *inside* a document, so a run killed mid-stage continues at that stage rather than restarting the file.
+
+```bash
+# what would happen, without doing it
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --dry-run
 ```
 
 ```bash
-# what would be re-run, without running it
-docflow resume 7f3a91c2 --dry-run
+# finish only what failed
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --only failed
 ```
+
+Scoping does not change the rule: the ledger is still consulted, and completed work is still skipped.
+
+### What `--force` means
+
+`--force` is the single override, and it does one thing: **ignore the ledger's completion claims.**
 
 ```bash
-# re-run only the documents where a stage failed
-docflow resume 7f3a91c2 --only failed
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --force
 ```
 
-```bash
-# re-run from a given stage on, for every incomplete document
-docflow resume 7f3a91c2 --from validate
+```
+found 11034 documents, 4821 complete
+
+  --force: ignoring 4821 completed
+
+  reprocessing 11034
 ```
 
----
+| Without `--force` | With `--force` |
+|---|---|
+| Ledger is read | Ledger is ignored |
+| `done` is skipped | `done` is reprocessed |
+| Completes a run | Repeats a run |
 
-## Forced reprocessing
+That is the whole difference. `--force` is not a different verb with its own semantics — it is the same `run` with the ledger's claims set aside.
 
-`resume` trusts the ledger. That is what makes it cheap, and it is also its limit: **a ledger records completion, not validity.**
+### Why `--force` is needed at all
 
-A stage can be `done` and still be wrong, or right and no longer good enough:
+Because **a ledger records completion, not validity.** A stage can be `done` and still be wrong, or right and no longer good enough:
 
-| Situation | Ledger says | Why `resume` cannot fix it |
+| Situation | Ledger says | Needs `--force` |
 |---|---|---|
-| The extraction prompt improved | `extract.p` is `done` | The artifacts are valid; they are just from the older prompt |
-| A business rule was added to the Validator | `validate` is `done` | It passed the rules that existed at the time |
-| A bug was fixed in a component | everything is `done` | Completion was never in question |
-| A correction was promoted by the Reviewer | `report` is `done` | The output predates the rule |
-| An artifact is suspect | `done` | The stage claims success |
+| The extraction prompt improved | `extract.p` is `done` | Yes — the artifacts are valid but from the older prompt |
+| A business rule was added to the Validator | `validate` is `done` | Yes — it passed the rules that existed then |
+| A bug was fixed in a component | everything is `done` | Yes — completion was never in question |
+| A correction was promoted by the Reviewer | `report` is `done` | Yes — the output predates the rule |
+| An artifact is suspect | `done` | Yes — the stage claims success |
 
-In every one of these, `resume` does nothing — correctly, by its own definition. What is needed is the opposite operation: **re-execute a stage that the ledger already considers finished.**
+Without `--force`, all five are invisible to the tool: every stage is complete, so a plain `run` has nothing to do.
 
-### `rerun`
+### Scoping a forced reprocess
+
+`--force` over eleven thousand documents is the expensive case. `--stage` sets the floor:
 
 ```bash
-docflow rerun 7f3a91c2 --stage extract.p
+# reprocess everything, from validate onward
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --force --stage validate
 ```
 
-It **ignores the `done` state** and re-executes. The ledger is updated, not consulted.
-
-### Scope
-
-Same scoping as `resume`, applied to what gets re-executed:
-
-```bash
-# every document in the run
-docflow rerun 7f3a91c2 --stage validate
 ```
+--force from validate
 
-```bash
-# only the ones that failed, or only one path
-docflow rerun 7f3a91c2 --stage validate --only failed
-docflow rerun 7f3a91c2 --stage extract.p documentos/2024/enero/factura-001.pdf
+  11034 documents
+  skipping:   acquire, extract.r, extract.p
+  re-running: validate, consistency, report
 ```
 
 ```bash
-# what would be re-executed, without running anything
-docflow rerun 7f3a91c2 --stage extract.p --dry-run
+# only the documents that failed
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --force --stage validate --only failed
 ```
 
-### Downstream is invalidated by default
+```bash
+# one document
+docflow run --pipeline M1-ErpVR documentos/2024/enero/factura-001.pdf --force --stage extract.p
+```
 
-This is the part that has to be right, and it is where a naive re-run becomes a silent error.
+```bash
+# what would be reprocessed, without doing it
+docflow run --pipeline M1-ErpVR documentos/ --force --stage validate --dry-run
+```
+
+The order to reach for, cheapest first: plain `run` to finish incomplete work, `--force --stage <late stage>` to refresh derived output, `--force --stage acquire` only when the acquisition itself is what changed.
+
+### Downstream is invalidated
+
+This is the part that has to be right, and it is where a naive reprocess becomes a silent error.
 
 Re-executing `extract.p` changes the fields. Everything after it — `validate`, `consistency`, `report` — was computed from the **previous** values. Leaving those artifacts in place produces an output where the fields are new and the verdicts describe the old ones. Nothing would flag it: every stage is `done`, every artifact verifies, and the result is inconsistent.
 
-So the default is to invalidate downstream:
-
-```bash
-docflow rerun 7f3a91c2 --stage extract.p
-```
-
-```
-re-running extract.p, and everything after it
-
-  2024/enero/factura-001   extract.p → validate → consistency → report
-  2024/enero/factura-002   extract.p → validate → consistency → report
-  …
-
-downstream invalidated: validate, consistency, report
-```
+So reprocessing a stage invalidates what follows:
 
 ```mermaid
 graph LR
@@ -657,14 +669,14 @@ graph LR
     C --> D["report<br/>invalidated"]
 ```
 
-The ledger records `pending` for each invalidated stage, so a later `--verify` sees the truth rather than a stale `done`.
+The ledger records `pending` for each invalidated stage, so the next `run` — with or without `--force` — sees the truth rather than a stale `done`.
 
 ### Isolating a stage
 
 Sometimes only one stage should re-run — measuring the OCR correction on its own, or re-deriving a layout without touching the reads. That is possible, and it is **opt-in because it produces a knowingly inconsistent state**:
 
 ```bash
-docflow rerun 7f3a91c2 --stage reconstructor --isolate
+docflow run --pipeline M1-ErpVR documentos/ --force --stage reconstructor --isolate
 ```
 
 ```
@@ -673,7 +685,7 @@ re-running reconstructor only
   downstream artifacts kept, marked stale:
     validate, consistency, report
 
-  ⚠ report was produced from the previous document.json.
+  \u26a0 report was produced from the previous document.json.
     re-run with --stage reconstructor to refresh it,
     or accept that the output no longer matches the artifacts.
 ```
@@ -685,31 +697,22 @@ graph LR
     C --> D["report<br/>STALE"]
 ```
 
-The affected stages are marked `stale` rather than `done`, and the Contract reports it, so the inconsistency is **declared in the output instead of hidden in the artifacts**. That follows the same rule as everything else here: a field carries its verdicts, and a document carries the state of what produced it.
+The affected stages are marked `stale` rather than `done`, and the Contract reports it, so the inconsistency is **declared in the output instead of hidden in the artifacts**. Same rule as everywhere else here: a field carries its verdicts, and a document carries the state of what produced it.
 
 ### Artifacts
 
-By default a re-run overwrites the previous artifact, because keeping every version of every stage across eleven thousand documents is unbounded.
+A reprocess overwrites the previous artifact by default, because keeping every version of every stage across eleven thousand documents is unbounded.
 
 ```bash
 # keep the previous artifact as .prev, for diffing
-docflow rerun 7f3a91c2 --stage extract.p --keep-artifacts
+docflow run --pipeline M1-ErpVR documentos/ --force --stage extract.p --keep-artifacts
 ```
 
-Worth using when the point of the re-run is to compare — a new prompt, a new model — since the previous output is the only baseline available.
-
-### Cost
-
-`rerun` is the expensive operation, and by definition: it does work the ledger says is unnecessary. Two things bound it:
-
-- **Scope narrows it.** `--only failed`, a single path, or a document filter.
-- **`--stage` decides the floor.** Re-running `extract.p` re-executes everything downstream; re-running `report` alone touches nothing else.
-
-The order to reach for, cheapest first: `resume` for incomplete work, `rerun --stage <late stage>` to refresh derived output, `rerun --stage acquire` only when the acquisition itself is what changed.
+Worth using when the point of the reprocess is to compare — a new prompt, a new model — since the previous output is the only baseline available.
 
 ### Relationship to a forced stop
 
-They compose without special cases. A `rerun` is killed and recovered exactly like any other execution — the same `running` states, the same `--verify` before resuming, the same rule that at most one stage per in-flight document is repeated.
+They compose without special cases. A forced reprocess is killed and recovered exactly like any other execution: the same `running` states, the same `--verify` before trusting the ledger, and the same rule that at most one stage per in-flight document is repeated.
 
 ### Inspecting the ledger
 
@@ -739,11 +742,11 @@ A ledger is a claim about the filesystem, and it can disagree with it. Three way
 
 This matters more here than in an ordinary job runner, and for the same reason the whole architecture exists: **a stale ledger produces results that look complete and are not.** A document marked `done` whose artifact is missing, or whose input changed underneath it, reports as finished. Nothing downstream would notice.
 
-So the ledger is not authoritative — **the artifacts and the input hash are**. The ledger is an index over them, and it has to be validated against them before a resume trusts it:
+So the ledger is not authoritative — **the artifacts and the input hash are**. The ledger is an index over them, and it has to be validated against them before a `run` trusts it:
 
 ```bash
-# verify every 'done' stage against the filesystem before resuming
-docflow resume 7f3a91c2 --verify
+# verify every 'done' stage against the filesystem before continuing
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --verify
 ```
 
 ### Relationship to pipeline and mode
@@ -807,13 +810,13 @@ stopping 3 runs
   8c02a914   M0-ErVR     was finalising, allowed to complete
 
 2 killed, 1 completed. 17 documents left in-flight.
-run `docflow resume --verify` before resuming.
+run again with `--verify` before trusting the ledger.
 ```
 
 Three behaviours worth noting, because they are what make `--force` safe to reach for:
 
 - **It distinguishes states.** A run that is finalising is allowed to finish — killing it would discard completed work for no reason. Only genuinely active runs are killed.
-- **It reports what it left behind.** "17 documents left in-flight" is the number that matters on resume, not the number of processes killed.
+- **It reports what it left behind.** "17 documents left in-flight" is the number that matters on the next `run`, not the number of processes killed.
 - **It tells you the next command.** A forced kill can leave an artifact half-written, so the output says to verify before resuming rather than leaving that to be discovered.
 
 ### What a forced kill leaves behind
@@ -824,7 +827,7 @@ The rule that contains it: **a stage is trusted only if it is recorded `done` *a
 
 Because `running` is written when a stage *starts*, a killed stage is always already recorded as `running` — so the ledger never has to guess. What varies is whether the artifact on disk is usable:
 
-| State at kill | Ledger says | Artifact on disk | On resume |
+| State at kill | Ledger says | Artifact on disk | On next `run` |
 |---|---|---|---|
 | Stage completed, `done` written | `done` | complete, verifies | Skipped |
 | Killed mid-stage | `running` | not written yet | Re-run from here |
@@ -833,37 +836,41 @@ Because `running` is written when a stage *starts*, a killed stage is always alr
 
 The last row is the one that needs the check rather than the state. If the kill lands while the ledger is being written, the file can claim a stage finished when it did not — the same class of silent error the rest of the system is built to catch, and the reason `--verify` re-checks every `done` against the filesystem instead of trusting the record.
 
-**This is why a forced stop is safe to use.** Without per-document ledgers and verification, a killed run would have to be either fully re-done or manually inspected. With them, it resumes exactly from the interrupted stage — and the artifacts written before the kill are still good.
+**This is why a forced stop is safe to use.** Without per-document ledgers and verification, a killed run would have to be either fully re-done or manually inspected. With them, it continues from the interrupted stage — and the artifacts written before the kill are still good.
 
 ```bash
 # reconcile every ledger against what is actually on disk
-docflow resume --verify
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --verify
 ```
 
 ```bash
-# then resume
-docflow resume
+# then continue — the same command, without --verify
+docflow run --pipeline M1-ErpVR documentos/ --out out/
 ```
 
 **Accepted cost of `--force`:** at most one stage per in-flight document is re-run — the one that was executing. Everything before it is preserved, and nothing after it had started. On eleven thousand files that is the difference between resuming a run and repeating it.
 
 ### Pause and resume
 
-Pause is the *polite* counterpart: it drains in-flight work instead of cutting it off.
+Pause is the *polite* counterpart to a forced stop: it drains in-flight work instead of cutting it off.
 
 ```bash
 docflow pause 7f3a91c2        # finish in-flight files, then hold
-docflow resume 7f3a91c2       # continue where it stopped
+```
+
+```bash
+# continue: the same run command
+docflow run --pipeline M1-ErpVR documentos/ --out out/
 ```
 
 | | `pause` | `stop --force` |
 |---|---|---|
 | In-flight files | Finish | Killed |
 | Ledger state | Always consistent | May need `--verify` |
-| Resumable from | Exact point | Exact stage, after verification |
+| Continues from | Exact point | Exact stage, after verification |
 | When to use | Planned interruption | Something is wrong, or you need the machine |
 
-Resume reads the per-document ledgers to decide what still needs doing — not a single cursor. The process can end and the run picks up without reprocessing what already completed, including partial progress inside a document.
+Both are recovered the same way — by running again. The per-document ledgers decide what still needs doing, not a single cursor, so the process can end and the run picks up without reprocessing what already completed, including partial progress inside a document.
 
 ### Every run reports a job id
 
@@ -915,7 +922,7 @@ Every component takes an input and writes an artifact to `--out`. Passing artifa
 | `contract` | `<name>.catalog.json` | the final output |
 | `reviewer` | routed cases | corrections |
 
-This is the shape the examples below follow: each stage names the artifact it consumes, so a run can be resumed at any point in the chain.
+This is the shape the examples below follow: each stage names the artifact it consumes, so a run can be continued at any point in the chain.
 
 ---
 
