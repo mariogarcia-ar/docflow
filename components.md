@@ -2,7 +2,7 @@
 
 The component reference for the document extraction system.
 
-Components are named by **what they produce**. The method flows that use them are named by **what the extractor receives** — see `README.md` for the three general flows (Rules, Interpretation, Vision) and `workflow.md` for the four input pipelines (P1–P4).
+Components are named by **what they produce**. The method flows that use them are named by **what the extractor receives** — see `README.md` for the three general flows (Rules, Interpretation, Vision) and `workflow.md` for the thirteen input pipelines (coded `M<material>.<extractor>`).
 
 ---
 
