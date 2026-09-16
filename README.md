@@ -191,6 +191,7 @@ La razón de este orden es el costo: interpretar cada píxel de cada página es 
 | `a.md` | Solo texto — OCR lineal + anclas semánticas |
 | `b.md` | Solo visual — segmentación + detección de objetos |
 | `c.md` | Multimodal — fusión texto + posición + imagen |
+| `d.md` | Nota técnica — validación con Pydantic (auditar vs. normalizar) |
 
 Los tres describen capas del flujo tradicional: el AI sobre texto reemplaza la extracción por reglas, y el AI sobre imagen reemplaza además la lectura y la estructura.
 
