@@ -18,6 +18,10 @@ Eleven thousand documents. Extract structured information from them and expose i
 | `docs/artifacts/wbs.md` | The build plan: 53 tasks across 3 stages, critical path, DoR/DoD |
 | `docs/artifacts/kernel-cli.md` | The Stage 1 acceptance harness: exit codes, the 17-row silent-failure matrix |
 | `docs/artifacts/traceability.md` | Requirement → pipeline → task → test, including the deviations from `my_prompt.md` |
+| `docs/plans/README.md` | The gate model — how the three plans relate, what each one freezes, what can slip |
+| `docs/plans/plan-01-kernels.md` | Stage 1: the 22 kernel and ports/adapters tasks, closing on the synthetic flow |
+| `docs/plans/plan-02-components.md` | Stage 2: the 17 domain-component tasks, closing on a real document |
+| `docs/plans/plan-03-pipelines.md` | Stage 3: the 14 pipeline tasks, closing on the 11k-file corpus |
 | `my_prompt.md` | The original specification — requirements and constraints |
 
 Start with `docs/idea/04-storytelling.md` for the reasoning, or `docs/idea/03-cli.md` if you need to run something. The `docs/artifacts/` set is the specification the PoC is built against; where an artifact and an `idea/` document disagree, the artifact is the decision and the `idea/` document is the exploration that led to it.

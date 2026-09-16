@@ -1,3 +1,12 @@
+un punto importante por cada capa 
+
+- completar flujo rapido
+- goldenn set / test 
+- code (para reutilizar)
+- cli (para probar)
+
+
+
 tengo 11k archivos en la carpeta documentos documentos
 necesito extraer informacion de los mismos y dejarlos disponibles para ser consumidos por otro sistema
 
