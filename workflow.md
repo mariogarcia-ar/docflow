@@ -53,46 +53,57 @@ Seen across all five materials, the axis is not really *what the input is* but *
 
 ## The thirteen pipelines
 
-With an ID for reference, in the sequence each one follows.
+With an ID for reference. The extractor slot is named by the code suffix (`.R`, `.P`, `.B`), so each row shows only the prefix that precedes **EVR**.
 
 | # | Code | Pipeline |
 |---|---|---|
-| 1 | `M0.R` | text → rules → validate → report |
-| 2 | `M0.P` | text → prompts → validate → report |
-| 3 | `M0.B` | text → rules / prompts → validate → report |
-| 4 | `M1.R` | text PDF → extract text → rules → validate → report |
-| 5 | `M1.P` | text PDF → extract text → prompts → validate → report |
-| 6 | `M1.B` | text PDF → extract text → rules / prompts → validate → report |
-| 7 | `M2.R` | image PDF → convert img → OCR → rules → validate → report |
-| 8 | `M2.P` | image PDF → convert img → OCR → prompts → validate → report |
-| 9 | `M2.B` | image PDF → convert img → OCR → rules / prompts → validate → report |
-| 10 | `M3.R` | image → OCR → rules → validate → report |
-| 11 | `M3.P` | image → OCR → prompts → validate → report |
-| 12 | `M3.B` | image → OCR → rules / prompts → validate → report |
-| 13 | `M4.P` | image → prompts → validate → report |
+| 1 | `M0.R` | text → EVR |
+| 2 | `M0.P` | text → EVR |
+| 3 | `M0.B` | text → EVR |
+| 4 | `M1.R` | text PDF → extract text → EVR |
+| 5 | `M1.P` | text PDF → extract text → EVR |
+| 6 | `M1.B` | text PDF → extract text → EVR |
+| 7 | `M2.R` | image PDF → convert img → OCR → EVR |
+| 8 | `M2.P` | image PDF → convert img → OCR → EVR |
+| 9 | `M2.B` | image PDF → convert img → OCR → EVR |
+| 10 | `M3.R` | image → OCR → EVR |
+| 11 | `M3.P` | image → OCR → EVR |
+| 12 | `M3.B` | image → OCR → EVR |
+| 13 | `M4.P` | image → EVR |
 
-### The primitive: `extractor → validate → report`
-
-Every pipeline is one primitive:
+In full, without the abbreviation:
 
 ```
-extractor → validate → report
+text PDF → extract text → rules → validate → report
+image → OCR → prompts → validate → report
 ```
 
-A pipeline is this primitive plus a **prefix** that obtains the text. The extractor slot is filled by one of three modes:
+### The primitive: EVR
 
+Every pipeline is one primitive, written **EVR**:
+
+**EVR** = **E**xtractor → **V**alidate → **R**eport.
+
+```mermaid
+graph LR
+    subgraph EVR["EVR"]
+        B["Extractor"] --> C["Validate"] --> D["Report"]
+    end
 ```
-[material prefix] → extractor → validate → report
-        ↑                ↑
-   varies by material   varies by mode
+
+A pipeline is EVR plus a **prefix** that obtains the text:
+
+```mermaid
+graph LR
+    A["Material prefix"] --> B["EVR"]
 ```
 
 | Slot | Varies by | Applies to |
 |---|---|---|
-| **Material prefix** | Material | M1–M4; empty at M0 |
-| **Extractor** | Mode (`.R`, `.P`, `.B`) | all thirteen |
-| **Validate** | — never | all thirteen |
-| **Report** | — never | all thirteen |
+| **Material prefix** | Material | M1–M4; empty at M0 (so the pipeline starts at the extractor) |
+| **E**xtractor | Mode (`.R`, `.P`, `.B`) | all thirteen |
+| **V**alidate | — never | all thirteen |
+| **R**eport | — never | all thirteen |
 
 **No pipeline skips validation**, including the rules-only ones. A regex match proves a value was **captured**, not that it is **correct** — a bad anchor in Rules is detected only by cross-flow contrast, because the value is real and carries the correct shape and type. Acquisition quality is not a factor: `M0.R` and `M1.R` are the same read, differing only in where the text came from.
 
@@ -106,6 +117,11 @@ What each material prepends to the primitive. Nothing here changes the tail.
 
 ### M0 — no prefix
 
+```mermaid
+graph LR
+    A["Text"] --> B["EVR"]
+```
+
 The caller supplies the text and the primitive runs unchanged.
 
 **The traceability ceiling is set by the caller.** An offset is only meaningful against *the text that was actually processed*; if the caller's document and the text it passes differ, the offset points into the passed text and no further. The contract should record this.
@@ -113,6 +129,11 @@ The caller supplies the text and the primitive runs unchanged.
 **Nothing is lossy, and nothing is checked.** No acquisition risk — no OCR error, no reading-order heuristic — but also no acquisition *evidence*. Diagnosis has no gate here, because a string has no legibility to measure. Text extracted badly elsewhere arrives indistinguishable from clean text.
 
 ### M1 — `pdf → text`
+
+```mermaid
+graph LR
+    A["Text PDF"] --> B["Extract text<br/>pdftotext"] --> C["EVR"]
+```
 
 Conversion needs no correction: a converter does not read badly, it transcribes what is there.
 
@@ -122,15 +143,30 @@ The cost is reading order. `pdftotext` is heuristic, so a table header is not as
 
 ### M2 — `pdf → image → text`
 
+```mermaid
+graph LR
+    A["Image PDF"] --> B["Convert to image"] --> C["OCR"] --> D["EVR"]
+```
+
 **Identical to M3 once rasterized**, so the two should share one implementation with a switch at the front. Six of the thirteen pipelines are three designs with a prefix; divergence would be an accident rather than a decision.
 
 ### M3 — `image → text`
+
+```mermaid
+graph LR
+    A["Image"] --> B["OCR"] --> C["EVR"]
+```
 
 **Loses everything visual.** Layout, signatures, seals, checkboxes, logos — the Vision flow is the one that sees signatures and seals, and M3 by construction does not.
 
 **Inherits OCR error.** A pattern has to tolerate the misreads OCR actually produces; a prompt may quietly "repair" a digit it should have flagged. Validation catches either.
 
 ### M4 — no text at all
+
+```mermaid
+graph LR
+    A["Image"] --> B["EVR<br/>extractor = VLM"]
+```
 
 The extractor slot is filled by a multimodal model reading pixels.
 
