@@ -66,15 +66,94 @@ Every pipeline has a material prefix and an extractor mode. The two ways to name
 
 ### Options
 
-Every flag used anywhere in this document.
+**Thirty-three flags appear in this document. Nine are in the first instance.** The rest are designed but deferred — they appear in later sections as intent, not as v1 scope. Five corpus settings are not flags at all; they live in `.env`.
 
-**Any flag can be given a default in the environment**, which is what makes a corpus-specific setup a one-time configuration instead of a flag repeated on every invocation:
+### v1 — the minimum
+
+Every one of these is reachable from the two real tasks: process a corpus, and redo part of it.
+
+| Flag | Command | Why it is in v1 |
+|---|---|---|
+| `--pipeline` | `run` | What to run. One of the thirteen codes |
+| `--extractor` | `run` | Alternative to `--pipeline` when the material varies per file |
+| `--out` | `run`, components | Where everything goes. Required — there is no implicit destination |
+| `--jobs` | `run` | Concurrency. Without it 11k files run serially |
+| `--force` | `run`, `stop` | **The one override.** Reprocess what the ledger calls done; on `stop`, kill without draining |
+| `--stage` | `run` | Scopes a `--force`. Without it, a forced reprocess starts at acquisition |
+| `--only` | `run` | Scopes a run, e.g. `--only failed` |
+| `--model` | `run`, components | Which local model extracts. Has an environment default |
+| `--validator` | `run` | Which frontier LLM governs escalation. Has an environment default |
+
+That is the whole surface for a batch run:
+
+```bash
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --jobs 8
+```
+
+```bash
+# redo only what failed
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --only failed
+```
+
+```bash
+# the prompt changed: reprocess from extraction on
+docflow run --pipeline M1-ErpVR documentos/ --out out/ --force --stage extract.p
+```
+
+### Everything else is set, not passed
+
+The component thresholds are **environment settings, not flags**. They describe a corpus — how strict the quality gate is, how much tolerance amounts get — and a corpus does not change per invocation:
+
+| Setting | Component | Default |
+|---|---|---|
+| `DOCFLOW_CUT_CONFIDENCE` | `segmenter` | `0.7` |
+| `DOCFLOW_MIN_CHARS` | `diagnosis` | `100` |
+| `DOCFLOW_MIN_DPI` | `diagnosis` | `200` |
+| `DOCFLOW_CORRECT` | `reader` | `false` |
+| `DOCFLOW_TOLERANCE_AMOUNTS` | `consistency` | `1` |
+
+They are in `.env.example`. Tuning one is a decision about the corpus, so it belongs in the configuration rather than retyped. None of them has a CLI flag in the first instance.
+
+### Deferred
+
+Designed, documented, and **not in the first instance**. Each is listed with what it would add:
+
+| Flag | Where | What it adds | Why deferred |
+|---|---|---|---|
+| `--dry-run` | `run` | Report what would happen | Convenience; the ledger makes the outcome predictable |
+| `--format` | `run`, `contract` | `md`, `html` | JSON is the consumer contract; other formats are for humans |
+| `--schema` | `validator` | Validate against a document type | Needs the schema files to exist first |
+| `--golden` | `run` | Compare pipelines on a golden set | Only useful once there is a golden set |
+| `--isolate` | `run` | Keep downstream marked `stale` | Produces a knowingly inconsistent state; add when a measuring use case appears |
+| `--keep-artifacts` | `run` | Keep the previous artifact as `.prev` | Retention policy, not needed to run |
+| `--show-evidence` | `identifier` | Print what triggered a decision | Triage aid |
+| `--continuity-only` | `reconstructor` | Skip the layout pass | Optimisation, not a capability |
+| `--ocr` | `reader` | Force an OCR engine | The default is chosen by Diagnosis |
+| `--source` | `catalog` | External source to validate against | No pipeline runs the Catalog yet |
+| `--failed`, `--state` | `status`, `ledger` | Filter a report | Inspection niceties |
+| `--retry-queue`, `--retry` | `catalog` | Inspect and retry unverified | Needs the Catalog running first |
+| `--rebuild`, `--rebuild-index` | `ledger`, `run` | Recompute the index | Repair path, not routine |
+| `--rule`, `--new-type`, `--value` | `reviewer` | Promote a case | Needs the Reviewer workflow |
+
+**Components keep their input and `--out`.** Run standalone, a component takes its input and writes where told — nothing else is required.
+
+### Verification is not a flag
+
+**`--verify` does not exist, on purpose.** Checking that a `done` stage's artifact is actually on disk, and that the input still matches its recorded hash, happens **whenever the ledger is read** — not when someone remembers to ask.
+
+The reason is the shape of the failure it guards against. A forced kill can land while a ledger is being written, leaving a file that claims a stage finished when it did not. If verification were opt-in, the run that needed it most — the one after a kill — would be the one most likely to omit it, and the result would look complete. That is the silent error the whole system exists to catch.
+
+The cost is bounded: an existence check and a hash comparison per document, against the cost of re-running a stage that turned out to be necessary. Verification is cheap; being wrong about it is not.
+
+### Configuration
+
+`--model` and `--validator` are in v1 but have environment defaults, so a corpus is configured once:
 
 ```bash
 cp .env.example .env
 ```
 
-The flag name maps to the variable predictably — `--jobs` → `DOCFLOW_JOBS`, `--model` → `DOCFLOW_MODEL`, `--cut-confidence` → `DOCFLOW_CUT_CONFIDENCE`. Precedence, highest first:
+Precedence, highest first:
 
 | Source | Example |
 |---|---|
@@ -83,86 +162,11 @@ The flag name maps to the variable predictably — `--jobs` → `DOCFLOW_JOBS`, 
 | **`.env`** | `DOCFLOW_JOBS=8` |
 | Built-in default | — |
 
-The exception is deliberate: flags that decide *what to repeat* are not settable by default, because a default for them would be a footgun.
+The flag name maps to the variable predictably — `--jobs` → `DOCFLOW_JOBS`, `--cut-confidence` → `DOCFLOW_CUT_CONFIDENCE`.
 
-| Flag | Why no default |
-|---|---|
-| `--force` | A default would reprocess done work on every run |
-| `--stage` | Only meaningful alongside `--force` |
-| `--isolate` | Produces a knowingly inconsistent state |
-| `--keep-artifacts` | Retention is a per-run decision |
-| `--only` | Scope is a per-run decision |
-| `--dry-run` | A default would make every run a no-op |
+**`--force` and `--stage` are never settable.** A default would reprocess done work on every run, which is the one thing the ledger exists to prevent. The same applies to `--only`: persisting a scope would silently narrow every later run.
 
-**A second group is not settable either, for a different reason.** These are arguments to inspection subcommands rather than to `run` — `docflow status --failed`, `docflow ledger --state failed`, `docflow reviewer promote --rule`. A default for them would change what a *report* returns, not how work is done, and a persisted `--state failed` would silently filter every later query:
-
-| Flag | Subcommand | Why no default |
-|---|---|---|
-| `--failed` | `status` | A filter on a report |
-| `--state` | `ledger` | A filter on a report |
-| `--retry-queue`, `--retry` | `catalog` | Inspection, not configuration |
-| `--rebuild`, `--rebuild-index` | `ledger`, `run` | An explicit repair action |
-| `--rule`, `--new-type`, `--value` | `reviewer` | A one-off correction |
-
-**Two component flags are settable despite looking similar** — `--show-evidence` and `--continuity-only`, alongside `--correct` and `--ocr`. They select *how a component operates*, which is exactly what a corpus-wide default is for. The line is not "component flag" versus "run flag"; it is whether the flag describes how work is done, or what to do about work already done.
-
-**Secrets live in `.env`, never in a flag.** Provider API keys for the frontier validator have no CLI form — `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY` — so they cannot end up in shell history or a process listing. `.env` is git-ignored.
-
-`DOCFLOW_OLLAMA_HOST` is the same kind of setting: an endpoint, not a per-invocation choice, so it is environment-only as well.
-
-**Input**
-
-| Flag | Meaning |
-|---|---|
-| `--pipeline` | The pipeline code. One of the thirteen in `workflow.md`. See *Naming the mode* |
-| `--extractor` | The mode, with the material inferred per file: `r` \| `p` \| `rp`. Alternative to `--pipeline` |
-| `--schema` | Document-type schema, used by `validator` |
-| `--golden` | Golden set for tuning and comparison |
-
-**Models**
-
-| Flag | Meaning |
-|---|---|
-| `--model` | Local extraction model, e.g. `ollama:qwen2.5`. Used by `EpVR` and `ErpVR` |
-| `--validator` | Frontier LLM that governs escalation, e.g. `claude`, `deepseek`, `openai` |
-
-**Output**
-
-| Flag | Meaning |
-|---|---|
-| `--out` | Output directory. Results, ledgers and intermediates all live here, and a folder input mirrors its tree |
-| `--format` | Result format: `json` (default), `md`, `html` |
-
-**Execution**
-
-| Flag | Meaning |
-|---|---|
-| `--jobs` | Concurrency for batch runs |
-| `--force` | Ignore the ledger and reprocess. On `stop`: kill without draining |
-| `--stage` | With `--force`, the stage to start reprocessing from |
-| `--isolate` | With `--force --stage`, keep downstream artifacts marked `stale` |
-| `--keep-artifacts` | Keep the previous artifact as `.prev` instead of overwriting |
-| `--only` | Restrict to a subset, e.g. `--only failed` |
-| `--dry-run` | Report what would happen, run nothing |
-
-**Component-specific** — the rest, grouped by where they appear
-
-| Flag | Component | Meaning |
-|---|---|---|
-| `--cut-confidence` | `segmenter` | Threshold for accepting a cut |
-| `--show-evidence` | `identifier` | Print the words or shapes that triggered the decision |
-| `--min-chars`, `--min-dpi` | `diagnosis` | Quality gate before routing |
-| `--ocr` | `reader` | Force an OCR engine |
-| `--correct` | `reader` | Enable OCR-text correction |
-| `--continuity-only` | `reconstructor` | Cross-page continuity without full layout |
-| `--tolerance-amounts` | `consistency` | Tolerance for amounts, in cents |
-| `--source` | `catalog` | External source to validate against |
-| `--retry-queue`, `--retry` | `catalog` | Inspect or retry unverified fields |
-| `--rebuild`, `--rebuild-index` | `ledger`, `run` | Recompute the index from artifacts |
-| `--state` | `ledger` | Filter documents by stage state |
-| `--verify` | `run`, `status` | Reconcile the record against the filesystem |
-| `--rule`, `--new-type`, `--value` | `reviewer` | Promote a case to a rule, a type, or a corrected value |
-| `--failed` | `status` | Show only what escalated |
+**Secrets live in `.env`, never in a flag.** `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY`, and `DOCFLOW_OLLAMA_HOST` are environment-only, so they cannot end up in shell history or a process listing. `.env` is git-ignored.
 
 ---
 
@@ -496,7 +500,7 @@ So the ledgers are authoritative and `run.json` is rebuildable:
 docflow run --rebuild-index out/
 
 # what does it currently claim, and does it hold?
-docflow status 7f3a91c2 --verify
+docflow status 7f3a91c2
 ```
 
 ### Reading progress without the tool
@@ -742,6 +746,8 @@ The ledger records `pending` for each invalidated stage, so the next `run` — w
 
 ### Isolating a stage
 
+**`--isolate` is deferred** (see *Options*). It is described here because the case it serves is real, and because the `stale` state only exists to support it.
+
 Sometimes only one stage should re-run — measuring the OCR correction on its own, or re-deriving a layout without touching the reads. That is possible, and it is **opt-in because it produces a knowingly inconsistent state**:
 
 ```bash
@@ -772,16 +778,11 @@ The affected stages are marked `stale` rather than `done`, and the Contract repo
 
 A reprocess overwrites the previous artifact by default, because keeping every version of every stage across eleven thousand documents is unbounded.
 
-```bash
-# keep the previous artifact as .prev, for diffing
-docflow run --pipeline M1-ErpVR documentos/ --force --stage extract.p --keep-artifacts
-```
-
-Worth using when the point of the reprocess is to compare — a new prompt, a new model — since the previous output is the only baseline available.
+Worth having when the point of the reprocess is to compare — a new prompt, a new model — since the previous output is the only baseline. **`--keep-artifacts` is deferred** (see *Options*); in the first instance, copy the artifact before forcing a reprocess.
 
 ### Relationship to a forced stop
 
-They compose without special cases. A forced reprocess is killed and recovered exactly like any other execution: the same `running` states, the same `--verify` before trusting the ledger, and the same rule that at most one stage per in-flight document is repeated.
+They compose without special cases. A forced reprocess is killed and recovered exactly like any other execution: the same `running` states, the same verification before the ledger is trusted, and the same rule that at most one stage per in-flight document is repeated.
 
 ### Inspecting the ledger
 
@@ -811,11 +812,11 @@ A ledger is a claim about the filesystem, and it can disagree with it. Three way
 
 This matters more here than in an ordinary job runner, and for the same reason the whole architecture exists: **a stale ledger produces results that look complete and are not.** A document marked `done` whose artifact is missing, or whose input changed underneath it, reports as finished. Nothing downstream would notice.
 
-So the ledger is not authoritative — **the artifacts and the input hash are**. The ledger is an index over them, and it has to be validated against them before a `run` trusts it:
+So the ledger is not authoritative — **the artifacts and the input hash are**. The ledger is an index over them, and it is validated against them every time it is read:
 
 ```bash
-# verify every 'done' stage against the filesystem before continuing
-docflow run --pipeline M1-ErpVR documentos/ --out out/ --verify
+# continue; each ledger is checked against the filesystem as it is read
+docflow run --pipeline M1-ErpVR documentos/ --out out/
 ```
 
 ### Relationship to pipeline and mode
@@ -825,7 +826,7 @@ Two changes invalidate a ledger's claims, and both are recorded so the check is 
 - **A different pipeline.** `M1-ErVR` and `M1-ErpVR` share `M1`'s prefix, so the artifacts up to the extractor are reusable. But a pipeline that changes the *material* — M1 to M2 — invalidates everything, because acquisition itself changes.
 - **A different extractor mode.** Re-running `M1-ErVR` as `M1-ErpVR` reuses the acquisition and re-runs extraction. That is exactly the case the read/write chain is designed to make cheap.
 
-The ledger therefore records the pipeline code and the config hash, not just a completion flag — so `--verify` can decide per stage what is still valid instead of discarding the whole run.
+The ledger therefore records the pipeline code and the config hash, not just a completion flag — so verification can decide per stage what is still valid instead of discarding the whole run.
 
 ---
 
@@ -879,7 +880,7 @@ stopping 3 runs
   8c02a914   M0-ErVR     was finalising, allowed to complete
 
 2 killed, 1 completed. 17 documents left in-flight.
-run again with `--verify` before trusting the ledger.
+run again — each ledger is verified against the filesystem as it is read.
 ```
 
 Three behaviours worth noting, because they are what make `--force` safe to reach for:
@@ -901,21 +902,18 @@ Because `running` is written when a stage *starts*, a killed stage is always alr
 | Stage completed, `done` written | `done` | complete, verifies | Skipped |
 | Killed mid-stage | `running` | not written yet | Re-run from here |
 | Killed mid-write | `running` | **partial** — fails its check | Re-run from here |
-| Ledger itself cut off | `done` for the wrong stage, or unparsable | unclear | `--verify` quarantines it, re-run from the earliest unverified stage |
+| Ledger itself cut off | `done` for the wrong stage, or unparsable | unclear | Verification quarantines it; re-run from the earliest unverified stage |
 
-The last row is the one that needs the check rather than the state. If the kill lands while the ledger is being written, the file can claim a stage finished when it did not — the same class of silent error the rest of the system is built to catch, and the reason `--verify` re-checks every `done` against the filesystem instead of trusting the record.
+The last row is the one that needs the check rather than the state. If the kill lands while the ledger is being written, the file can claim a stage finished when it did not — the same class of silent error the rest of the system is built to catch, and the reason every `done` is re-checked against the filesystem instead of trusted. That check is automatic, not a flag — see *Verification is not a flag*.
 
 **This is why a forced stop is safe to use.** Without per-document ledgers and verification, a killed run would have to be either fully re-done or manually inspected. With them, it continues from the interrupted stage — and the artifacts written before the kill are still good.
 
 ```bash
-# reconcile every ledger against what is actually on disk
-docflow run --pipeline M1-ErpVR documentos/ --out out/ --verify
-```
-
-```bash
-# then continue — the same command, without --verify
+# continue — verification happens as the ledger is read
 docflow run --pipeline M1-ErpVR documentos/ --out out/
 ```
+
+Each ledger is checked against the filesystem as it is read, so a stage whose artifact is missing or whose input changed is treated as incomplete rather than trusted.
 
 **Accepted cost of `--force`:** at most one stage per in-flight document is re-run — the one that was executing. Everything before it is preserved, and nothing after it had started. On eleven thousand files that is the difference between resuming a run and repeating it.
 
@@ -935,7 +933,7 @@ docflow run --pipeline M1-ErpVR documentos/ --out out/
 | | `pause` | `stop --force` |
 |---|---|---|
 | In-flight files | Finish | Killed |
-| Ledger state | Always consistent | May need `--verify` |
+| Ledger state | Always consistent | Verification may quarantine a stage |
 | Continues from | Exact point | Exact stage, after verification |
 | When to use | Planned interruption | Something is wrong, or you need the machine |
 
