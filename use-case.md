@@ -477,16 +477,20 @@ Three behaviours worth noting, because they are what make `--force` safe to reac
 
 `--force` does not drain, so a stage can be interrupted **while writing its artifact**. That is the real cost of the flag, and it lands on the ledger.
 
-The rule that contains it: **a stage is trusted only if it is recorded `done` *and* its artifact verifies.** A stage left in `running` — or one whose write was cut off mid-file — is treated as incomplete, not as done.
+The rule that contains it: **a stage is trusted only if it is recorded `done` *and* its artifact verifies.** Anything else is treated as incomplete.
 
-| State at kill | Ledger says | On resume |
-|---|---|---|
-| Stage completed, ledger written | `done` + artifact verifies | Skipped |
-| Stage writing, ledger not yet written | `running` | Re-run from here |
-| Stage wrote a partial artifact | `running`, artifact fails its check | Re-run from here |
-| Ledger entry not yet written at all | absent | Re-run from here |
+Because `running` is written when a stage *starts*, a killed stage is always already recorded as `running` — so the ledger never has to guess. What varies is whether the artifact on disk is usable:
 
-**This is why a forced stop is safe to use.** Without it, a killed run would have to be either fully re-done or manually inspected; with per-document ledgers and verification, it resumes exactly from the interrupted stage — and the artifacts written before the kill are still good.
+| State at kill | Ledger says | Artifact on disk | On resume |
+|---|---|---|---|
+| Stage completed, `done` written | `done` | complete, verifies | Skipped |
+| Killed mid-stage | `running` | not written yet | Re-run from here |
+| Killed mid-write | `running` | **partial** — fails its check | Re-run from here |
+| Ledger itself cut off | `done` for the wrong stage, or unparsable | unclear | `--verify` quarantines it, re-run from the earliest unverified stage |
+
+The last row is the one that needs the check rather than the state. If the kill lands while the ledger is being written, the file can claim a stage finished when it did not — the same class of silent error the rest of the system is built to catch, and the reason `--verify` re-checks every `done` against the filesystem instead of trusting the record.
+
+**This is why a forced stop is safe to use.** Without per-document ledgers and verification, a killed run would have to be either fully re-done or manually inspected. With them, it resumes exactly from the interrupted stage — and the artifacts written before the kill are still good.
 
 ```bash
 # reconcile every ledger against what is actually on disk
@@ -497,6 +501,8 @@ docflow resume --verify
 # then resume
 docflow resume
 ```
+
+**Accepted cost of `--force`:** at most one stage per in-flight document is re-run — the one that was executing. Everything before it is preserved, and nothing after it had started. On eleven thousand files that is the difference between resuming a run and repeating it.
 
 ### Pause and resume
 
