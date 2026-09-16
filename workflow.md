@@ -45,9 +45,9 @@ Seen across all five materials, the axis is not really *what the input is* but *
 | **M3** | OCR | high |
 | **M4** | never — the model reads pixels | n/a (no text) |
 
-**M0 is the floor, and it makes the rest of the model legible.** With acquisition cost at zero, M0 is nothing but *extraction → validation → reporting*. Every other material is that same pipeline with work prepended to obtain the text. This is the cleanest available statement of what the system actually does: the pipeline is extraction plus verification, and the materials are five ways of arriving at its input.
+**M0 is the floor, and it makes the rest of the model legible.** With acquisition cost at zero, M0 is nothing but *extraction → validation → reporting*. Every other material is that same pipeline with work prepended to obtain the text. The pipeline is extraction plus verification; the materials are five ways of arriving at its input.
 
-**Why M0 is a real case, not a degenerate one.** `my_prompt.md` describes a library consumed as includes or as a CLI, and a caller that already holds text is a natural consumer — text from a web form, a database field, an upstream system, or an OCR step run elsewhere. Requiring such a caller to wrap its text in a PDF to re-extract it would be an artificial constraint.
+**M0 is a first-class case.** `my_prompt.md` describes a library consumed as includes or as a CLI, and a caller that already holds text is a natural consumer — text from a web form, a database field, an upstream system, or an OCR step run elsewhere.
 
 ---
 
@@ -86,9 +86,9 @@ Every pipeline follows **one sequence**, fixed in order:
 | **Validate** | — never | all thirteen |
 | **Report** | — never | all thirteen |
 
-**No pipeline skips validation**, including the rules-only ones. A regex match proves a value was **captured**, not that it is **correct** — `README.md` states that a bad anchor in Rules is detected *only* by cross-flow contrast, because the value is real and carries the correct shape and type. Text of impeccable provenance does not make a value correctly anchored, so no acquisition quality excuses the check. The same holds for `M0.R`: it is the same read as `M1.R`, differing only in where the text came from.
+**No pipeline skips validation**, including the rules-only ones. A regex match proves a value was **captured**, not that it is **correct** — a bad anchor in Rules is detected only by cross-flow contrast, because the value is real and carries the correct shape and type. Acquisition quality is not a factor: `M0.R` and `M1.R` are the same read, differing only in where the text came from.
 
-**What the sequence guarantees to the consumer.** Because every one of the thirteen passes through the Validator and the Contract, a field always arrives with the four check verdicts and a trace, whatever route produced it. That is what makes the pipelines substitutable rather than merely similar. If a pipeline could skip validation, the consumer could not tell a validated field from an unvalidated one — a difference invisible in the report unless it is enforced here.
+**What the sequence guarantees to the consumer.** A field always arrives with the four check verdicts and a trace, whatever route produced it, which is what makes the pipelines substitutable rather than merely similar.
 
 ---
 
@@ -107,7 +107,7 @@ graph LR
 
 **The traceability ceiling is set by the caller.** M0 has the strongest trace any material can offer, because a character offset into text is the most precise pointer available — but the offset is only meaningful against *the text that was actually processed*. If the caller's original document and the text it passes are not the same artifact, the offset points into the passed text and no further. This should be explicit in the contract, since it is the one thing M0 cannot verify for itself.
 
-**Nothing here is lossy, and nothing is checked either.** M0 inherits no acquisition risk — no OCR error, no reading-order heuristic — but also no acquisition *evidence*. `components.md`'s Diagnosis detects what is present and adapts it; M0 has no such gate, because a string has no legibility to measure. If the caller passes text extracted badly elsewhere, M0 cannot tell.
+**Nothing is lossy, and nothing is checked.** M0 inherits no acquisition risk — no OCR error, no reading-order heuristic — but also no acquisition *evidence*. `components.md`'s Diagnosis detects what is present and adapts it; M0 has no such gate, because a string has no legibility to measure. Text extracted badly elsewhere arrives indistinguishable from clean text.
 
 ### M1 — text PDF
 
@@ -140,7 +140,7 @@ graph LR
 
 **What it loses:** everything visual. Layout, signatures, seals, checkboxes, logos — `components.md` notes the Vision flow is the one that sees signatures and seals, and M3 by construction does not.
 
-**What it inherits:** OCR error is in the text. A pattern has to tolerate the misreads OCR actually produces; a prompt may quietly "repair" a digit it should have flagged. Validation is what catches either, which is why it is not optional here.
+**What it inherits:** OCR error is in the text. A pattern has to tolerate the misreads OCR actually produces; a prompt may quietly "repair" a digit it should have flagged. Validation catches either.
 
 ### M4 — image, direct prompt
 
@@ -172,7 +172,7 @@ Regex over the text. **Invents nothing** and is deterministic; it either capture
 - Needs one pattern per wording variant, and at 11k files the variants are unknown.
 - **An anchor error is invisible.** `README.md` is explicit that a bad anchor in Rules is detected *only* by cross-flow contrast, because the value is real and has the correct shape and type. With no second read, `.R` has no way to notice it took the value from the neighboring block.
 
-So `.R` is the cheapest mode and, on its own, the one with the least ability to catch its own characteristic error. Note that a clean text source does not help with this at all — the anchor error is independent of acquisition quality.
+So `.R` is the cheapest mode and, on its own, the one with the least ability to catch its own characteristic error. A clean text source does not help: the anchor error is independent of acquisition quality.
 
 ### `.P` — prompts only
 
@@ -180,7 +180,7 @@ A prompt over the text (or over pixels, in M4). **Tolerates wording variation**,
 
 **Two limits:**
 
-- **Can invent values.** Arithmetic and check digit in the Validator are what catch this — which is why validation is not optional.
+- **Can invent values.** Arithmetic and check digit in the Validator catch this.
 - **Can misattribute.** A real value assigned to the wrong field, which is `README.md`'s semantic-confusion failure mode.
 
 **Trace** is a quote + offset for text materials, a bounding region for M4.
@@ -227,9 +227,9 @@ Runs `.R` and `.P` over the **same text** and lets Consistency compare them.
 | **No visual evidence** | 1–12 | Signatures, seals, checkboxes, logos |
 | **No offset** | 13 | Precise traceability |
 
-**Read this table as residual risk, not as coverage.** Validation already runs on all thirteen, so these blind spots are what remains *after* the four checks — the failures the Validator structurally cannot see. That is why they matter: they are the gap the validator does not close, and the only remedies are contrast (`.B`) or an external source (`Catalog`, which no pipeline runs).
+**Read this table as residual risk, not as coverage.** Validation already runs on all thirteen, so these blind spots are what remains *after* the four checks — the failures the Validator structurally cannot see. The only remedies are contrast (`.B`) or an external source (`Catalog`, which no pipeline runs).
 
-**This table is the whole decision surface.** Choosing a pipeline is choosing which residual blind spot to accept. The extractor choice is not a detail — it decides whether the pipeline can catch its own characteristic error — and the material choice is not a detail either, but note *what it does not decide*: it has no effect on the `.R` anchor blind spot or the `.P` invention risk, which are properties of the reader, not of how the text arrived.
+**This table is the whole decision surface.** Choosing a pipeline is choosing which residual blind spot to accept. The extractor choice decides whether the pipeline can catch its own characteristic error. The material choice decides acquisition cost and what evidence is available — but not the `.R` anchor blind spot or the `.P` invention risk, which are properties of the reader.
 
 ---
 
