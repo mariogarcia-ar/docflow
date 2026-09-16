@@ -44,7 +44,58 @@ Los de nivel página son **paralelizables**. El Segmentador y el Contrato son **
 
 ### Segmentador
 
+```mermaid
+graph LR
+    A["Archivo<br/>20 páginas"] --> B["Detectar cortes<br/>continuidad · numeración"]
+    B --> C["Doc 1<br/>págs 1-7"]
+    B --> D["Doc 2<br/>págs 8-12"]
+    B --> E["Doc 3<br/>págs 13-20"]
+```
+
 Agrupa las páginas en documentos lógicos antes del Identificador. Sin él, un PDF con tres facturas se procesa como una sola y los campos se mezclan entre comprobantes.
+
+Las señales de corte son la numeración de página reiniciada, un encabezado de documento nuevo, o la ausencia de continuidad en tablas abiertas.
+
+### Identificador
+
+```mermaid
+graph LR
+    A["Documento<br/>lógico"] --> B{"¿Qué evidencia<br/>hay?"}
+    B -->|"texto"| C["Por campos<br/>y palabras clave"]
+    B -->|"imagen"| D["Por formas<br/>y marcas"]
+    B -->|"ambos"| E["Mixto<br/>estructura + contenido"]
+    C --> F["Tipo + confianza<br/>+ evidencia"]
+    D --> F
+    E --> F
+    F --> G["Ruteo:<br/>plantilla · extractor"]
+```
+
+Tres variantes según qué evidencia esté disponible: solo texto, solo imagen, o ambos. La diferencia no es de precisión sino de qué se puede observar.
+
+Devuelve la **evidencia** junto al tipo: qué palabras o formas dispararon la decisión. Sin eso, un documento mal clasificado es invisible y el error aparece recién al final, como un campo mal extraído.
+
+Confianza baja deriva a revisión en vez de elegir el tipo más probable. Y hace falta una categoría "otro" con ruta propia: de ahí salen los tipos nuevos.
+
+### Diagnóstico
+
+```mermaid
+graph LR
+    A["Página"] --> B{"¿Qué<br/>contiene?"}
+    B -->|"capa de texto"| C["Medir<br/>proporción · alfabéticos"]
+    B -->|"imagen"| D["Medir<br/>DPI · peso · legibilidad"]
+    C --> E{"¿Usable?"}
+    D --> E
+    E -->|"sí"| F["Ruta:<br/>conversión"]
+    E -->|"no"| G["Adecuar<br/>reescalar · comprimir"]
+    G --> H["Ruta:<br/>OCR"]
+    E -->|"ilegible"| I["Derivar<br/>con motivo"]
+```
+
+Corre antes de leer y hace tres cosas: **detecta** qué hay, **mide** si es procesable, y **adecúa** la entrada.
+
+No alcanza con preguntar si hay texto: hay que ver si es usable. Un PDF puede traer una capa de OCR vieja y mala; el ruteo por presencia lo manda a conversión y arrastra esos errores sin que nadie los revise. El chequeo es de proporción y calidad — una capa con 40 caracteres en una A4 es basura.
+
+Legibilidad es distinto de resolución: una imagen puede tener DPI suficiente y estar desenfocada. Si no pasa, hay dos salidas válidas (preprocesar o derivar) y una inválida: pasarla al OCR igual y dejar que devuelva texto inventado indistinguible de una lectura real.
 
 ### Lector
 
@@ -62,11 +113,23 @@ graph LR
 | Conversión | Capa de texto existente | No | 1.0 |
 | OCR | Imagen | Sí | Estimada |
 
-La corrección existe solo en OCR: un conversor no lee mal, transcribe lo que hay.
+La corrección existe solo en OCR: un conversor no lee mal, transcribe lo que hay. Aplicarle un modelo de lenguaje "por las dudas" solo puede introducir daño.
 
 El ruteo es **por página**: un PDF mixto combina ambos caminos y los une al final.
 
 ### Reconstructor
+
+```mermaid
+graph LR
+    A["Páginas<br/>1-7"] --> B["Layout<br/>por página"]
+    B --> C["Continuidad<br/>cruzar páginas"]
+    C --> D["Tablas<br/>encabezado + filas"]
+    C --> E["Encabezados<br/>colapsar repetidos"]
+    C --> F["Orden<br/>de lectura"]
+    D --> G["Documento<br/>estructurado"]
+    E --> G
+    F --> G
+```
 
 Recibe **varias páginas**, no una: el layout es local, pero la continuidad lo cruza.
 
@@ -74,6 +137,18 @@ Recibe **varias páginas**, no una: el layout es local, pero la continuidad lo c
 - Un encabezado repetido en las 5 páginas se captura 5 veces sin control de continuidad.
 
 ### Validador
+
+```mermaid
+graph LR
+    A["Campo<br/>extraído"] --> B["Forma"]
+    B --> C["Tipo"]
+    C --> D["Contenido"]
+    D --> E["Dígito<br/>verificador"]
+    B -.falla.-> F["Reintentar<br/>otra ancla"]
+    C -.falla.-> G["Reintentar<br/>si no, revisión"]
+    D -.falla.-> H["Revisión"]
+    E -.falla.-> I["Rechazar"]
+```
 
 Cuatro chequeos, de más débil a más fuerte:
 
@@ -84,9 +159,30 @@ Cuatro chequeos, de más débil a más fuerte:
 | **Contenido** | ¿Es admisible en el dominio? | Revisión |
 | **Dígito verificador** | ¿Es válido en sí mismo? | Rechazar |
 
+El orden no es arbitrario: **forma** descarta rápido, **contenido** es el único que conoce el negocio (un IVA de 17% pasa forma y tipo, y sigue siendo error), y **dígito verificador** es el único con garantía matemática — un número inventado no pasa salvo azar de 1 en 10.
+
 Se reutiliza en cinco puntos: dentro del Lector, al corregir OCR, por campo, entre campos, y contra catálogos externos.
 
 La consistencia entre campos puede cruzar páginas: subtotal en una y total en otra.
+
+Ningún chequeo detecta un valor **plausible pero falso**: un total de 15400 que era 1540 pasa las cuatro. Eso requiere comparar contra algo externo, y es una decisión aparte.
+
+### Contrato
+
+```mermaid
+graph LR
+    A["Documentos<br/>validados"] --> B["Unir<br/>campos por documento"]
+    B --> C["Adjuntar<br/>página + offset"]
+    C --> D["Derivar<br/>confianza"]
+    D --> E["JSON<br/>+ trazabilidad"]
+    F["Página<br/>ilegible"] -.-> E
+```
+
+Emitir es una **barrera**: espera a que todas las páginas estén resueltas antes de producir la salida del documento.
+
+Une los campos que vinieron de páginas distintas, adjunta la traza `(página, offset)` por campo, y deriva la confianza de señales verificables — no del score que declare el modelo.
+
+El fallo es **parcial**: una página ilegible se marca como tal y el resto del documento se emite igual, con esa ausencia declarada.
 
 ## Los tres flujos
 
