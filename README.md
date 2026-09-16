@@ -8,8 +8,9 @@ Eleven thousand documents. Extract structured information from them and expose i
 
 | Document | What it covers |
 |---|---|
-| `02-components.md` | The ten components — what each produces, its diagram, its failure modes |
 | `01-pipelines.md` | The thirteen input pipelines, from material to output |
+| `02-components.md` | The ten components — what each produces, its diagram, its failure modes |
+| `02-arch-components.md` | The eight kernels underneath them — the reusable engines (orchestrator, PDF, image, OCR, local LLM, frontier LLM, store, registry) |
 | `03-cli.md` | How to invoke them: commands, flags, batch, resume |
 | `my_prompt.md` | The original specification — requirements and constraints |
 | `04-storytelling.md` | Why the architecture has this shape, as a narrative |

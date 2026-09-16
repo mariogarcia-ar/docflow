@@ -4,6 +4,8 @@ The thirteen input pipelines, built out of the components defined in `02-compone
 
 `02-components.md` defines the **components** (named by what they produce). `README.md` introduces the **two axes** — material and extractor — that generate the routes. This document defines the **thirteen input pipelines** and maps each one onto those components.
 
+Under both sits `02-arch-components.md`, which defines the **kernels** the components are built from. The material prefixes below map onto them directly: M1 is one kernel call (PDF text extraction), M2 is three (render → image op → OCR), M3 is two, and M4 is a single model call. Nothing in this document changes because of that layer — the thirteen are the same thirteen — but it is why the M2 and M3 prefixes are one implementation with a switch at the front.
+
 **Terminology note.** The source notes in `my_prompt.md` call these "flujos". This document calls the input-routed ones **pipelines**, coded `<material>-<primitive>` — distinct from the *extractor modes* (`r`, `p`, `rp`) they are built from.
 
 ---

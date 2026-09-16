@@ -11,6 +11,8 @@ Two other decompositions exist and are orthogonal to this one:
 | **Material** | How the text is obtained | `01-pipelines.md` — five materials, `M0`–`M4` |
 | **Extractor** | How values are read | `r` regex · `p` prompt, written inside the primitive |
 
+A fourth decomposition sits **underneath** this one: the **kernels** in `02-arch-components.md` — the engines these components are built from (orchestrator, PDF, image, OCR, local LLM, frontier LLM, store, registry). A component says what must happen to a document; a kernel says how a class of work is done at all, and is reusable by other projects.
+
 A primitive is **EVR** = **E**xtractor → **V**alidate → **R**eport, named `ErVR`, `EpVR` or `ErpVR`. A pipeline is a material prefix plus a primitive — thirteen in total, defined in `01-pipelines.md`.
 
 The traditional flow names (Rules, Interpretation, Vision) are aliases for the extractor modes: Rules is `ErVR`; Interpretation and Vision are both `EpVR`, on text and on pixels respectively. See `README.md`.
