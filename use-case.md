@@ -66,7 +66,35 @@ Every pipeline has a material prefix and an extractor mode. The two ways to name
 
 ### Options
 
-Every flag used anywhere in this document:
+Every flag used anywhere in this document.
+
+**Any flag can be given a default in the environment**, which is what makes a corpus-specific setup a one-time configuration instead of a flag repeated on every invocation:
+
+```bash
+cp .env.example .env
+```
+
+The flag name maps to the variable predictably — `--jobs` → `DOCFLOW_JOBS`, `--model` → `DOCFLOW_MODEL`, `--cut-confidence` → `DOCFLOW_CUT_CONFIDENCE`. Precedence, highest first:
+
+| Source | Example |
+|---|---|
+| **CLI flag** | `--jobs 4` |
+| **Environment** | `DOCFLOW_JOBS=4` |
+| **`.env`** | `DOCFLOW_JOBS=8` |
+| Built-in default | — |
+
+The exception is deliberate: flags that decide *what to repeat* are not settable by default, because a default for them would be a footgun.
+
+| Flag | Why no default |
+|---|---|
+| `--force` | A default would reprocess done work on every run |
+| `--stage` | Only meaningful alongside `--force` |
+| `--isolate` | Produces a knowingly inconsistent state |
+| `--keep-artifacts` | Retention is a per-run decision |
+| `--only` | Scope is a per-run decision |
+| `--dry-run` | A default would make every run a no-op |
+
+**Secrets live in `.env`, never in a flag.** Provider API keys for the frontier validator have no CLI form — `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `OPENAI_API_KEY` — so they cannot end up in shell history or a process listing. `.env` is git-ignored.
 
 **Input**
 

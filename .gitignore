@@ -1,0 +1,29 @@
+# Environment — contains API keys for the frontier validator
+.env
+.env.local
+.env.*.local
+
+# docflow output and bookkeeping
+out/
+work/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node, if the CLI is packaged that way
+node_modules/
+dist/
+build/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
