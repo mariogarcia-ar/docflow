@@ -29,7 +29,7 @@ $$4 \text{ text-available materials} \times 3 \text{ extractor modes} + 1 \text{
 
 **M4 has one variant only.** Regex needs a string to run on, and M4 never produces one — pixels go to the model and fields come back. So the matrix is 4×3+1, and every other material supports all three extractor modes.
 
-**The material path and the extractor are independent.** M0 and M3 differ only in how text is obtained; `.R` and `.P` differ only in how that text is read. Neither choice constrains the other, which is why the count multiplies rather than adds.
+**The material prefix and the extractor are independent.** M0 and M3 differ only in how text is obtained; `.R` and `.P` differ only in how that text is read. Neither choice constrains the other, which is why the count multiplies rather than adds.
 
 ---
 
@@ -71,129 +71,110 @@ With an ID for reference, in the sequence each one follows.
 | 12 | `M3.B` | image → OCR → rules / prompts → validate → report |
 | 13 | `M4.P` | image → prompts → validate → report |
 
-### The validation sequence is invariant
+### The primitive: `extractor → validate → report`
 
-Every pipeline follows **one sequence**, fixed in order:
+Every pipeline is one primitive:
 
 ```
-[acquisition] → [extraction] → validate → report
+extractor → validate → report
 ```
 
-| Stage | Varies by | Applies to |
+A pipeline is this primitive plus a **prefix** that obtains the text. The extractor slot is filled by one of three modes:
+
+```
+[material prefix] → extractor → validate → report
+        ↑                ↑
+   varies by material   varies by mode
+```
+
+| Slot | Varies by | Applies to |
 |---|---|---|
-| **Acquisition** | Material | M1–M4; empty at M0 |
-| **Extraction** | Extractor mode | all thirteen |
+| **Material prefix** | Material | M1–M4; empty at M0 |
+| **Extractor** | Mode (`.R`, `.P`, `.B`) | all thirteen |
 | **Validate** | — never | all thirteen |
 | **Report** | — never | all thirteen |
 
 **No pipeline skips validation**, including the rules-only ones. A regex match proves a value was **captured**, not that it is **correct** — a bad anchor in Rules is detected only by cross-flow contrast, because the value is real and carries the correct shape and type. Acquisition quality is not a factor: `M0.R` and `M1.R` are the same read, differing only in where the text came from.
 
-**What the sequence guarantees to the consumer.** A field always arrives with the four check verdicts and a trace, whatever route produced it, which is what makes the pipelines substitutable rather than merely similar.
+**What the primitive guarantees.** A field always arrives with the four check verdicts and a trace, whatever route produced it, which is what makes the pipelines substitutable rather than merely similar.
 
 ---
 
-## Material paths
+## Material prefixes
 
-Each defined once; the extractor is layered on top.
+What each material prepends to the primitive. Nothing here changes the tail.
 
-### M0 — text arrives directly
+### M0 — no prefix
 
-```mermaid
-graph LR
-    A["Text"] --> B["Extractor"] --> C["Validate"] --> D["Report"]
-```
+The caller supplies the text and the primitive runs unchanged.
 
-**No acquisition step at all.** There is no Reader, no Diagnosis, and no conversion — the caller supplies the text and the pipeline begins at extraction.
+**The traceability ceiling is set by the caller.** An offset is only meaningful against *the text that was actually processed*; if the caller's document and the text it passes differ, the offset points into the passed text and no further. The contract should record this.
 
-**The traceability ceiling is set by the caller.** M0 has the strongest trace any material can offer, because a character offset into text is the most precise pointer available — but the offset is only meaningful against *the text that was actually processed*. If the caller's original document and the text it passes are not the same artifact, the offset points into the passed text and no further. This should be explicit in the contract, since it is the one thing M0 cannot verify for itself.
+**Nothing is lossy, and nothing is checked.** No acquisition risk — no OCR error, no reading-order heuristic — but also no acquisition *evidence*. Diagnosis has no gate here, because a string has no legibility to measure. Text extracted badly elsewhere arrives indistinguishable from clean text.
 
-**Nothing is lossy, and nothing is checked.** M0 inherits no acquisition risk — no OCR error, no reading-order heuristic — but also no acquisition *evidence*. `components.md`'s Diagnosis detects what is present and adapts it; M0 has no such gate, because a string has no legibility to measure. Text extracted badly elsewhere arrives indistinguishable from clean text.
+### M1 — `pdf → text`
 
-### M1 — text PDF
+Conversion needs no correction: a converter does not read badly, it transcribes what is there.
 
-```mermaid
-graph LR
-    A["Text PDF"] --> B["Extract text<br/>pdftotext"] --> C["Extractor"] --> D["Validate"] --> E["Report"]
-```
+The cost is reading order. `pdftotext` is heuristic, so a table header is not associated with rows continuing on the next page, and a header repeated across five pages is not collapsed. That is the Reconstructor's job and it is not being done. Broken linear text still looks plausible, so the failure is quiet.
 
-**Honest reduction.** Conversion needs no correction — `components.md` is clear that a converter does not read badly, it transcribes what is there, and that applying a language model "just in case" can only introduce damage.
+**M1 is M0 plus one step**, and that step is its only liability.
 
-**The trade.** `pdftotext` produces reading order heuristically: it does not associate a table header with rows continuing on the next page, and does not collapse a header repeated across five pages. That is the Reconstructor's job and it is not being done. Broken linear text still looks plausible, so the failure is quiet.
+### M2 — `pdf → image → text`
 
-**M1 is M0 plus one step**, and that step is where M1's only liability enters. Worth stating plainly: with `pdftotext` removed, M1 becomes M0.
+**Identical to M3 once rasterized**, so the two should share one implementation with a switch at the front. Six of the thirteen pipelines are three designs with a prefix; divergence would be an accident rather than a decision.
 
-### M2 — image PDF
+### M3 — `image → text`
 
-```mermaid
-graph LR
-    A["Image PDF"] --> B["Convert to image"] --> C["OCR"] --> D["Extractor"] --> E["Validate"] --> F["Report"]
-```
+**Loses everything visual.** Layout, signatures, seals, checkboxes, logos — the Vision flow is the one that sees signatures and seals, and M3 by construction does not.
 
-**M2 is M3 with a conversion prefix.** Once rasterized, the steps are identical, so `M2.*` and `M3.*` should share one implementation with a switch at the front. Six of the thirteen pipelines are really three designs with a prefix; divergence between them would be an accident rather than a decision.
+**Inherits OCR error.** A pattern has to tolerate the misreads OCR actually produces; a prompt may quietly "repair" a digit it should have flagged. Validation catches either.
 
-### M3 — image via OCR
+### M4 — no text at all
 
-```mermaid
-graph LR
-    A["Image"] --> B["OCR"] --> C["Extractor"] --> D["Validate"] --> E["Report"]
-```
+The extractor slot is filled by a multimodal model reading pixels.
 
-**What it loses:** everything visual. Layout, signatures, seals, checkboxes, logos — `components.md` notes the Vision flow is the one that sees signatures and seals, and M3 by construction does not.
+**Uniquely sees** visual evidence — a signature, a seal, a checkbox — as part of extraction rather than as something lost in conversion.
 
-**What it inherits:** OCR error is in the text. A pattern has to tolerate the misreads OCR actually produces; a prompt may quietly "repair" a digit it should have flagged. Validation catches either.
+**Uniquely risks** a single fused read with no second opinion, and no offset to trace: the trace is a bounding region, less precise than a character offset.
 
-### M4 — image, direct prompt
-
-```mermaid
-graph LR
-    A["Image"] --> B["Prompt<br/>multimodal model"] --> C["Validate"] --> D["Report"]
-```
-
-**The only pipeline with no text anywhere in it.** No OCR, no regex, and nothing to contrast against.
-
-**What it uniquely sees:** the model gets pixels, so it is the only pipeline that can use visual evidence — a signature, a seal, a checkbox, a logo — as part of extraction rather than as something lost in conversion.
-
-**What it uniquely risks:** with one fused read there is no second opinion, and with no text intermediate there is no offset to trace — the trace is a bounding region, inherently less precise than a character offset.
-
-**Diagnosis is absent by design**, matching `README.md`'s note that Vision uses neither Diagnosis nor Reader. The consequence: nothing measures legibility before the model reads, so a bad input surfaces as low-confidence extraction rather than as a routing decision.
+**Diagnosis is absent by design**, matching `README.md`'s note that Vision uses neither Diagnosis nor Reader. Nothing measures legibility before the model reads, so a bad input surfaces as low-confidence extraction rather than as a routing decision.
 
 ---
 
 ## Extractor modes
 
-Each defined once; the material path is beneath it.
+What fills the extractor slot. All three read the text from the material prefix — except `.P` in M4, which reads pixels.
 
-### `.R` — rules only
+| Mode | Method | Invents values | Deterministic | Contrast | Trace |
+|---|---|:---:|:---:|:---:|---|
+| **`.R`** | regex | No | Yes | — | exact offset |
+| **`.P`** | prompt | Yes | No | — | quote + offset |
+| **`.B`** | both | — | — | **✓** | exact + quote |
 
-Regex over the text. **Invents nothing** and is deterministic; it either captures a value that is there or fails.
+### `.R` — regex
 
-**Two limits, and the second is the serious one:**
+Cheapest and deterministic; it either captures a value that is there or fails.
 
-- Needs one pattern per wording variant, and at 11k files the variants are unknown.
-- **An anchor error is invisible.** `README.md` is explicit that a bad anchor in Rules is detected *only* by cross-flow contrast, because the value is real and has the correct shape and type. With no second read, `.R` has no way to notice it took the value from the neighboring block.
+- One pattern per wording variant, and at 11k files the variants are unknown.
+- **An anchor error is invisible.** A bad anchor in Rules is detected only by cross-flow contrast, because the value is real and carries the correct shape and type. With no second read, `.R` cannot notice it took the value from the neighboring block.
 
-So `.R` is the cheapest mode and, on its own, the one with the least ability to catch its own characteristic error. A clean text source does not help: the anchor error is independent of acquisition quality.
+### `.P` — prompt
 
-### `.P` — prompts only
-
-A prompt over the text (or over pixels, in M4). **Tolerates wording variation**, which is what makes it viable when the corpus is unknown.
-
-**Two limits:**
+Tolerates wording variation, which is what makes it viable when the corpus is unknown.
 
 - **Can invent values.** Arithmetic and check digit in the Validator catch this.
-- **Can misattribute.** A real value assigned to the wrong field, which is `README.md`'s semantic-confusion failure mode.
-
-**Trace** is a quote + offset for text materials, a bounding region for M4.
+- **Can misattribute.** A real value assigned to the wrong field.
 
 ### `.B` — both
 
 Runs `.R` and `.P` over the **same text** and lets Consistency compare them.
 
-**This is the only mode that produces contrast**, and contrast is the one mechanism that catches a plausible-but-false value: a total of 15400 that was 1540 passes shape, type and content, and has no check digit. Nothing internal sees it. A disagreement between two reads does.
+**The only mode that produces contrast**, and contrast is the one mechanism that catches a plausible-but-false value: a total of 15400 that was 1540 passes shape, type and content, and has no check digit. Nothing internal sees it. A disagreement between two reads does.
 
-**Why it is cheap.** `components.md` reserves cross-flow contrast because each method flow re-acquires the document. Here the text is in hand, so a second read costs one extra call on critical fields, not a second pass over the document.
+**Cheap, because the acquisition is already paid.** `components.md` reserves cross-flow contrast because each method flow re-acquires the document; here the text is in hand, so a second read costs one extra call on critical fields.
 
-**`.B` is not available in M4**, because there is no text for a regex to run on.
+**Not available in M4**, because there is no text for a regex to run on.
 
 ---
 
@@ -265,7 +246,7 @@ Running both costs one extra call on critical fields, not a second acquisition. 
 
 ✓ runs in full · ◐ only in the `.B` variants · — does not run · *selector* gates the pipeline, does not run inside it
 
-**M0 runs no acquisition component at all** — no Diagnosis, no Reader. It is the clearest view of the invariant tail: Validate and Report, with nothing before them.
+**M0 runs no acquisition component at all** — no Diagnosis, no Reader. It is the primitive with an empty prefix: Validate and Report, with nothing before the extractor.
 
 **Diagnosis selects where it can.** Choosing M1 over M2 asks whether the PDF has a usable text layer — exactly Diagnosis's question in `components.md`, including its warning that the check must be **quality, not presence**, because an old bad OCR layer is not a text layer. Choosing M0 is a caller assertion rather than a detection: there is no artifact to diagnose, only text handed over. So M0 also moves the most trust onto the caller.
 
@@ -350,8 +331,8 @@ Every pipeline reports through the **Contract**, so outputs have the same shape 
 - **Whether `.B` is the default for text materials.** It is the only mode that catches its own characteristic failure, and the extra cost is one call on critical fields rather than a re-read. The argument for ever choosing `.R` or `.P` alone needs stating.
 - **What decides `.R` vs `.P` inside `.B` when they disagree.** Consistency can break a tie by arithmetic, but only for fields with an arithmetic relation. For an identifier, disagreement has no tie-breaker.
 - **What defines a "critical field".** Both the contrast policy and the target of escalation depend on it, and today it exists only as an expression in `components.md`.
-- **Whether OCR correction is part of the OCR step.** `components.md` has the Reader correcting OCR output (scoped to characters and spacing, never digits, raw text retained for audit). The thirteen pipelines do not list it, so it is either inside "OCR" or absent.
-- **What happens before OCR in M2 and M3.** Neither lists preprocessing, yet `components.md` has input adaptation (rescale, compress) and treats legibility as distinct from resolution. A blurred photo passed straight to OCR is the one outcome it calls invalid.
+- **Whether OCR correction is inside the OCR step.** `components.md` has the Reader correcting OCR output (scoped to characters and spacing, never digits, raw text retained for audit). The M2 and M3 prefixes are written as a single `OCR` step, so correction is either inside it or absent.
+- **Whether the M2 and M3 prefixes include preprocessing.** Both are written as `OCR` alone, yet `components.md` has input adaptation (rescale, compress) and treats legibility as distinct from resolution. A blurred photo passed straight to OCR is the outcome it calls invalid.
 - **Whether the Segmenter is needed after all.** It is the only silent gap. A cheap continuity check — page numbering, header recurrence — may be enough to keep it, though M0 gives it nothing to inspect.
 - **Whether M4's model is the same one the cascade's Vision flow uses**, or a cheaper specialist. It decides whether tuning and the golden set carry over.
 - **What the extraction prompt is built from.** Per document type, derived from the schema, or shared with the general Interpretation flow. If shared, tuning carries over; if not, there are two prompt sets to maintain.
