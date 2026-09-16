@@ -1,155 +1,205 @@
 # Workflows
 
-The four input pipelines, built out of the components defined in `components.md`.
+The ten input pipelines, built out of the components defined in `components.md`.
 
-`components.md` defines the **components** (named by what they produce). `README.md` defines the **three method flows** (Rules, Interpretation, Vision — named by what the extractor receives). This document defines the **four input pipelines** (named by what the input is) and maps each one onto those components.
+`components.md` defines the **components** (named by what they produce). `README.md` defines the **three method flows** (Rules, Interpretation, Vision — named by what the extractor receives). This document defines the **ten input pipelines** and maps each one onto those components.
 
-**Terminology note.** The source notes in `my_prompt.md` call these "flujos"; `README.md` uses that word for the method flows. To keep the two apart, this document calls the input-routed ones **pipelines (P1–P4)**.
-
----
-
-## The four pipelines
-
-| | Input | How text is obtained | Extractor | Pipeline |
-|---|---|---|---|---|
-| **P1** | Text PDF | extract text | rules **or** prompts | `extract text → regex/prompt → validate → report` |
-| **P2** | Image PDF | convert to image, then OCR | rules **or** prompts | `convert img → OCR → regex/prompt → validate → report` |
-| **P3** | Image | OCR | rules **or** prompts | `OCR → regex/prompt → validate → report` |
-| **P4** | Image | — (no text step) | prompts directly on pixels | `prompt → validate → report` |
-
-Every pipeline ends the same way: **validate → report**. That tail is not negotiable, and it is what makes the four substitutable from the consumer's side.
+**Terminology note.** The source notes in `my_prompt.md` call these "flujos"; `README.md` uses that word for the method flows. To keep the two apart, this document calls the input-routed ones **pipelines**, and codes them `M<material>.<extractor>`.
 
 ---
 
-## The two axes
+## Ten pipelines are a matrix, not ten designs
 
-Conflating these is the main source of confusion in this document's earlier drafts.
+The ten come from two independent choices multiplied out, plus the one material where only one choice is possible:
 
 | Axis | Question | Values |
 |---|---|---|
-| **Material** | How do we obtain something readable? | text (P1), OCR text (P2, P3), pixels (P4) |
-| **Extractor** | How do we read values from it? | regex (Rules), prompt (Interpretation), direct vision prompt (Vision) |
+| **Material** | How do we obtain something readable? | **M1** text · **M2** image PDF → OCR · **M3** image → OCR · **M4** image, no text step |
+| **Extractor** | How do we read values from it? | **.R** rules · **.P** prompts · **.B** both |
 
-**Whenever a pipeline produces text, both extractors are available.** P1, P2 and P3 all end up with a text string, so `rules / prompts` is a genuine choice in each — not a property of the pipeline. Which one runs is a routing decision inside the pipeline.
+$$3 \text{ text-producing materials} \times 3 \text{ extractor modes} + 1 \text{ pixels-only material} \times 1 = 10$$
 
-| Pipeline | Material | regex | prompt | vision prompt |
+| | Material path | `.R` rules | `.P` prompts | `.B` both |
 |---|---|:---:|:---:|:---:|
-| **P1** | text | ✓ | ✓ | — |
-| **P2** | OCR text | ✓ | ✓ | — |
-| **P3** | OCR text | ✓ | ✓ | — |
-| **P4** | pixels | — | — | ✓ |
+| **M1** | text PDF → extract text | 1 | 2 | 3 |
+| **M2** | image PDF → convert → OCR | 4 | 5 | 6 |
+| **M3** | image → OCR | 7 | 8 | 9 |
+| **M4** | image → (no text) | — | 10 | — |
 
-**P4 is the only one without the choice.** With no text intermediate, there is no string for a regex to run on, so the model reads the image and emits fields in one pass. This is `README.md`'s **Vision** flow: it uses neither Diagnosis nor Reader, because reading and extraction collapse into a single step.
+**M4 has one variant only.** Regex needs a string to run on, and M4 never produces one — pixels go to the model and fields come back. So the matrix is 3×3+1, and every other material supports all three extractor modes.
 
----
-
-## P1 — Text PDF
-
-**Input:** a PDF with a usable text layer.
-
-```mermaid
-graph LR
-    A["Text PDF"] --> B["Extract text<br/>pdftotext"]
-    B --> C{{"Extractor<br/>regex · prompt"}}
-    C --> D["Validate"]
-    D --> E["Report"]
-```
-
-| Step | Component | What it does |
-|---|---|---|
-| Extract text | Reader (conversion) | Emits a linear text stream |
-| Extractor | Rules **or** Interpretation | Regex or a prompt over the text |
-| Validate | Validator | Schema, type, content, check digit |
-| Report | Contract | Verdict vector per field |
-
-**Where the reduction is honest.** Conversion has no correction step — `components.md` is clear that a converter does not read badly, it transcribes what is there, and that applying a language model "just in case" can only introduce damage. A text PDF genuinely needs neither OCR nor correction.
-
-**Where the reduction is a trade.** `pdftotext` produces reading order, but heuristically: it does not associate a table header with rows continuing on the next page, and does not collapse a header repeated across five pages. That is the Reconstructor's job and it is not being done. Linear text with a broken table still looks plausible, so the failure is quiet.
-
-**Trace:** exact offset for a regex match, quote + offset for a prompt. Both are offsets into a text stream, which keeps traceability here stronger than in P4.
+**The material path and the extractor are independent.** M1 and M3 differ only in how text is obtained; `.R` and `.P` differ only in how that text is read. Neither choice constrains the other, which is why the count multiplies rather than adds.
 
 ---
 
-## P2 — Image PDF
+## The ten pipelines
 
-**Input:** a PDF with no usable text layer.
+Stated in the source notation, with an ID for reference.
 
-```mermaid
-graph LR
-    A["Image PDF"] --> B["Convert to image"]
-    B --> C["OCR"]
-    C --> D{{"Extractor<br/>regex · prompt"}}
-    D --> E["Validate"]
-    E --> F["Report"]
-```
-
-| Step | Component | What it does |
+| # | Code | Pipeline |
 |---|---|---|
-| Convert to image | — (rasterization step) | Rasterizes the PDF into page images |
-| OCR | Reader (OCR path) | Extracts tokens, with estimated confidence |
-| Extractor | Rules **or** Interpretation | Regex or a prompt over the corrected text |
-| Validate | Validator | Unchanged |
-| Report | Contract | Unchanged |
+| 1 | `M1.R` | text PDF → extract text → rules → report |
+| 2 | `M1.P` | text PDF → extract text → prompts → validate → report |
+| 3 | `M1.B` | text PDF → extract text → rules / prompts → validate → report |
+| 4 | `M2.R` | image PDF → convert img → OCR → rules → validate → report |
+| 5 | `M2.P` | image PDF → convert img → OCR → prompts → validate → report |
+| 6 | `M2.B` | image PDF → convert img → OCR → rules / prompts → validate → report |
+| 7 | `M3.R` | image → OCR → rules → validate → report |
+| 8 | `M3.P` | image → OCR → prompts → validate → report |
+| 9 | `M3.B` | image → OCR → rules / prompts → validate → report |
+| 10 | `M4.P` | image → prompts → validate → report |
 
-**P2 is P3 with a conversion prefix.** Once the PDF is rasterized, the remaining steps are identical to P3. That means the two share one implementation with a switch at the front — worth keeping in mind so they do not drift apart.
+### Discrepancy to resolve
+
+Pipeline 1 (`M1.R`) is written **without** a `validar` step, while every other pipeline has one — including `M1.P` and `M1.B` on the same material.
+
+Two readings, and they are not equivalent:
+
+- **An omission.** Then `M1.R` validates like everything else, and the ten are uniform in their tail.
+- **Intentional.** Then a rules-only read on a text PDF is treated as self-verifying. That contradicts `components.md`, which has the Validator run four checks including arithmetic and check digit — a regex match proves a value was *captured*, not that it is *correct*. The `README.md` invariant "the model never replaces the Validator" points the same way.
+
+This document assumes the first reading and lists pipeline 1 with validation. If the second was intended, the reason should be recorded, because it would make `M1.R` the only unvalidated path in the system.
 
 ---
 
-## P3 — Image, via OCR
+## Material paths
 
-**Input:** an image (photo or scan), read by OCR first.
+Each defined once; the extractor is layered on top.
+
+### M1 — text PDF
 
 ```mermaid
 graph LR
-    A["Image"] --> B["OCR"]
-    B --> C{{"Extractor<br/>regex · prompt"}}
-    C --> D["Validate"]
-    D --> E["Report"]
+    A["Text PDF"] --> B["Extract text<br/>pdftotext"] --> C["Extractor"] --> D["Validate"] --> E["Report"]
 ```
 
-| Step | Component | What it does |
-|---|---|---|
-| OCR | Reader (OCR path) | Extracts tokens, with estimated confidence |
-| Extractor | Rules **or** Interpretation | Regex or a prompt over the corrected text |
-| Validate | Validator | Unchanged |
-| Report | Contract | Unchanged |
+**Honest reduction.** Conversion needs no correction — `components.md` is clear that a converter does not read badly, it transcribes what is there, and that applying a language model "just in case" can only introduce damage.
 
-**This is the cheap image path.** OCR reduces the image to text, so the downstream extraction is the same as P1's — regex is available, and a prompt reads a string rather than pixels. What it loses is everything visual: layout, signatures, seals, checkboxes, logos. `components.md` notes that the Vision flow is the one that sees signatures and seals; P3 by construction does not.
+**The trade.** `pdftotext` produces reading order heuristically: it does not associate a table header with rows continuing on the next page, and does not collapse a header repeated across five pages. That is the Reconstructor's job and it is not being done. Broken linear text still looks plausible, so the failure is quiet.
 
-**OCR error is present in the text.** A pattern has to tolerate the misreads OCR actually produces, and a prompt may quietly "repair" a digit it should have flagged. The Validate step is what catches the result, which is why it is not optional here.
+**Trace.** Exact offset for a regex match, quote + offset for a prompt — both offsets into a text stream.
+
+### M2 — image PDF
+
+```mermaid
+graph LR
+    A["Image PDF"] --> B["Convert to image"] --> C["OCR"] --> D["Extractor"] --> E["Validate"] --> F["Report"]
+```
+
+**M2 is M3 with a conversion prefix.** Once rasterized, the steps are identical, so `M2.*` and `M3.*` should share one implementation with a switch at the front. Six of the ten pipelines are really three designs with a prefix; divergence between them would be an accident rather than a decision.
+
+### M3 — image via OCR
+
+```mermaid
+graph LR
+    A["Image"] --> B["OCR"] --> C["Extractor"] --> D["Validate"] --> E["Report"]
+```
+
+**What it loses:** everything visual. Layout, signatures, seals, checkboxes, logos — `components.md` notes the Vision flow is the one that sees signatures and seals, and M3 by construction does not.
+
+**What it inherits:** OCR error is in the text. A pattern has to tolerate the misreads OCR actually produces; a prompt may quietly "repair" a digit it should have flagged. Validation is what catches either, which is why it is not optional here.
+
+### M4 — image, direct prompt
+
+```mermaid
+graph LR
+    A["Image"] --> B["Prompt<br/>multimodal model"] --> C["Validate"] --> D["Report"]
+```
+
+**The shortest pipeline and the only one with a single read.** No text intermediate, so no OCR, no regex, and nothing to contrast against.
+
+**What it uniquely sees:** the model gets pixels, so it is the only pipeline that can use visual evidence — a signature, a seal, a checkbox, a logo — as part of extraction rather than as something lost in conversion.
+
+**What it uniquely risks:** with one fused read there is no second opinion, and with no text intermediate there is no offset to trace — the trace is a bounding region, inherently less precise than a character offset.
+
+**Diagnosis is absent by design**, matching `README.md`'s note that Vision uses neither Diagnosis nor Reader. The consequence: nothing measures legibility before the model reads, so a bad input surfaces as low-confidence extraction rather than as a routing decision.
 
 ---
 
-## P4 — Image, direct prompt
+## Extractor modes
 
-**Input:** an image, sent to the model with no OCR step.
+Each defined once; the material path is beneath it.
 
-```mermaid
-graph LR
-    A["Image"] --> B["Prompt<br/>multimodal model"]
-    B --> C["Validate"]
-    C --> D["Report"]
-```
+### `.R` — rules only
 
-| Step | Component | What it does |
+Regex over the text. **Invents nothing** and is deterministic; it either captures a value that is there or fails.
+
+**Two limits, and the second is the serious one:**
+
+- Needs one pattern per wording variant, and at 11k files the variants are unknown.
+- **An anchor error is invisible.** `README.md` is explicit that a bad anchor in Rules is detected *only* by cross-flow contrast, because the value is real and has the correct shape and type. With no second read, `.R` has no way to notice it took the value from the neighboring block.
+
+So `.R` is the cheapest mode and, on its own, the one with the least ability to catch its own characteristic error.
+
+### `.P` — prompts only
+
+A prompt over the text (or over pixels, in M4). **Tolerates wording variation**, which is what makes it viable when the corpus is unknown.
+
+**Two limits:**
+
+- **Can invent values.** Arithmetic and check digit in the Validator are what catch this — which is why validation is not optional.
+- **Can misattribute.** A real value assigned to the wrong field, which is `README.md`'s semantic-confusion failure mode.
+
+**Trace** is a quote + offset for text materials, a bounding region for M4.
+
+### `.B` — both
+
+Runs `.R` and `.P` over the **same text** and lets Consistency compare them.
+
+**This is the only mode that produces contrast**, and contrast is the one mechanism that catches a plausible-but-false value: a total of 15400 that was 1540 passes shape, type and content, and has no check digit. Nothing internal sees it. A disagreement between two reads does.
+
+**Why it is cheap here.** `components.md` reserves cross-flow contrast because each method flow re-acquires the document. In a text pipeline **the acquisition is already paid for** — the text is in hand, so a second read costs one extra call on critical fields, not a second pass over the document. Contrast has never been cheaper than in `M1.B`, `M2.B` and `M3.B`.
+
+**`.B` is not available in M4**, because there is no text for a regex to run on.
+
+---
+
+## What each of the ten buys
+
+| # | Code | Deterministic | Invents values | Contrast | Sees visuals | Trace |
+|---|---|:---:|:---:|:---:|:---:|---|
+| 1 | `M1.R` | Yes | No | — | No | exact offset |
+| 2 | `M1.P` | No | Yes | — | No | quote + offset |
+| 3 | `M1.B` | — | — | **✓** | No | exact + quote |
+| 4 | `M2.R` | Yes | No | — | No | exact offset |
+| 5 | `M2.P` | No | Yes | — | No | quote + offset |
+| 6 | `M2.B` | — | — | **✓** | No | exact + quote |
+| 7 | `M3.R` | Yes | No | — | No | exact offset |
+| 8 | `M3.P` | No | Yes | — | No | quote + offset |
+| 9 | `M3.B` | — | — | **✓** | No | exact + quote |
+| 10 | `M4.P` | No | Yes | — | **✓** | bounding region |
+
+**Only 3 of the 10 have contrast**, and they are exactly the `.B` ones. The other seven produce a single read, so each carries one of the two blind spots:
+
+| Blind spot | Pipelines | What goes undetected |
 |---|---|---|
-| Prompt | Vision | Reads and extracts in a single pass |
-| Validate | Validator | Unchanged |
-| Report | Contract | Unchanged |
+| **Single read, no contrast** | 1, 4, 7 (`.R`) | A bad anchor — a real value taken from the wrong place |
+| **Single read, no contrast** | 2, 5, 8, 10 (`.P`) | A plausible-but-false value, and a bad anchor |
+| **None of the above** | 3, 6, 9 (`.B`) | — contrast is present |
+| **No visual evidence** | 1–9 | Signatures, seals, checkboxes, logos |
+| **No text, no offset** | 10 | Precise traceability |
 
-**The shortest pipeline and the only one with one read.** No text intermediate exists, so there is no OCR, no regex, and no second read to compare against.
+**This table is the whole decision surface.** Choosing a pipeline is choosing which blind spot to accept, which is why the extractor choice is not a detail — it decides whether the pipeline can catch its own characteristic error.
 
-**What it uniquely sees.** Because the model gets pixels, this is the only pipeline that can use visual evidence — a signature, a seal, a checkbox, a logo — as part of the extraction rather than as something lost in conversion.
+---
 
-**What it uniquely risks.** With a single fused read there is nothing to contrast against, so a plausible-but-false value has no detector. And with no text intermediate, there is no offset to trace — the trace is a bounding region, which is inherently less precise than the text pipelines' character offsets.
+## Contrast is cheaper here than in the cascade
 
-**Diagnosis is absent here by design**, matching `README.md`'s note that the Vision flow uses neither Diagnosis nor Reader. The consequence: nothing measures legibility before the model is asked to read, so a bad input surfaces as low-confidence extraction rather than as a routing decision.
+`components.md` reserves cross-flow contrast because running two method flows is expensive — each re-acquires the document. In a text pipeline the acquisition is already paid for:
+
+| Pipelines | Contrast available |
+|---|---|
+| 3, 6, 9 (`.B`) | **Yes** — rules and prompts over the same text, on critical fields |
+| 1, 2, 4, 5, 7, 8 (`.R`, `.P`) | No — a single read |
+| 10 (`M4.P`) | No — a single fused read, nothing to compare against |
+
+Running both costs one extra call on critical fields, not a second pass over the document. **This is the strongest argument for `.B` over `.R` or `.P` when the material is text**: it is the only mode whose characteristic failure is detectable.
 
 ---
 
 ## Component usage
 
-| Component | P1 Text PDF | P2 Image PDF | P3 Image→OCR | P4 Image→prompt |
+| Component | M1 | M2 | M3 | M4 |
 |---|:---:|:---:|:---:|:---:|
 | **Segmenter** | — | — | — | — |
 | **Identifier** | — | — | — | — |
@@ -157,62 +207,20 @@ graph LR
 | **Reader** | ✓ conversion | ✓ OCR | ✓ OCR | — |
 | **Reconstructor** | — | — | — | — |
 | **Validator** | ✓ | ✓ | ✓ | ✓ |
-| **Consistency** | ◐ | ◐ | ◐ | — |
+| **Consistency** | ◐ `.B` only | ◐ `.B` only | ◐ `.B` only | — |
 | **Catalog** | — | — | — | — |
 | **Contract** | ✓ | ✓ | ✓ | ✓ |
 | **Reviewer** | ✓ | ✓ | ✓ | ✓ |
 
-✓ runs in full · ◐ available only when both extractors run · — does not run · *selector* gates the pipeline, does not run inside it
+✓ runs in full · ◐ only in the `.B` variants · — does not run · *selector* gates the pipeline, does not run inside it
 
-**Diagnosis selects; it does not appear inside the pipelines.** Deciding P1 from P2 means asking whether the PDF has a usable text layer — which is exactly Diagnosis's question in `components.md`, including its warning that the check must be *quality*, not presence, because an old bad OCR layer is not a text layer. Once the answer is known the pipeline starts after that gate, which is why the four flows above begin at "extract text" or "OCR" rather than at a diagnosis step.
+**Diagnosis selects; it does not appear inside a pipeline.** Choosing M1 over M2 asks whether the PDF has a usable text layer — exactly Diagnosis's question in `components.md`, including its warning that the check must be **quality, not presence**, because an old bad OCR layer is not a text layer. Once that answer is known the pipeline starts after the gate, which is why the ten begin at "extract text" or "OCR".
 
-**This is also the P3/P4 fork for images.** Diagnosis is where the question "can this be read as text?" would be answered; the four pipelines assume it already was, and that a caller or selector chose OCR-then-text extraction or a direct vision prompt.
-
-**The tail is identical in all four.** Validate and Report run everywhere. The Validator does not care how a value was obtained, so schema, type, content and check-digit checks apply unchanged whatever produced the field. Dropping validation is what would turn a pipeline into a fork of the system rather than a route through it.
-
-**The Contract is what makes them substitutable.** The consuming system must receive the same output shape whether a file went through P1 or P4, so the Report step and its verdict vector are non-negotiable.
-
----
-
-## Contrast is cheaper here than in the cascade
-
-`components.md` reserves cross-flow contrast because running two method flows is expensive — each re-acquires the document. In a **text** pipeline the acquisition is already paid for:
-
-| Pipeline | Contrast available |
-|---|---|
-| **P1, P2, P3** | **Yes** — regex and prompt over the same text, on critical fields |
-| **P4** | No — a single fused read, nothing to compare against |
-
-Running both extractors costs one extra call on critical fields, not a second pass over the document. This is the strongest argument for keeping a regex path even when a prompt is the primary extractor: it is not a fallback, it is the second opinion that catches a plausible-but-false value.
-
-P4 cannot do this. If contrast on critical fields is required, that requirement is what pushes an image toward P3 despite P4's other advantages — a real trade between what P4 sees and what P3 can verify.
-
----
-
-## Choosing regex or prompt
-
-Both run over the same text, so the choice is open and cheap to revisit.
-
-| | Regex (Rules) | Prompt (Interpretation) |
-|---|---|---|
-| Invented values | **No** — captures what is there or fails | **Yes** — can produce a value nobody wrote |
-| Bad anchor | Textual proximity: a real value from the neighboring block | Semantic confusion: a real value attributed to the wrong field |
-| Deterministic | Yes | No |
-| Handles wording variation | Needs a pattern per variant | Tolerates it |
-| Cost | Negligible | One model call |
-| Trace | Exact offset | Quote + offset |
-
-Neither dominates, and the sensible use is **both**:
-
-- **Regex where the field is stable** — identifiers, dates, amounts with a known format. Deterministic, free, invents nothing.
-- **Prompt where the wording varies** — supplier names, descriptions, fields whose anchor differs per issuer. At 11k files the variants are unknown, and one pattern per variant is what makes pure regex brittle.
-- **Both on critical fields** — the contrast above, at the cost of one extra call.
+**Validate and Report run in all ten.** The Validator does not care how a value was obtained, so schema, type, content and check-digit checks apply unchanged. The Contract is what makes the ten substitutable: the consumer receives the same output shape whichever route a file took.
 
 ---
 
 ## What the pipelines give up
-
-Grouped by the component removed, since `components.md` already states each consequence.
 
 | Removed | Consequence | Detectable downstream? |
 |---|---|---|
@@ -223,12 +231,13 @@ Grouped by the component removed, since `components.md` already states each cons
 
 **Silent losses per pipeline:**
 
-| Pipeline | Silent losses |
+| Pipelines | Silent losses |
 |---|---|
-| **P1, P2, P3** | The **Segmenter** |
-| **P4** | The **Segmenter**, and contrast (no second read) |
+| 3, 6, 9 (`.B`) | The **Segmenter** |
+| 1, 2, 4, 5, 7, 8 | The **Segmenter**, and the blind spot of a single read |
+| 10 | The **Segmenter**, a second read, and precise traceability |
 
-**The Segmenter is the one gap no pipeline closes.** Every other reduction degrades into something visible — a missing field, a low confidence, an arithmetic failure. A merge error produces output that looks correct, which is why the gate that detects the input type matters more than the speed it buys.
+**The Segmenter is the one gap no pipeline closes.** Every other reduction degrades into something visible — a missing field, a low confidence, an arithmetic failure. A merge error produces output that looks correct, which is why the gate that picks the material path matters more than the speed it buys.
 
 ---
 
@@ -248,18 +257,16 @@ graph LR
     G --> C
 ```
 
-`components.md` makes the Validator the single place where "could not" is defined, and this is why: a pipeline failure is not a new kind of failure, it is the existing escalation with a lower starting point.
-
-**The two escalation kinds cost differently:**
+`components.md` makes the Validator the single place where "could not" is defined: a pipeline failure is not a new kind of failure, it is the existing escalation with a lower starting point.
 
 | Kind | What is there | Cost |
 |---|---|---|
 | **Invalid field** | Value, page, offset | Renders the region. Cheap and precise |
 | **Missing field** | Nothing to point at | Whole document re-read — no saving over the cascade |
 
-A pipeline routinely has *less* to point at than the cascade, because without the Reconstructor it has no resolved structure to locate a field in. So where the cascade escalates cheaply, a pipeline can escalate expensively. This is the number that decides whether a pipeline pays: **cost saved on the files it handles, against cost of files it hands on having done partial work.**
+A pipeline has *less* to point at than the cascade, because without the Reconstructor it has no resolved structure to locate a field in. So where the cascade escalates cheaply, a pipeline can escalate expensively. The number that decides whether a pipeline pays: **cost saved on the files it handles, against cost of files it hands on having done partial work.**
 
-**Escalation also recovers contrast.** A pipeline's value exists, so when the cascade re-reads the field, the two values can be compared exactly as two flows are.
+**Escalation also recovers contrast.** A pipeline's value exists, so when the cascade re-reads the field the two values can be compared exactly as two flows are — a second opinion already paid for.
 
 ---
 
@@ -267,27 +274,27 @@ A pipeline routinely has *less* to point at than the cascade, because without th
 
 Every pipeline reports through the **Contract**, so outputs have the same shape and the consumer needs no per-pipeline logic.
 
-The verdict vector is what makes this honest rather than merely convenient. A field from a pipeline will typically carry *weaker* verdicts than one from the cascade, and the Contract reports that instead of hiding it.
+| Verdict | Cascade | `.R` variants | `.P` variants | `.B` variants |
+|---|---|---|---|---|
+| `shape` / `type` / `content` / `digit` | From Validator | Same | Same | Same |
+| `consistency` | Reinforcement or disagreement | `null` | `null` | set — both reads compared |
+| `catalog` | Verified / unverified | `unverified` | `unverified` | `unverified` |
 
-| Verdict | Cascade | P1 | P2 | P3 | P4 |
-|---|---|---|---|---|---|
-| `shape` / `type` / `content` / `digit` | From Validator | Same | Same | Same | Same |
-| `consistency` | Reinforcement or disagreement | set if both extractors ran | same | same | `null` |
-| `catalog` | Verified / unverified | `unverified` | `unverified` | `unverified` | `unverified` |
-
-**This is the argument for the verdict vector over a score.** With a single confidence number, a pipeline's output and the cascade's would have to be collapsed to the same scale and the difference would vanish — a field nobody cross-checked would look the same as one that survived contrast. Kept separate, the consumer can require `consistency` for critical fields and accept `null` for the rest.
+**This is the argument for the verdict vector over a score.** With a single confidence number, a pipeline's output and the cascade's would collapse to the same scale and the difference would vanish — a field nobody cross-checked would look identical to one that survived contrast. Kept separate, the consumer can require `consistency` on critical fields and accept `null` elsewhere, which is precisely the information needed to choose a pipeline per document type.
 
 ---
 
 ## Open questions
 
-- **Which pipeline, and who decides.** The four are keyed by input type, but for an image both P3 and P4 are valid. Nothing yet says whether the caller declares the pipeline or the system infers it, and for images the P3/P4 fork is a real cost/verification trade rather than a technical detail.
-- **What decides regex vs prompt, and per what.** Per field, per document type, or regex first with a prompt on failure. Cheap to change per file, but it has to be expressed somewhere.
-- **Whether running both extractors is the default or reserved for critical fields.** Both over a whole document doubles the cost of a pipeline chosen to be cheap, so likely critical fields only — but that needs a definition of "critical".
-- **Whether OCR correction is part of the OCR step.** `components.md` has the Reader correcting OCR output (scoped to characters and spacing, never digits, with the raw text retained for audit). The four pipelines do not list it separately, so it is either inside "OCR" or absent; if inside, it inherits the same constraint.
-- **What happens before OCR in P2 and P3.** Neither lists preprocessing, yet `components.md` has Diagnosis adapting input (rescale, compress) and treating legibility as distinct from resolution. A blurred photo passed straight to OCR is the one outcome it calls invalid.
+- **The `M1.R` validation gap.** Whether pipeline 1's missing `validar` was an omission or a decision (see above). If intentional, the justification belongs in the record.
+- **Which pipeline, and who decides.** The ten are keyed by material and extractor, but nothing says whether the caller declares the pipeline or the system infers it. For an image, M3 and M4 are both valid and the choice is a real cost/verification trade rather than a technical detail.
+- **Whether `.B` is the default for text materials.** It is the only mode that catches its own characteristic failure, and the extra cost is one call on critical fields rather than a re-read. The argument for ever choosing `.R` or `.P` alone needs stating.
+- **What decides `.R` vs `.P` inside `.B` when they disagree.** Consistency can break a tie by arithmetic, but only for fields with an arithmetic relation. For an identifier, disagreement has no tie-breaker.
+- **What defines a "critical field".** Both the contrast policy and the target of escalation depend on it, and today it exists only as an expression in `components.md`.
+- **Whether OCR correction is part of the OCR step.** `components.md` has the Reader correcting OCR output (scoped to characters and spacing, never digits, raw text retained for audit). The ten pipelines do not list it, so it is either inside "OCR" or absent.
+- **What happens before OCR in M2 and M3.** Neither lists preprocessing, yet `components.md` has input adaptation (rescale, compress) and treats legibility as distinct from resolution. A blurred photo passed straight to OCR is the one outcome it calls invalid.
 - **Whether the Segmenter is needed after all.** It is the only silent gap. A cheap continuity check — page numbering, header recurrence — may be enough to keep it.
-- **Whether P4's model is the same one the cascade's Vision flow uses**, or a cheaper specialist. It decides whether tuning and the golden set carry over.
+- **Whether M4's model is the same one the cascade's Vision flow uses**, or a cheaper specialist. It decides whether tuning and the golden set carry over.
 - **What the extraction prompt is built from.** Per document type, derived from the schema, or shared with the general Interpretation flow. If shared, tuning carries over; if not, there are two prompt sets to maintain.
-- **`pdftotext` is a poppler dependency** (external binary). It needs a stated version and a fallback, or P1 silently depends on whatever the host has.
-- **Whether P2 and P3 should share one implementation.** They are the same pipeline with a conversion prefix, so divergence between them would be an accident rather than a decision.
+- **`pdftotext` is a poppler dependency** (external binary). It needs a stated version and a fallback, or M1 silently depends on whatever the host has.
+- **Whether M2 and M3 should share one implementation.** They are the same pipeline with a conversion prefix, so six of the ten are three designs with a prefix.
