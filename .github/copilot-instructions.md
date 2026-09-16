@@ -17,3 +17,21 @@ Follow strict PEP 8 naming conventions using English terminology:
 ## 4. Pythonic Best Practices
 - **Type Hinting:** Always include explicit type hints for function arguments and return values (e.g., `def get_user(user_id: int) -> User:`).
 - **Docstrings:** Write comprehensive docstrings in English using **Google Style** format.
+
+## 5. Software Lifecycle Rules (PoC -> MVP -> Release)
+The project evolves through three clear stages. You must structure code bases according to the active stage, prioritizing flow completion in the current phase:
+
+- **PoC (Proof of Concept) [CURRENT MODE - KEY: CLOSE THE FLOWS]:**
+  - **Primary Objective:** Validate technical feasibility by closing end-to-end user journeys and data flows as fast as possible (*Happy Path* focus).
+  - **Execution over Perfection:** Prioritize a working end-to-end integration over exhaustive edge-case handling.
+  - **Pragmatic Shortcuts:** Use hardcoded configurations, in-memory storage, or mocked external services *if* it accelerates closing the functional loop. Do not over-engineer architecture.
+  
+- **MVP (Minimum Viable Product) [NEXT STAGE]:**
+  - Transition from simulated loops to basic production reality.
+  - Leave explicit `# TODO: [MVP]` comments where proper validation, real databases, actual API endpoints, and robust error handling must replace PoC shortcuts.
+  
+- **Release (Production Ready) [FINAL STAGE]:**
+  - Scalability and bulletproof reliability.
+  - Leave explicit `# TODO: [RELEASE]` comments for telemetry, caching layers, high-availability setups, and strict security compliance.
+
+- **Instruction for Copilot:** Focus 100% on implementing the functional code needed to close the end-to-end flow right now. Append `# TODO: [MVP]` or `# TODO: [RELEASE]` comments to document the shortcuts taken and mark what needs refactoring later.
