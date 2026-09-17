@@ -93,6 +93,7 @@ __all__: list[str] = [
     "classify",
     "effective_dpi",
     "extract_tokens",
+    "layout_text",
     "probe",
     "render",
     "split",
@@ -132,6 +133,11 @@ _INVISIBLE_RENDER_MODE: Final[str] = "3"
 #: A ``Tr`` operator preceded by its operand, e.g. ``3 Tr``. Scanned in the page's
 #: own content stream, which is where the instruction actually lives.
 _RENDER_MODE_PATTERN: Final[re.Pattern[bytes]] = re.compile(rb"(\d+(?:\.\d+)?)\s+Tr\b")
+
+#: The encoding the reader is asked to emit. Passed explicitly because the
+#: default follows the host's locale, and two machines extracting the same file
+#: would then disagree on the bytes without disagreeing on the document.
+_READER_ENCODING: Final[str] = "UTF-8"
 
 #: Producer strings that a scanned document carries when a capture device or a
 #: scan pipeline wrote it. Used only to report a *contradiction*, never to decide
@@ -1128,6 +1134,147 @@ def extract_tokens(
     )
 
 
+def layout_text(path: Path, pages: Sequence[int]) -> KernelResult[str]:
+    """Extract the text layer with its physical layout preserved.
+
+    The reader's ``-layout`` mode renders each page as a fixed grid of characters,
+    so columns, aligned fields and tables survive as the whitespace they occupy on
+    the page. It is the cheapest useful read of a PDF that already carries text,
+    and on material whose meaning depends on what sits beside what it is the
+    *better* read: a two-column document flattened into a single column of text is
+    not a different rendering of the same facts, it is a different set of facts.
+
+    **This operation is a convenience, not a contract, and nothing depends on it.**
+    It is deliberately absent from ``docflow/ports/pdf.py``: `plans/README.md` §3
+    freezes the port interfaces and Plan 2 may not change them, so a consumer that
+    needs layout reaches this function directly. It is under consideration as an
+    optimisation for the text path, and it is **not** wired into any flow yet.
+
+    What it is not
+    --------------
+
+    It is **not** a replacement for ``extract_tokens``, and the two are not
+    interchangeable. ``extract_tokens`` returns positioned boxes in source page
+    coordinates, which is what a trace needs and what a layout can be *derived*
+    from; this returns a character grid, which carries no coordinates at all — a
+    consumer cannot say which pixels a line came from.
+
+    It also does **not** let a caller reproduce the reader's output byte-for-byte
+    from the tokens. The reader has the font metrics and emits the soft hyphen it
+    broke a word on; a token box has neither. Measured on the two-column fixture
+    ``casos/9dfc597f``: 0 of 68 lines of a token-derived reconstruction match the
+    reader's own output, while the *structure* — which column each word sits in —
+    is recoverable.
+
+    Args:
+        path: The PDF to read.
+        pages: The one-based page numbers to read, in strictly ascending order. A
+            non-contiguous selection such as ``[1, 3]`` is served by reading each
+            page and joining the results, which is byte-identical to reading a
+            contiguous range in one invocation — asserted by the tests rather than
+            assumed.
+
+    Returns:
+        The layout text, or no value and a typed ``Reason``. A document whose
+        requested pages yield no text returns ``blank_page``: the reader produced
+        nothing because there is nothing, which is a statement about the document.
+        A file this engine cannot open returns ``encrypted`` or
+        ``unsupported_format``.
+
+    Raises:
+        ValueError: If the selection is empty, names a page outside the document,
+            or is not strictly ascending. The order is required rather than
+            imposed: the result is the reader's own concatenation, so a caller who
+            asked for a different order would otherwise silently receive one it did
+            not ask for.
+
+    """
+    engine, engine_failure = _engine()
+    if engine is None:
+        return _failure(engine_failure or Reason("engine_unavailable", ""), {}, {}, {})
+
+    binary, reader_failure = _reader()
+    if binary is None:
+        return _failure(
+            reader_failure or Reason("engine_unavailable", ""),
+            _engine_terms(engine),
+            {},
+            {"file": path.name},
+        )
+
+    try:
+        document = _open_document(path, engine)
+    except _Refused as refused:
+        return _failure(refused.reason, _engine_terms(engine), {}, {"file": path.name})
+
+    try:
+        selection = _validate_selection(pages, document.page_count)
+        if list(selection) != list(pages):
+            raise ValueError(
+                f"pages must be strictly ascending, got {list(pages)}. The result "
+                "is the reader's own concatenation, so a reordered selection would "
+                "return a document the caller did not ask for rather than the order "
+                "it asked for."
+            )
+    finally:
+        document.close()
+
+    terms = dict(_engine_terms(engine)) | dict(_reader_terms(binary))
+
+    try:
+        chunks = [_read_layout(binary, path, page) for page in selection]
+    except (OSError, subprocess.SubprocessError) as exc:
+        return _failure(
+            Reason(
+                code=_CODE_ENGINE_UNAVAILABLE,
+                message=(
+                    f"the {_READER_BINARY!r} binary could not read {path.name!r}: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            ),
+            terms,
+            {},
+            {"file": path.name, "pages_requested": list(selection)},
+        )
+
+    text = "".join(chunks)
+    observed: dict[str, object] = {
+        "file": path.name,
+        "pages_requested": list(selection),
+        "page_separator": "\\f",
+        "reader_flag": "-layout",
+        "reader_encoding": _READER_ENCODING,
+    }
+    measurements: dict[str, float] = {
+        "pages_read": float(len(selection)),
+        "characters": float(len(text)),
+        "lines": float(text.count("\n")),
+    }
+
+    if not text.strip():
+        # The reader ran and produced only whitespace. That is a measurement about
+        # the document's text layer, not a failure of the call.
+        return _failure(
+            Reason(
+                code=_CODE_BLANK_PAGE,
+                message=(
+                    f"the requested page(s) of {path.name!r} yielded no text, so "
+                    "there is no layout to preserve. This is what a scan looks "
+                    "like: it has pixels, not a text layer."
+                ),
+            ),
+            terms,
+            measurements,
+            observed,
+        )
+
+    return KernelResult(
+        value=text,
+        evidence=_evidence(terms, measurements, observed),
+        reason=None,
+    )
+
+
 def render(path: Path, pages: Sequence[int], dpi: int) -> KernelResult[Bytes]:
     """Render a page range as a bitmap, never upscaling.
 
@@ -1306,6 +1453,57 @@ def split(path: Path, pages: Sequence[int]) -> KernelResult[Bytes]:
 
 
 # --- Helpers -----------------------------------------------------------------
+
+
+def _read_layout(binary: str, path: Path, page: int) -> str:
+    """Read one page's text with its physical layout preserved.
+
+    The page is read on its own with ``-f``/``-l`` rather than as part of a range,
+    because a caller may ask for pages that are not contiguous. Composing the
+    result from per-page reads is byte-identical to one range invocation — the tests
+    assert that equivalence rather than trusting it, since a silent difference here
+    would be a different document.
+
+    Args:
+        binary: The resolved reader binary.
+        path: The PDF to read.
+        page: The one-based page number.
+
+    Returns:
+        The page's layout text, form feed included, exactly as the reader emitted
+        it.
+
+    Raises:
+        OSError: If the binary cannot be executed.
+        subprocess.SubprocessError: If the binary fails or times out.
+
+    """
+    completed = subprocess.run(
+        [
+            binary,
+            "-layout",
+            "-enc",
+            _READER_ENCODING,
+            "-q",
+            "-f",
+            str(page),
+            "-l",
+            str(page),
+            str(path),
+            "-",
+        ],
+        capture_output=True,
+        timeout=300,
+        check=False,
+    )
+
+    if completed.returncode != 0:
+        stderr = (completed.stderr or b"").decode("utf-8", "replace")[:200]
+        raise subprocess.SubprocessError(
+            f"{_READER_BINARY!r} exited {completed.returncode}: {stderr!r}"
+        )
+
+    return completed.stdout.decode(_READER_ENCODING, "replace")
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

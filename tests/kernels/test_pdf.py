@@ -214,6 +214,12 @@ def test_module_exports_exactly_the_five_operations_plus_the_shape_set() -> None
     ``PAGE_SHAPES`` is exported because it is the closed set a caller asserts
     against; the private helpers are not, because a caller reaching for one would
     be reaching past the kernel's contract.
+
+    ``layout_text`` is the sixth name and the only one that is **not** a port
+    operation: it exists for callers that need the reader's own character grid, and
+    it is deliberately absent from ``PdfSource`` because `plans/README.md` §3
+    freezes that port. Its presence here is asserted rather than assumed so that a
+    seventh name cannot appear unnoticed.
     """
     exported: list[str] = list(pdf.__all__)
 
@@ -223,6 +229,7 @@ def test_module_exports_exactly_the_five_operations_plus_the_shape_set() -> None
         "classify",
         "effective_dpi",
         "extract_tokens",
+        "layout_text",
         "probe",
         "render",
         "split",

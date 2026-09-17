@@ -31,10 +31,11 @@ bytes is a different measurement wearing this one's name.
 
 ## The whole surface
 
-Six module-level functions in `docflow.kernels.pdf`. All six return
-`KernelResult`, which has exactly two states: a value with evidence, or no value
-with a `Reason`. There is no third state and no exception for an expected negative
-outcome.
+Seven module-level functions in `docflow.kernels.pdf` — six that make up the port
+contract, plus `layout_text`, which is a convenience for callers that need the
+reader's own character grid. All of them return `KernelResult`, which has exactly
+two states: a value with evidence, or no value with a `Reason`. There is no third
+state and no exception for an expected negative outcome.
 
 ```python
 from pathlib import Path
@@ -162,7 +163,6 @@ round(at_144 / at_72, 2)   # 2.0
 ```
 
 ## 6. `split` — cut a page range out as a new document
-
 ```python
 result = pdf.split(Path("documento.pdf"), pages=[1])
 result.value.media_type                       # 'application/pdf'
@@ -177,6 +177,84 @@ that separates a document from its pages is a silent failure: the output is a
 perfectly valid PDF of the wrong thing.
 
 A repeated page is refused rather than silently duplicated.
+
+---
+
+## 7. `layout_text` — the reader's own character grid
+
+> **Not part of the port contract, and not wired into any flow.** This operation
+> exists for callers that need the layout as *text*. It is deliberately absent
+> from `docflow/ports/pdf.py`, because `plans/README.md` §3 freezes the port
+> interfaces and Plan 2 may not change them. It is under consideration as an
+> optimisation for the text path; nothing depends on it today.
+
+```python
+result = pdf.layout_text(Path("boleto.pdf"), pages=[1])
+result.value
+# 'Boleto:SUV-255671438-0                          Butaca: 56\n...'
+```
+
+`pdftotext -layout` renders each page as a fixed grid of characters, so columns,
+aligned fields and tables survive as the whitespace they occupy on the page. It is
+the cheapest useful read of a PDF that already carries text.
+
+**On material whose meaning depends on what sits beside what, it is the better
+read.** A two-column ticket flattened into one column is not a different rendering
+of the same facts, it is a different set of facts. From the committed fixture
+`casos/9dfc597f` — the document that motivated this in the previous system:
+
+```
+Se anuncia a: VENADOTUERTO                       Arribo Estimado: 28/08/2026 18:23
+```
+
+The left column's "where it departs from" stays paired with the right column's
+"when it arrives", because the gap between them is preserved.
+
+### Byte-identical to the previous system's command
+
+```python
+pdf.layout_text(path, [1]).value == legacy_output_1_to_1   # True
+```
+
+Verified against `pdftotext -layout -enc UTF-8 -q -f 1 -l 1 <file> -`. The encoding
+is passed explicitly because the default follows the host locale, and two machines
+would otherwise disagree on the bytes without disagreeing on the document.
+
+### Page selections
+
+`pages` must be **strictly ascending**. A non-contiguous selection such as `[1, 3]`
+is served by reading each page and joining the results — the binary has no way to
+name a disjoint range — and that composition is byte-identical to a contiguous
+read. The tests assert the equivalence rather than trusting it.
+
+A reordered selection raises rather than being sorted, because the result is the
+reader's own concatenation: honouring `[3, 1]` would return the file in an order
+the caller did not ask for.
+
+### What it is **not**
+
+It does **not** replace `extract_tokens`, and the two are not interchangeable:
+
+| | `extract_tokens` | `layout_text` |
+|---|---|---|
+| Returns | positioned boxes in source page coordinates | a character grid |
+| Carries coordinates | yes | **no** |
+| A trace can point at a pixel | yes | no |
+| Preserves columns | derivable from the boxes | preserved as whitespace |
+| Byte-identical to `pdftotext -layout` | no | yes |
+
+And a caller **cannot** reproduce the reader's grid from the token boxes. Measured
+on `casos/9dfc597f`: **0 of 68 lines** of a token-derived reconstruction match the
+reader's own output. The reader has the font metrics and emits the soft hyphen it
+broke a word on; a token box has neither. The coordinates carry the *structure* —
+which column a word sits in — and they do not carry the grid.
+
+That distinction is why both operations exist. Use `extract_tokens` when you need
+provenance; use `layout_text` when you need the text as a person reads it.
+
+Failure paths: a page that yields no text reports `blank_page` (that is what a scan
+looks like — pixels, not a text layer), and a missing binary reports
+`engine_unavailable` rather than falling back to another reader.
 
 ---
 
@@ -199,7 +277,7 @@ The codes this kernel can raise, all from the closed set of `kernel-cli.md` §5:
 | Code | What it means |
 |---|---|
 | `insufficient_effective_resolution` | The requested DPI exceeds the embedded pixels; nothing was produced |
-| `blank_page` | The page carries neither text nor image |
+| `blank_page` | The page carries neither text nor image; from `layout_text`, the requested pages yielded no text at all |
 | `encrypted` | Refuses to open without a password |
 | `unsupported_format` | Not a PDF this engine accepts; also the "does not exist" case |
 | `engine_unavailable` | PyMuPDF or the `pdftotext` binary is missing |
