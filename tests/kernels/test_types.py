@@ -1145,6 +1145,12 @@ def test_boundary_package_contains_only_the_expected_modules() -> None:
         # adding siblings - which is why only one name is declared here for five
         # issues. `determinism.py` (`E05-03`) is named when it lands.
         "orchestrator.py",
+        # `resolution.py` is `E04-07`'s (`S1-T17`) deliverable: which engine answers
+        # a capability, and what the cache key will therefore be. A kernel-layer
+        # module, not a port - the adapters are reached through the caller's own
+        # injected engine mapping, which is what keeps this file free of an adapter
+        # import.
+        "resolution.py",
     }
     actual = {path.name for path in PACKAGE_ROOT.glob("*.py")}
 

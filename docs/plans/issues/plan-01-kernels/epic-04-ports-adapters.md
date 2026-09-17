@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E04** |
 | Capability | The five port interfaces plus the thin acquisition (K2/K3) and generation (K4/K5/K6) adapters, and resolution by capability |
-| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 0 criteria unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 0 criteria unmet, criterion 8 restated (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) — **`in progress`**, 0 criteria unmet, 3 documented deltas (§3) · `E04-06` (`S1-T16`) — **`in progress`**, 0 criteria unmet, 2 documented deltas (§3) · `E04-07` (`S1-T17`) — `todo` |
+| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 0 criteria unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 0 criteria unmet, criterion 8 restated (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) — **`in progress`**, 0 criteria unmet, 3 documented deltas (§3) · `E04-06` (`S1-T16`) — **`in progress`**, 0 criteria unmet, 2 documented deltas (§3) · `E04-07` (`S1-T17`) — **`done`** (§3) |
 | Issue count | **7** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/ports/`, `docflow/adapters/`, `docflow/kernels/` |
 | Wave span | **W2 → W4** (W2: 1 · W3: 5 · W4: 1) |
@@ -667,6 +667,59 @@ Two things go wrong when a remote model is involved. The raw completion gets coe
 
 **Title**
 Resolution by capability + fail fast on unknown provider/model.
+
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | `docflow/kernels/resolution.py` exists and resolves a capability to a concrete adapter plus its revision and parameters | ✅ met |
+| 2 | `ollama:qwen2.5` **resolves**, and a frontier name (`anthropic:…`) **resolves** — both through the same capability-based path | ✅ met — one `resolve()` call, the difference carried as data on the declared family rather than in a branch |
+| 3 | An unknown name fails with a reason **naming it** — `model_unknown` / `provider_unknown`, exit `3` | ✅ met — and the code is on the `Reason`, so the exit follows from it rather than from here |
+| 4 | **No fallback default exists anywhere**, asserted not merely asserted-about | ✅ met — **five** assertions, four of them static (below) |
+| 5 | Resolution is reported **before execution**: adapter, `model_revision`, `adapter_revision`, `params`, `cache_key_terms` | ✅ met — `resolve_with_registry` attaches all seven terms and records the composed key in the evidence |
+| 6 | The resolved model revision and the registry hash appear in the terms, matching `E03-02`'s key | ✅ met — and `test_the_key_matches_what_the_orchestrator_would_compose` asserts resolution's key and `E05-01`'s key are the **same value** |
+| 7 | Resolution performs no network call and no model invocation | ✅ met — the only adapter call is `capabilities`, and the suite runs with stub engines and no runtime |
+
+**On #4 — the criterion asks for an assertion, and four of the five are static.** A behavioural test cannot catch a default that no test path reaches, so the *absence* is asserted over the module's source and its declarations:
+
+- `test_the_module_reads_no_environment_variable` — no `os.get`/`getenv`/`environ`, **and no `os` import at all**, which is the strongest available form of the claim.
+- `test_no_default_model_constant_exists` — no module-level constant whose name contains `DEFAULT_*` or `FALLBACK`.
+- `test_the_public_surface_exposes_no_parameter_with_a_default` — over the parsed source *and* the live `inspect.signature`, so a default cannot survive in either.
+- `test_the_declared_table_is_the_whole_registry` — the family table is closed, so an absent family cannot resolve.
+
+The fifth is behavioural: an unknown name returns a `Reason` instead of a value.
+
+**The design discovery: the two adapters are not shaped alike, and one rule could not serve both.** Measured against the adapters as built rather than assumed:
+
+| Family | Its ``capabilities`` | The name it answers to |
+|---|---|---|
+| `ollama` (K5) | reads `/api/tags` | **bare** — `ollama:qwen2.5` matches **nothing** in its catalogue, because to that runtime `:` separates a **tag** (`qwen2.5:latest`) |
+| `anthropic` (K6) | model required | **prefixed** — the adapter reports `model_unknown` for a bare name |
+
+So `answers_to` is a field on the declared family, read from the **adapter's own** parsing rule. A single "strip the prefix" or "keep the prefix" rule would be wrong for exactly one of the two, and being wrong here means resolving to a **different model** than the adapter then asks for — a silent substitution arriving from the resolution layer.
+
+**Why a capability is declared rather than discovered by trying.** Resolution could call each adapter and keep the one that answers. It does not: `capabilities` is not free, and `--resolve-only` is specified to execute nothing (`kernel-cli.md` §8). Worse, a list assembled by trial would put *"which engine is reachable"* inside the resolution decision, so a **transient outage would change which model is used** — the failure this module exists to prevent, one layer down.
+
+**A refusal is a `KernelResult`, never an exception — and that is the criterion's exit `3`.** An unknown model is *the call's precondition*, and `kernel-cli.md` §5 gives that exit `3` with a closed code. A raised exception would reach exit `1` — *unexpected internal error* — collapsing *"this name is wrong"* into *"the code has a bug"*. `test_the_module_raises_no_exception_for_a_bad_name` asserts over the source that no `raise` carries a resolution code.
+
+**The adapter's own reason is forwarded, not rewritten.** `model_not_pulled` is a different fact from `model_unknown` with a different remedy, and only the adapter knows which happened. Replacing a specific code with a general one turns a diagnosis into a guess — asserted by `test_the_adapters_own_reason_is_forwarded_not_rewritten`.
+
+**K4 is deliberately not a family, and that is ADR-001 read literally.** Docling is the fixed and only OCR engine (`prd.md` FR-16), so K4 has **no capability to resolve**: nothing to choose, and no `model_revision` to key by. Its engine identity is `OcrEngine.engine_info()`, built by `E04-04`. A `docling` family here would be this module **inventing an engine setting**, and `M17` is the mutation that proves the assertion would notice.
+
+**What the issue did not name, and is recorded rather than worked around.** `capabilities` on K5 reports `model_revision` but **not** `adapter_revision` — that term lives in `_runtime_revision()`, which the evidence omits. `resolve()` therefore requires both keys in the observation and would raise `KeyError` on a real runtime. The fix belongs in `E04-05`'s adapter (one key added to its `observed` mapping) and is deliberately **not** made from `E04-07`: the adapter declares what it observed, and a resolution layer that synthesised the missing term would be producing a cache key from a value nothing measured. Recorded here so `E07-02`, which wires the real engines, meets it with its eyes open.
+
+**Effort**
+**S** — one concept and one declared table. The cost is in the *absence* guarantees, which are assertions over the source rather than fixtures.
+
+**Test / evidence**
+- `tests/kernels/test_resolution.py` — **39 tests**, all green.
+- `tests/kernels/mutation_resolution.py` — **18 mutations, all falsified.** Three survivors were investigated and each had a different cause: `M1` was a **no-op** (`None or X` is `X`); `M2` and `M14` were **ambiguous anchors** that landed in a different function than intended — the trap `E04-02` and `E04-05` both recorded. All three were re-anchored to the function they mean to break, not rewritten to pass.
+- `M13` exposed a **real test gap**: nothing asserted that the evidence's terms carry the same revisions the `Resolved` value claims. The value and the evidence are separate surfaces — the first is what a Python caller reads, the second is what a script reads off stdout — so a revision on one and not the other would make the printed key terms describe a different engine than the call used. `test_the_evidence_terms_carry_the_revisions_the_report_claims` was added.
+- `plan-01-kernels.md` §7b — *"No fallback model, engine or threshold"*, breaking it looks like *"an unknown model resolves to something instead of failing, or a default appears in the code"*. Requirement **FR-27**.
+- `kernel-cli.md` §8 — the worked ``--resolve-only`` example: a known model returns the resolution envelope, `ollama:nope` returns exit `3` with `model_unknown`. The *envelope* is `E07-02`'s to print; the resolution this issue owns is what it prints.
+- All four QA gates green: `pytest` (770 passed), `ruff check`, `ruff format --check`, `pylint src tests`.
+
+**Open state carried forward.** `resolution.py` declares two families; `E07-02` (`S1-T21`) supplies the real engines. Until `E04-05`'s evidence carries `adapter_revision`, wiring a live Ollama engine raises rather than resolving — see above.
 
 **Context**
 The single most expensive silent failure in the layer is a model that resolves to *something* instead of failing: every value downstream is then produced by a model nobody chose, and nothing in the output says so. This issue exists to make *"there is no fallback"* a fact a test can reach — the failure path is typed, it names the name that failed, and a default does not exist in the code to be found.
