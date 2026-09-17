@@ -338,42 +338,63 @@ class FilesystemStore:
     # --- The derived summary ------------------------------------------------
 
     def rebuild_manifest(self, out_dir: Path) -> KernelResult[Mapping[str, object]]:
-        """Rebuild the run summary from the ledgers alone — **not yet available**.
+        """Rebuild the run summary from the ledgers alone, by delegating to K1.
 
-        The port declares this operation and requires it to **delegate to K1's**
-        ``rebuild_index()``: K7 owns the bytes and the ledger files, K1 owns what a run
-        means (`sad.md` §3). K1 does not exist yet (`E05-01`, `S1-T06`), so there is
-        nothing to delegate to.
+        The port requires this operation to **delegate to K1's** ``rebuild_index()``:
+        K7 owns the bytes and the ledger files, K1 owns what a run means
+        (`sad.md` §3). This is that delegation, and it is the whole implementation -
+        there is no rule of the store's own in it, which is the point.
 
-        **This refuses rather than substituting.** Assembling a manifest here from a
-        rule of the store's own would make K7 the authority on what a run means, which
-        is precisely the split the port describes — and a manifest nobody can rebuild
-        is a manifest that becomes authoritative and drifts.
+        **The import is inside the method, and that is the boundary being respected.**
+        ``docflow/kernels/orchestrator.py`` reaches back to this module's kernel
+        (``K7``'s ledger writer), so a module-level import would be a cycle between the
+        adapter and the kernel it binds. Reading it as a *dependency at call time*
+        states what is true: the port's operation is available exactly when K1 is, and
+        an import failure is a typed ``engine_unavailable`` rather than an
+        ``ImportError`` raised while the adapter is being built.
 
         Args:
             out_dir: The run's output directory.
 
         Returns:
-            No value and ``engine_unavailable``, naming the missing dependency.
+            K1's ``rebuild_index()`` result, unchanged - so both doors return the same
+            value and *"one operation, one authority"* is a fact rather than a claim.
 
         """
+        try:
+            from docflow.kernels import (  # pylint: disable=import-outside-toplevel
+                orchestrator,
+            )
+        except ImportError as exc:  # pragma: no cover - K1 is in this package
+            return KernelResult(
+                value=None,
+                evidence=_evidence(
+                    {},
+                    {"out_dir": out_dir.name, "awaits": "kernels/orchestrator.py"},
+                ),
+                reason=Reason(
+                    code=_CODE_ENGINE_UNAVAILABLE,
+                    message=(
+                        "`rebuild_manifest` delegates to K1's `rebuild_index()`, and "
+                        f"that module could not be imported: {exc}. It is not "
+                        "assembled from a rule of this adapter's own: K7 owns the "
+                        "bytes and the ledger files, K1 owns what a run means."
+                    ),
+                ),
+            )
+
+        derived = orchestrator.rebuild_index(out_dir)
         return KernelResult(
-            value=None,
+            value=derived,
             evidence=_evidence(
                 {},
-                {"out_dir": out_dir.name, "awaits": "kernels/orchestrator.py"},
+                {
+                    "out_dir": out_dir.name,
+                    "delegated_to": "orchestrator.rebuild_index",
+                    "state": str(derived.get("state", "")),
+                },
             ),
-            reason=Reason(
-                code=_CODE_ENGINE_UNAVAILABLE,
-                message=(
-                    "`rebuild_manifest` delegates to K1's `rebuild_index()`, which "
-                    "does not exist yet (`E05-01` / `S1-T06`). It is not assembled "
-                    "from a rule of this adapter's own: K7 owns the bytes and the "
-                    "ledger files, K1 owns what a run means, and a manifest this "
-                    "layer derived would be the store claiming to know. `# TODO: "
-                    "[MVP]`"
-                ),
-            ),
+            reason=None,
         )
 
     # --- Helpers ------------------------------------------------------------

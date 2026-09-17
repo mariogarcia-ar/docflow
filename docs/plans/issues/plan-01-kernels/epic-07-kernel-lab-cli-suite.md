@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E07** |
 | Capability | `docflow-kernel` as a lab surface — entry point, exit-code contract, JSON envelope, one command per port method — and the 17-row silent-failure suite that asserts each kernel's characteristic failure on its own |
-| Issues | `E07-01` (`S1-T20`) — `todo` · `E07-02` (`S1-T21`) — `todo` (partial completion) · `E07-03` (`S1-T22`) — `todo` |
+| Issues | `E07-01` (`S1-T20`) — **`done`** (§3) · `E07-02` (`S1-T21`) — `todo` (partial completion) · `E07-03` (`S1-T22`) — `todo` |
 | Issue count | **3** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernel_cli/`, `tests/kernel_cli/`, `fixtures/` |
 | Wave span | **W2 → W5 → W6** (W2: 1 · W5: 1, opening · W6: 1) |
@@ -42,6 +42,43 @@ Intra-epic edges (not drawn as epic edges): `E07-02` → `E07-01`; `E07-03` → 
 
 **Title**
 `docflow-kernel` entry point: subcommand dispatch, `--list`, the exit-code contract (`0`/`2`/`3`/`4`/`1`), the `KernelResult` JSON envelope, `--save` routed through K7.
+
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | `docflow/kernel_cli/` is a **package** with `__init__.py` and `main.py`; no `kernel_cli.py` module beside it | ✅ met — and the package docstring records *why*: the per-kernel modules `E07-02` adds land inside it, so a same-named module would make them impossible without breaking the entry point `pyproject.toml` fixes |
+| 2 | The entry point `docflow-kernel = "docflow.kernel_cli:main"` resolves | ✅ met — `__init__.py` re-exports the **function**, so `docflow.kernel_cli.main` is the function and `docflow.kernel_cli.main` the module stay distinguishable (`importlib.import_module` is how the tests reach the module) |
+| 3 | All five exit codes reachable and unit-tested | ✅ met — `0`, `2`, `3`, `4`, `1`, each with a test, in `tests/kernel_cli/test_main.py` (83 tests) |
+| 4 | stdout is valid JSON on `0`/`2`/`3`, same envelope shape, differing only in the code | ✅ met — asserted as *the same shape*, which is the claim a script's `jq` depends on |
+| 5 | Exits `4` and `1` emit **no** `KernelResult` | ✅ met — asserted as the **absence**, since asserting only the code would pass with an envelope present |
+| 6 | stderr carries nothing a script parses | ✅ met — stderr is the human log; `--verbose` adds a line there and never touches stdout |
+| 7 | `--list` reports the 8 kernels with determinism class and adapter availability; an unavailable adapter reports `no` | ✅ met — verified by behaviour, not by reading: 8 rows, `K1/K2/K3/K7/K8` `deterministic`, `K4/K5` `sampled`, `K6` `external`, and `K6` is the one row with `available: false` (`no provider key in the environment`) |
+| 8 | `--list` is at the kernel level and does not conflate adapter availability with per-command status | ✅ met — `available` is exactly `detail is None`; there is no second source of truth for the boolean |
+| 9 | `--save` routes bytes through K7, so the hash is the real content hash | ✅ met — `_apply_save` writes via K7; without `--save` stdout carries a descriptor and the bytes stay out of band |
+| 10 | Exit `2` is reserved for a typed `Reason`; an exception is `1`, never `2` | ✅ met — and proven **from both sides**: a typed reason reaches `2`, and a defect inside a handler does **not** |
+| 11 | The exit-code contract is asserted by unit tests | ✅ met |
+
+**The decision that shaped the module: the exit code is derived, never passed.** `exit_code_for(result)` reads `value is not None` → `0`, and otherwise looks the reason code up in `REASON_CODE_EXITS`. A handler returns a `Call`; the *surface* decides what that means to a process. An unknown code becomes `1` rather than `2`, because a code outside the vocabulary is a **vocabulary breach**, and reporting it as `2` would collapse *broken* into *the document answered* in the other direction. This is what makes *"exit `2` is reserved for a typed `Reason`"* structural instead of a habit.
+
+**`dispatch()` returns an `Invocation`, so `main()` is the only function touching a stream.** That is what makes the contract testable without capturing file descriptors, and it is why every assertion in the suite goes through `dispatch` — it is asserting what a *process* would report, not what a helper returned.
+
+**The envelope is encoded explicitly, member by member.** Never introspectively: adding a field to a boundary type must not silently change the wire format, and the encoder **raises** on an unknown type rather than falling back to `str(value)` — a stringified object is a stand-in that reads like data.
+
+**`_OPERATIONS` is empty here, and that is the seam `E07-02` fills.** *An operation declared before its adapter lands is an operation whose contract cannot be checked* — so `E07-01` declares the dispatcher and `test_the_registered_surface_is_empty_until_e07_02_fills_it` asserts it. That test was **rewritten** when `E07-02` landed the registrations; the two cannot both hold, and the assertion moves to the invariant that survives (every registered operation has a handler or is a declared `MVP`).
+
+**Two recorded deltas, so they are not re-discovered.**
+- `--list` emits **JSON**, not the aligned table §4 shows. §4 shows the *content*; §6 fixes the *format*, and a table is not machine-readable.
+- Row 12's fixture is impractical to commit (a prompt that overflows a 128k window), so the truncation test cuts with `num_predict` instead — the same `done_reason` signal and the same code path. Recorded as a delta in `E04-05`, not presented as the named fixture.
+
+**Effort**
+**M**
+
+**Test / evidence**
+- `tests/kernel_cli/test_main.py` — **83 tests**, all green.
+- `plan-01-kernels.md` §6 step 12 and step 2 — the exit contract and the inventory.
+- `kernel-cli.md` §5 (exit table), §6 (the output contract), §4 (the inventory).
+- All four QA gates green, and the `E07-01` mutation coverage is carried by `tests/kernel_cli/mutation_cli.py` (18 mutations) and `tests/cli/mutation_cli.py`.
 
 **Context**
 A kernel that fails silently is discovered late and blamed on whatever consumed it. The cheapest structural defence is to make the *process* encode the kernel contract: exit `0` = a value with evidence, exit `2` = no value with a typed reason, exit `3` = the call could not legitimately be made, exit `4` = usage, exit `1` = a bug. Once that exists, a shell can distinguish *the document's answer* from *the call's precondition* from *a broken build* — and every downstream assertion in this epic becomes a one-line check rather than a code review.

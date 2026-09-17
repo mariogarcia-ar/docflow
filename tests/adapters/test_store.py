@@ -450,24 +450,36 @@ def test_fail_records_the_stage_reason_without_failing_the_call(
 # --- The derived summary -----------------------------------------------------
 
 
-def test_rebuild_manifest_refuses_rather_than_deriving_a_summary(
+def test_rebuild_manifest_delegates_to_k1_and_returns_its_answer(
     store: FilesystemStore, root: pathlib.Path
 ) -> None:
-    """``rebuild_manifest`` waits on K1, and says so instead of guessing.
+    """``rebuild_manifest`` delegates to K1's ``rebuild_index()``, and adds nothing.
 
-    The port requires it to delegate to K1's ``rebuild_index()``: K7 owns the bytes and
-    the ledger files, K1 owns what a run means. K1 does not exist yet, so there is
-    nothing to delegate to. Assembling a manifest here from a rule of the store's own
-    would make this layer the authority on what a run means — and a manifest nobody can
-    rebuild is one that becomes authoritative and drifts.
+    The port requires the delegation: K7 owns the bytes and the ledger files, K1 owns
+    what a run means. Until `E05-01` landed there was nothing to delegate to and this
+    operation refused with a typed reason; now it delegates, and the assertion that
+    matters is that the two doors return **the same object**.
+
+    A manifest this adapter assembled from a rule of its own would be the store
+    claiming to know what a run means - and a manifest nobody can rebuild is one that
+    becomes authoritative and drifts.
+
+    ``root`` here is an output root with no ledgers under it, so K1's answer is the
+    manifest of a run that produced nothing. That is a real answer rather than an
+    error: *"no ledgers"* is a state a run can be in, and K1 reports it as
+    ``incomplete`` rather than refusing.
     """
     result = store.rebuild_manifest(root)
 
-    assert result.value is None
-    assert result.reason is not None
-    assert result.reason.code == "engine_unavailable"
-    assert "rebuild_index" in result.reason.message
-    assert result.evidence.observed["awaits"] == "kernels/orchestrator.py"
+    # pylint: disable=import-outside-toplevel
+    from docflow.kernels import orchestrator
+
+    expected = orchestrator.rebuild_index(root)
+
+    assert result.reason is None
+    assert result.value == expected, "K7's door returns what K1's door returned"
+    assert result.evidence.observed["delegated_to"] == "orchestrator.rebuild_index"
+    assert result.evidence.observed["state"] == expected["state"]
 
 
 # --- The reason vocabulary ---------------------------------------------------

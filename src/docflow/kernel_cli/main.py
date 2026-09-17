@@ -570,12 +570,22 @@ class Operation:
         kernel: The kernel's name, which must match a :class:`KernelSpec`.
         name: The operation's name, e.g. ``"put"``.
         handler: The implementation, or None for an ``MVP`` command.
+        positional: The parameter a bare argument binds to, or None when the
+            operation takes no argument. ``store put <file>`` is one positional;
+            ``store ls`` has none. Declared on the operation rather than guessed by
+            the dispatcher, because *which* argument a command takes is a fact
+            about the command.
+        flags: The flags this command reads, which are the parameters of the port
+            method it mirrors. Declared so the `E07-02` contract test can compare
+            them against that signature rather than re-deriving them.
 
     """
 
     kernel: str
     name: str
     handler: Handler | None = None
+    positional: str | None = None
+    flags: tuple[str, ...] = ()
 
     @property
     def is_mvp(self) -> bool:
@@ -823,19 +833,29 @@ def _usage_error(message: str) -> Invocation:
     return Invocation(exit_code=EXIT_USAGE, stdout="", stderr=f"{message}\n{_USAGE}")
 
 
-def _parse_flags(tokens: Sequence[str]) -> tuple[dict[str, object], Invocation | None]:
-    """Parse the flag tokens into operation parameters.
+def _parse_flags(
+    tokens: Sequence[str], positional: str | None = None
+) -> tuple[dict[str, object], Invocation | None]:
+    """Parse the argument tokens into operation parameters.
 
     The dispatcher validates the *flag names* and the two it owns; interpreting a
     parameter's value is the operation's business. That split is what keeps the
     surface free of logic: a flag with no port counterpart never gets this far,
     because it is not in :data:`ALLOWED_FLAGS`.
 
+    One positional is allowed, and only when the operation declares it. `E07-02`'s
+    commands name their subject as an argument rather than a flag - `store put
+    <file>` is `put(bytes, media_type)` in `kernel-cli.md` §9, not `put --file
+    <file>`, and the two shapes are not equivalent: a flag is a parameter of the
+    call, an argument is which call is being made.
+
     Args:
         tokens: The tokens after the operation name.
+        positional: The parameter name a bare argument binds to, or None when the
+            operation takes no argument.
 
     Returns:
-        The parsed parameters, and an exit-``4`` invocation when a flag is
+        The parsed parameters, and an exit-``4`` invocation when an argument is
         unusable. Exactly one of the two is meaningful.
 
     """
@@ -845,7 +865,11 @@ def _parse_flags(tokens: Sequence[str]) -> tuple[dict[str, object], Invocation |
         token = tokens[index]
 
         if not token.startswith("--"):
-            return params, _usage_error(f"unexpected argument {token!r}")
+            if positional is None or positional in params:
+                return params, _usage_error(f"unexpected argument {token!r}")
+            params[positional] = token
+            index += 1
+            continue
 
         if token in FORBIDDEN_FLAGS:
             return params, _usage_error(
@@ -944,7 +968,8 @@ def dispatch(
     if isinstance(resolved, Invocation):
         return resolved
 
-    params, bad_flag = _parse_flags(flag_tokens)
+    operation = operations[(kernel, name)]
+    params, bad_flag = _parse_flags(flag_tokens, operation.positional)
     if bad_flag is not None:
         return bad_flag
 
@@ -1111,6 +1136,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code.
 
     """
+    # The surface is registered by the **package's** import, not here. Registering
+    # it in this function would make the dispatcher import the composition root, and
+    # the composition root imports the dispatcher - a genuine import cycle, which
+    # Pylint reports as one. The entry point is `docflow.kernel_cli:main`, so
+    # importing the package is what running the command does, and that is where the
+    # assembly belongs.
     invocation = dispatch(sys.argv[1:] if argv is None else argv)
     if invocation.stdout:
         sys.stdout.write(invocation.stdout)

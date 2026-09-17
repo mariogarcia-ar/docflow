@@ -8,13 +8,28 @@ version = "0.0.1"
 description = "Library-first document extraction: extract structured data from a corpus and expose it for another system to consume."
 readme = "README.md"
 requires-python = ">=3.13"
-# No runtime dependencies yet: Stage 1's boundary layer is pure standard library.
-# Each adapter declares its own engine (Docling, Ollama, a provider SDK) when it
-# lands — S1-T14, S1-T15, S1-T16.
+# No runtime dependencies for the *library*: Stage 1's boundary layer is pure
+# standard library. Each adapter declares its own engine (Docling, Ollama, a
+# provider SDK) when it lands — S1-T14, S1-T15, S1-T16.
+#
+# PyYAML is the one entry, and it belongs to the **lab surface**, not to the library.
+# The descriptor *format* is frozen by `plans/README.md` §3 as a `.yaml` file, while
+# the kernel layer may import no third party — so the reader lives in the composition
+# root (`docflow/kernel_cli/commands/descriptor.py`), behind the seam
+# `orchestrator.read_descriptor` takes, and this is that seam's dependency. A
+# hand-rolled subset parser was rejected: it would be real code with no owner, and it
+# would mis-read the thirteen pipeline descriptors `S3-T01` commits — dropping a stage
+# rather than refusing the document, which is a silent failure of exactly the kind
+# Stage 1 exists to prevent.
+#
+# TODO: [MVP] Move this behind a `[kernel-cli]` extra together with the `[dev]` note
+# below, so installing the library does not pull a parser only the bench needs.
 # TODO: [MVP] Pin the adapter dependencies once the K2-K6 adapters exist, and
 # split them into extras (a `[pdf]` extra that pulls poppler bindings, an `[ocr]`
 # extra for Docling) so installing the library does not force every engine.
-dependencies = []
+dependencies = [
+    "PyYAML>=6",
+]
 
 [project.optional-dependencies]
 # The QA gates `.github/copilot-instructions.md` requires. All four are run in CI.

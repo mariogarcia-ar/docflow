@@ -1,0 +1,9 @@
+{
+  "assets": [
+    {
+      "key": "policies/thresholds.json",
+      "format": "json",
+      "required_keys": ["reader.correct", "reader.min_chars", "diagnosis.min_dpi"]
+    }
+  ]
+}

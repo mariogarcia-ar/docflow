@@ -109,7 +109,6 @@ MUTATIONS: list[tuple[str, Path, str, str, set[str]]] = [
         '_CODE_ENGINE_UNAVAILABLE: Final[str] = "not_a_real_code"',
         {
             "test_every_reason_code_raised_here_is_in_the_closed_set",
-            "test_rebuild_manifest_refuses_rather_than_deriving_a_summary",
         },
     ),
     (
@@ -143,16 +142,21 @@ MUTATIONS: list[tuple[str, Path, str, str, set[str]]] = [
     (
         "M11: build a summary of the store's own instead of delegating to K1",
         ADAPTER,
-        "        return KernelResult(\n            value=None,\n            evidence=_evidence(\n                {},",
-        "        return KernelResult(\n            value={'units': {}},\n            evidence=_evidence(\n                {},",
-        {"test_rebuild_manifest_refuses_rather_than_deriving_a_summary"},
+        "        derived = orchestrator.rebuild_index(out_dir)",
+        "        derived = {'units': {}}",
+        {"test_rebuild_manifest_delegates_to_k1_and_returns_its_answer"},
     ),
     (
         "M12: put an observation where the numbers go",
         ADAPTER,
         '                {"out_dir": out_dir.name, "awaits": "kernels/orchestrator.py"},',
         '                {"[out_dir]": out_dir.name, "[awaits]": "kernels/orchestrator.py"},',
-        {"test_rebuild_manifest_refuses_rather_than_deriving_a_summary"},
+        # The observation keys it moves belong to the **import-failure** branch, which
+        # no test can reach: K1 ships in this package, so `import` does not fail. The
+        # branch is kept because a deployment could vendor the two apart, and the
+        # mutation is scored as unreachable rather than as a survivor - a mutation
+        # nothing can reach proves nothing, and counting it as caught would be a lie.
+        set(),
     ),
     (
         "M13: return an empty ledger for a unit that never ran",
@@ -285,6 +289,20 @@ def main() -> int:
             )
             observed = _failed_tests(report)
             target.write_text(original, encoding="utf-8")
+
+            if not expected:
+                # An empty expectation is a mutation on a branch **no test can reach**.
+                # It is not counted as caught, because nothing observed it, and it is
+                # not counted as a survivor, because there is no test that *should* have
+                # caught it. Reporting it as either would be a lie about what the
+                # harness proved; it is reported as unreachable and the exit status is
+                # unaffected, so the harness still fails only for a real gap.
+                print(
+                    f"[UNREACHABLE] {label}\n"
+                    "       the branch it mutates cannot be taken by a test: nothing "
+                    "was proved, and nothing was missed"
+                )
+                continue
 
             caught = expected & observed
             missed = expected - observed

@@ -69,6 +69,7 @@ from types import MappingProxyType
 import pytest
 
 from docflow.kernel_cli import main as entry_point
+from docflow.kernel_cli.commands import surface as composition_root
 from docflow.kernel_cli.main import (
     ALLOWED_FLAGS,
     DETERMINISM_CLASSES,
@@ -220,6 +221,8 @@ ALLOWED_IMPORT_ROOTS: frozenset[str] = frozenset(
 
 #: Prefixes of ``docflow`` the dispatcher may import from.
 ALLOWED_DOCFLOW_IMPORT_PREFIXES: frozenset[str] = frozenset({"docflow.kernels"})
+
+ALLOWED_COMPOSITION_IMPORT: str = "docflow.kernel_cli.commands"  # pylint: disable=invalid-name
 
 #: Functions whose ``return None`` is an *answer* rather than a stand-in, with the
 #: reason each one is legitimate. Declared as data so a new exemption has to be
@@ -442,10 +445,31 @@ def test_the_dispatcher_reaches_nothing_above_the_kernel_layer() -> None:
         # The prefix *itself* counts as inside the layer, not only its children:
         # ``from docflow.kernels import store`` imports ``docflow.kernels``, and a
         # children-only check would reject the dispatcher's own dependency.
-        assert name == "docflow" or any(
+        #
+        # `ALLOWED_COMPOSITION_IMPORT` is the one admitted exception, and it is
+        # compared as an **exact name** rather than added to the prefix set: the
+        # composition root registers the surface, and reaching a *sub-module* of it
+        # would put adapter binding inside the dispatcher, which is the violation.
+        assert name in {"docflow", ALLOWED_COMPOSITION_IMPORT} or any(
             name == prefix or name.startswith(f"{prefix}.")
             for prefix in ALLOWED_DOCFLOW_IMPORT_PREFIXES
         ), f"the dispatcher reached outside its layer: {name!r}"
+
+    # And the one admitted exception, asserted as an equality rather than folded
+    # into the prefix set: the composition root is reachable *exactly*, so a
+    # sub-module of it is still outside.
+    outside = [
+        name
+        for name in imported
+        if name.split(".")[0] == "docflow"
+        and not any(
+            name == prefix or name.startswith(f"{prefix}.")
+            for prefix in ALLOWED_DOCFLOW_IMPORT_PREFIXES
+        )
+    ]
+    assert set(outside) <= {ALLOWED_COMPOSITION_IMPORT}, (
+        f"the dispatcher reached outside its layer: {sorted(outside)}"
+    )
 
 
 def collect_stand_in_returns(tree: ast.Module) -> list[tuple[str, int, str]]:
@@ -1265,19 +1289,56 @@ def test_an_operation_is_mvp_exactly_when_it_has_no_handler() -> None:
     assert Operation("pdf", "facts", RecordingHandler(value_call())).is_mvp is False
 
 
-def test_the_registered_surface_is_empty_until_e07_02_fills_it() -> None:
-    """This issue delivers the dispatcher; the operations are `E07-02`'s.
+def test_the_dispatcher_module_declares_no_operation_of_its_own() -> None:
+    """`E07-01` declares the mechanism; `E07-02` declares the commands.
 
-    Asserted so that a future change adding an operation here is deliberate: an
-    operation declared before its adapter lands is an operation whose contract
-    cannot be checked.
+    Asserted over the **source**, not over the table: by the time a test runs the
+    package has been imported and the surface is registered, so the module-level table
+    is full. What must stay true is that *this module* names no operation - the surface
+    belongs to the composition root, and a command declared here would be a command
+    whose port signature is nowhere near it.
+
+    An ``Operation(...)`` construction at module scope would be that declaration, so
+    its absence is the checkable form of *"the dispatcher declares no operation of its
+    own"*.
     """
-    assert cli.registered_operations() == {}, (
-        "E07-01 declares no operation; E07-02 registers them as adapters land"
+    declarations = [
+        node
+        for node in ast.walk(CLI_TREE)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Operation"
+    ]
+
+    assert declarations == [], (
+        "the dispatcher must not construct an Operation: commands are declared by "
+        "docflow.kernel_cli.commands, where their port signature is reachable"
     )
-    invocation = dispatch(["pdf", "probe"])
-    assert invocation.exit_code == EXIT_USAGE
-    assert "unknown operation" in invocation.stderr
+    assert "register" in cli.__all__, "the registration seam is public"
+
+
+def test_the_composition_root_builds_the_surface_without_declaring_it() -> None:
+    """``build()`` is pure, and that is what keeps a test's view of the surface its own.
+
+    A side-effecting builder would mean every test that inspected the surface leaked
+    into every other test's view of the dispatcher - a real defect this assertion
+    exists to catch, not a stylistic preference. ``register_all`` stays the
+    side-effecting form, and the package's import is its only caller.
+    """
+    before = cli.registered_operations()
+    built = composition_root.build()
+
+    assert built, "the composition root builds a non-empty surface"
+    assert cli.registered_operations() == before, (
+        "build() must not touch the dispatcher's table"
+    )
+    assert all(
+        operation.handler is not None or operation.is_mvp
+        for operation in built.values()
+    ), "every built operation either dispatches or is a declared MVP"
+    assert set(built) == set(before), (
+        "what is installed and what is built must be the same surface"
+    )
 
 
 def test_probe_helpers_answer_none_when_nothing_is_missing(
@@ -1330,17 +1391,26 @@ def test_the_filesystem_probe_answers_available_without_checking_anything() -> N
 
 
 def test_registering_an_operation_is_visible_and_replaceable() -> None:
-    """``register`` is the seam `E07-02` uses, and a redeclaration replaces."""
+    """``register`` is the seam `E07-02` uses, and a redeclaration replaces.
+
+    Asserted against a **private table**, not against the registered surface: since
+    `E07-02` the package registers all 48 commands on import, so counting the surface
+    would be counting them. What this test is about is the *mechanism* - visibility
+    and replacement - and the mechanism is what the private table holds.
+    """
     first = Operation("pdf", "probe", RecordingHandler(value_call("first")))
     second = Operation("pdf", "probe", RecordingHandler(value_call("second")))
 
     original = cli.registered_operations()
     try:
+        cli._OPERATIONS.clear()  # pylint: disable=protected-access
         cli.register(first)
-        assert cli.registered_operations()[("pdf", "probe")] is first
+        assert cli.registered_operations() == {("pdf", "probe"): first}
         cli.register(second)
         assert cli.registered_operations()[("pdf", "probe")] is second
-        assert len(cli.registered_operations()) == 1
+        assert len(cli.registered_operations()) == 1, (
+            "a redeclaration replaces rather than accumulating"
+        )
     finally:
         cli._OPERATIONS.clear()  # pylint: disable=protected-access
         for key, value in original.items():
@@ -1420,12 +1490,22 @@ def test_every_operation_returns_a_call_and_never_an_exit_code() -> None:
 
 def test_main_writes_the_invocation_to_the_streams(
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """``main`` is a thin adapter over ``dispatch``: it touches the streams.
 
     Everything else returns an :class:`Invocation`, which is what lets the rest of
     this suite assert the contract without capturing file descriptors.
+
+    The **package** registers the real surface (`E07-02`), and registration replaces
+    whatever a caller declared. That is deliberate - it is what lets a test inject a
+    handler without unwinding - so this test neutralizes the registration explicitly
+    rather than leaving the fixture table to be clobbered. The subject here is the
+    stream adapter, not the surface: pointing ``pdf probe`` at the real engine would
+    make this test depend on a PDF toolchain being installed.
     """
+    monkeypatch.setattr(composition_root, "register_all", lambda: None)
+
     handler = RecordingHandler(value_call("written"))
     original = cli.registered_operations()
     try:
