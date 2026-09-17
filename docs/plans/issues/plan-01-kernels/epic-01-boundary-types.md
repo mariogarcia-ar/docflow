@@ -44,10 +44,11 @@ Freeze kernel boundary types: `Token`, `KernelResult`, `Evidence`, `Reason`, `Ca
 | Item | Evidence |
 |---|---|
 | Deliverable | `docflow/kernels/types.py` — the seven frozen boundary types plus `Box` |
-| Test | `tests/kernels/test_types.py` — **76 passed** (`python -m pytest tests/ -q`) |
-| Lint / format | `ruff check` and `ruff format --check` clean |
-| Invariant falsified | Three separate mutations of `__post_init__` (value+reason allowed; `None`-without-reason allowed; evidence-optional) each made the enumeration test **fail**; the file was restored and the suite re-run green |
+| Test | `tests/kernels/test_types.py` — **76 passed** (`python -m pytest tests/ -q`), **100 % statement coverage** of `docflow/kernels/types.py` (62/62) |
+| Lint / format | `ruff check` clean · `ruff check --select I` clean · `ruff format --check` clean · **`pylint` 10.00/10** (`pylint --disable=W0511 docflow tests`) |
+| Invariant falsified | Three separate mutations of `__post_init__` (value+reason allowed; `None`-without-reason allowed; evidence-optional) each made the enumeration test **fail**; the file was restored and the suite re-run green — re-run after the QA refactor, still failing in all three cases |
 | Static guards falsified | An injected domain noun (`invoice_total`) failed the vocabulary scan; an injected `import json` failed the import-isolation test |
+| Type hints / complexity | Zero missing annotations across both files; max McCabe complexity **6** (`__post_init__`), well inside the "low complexity" rule |
 | Acceptance boxes | All boxes below satisfied **except** the `# TODO: [MVP]` notes recorded inline (none blocks a box) |
 
 Two PoC properties are recorded in the module docstring and pinned by tests rather than left to be discovered downstream: `Evidence` (and therefore a `KernelResult` carrying one) is **not hashable**, and its `MappingProxyType` mappings are **not JSON-encodable by default** — an obligation handed explicitly to `E07-01` (`S1-T20`), which owns the envelope.

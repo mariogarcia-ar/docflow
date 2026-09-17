@@ -7,7 +7,22 @@ one, because it must fail if a third state ever becomes expressible.
 The import-isolation and forbidden-vocabulary tests are static assertions over
 ``docflow/kernels/types.py`` rather than prose claims, per
 ``docs/plans/plan-01-kernels.md`` §13 Track 3.
+
+Two Pylint relaxations are declared below, each because the rule contradicts what
+this suite is for rather than because the code is sloppy: a contract test must
+restate the names it checks instead of importing them (``duplicate-code``), and one
+test per acceptance criterion costs file length (``too-many-lines``).
 """
+
+# pylint: disable=duplicate-code
+# `EXPECTED_BOUNDARY_TYPE_NAMES` deliberately repeats the tuple declared in
+# `docflow/kernels/types.py`. A contract test must hold its own copy of the expected
+# names: importing the constant it is verifying would make the assertion vacuous.
+
+# pylint: disable=too-many-lines
+# One test per acceptance criterion of `E01-01`, plus one per lint guard. Splitting
+# the file to satisfy a line budget would separate the invariant from its
+# falsification tests, which is the one thing this suite exists to keep together.
 
 from __future__ import annotations
 
@@ -20,7 +35,7 @@ import json
 import pathlib
 import sys
 import typing
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from types import MappingProxyType
 
 import pytest
@@ -111,49 +126,94 @@ STDLIB_NAMES: frozenset[str] = frozenset(sys.stdlib_module_names)
 #: public-member scan because a field is not a constructor.
 FIELD_NAMES: frozenset[str] = frozenset({"value", "evidence", "reason"})
 
+#: The default human-readable message the test ``Reason`` carries. Shared by the
+#: factory and the assertions so the two cannot drift apart.
+DEFAULT_REASON_MESSAGE: str = "The page carries no content."
+
+#: The frozen boundary set, restated here **on purpose**: a contract test must hold
+#: its own copy of the expected names rather than import the constant it is
+#: checking, or the assertion would be vacuous. Written once so the two tests that
+#: assert it cannot drift from each other.
+EXPECTED_BOUNDARY_TYPE_NAMES: tuple[str, ...] = (
+    "Token",
+    "KernelResult",
+    "Evidence",
+    "Reason",
+    "CallRecord",
+    "Bytes",
+    "Artifact",
+)
+
 
 # --- Fixtures and helpers ----------------------------------------------------
 
 
-def make_evidence(**overrides: object) -> Evidence:
+def dataclass_is_frozen(member: type) -> bool:
+    """Report whether a dataclass was declared with ``frozen=True``.
+
+    The flag is read out of the class namespace dictionary rather than as a plain
+    attribute: ``__dataclass_params__`` is a CPython dataclass internal that static
+    checkers do not model, so a direct attribute read is reported as a
+    false-positive no-member error, while ``getattr`` with a constant name trips
+    another linter rule. Indexing ``vars()`` states the lookup is deliberate.
+
+    Args:
+        member: The class to inspect.
+
+    Returns:
+        True when the class is a frozen dataclass.
+
+    """
+    return bool(vars(member)["__dataclass_params__"].frozen)
+
+
+def make_evidence(
+    terms: Mapping[str, str] | None = None,
+    measurements: Mapping[str, float] | None = None,
+    observed: Mapping[str, object] | None = None,
+) -> Evidence:
     """Build a populated :class:`Evidence` for tests.
 
     Args:
-        **overrides: Field values replacing the defaults below.
+        terms: Cache-key terms, or None for the default test terms.
+        measurements: Raw measurements, or None for the default measurement.
+        observed: Free-form observables, or None for the default observable.
 
     Returns:
         A populated ``Evidence`` instance.
+
     """
-    defaults: dict[str, object] = {
-        "terms": MappingProxyType({"adapter_revision": "test 0.0.1"}),
-        "measurements": MappingProxyType({"character_count": 12.0}),
-        "observed": MappingProxyType({"reported_confidence": False}),
-    }
-    defaults.update(overrides)
     return Evidence(
-        terms=defaults["terms"],  # type: ignore[arg-type]
-        measurements=defaults["measurements"],  # type: ignore[arg-type]
-        observed=defaults["observed"],  # type: ignore[arg-type]
+        terms=terms
+        if terms is not None
+        else MappingProxyType({"adapter_revision": "test 0.0.1"}),
+        measurements=(
+            measurements
+            if measurements is not None
+            else MappingProxyType({"character_count": 12.0})
+        ),
+        observed=(
+            observed
+            if observed is not None
+            else MappingProxyType({"reported_confidence": False})
+        ),
     )
 
 
-def make_reason(**overrides: object) -> Reason:
+def make_reason(
+    code: str = "blank_page", message: str = DEFAULT_REASON_MESSAGE
+) -> Reason:
     """Build a populated :class:`Reason` for tests.
 
     Args:
-        **overrides: Field values replacing the defaults below.
+        code: The machine-readable reason code.
+        message: The human-readable explanation.
 
     Returns:
         A populated ``Reason`` instance.
+
     """
-    defaults: dict[str, object] = {
-        "code": "blank_page",
-        "message": "The page carries no content.",
-    }
-    defaults.update(overrides)
-    return Reason(  # type: ignore[arg-type]
-        code=defaults["code"], message=defaults["message"]
-    )
+    return Reason(code=code, message=message)
 
 
 def make_token() -> Token:
@@ -161,6 +221,7 @@ def make_token() -> Token:
 
     Returns:
         A ``Token`` on a one-based page with a source-coordinate box.
+
     """
     return Token(
         text="total",
@@ -176,6 +237,7 @@ def make_call_record() -> CallRecord:
 
     Returns:
         A ``CallRecord`` as a local model reports it, unreported fields ``None``.
+
     """
     return CallRecord(
         provider="ollama",
@@ -195,6 +257,7 @@ def make_bytes() -> Bytes:
 
     Returns:
         A buffer with its media type.
+
     """
     return Bytes(data=b"\x89PNG\r\n\x1a\n", media_type="image/png")
 
@@ -204,6 +267,7 @@ def make_artifact() -> Artifact:
 
     Returns:
         A stored-blob descriptor carrying a content hash.
+
     """
     return Artifact(
         sha256="9f2a" * 16,
@@ -234,8 +298,9 @@ def make_boundary_instance(name: str) -> object:
 
     Returns:
         A populated instance of that type, ready to be mutated.
+
     """
-    factories = {
+    factories: dict[str, Callable[[], object]] = {
         "Token": make_token,
         "KernelResult": lambda: KernelResult(
             value=[make_token()], evidence=make_evidence(), reason=None
@@ -260,18 +325,22 @@ def combination_key(combination: tuple[object, ...]) -> tuple[int, ...]:
 
     Returns:
         The identity of each element, in order.
+
     """
     return tuple(id(part) for part in combination)
 
 
-def make_kernel_result(
-    value: object, evidence: object, reason: object
-) -> KernelResult[object]:
+def make_kernel_result(value: object, evidence: object, reason: object) -> object:
     """Construct a ``KernelResult`` from a raw field triple.
 
     Split out so the enumeration test attempts every combination through one call
     site, which keeps the enumeration honest: the test cannot accidentally skip a
     combination by writing it differently.
+
+    The three arguments are deliberately untyped as ``object``: this helper exists
+    to pass illegal combinations through the constructor, so the annotations must
+    not describe the legal shape. It is the single place in this suite where the
+    type system is bypassed on purpose.
 
     Args:
         value: The ``value`` argument, or None.
@@ -280,10 +349,9 @@ def make_kernel_result(
 
     Returns:
         The constructed ``KernelResult``.
+
     """
-    return KernelResult(  # type: ignore[arg-type]
-        value=value, evidence=evidence, reason=reason
-    )
+    return KernelResult(value=value, evidence=evidence, reason=reason)  # type: ignore[arg-type]
 
 
 def iter_module_identifiers(tree: ast.Module) -> Iterator[tuple[str, int]]:
@@ -299,6 +367,7 @@ def iter_module_identifiers(tree: ast.Module) -> Iterator[tuple[str, int]]:
     Yields:
         ``(name, lineno)`` for every class name, function name, referenced name,
         attribute name, argument name and annotated target.
+
     """
     for node in ast.walk(tree):
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -321,6 +390,7 @@ def collect_imported_modules(tree: ast.Module) -> list[str]:
 
     Returns:
         The dotted module paths of all ``import`` and ``from ... import`` nodes.
+
     """
     imported: list[str] = []
     for node in ast.walk(tree):
@@ -346,15 +416,7 @@ BOUNDARY_FIELD_PAIRS: list[tuple[str, str]] = [
 def test_types_module_defines_the_seven_frozen_boundary_types() -> None:
     """The module defines exactly the seven boundary types, all frozen."""
     assert len(BOUNDARY_TYPE_NAMES) == 7
-    assert set(BOUNDARY_TYPE_NAMES) == {
-        "Token",
-        "KernelResult",
-        "Evidence",
-        "Reason",
-        "CallRecord",
-        "Bytes",
-        "Artifact",
-    }
+    assert set(BOUNDARY_TYPE_NAMES) == set(EXPECTED_BOUNDARY_TYPE_NAMES)
 
     discovered: set[str] = set()
     for name, member in vars(kernel_types).items():
@@ -372,7 +434,7 @@ def test_types_module_defines_the_seven_frozen_boundary_types() -> None:
     for name in BOUNDARY_TYPE_NAMES:
         member = getattr(kernel_types, name)
         assert dataclasses.is_dataclass(member), f"{name} is not a dataclass"
-        assert member.__dataclass_params__.frozen is True, f"{name} is not frozen"
+        assert dataclass_is_frozen(member), f"{name} is not frozen"
         assert "__slots__" in member.__dict__, f"{name} does not declare slots"
 
     # Box is a supporting value type, deliberately not an eighth boundary state.
@@ -391,6 +453,7 @@ def test_mutating_any_boundary_type_raises(type_name: str, field_name: str) -> N
     Args:
         type_name: The boundary type under test.
         field_name: The field to attempt to assign.
+
     """
     instance = make_boundary_instance(type_name)
     before = getattr(instance, field_name)
@@ -412,10 +475,10 @@ def test_deleting_a_field_of_any_boundary_type_raises(type_name: str) -> None:
 
     Args:
         type_name: The boundary type under test.
+
     """
     instance = make_boundary_instance(type_name)
     field_name = dataclasses.fields(instance)[0].name  # type: ignore[arg-type]
-
     with pytest.raises(dataclasses.FrozenInstanceError):
         delattr(instance, field_name)
 
@@ -548,6 +611,7 @@ def test_kernel_result_cannot_express_a_value_without_evidence(
 
     Args:
         stand_in: The stand-in a silent failure would have returned.
+
     """
     with pytest.raises(ValueError) as excinfo:
         make_kernel_result(stand_in, None, None)
@@ -561,7 +625,9 @@ def test_kernel_result_cannot_express_a_value_without_evidence(
 def test_kernel_result_cannot_express_a_value_with_absent_evidence() -> None:
     """A value whose evidence argument is missing is a ``TypeError``, not a default."""
     with pytest.raises(TypeError):
-        KernelResult(value="stand-in")  # type: ignore[call-arg]
+        # The missing arguments are the point: this asserts the constructor refuses
+        # a partial state, so the linter's incomplete-call report is expected here.
+        KernelResult(value="stand-in")  # type: ignore[call-arg]  # pylint: disable=no-value-for-parameter
 
 
 def test_an_empty_evidence_is_still_evidence_so_a_value_may_carry_it() -> None:
@@ -584,7 +650,7 @@ def test_an_empty_evidence_is_still_evidence_so_a_value_may_carry_it() -> None:
         value=1, evidence=empty_evidence, reason=None
     )
     assert result.evidence is empty_evidence
-    assert dict(result.evidence.terms) == {}
+    assert not dict(result.evidence.terms), "empty terms stay empty, not defaulted"
 
     with pytest.raises(ValueError):
         KernelResult(value=1, evidence=None, reason=None)  # type: ignore[arg-type]
@@ -607,6 +673,7 @@ def test_kernel_result_requires_a_reason_whenever_the_value_is_absent(
     Args:
         value: The ``value`` argument under test; ``0``, ``""`` and ``[]`` are legal
             values that are not ``None``, so they need no reason.
+
     """
     if value is None:
         with pytest.raises(ValueError):
@@ -642,10 +709,13 @@ def test_kernel_result_has_no_defaults_so_all_three_fields_must_be_stated() -> N
             f"{field.name} has a default factory"
         )
 
+    # Both calls are deliberately partial: proving the constructor refuses a
+    # partial state means calling it that way, so the linter's incomplete-call
+    # report is expected for this block.
     with pytest.raises(TypeError):
-        KernelResult(value=[make_token()])  # type: ignore[call-arg]
+        KernelResult(value=[make_token()])  # type: ignore[call-arg]  # pylint: disable=no-value-for-parameter
     with pytest.raises(TypeError):
-        KernelResult(  # type: ignore[call-arg]
+        KernelResult(  # type: ignore[call-arg]  # pylint: disable=no-value-for-parameter
             value=[make_token()], evidence=make_evidence()
         )
 
@@ -744,7 +814,7 @@ def test_no_domain_noun_in_any_type_or_member_name() -> None:
                     f"{identifier!r} at line {lineno} matches {forbidden!r}"
                 )
 
-    assert offenders == [], f"domain vocabulary found in identifiers: {offenders}"
+    assert not offenders, f"domain vocabulary found in identifiers: {offenders}"
 
     # Stated as its own assertion: no class defined here is named with a domain
     # noun, so a component cannot arrive by being renamed into this module.
@@ -823,7 +893,7 @@ def test_evidence_reason_call_record_bytes_artifact_and_box_are_frozen_and_slott
 ):
     """The observation records are immutable and use slots like the boundary types."""
     for member in (Evidence, Reason, CallRecord, Bytes, Artifact, Box):
-        assert member.__dataclass_params__.frozen is True
+        assert dataclass_is_frozen(member)
         assert "__slots__" in member.__dict__
 
 
@@ -953,15 +1023,7 @@ def test_boundary_type_names_declares_the_seven_in_the_frozen_documented_order()
     ``__all__`` is sorted for the linter; this constant is the contract. It is
     what a consumer imports to assert it has not been handed a new boundary type.
     """
-    assert BOUNDARY_TYPE_NAMES == (
-        "Token",
-        "KernelResult",
-        "Evidence",
-        "Reason",
-        "CallRecord",
-        "Bytes",
-        "Artifact",
-    )
+    assert BOUNDARY_TYPE_NAMES == EXPECTED_BOUNDARY_TYPE_NAMES
     assert len(BOUNDARY_TYPE_NAMES) == 7
     assert "Box" not in BOUNDARY_TYPE_NAMES, "Box is supporting, not a boundary state"
 
@@ -1024,7 +1086,7 @@ def test_artifact_carries_a_content_hash_and_bytes_carries_an_opaque_buffer() ->
 def test_box_is_a_supporting_value_type_and_not_a_boundary_state() -> None:
     """``Box`` is frozen and hinted, and is absent from the boundary set."""
     assert dataclasses.is_dataclass(Box)
-    assert Box.__dataclass_params__.frozen is True
+    assert dataclass_is_frozen(Box)
     assert "Box" not in BOUNDARY_TYPE_NAMES
     assert typing.get_type_hints(Box) == {
         "x": float,
@@ -1036,7 +1098,7 @@ def test_box_is_a_supporting_value_type_and_not_a_boundary_state() -> None:
 
 
 def test_boundary_package_contains_only_the_types_module() -> None:
-    """This issue introduced no sibling module under ``docflow/kernels``."""
+    """No sibling module was introduced under ``docflow/kernels``."""
     expected = {"__init__.py", "types.py"}
     actual = {path.name for path in PACKAGE_ROOT.glob("*.py")}
 

@@ -137,6 +137,7 @@ class Box:
         y: Top edge, in source page units at the render DPI.
         width: Width in source page units, strictly non-negative by convention.
         height: Height in source page units, strictly non-negative by convention.
+
     """
 
     x: float
@@ -158,6 +159,7 @@ class Token:
         bbox: Bounding box in source page coordinates, at the render DPI.
         confidence: Reader confidence in [0, 1], or None when the reader reports none.
         role: Reader-assigned role, e.g. "text", "table_cell", "header".
+
     """
 
     text: str
@@ -189,6 +191,7 @@ class Evidence:
             effective-DPI estimate.
         observed: Free-form observables that are neither cache terms nor
             numeric measurements, e.g. a flag the adapter reported.
+
     """
 
     terms: Mapping[str, str]
@@ -213,6 +216,7 @@ class Reason:
         code: The machine-readable reason code, a stable identifier such as
             "blank_page". Assertions target this member, never the message.
         message: The human-readable explanation, for logs and diagnostics.
+
     """
 
     code: str
@@ -225,7 +229,7 @@ class Reason:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class CallRecord:
+class CallRecord:  # pylint: disable=too-many-instance-attributes
     """What a provider call cost and which revision answered.
 
     Populated for the language-model kernels only (K5 and K6). The remaining
@@ -233,6 +237,12 @@ class CallRecord:
 
     ``model_revision`` is the identity, not the tag: a tag such as ``qwen2.5``
     moves, while the digest is what a reproducible run must record.
+
+    The nine fields are the frozen contract of `sad.md` §6 — *"provider, model
+    revision, tokens, cost, latency, request id"* — not an accumulation of
+    convenience members. Pylint's default attribute ceiling does not apply to a
+    dataclass whose shape another layer has already fixed; splitting or pooling
+    the fields would change the boundary this issue exists to freeze.
 
     Attributes:
         provider: The provider prefix that resolved, e.g. "ollama".
@@ -248,6 +258,7 @@ class CallRecord:
         latency_ms: Wall-clock latency of the call in milliseconds.
         request_id: The provider's request identifier for support and tracing,
             None when the provider does not return one.
+
     """
 
     provider: str
@@ -275,6 +286,7 @@ class Bytes:
     Attributes:
         data: The raw buffer, exactly as produced, with no encoding applied.
         media_type: The buffer's media type, e.g. "image/png".
+
     """
 
     data: bytes
@@ -295,6 +307,7 @@ class Artifact:
         media_type: The stored content's media type, e.g. "image/png".
         path: The location the artifact was written to, relative to the store
             root, or None when only the descriptor is known.
+
     """
 
     sha256: str
@@ -329,6 +342,7 @@ class KernelResult(Generic[T]):
             value); or if ``value`` is None and ``reason`` is None (a missing
             value must always be explained); or if ``evidence`` is None (every
             call, including a failed one, has something to report).
+
     """
 
     value: T | None
@@ -351,6 +365,7 @@ class KernelResult(Generic[T]):
         Raises:
             ValueError: If ``evidence`` is None, if a value is accompanied by a
                 reason, or if a missing value is unaccompanied by one.
+
         """
         if self.evidence is None:
             raise ValueError(
