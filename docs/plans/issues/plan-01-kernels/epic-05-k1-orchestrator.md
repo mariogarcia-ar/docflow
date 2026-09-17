@@ -136,7 +136,7 @@ The difference between a resume that is correct and one that silently skips work
 - **No verification on read.** `E05-05`.
 - **No determinism-class handling.** `E05-03` — this issue guarantees the *state* is truthful; what a truthful state implies for a sampled artifact is the next issue's.
 - **No slot or barrier scheduling.** `E05-04`.
-- **No `resume` verb.** Recovery is *"run it again"*: there is no separate `resume` verb (`FR-01`, `FR-02`, `plan-01-kernels.md` §3). **Never** a new verb.
+- **No `resume` verb on the *product* surface.** Recovery there is *"run it again"*: `docflow run` after an interruption continues from the exact stage and there is no separate product `resume` verb (`FR-01`, `FR-02`, `plan-01-kernels.md` §3). **Never** a new product verb. This prohibition is scoped to `docflow`, not to the orchestrator: the lab surface exposes `docflow-kernel orchestrator pause <job-id>` / `resume <job-id>` as a **port method**, listed `now` in `kernel-cli.md` §9 (K1 row 5) and required by `plan-01-kernels.md` §13 Track 4's *one subcommand per port method* rule. The absence that `FR-01` asserts is on the product surface; asserting it absolutely here would forbid a command `E07-02` must dispatch.
 - **No `--verify` flag**, no ledger-trust `verify` subcommand, no `--force`-shaped escape on the read path. **Never** (`kernel-cli.md` §9).
 - **No distributed state store.** The states live on the filesystem. `# TODO: [RELEASE]`.
 

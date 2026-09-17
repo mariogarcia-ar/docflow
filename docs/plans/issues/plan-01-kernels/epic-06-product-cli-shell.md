@@ -20,7 +20,7 @@ E06 delivers the **product** surface: `run`, `status`, `jobs`, `pause` and `stop
 
 It is a **separate epic with one issue** because it owns a different deliverable surface from everything else in Stage 1. `wbs.md` §8 assigns `docflow/cli.py` to the **Surface** layer; every other Stage 1 task belongs to **Kernels** (`docflow/kernels/`, `docflow/ports/`, `docflow/adapters/`, `docflow/kernel_cli/`, `descriptors/`, `fixtures/`). A table that folded this task into E05 would put two different owner layers inside one epic and would hide the one place where the product surface and the lab surface could be confused. That confusion is the risk `kernel-cli.md` §2 exists to prevent: **`docflow run` never invokes `docflow-kernel`** — two entry points, two audiences.
 
-There is also exactly **one** verb-set to build here and no capability to grow: five verbs, no `resume` verb, no flag that skips a stage. A single issue is the honest cut.
+There is also exactly **one** verb-set to build here and no capability to grow: five verbs, no `resume` verb *on this surface*, no flag that skips a stage. A single issue is the honest cut. The absence is this surface's own — the lab surface (`docflow-kernel`) exposes `pause`/`resume` as port methods (`kernel-cli.md` §9, K1 row 5), and the two facts do not contradict: `FR-01` forbids a second recovery verb in the product, not the port operation.
 
 ---
 
@@ -55,7 +55,7 @@ Crash recovery is only meaningful if a person can interrupt a run from a shell a
 - [ ] **`run` is idempotent**: repeating `run` **skips completed work** and starts nothing already terminal.
 - [ ] A **second `run` after a kill continues** — it does not restart from acquisition.
 - [ ] `pause` lets in-flight work finish and leaves the ledger consistent; a subsequent plain `run` continues from the **exact** stage.
-- [ ] **There is no `resume` verb.** Continuing is *"run it again"* (`FR-01`, `FR-02`). **Never** a new verb.
+- [ ] **There is no `resume` verb on `docflow`.** Continuing is *"run it again"* (`FR-01`, `FR-02`). **Never** a new product verb. (The lab surface's `docflow-kernel orchestrator resume` is a port method, not a product verb — `kernel-cli.md` §9.)
 - [ ] `stop` **with no arguments discovers and reports** instead of killing — it never kills by default.
 - [ ] `stop --force` performs the forced stop, and the interrupted stage reads `running` in the ledger afterwards.
 - [ ] `status` and `jobs` report run and job state without modifying it.
@@ -74,7 +74,7 @@ Crash recovery is only meaningful if a person can interrupt a run from a shell a
 - `traceability.md` §4.1 FR-01/FR-02 — the proof named there is `S1-T19`: *repeat `run` skips; after a kill it continues*.
 
 **Out of scope for this issue**
-- **No `resume` verb.** **Never** (`plan-01-kernels.md` §3, §11 checklist).
+- **No `resume` verb on this surface.** **Never** the product verb (`plan-01-kernels.md` §3, §11 checklist). The lab surface's `orchestrator resume` is `now` in `kernel-cli.md` §9 and is `E07-02`'s, not this issue's.
 - **No per-component subcommands.** The 10 per-component subcommands are `S2-T16` (Plan 2). This issue is the shell only.
 - **No batch or mirrored-tree behaviour.** `docflow/batch.py` is `S3-T06` (Plan 3).
 - **No `--pipeline <CODE>`.** The 13 pipeline codes are descriptors, `S3-T02` (Plan 3). A descriptor is not a pipeline code (`kernel-cli.md` §9).
@@ -100,7 +100,7 @@ Crash recovery is only meaningful if a person can interrupt a run from a shell a
 E06 is **`done`** when:
 
 1. `E06-01` is `done`, and
-2. the capability is **demonstrable from a shell**: `pause` followed by a plain `run` continues from the exact stage with no `resume` verb existing; `stop` with no arguments discovers and reports without killing; and `stop --force` mid-stage leaves `running` in the ledger.
+2. the capability is **demonstrable from a shell**: `pause` followed by a plain `run` continues from the exact stage with no product `resume` verb existing; `stop` with no arguments discovers and reports without killing; and `stop --force` mid-stage leaves `running` in the ledger.
 
 **Does E06 gate `S1-T19`?** **Yes, directly.** `S1-T18` is named in `S1-T19`'s dependency set, making E06 → E08 a **direct inter-epic edge**; and `S1-T18` is link 9 of the 9-link serial spine (`wbs.md` §6.2). The gate's *Resume after a forced kill* scenario is closed by this epic's surface plus `E05-02`'s ordering — `plan-01-kernels.md` §7c records the scenario's close as **`S1-T19`** (+ `S1-T18`, `S1-T07`).
 

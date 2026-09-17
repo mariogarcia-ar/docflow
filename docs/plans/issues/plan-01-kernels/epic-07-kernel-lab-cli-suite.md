@@ -186,7 +186,7 @@ A green suite that asserts on message text, or on a value a sampled kernel canno
 - `plan-01-kernels.md` §7c — the matrix table by row and status: rows 1–14, 16, 17 are `now` — Stage 1 gate; **row 15 is `Declared and gated`** — *"its command `llm.frontier judge` is `MVP` in `kernel-cli.md` §9, so the row asserts on `role_conflict` the moment `judge` lands. Not a Stage 1 gate and not silently dropped."*
 - `plan-01-kernels.md` §8 — 16 rows assert in CI; row 15 declared and gated. *(**No FR of its own — see the gap note in §5.**)* Carries **NFR-02**/**NFR-03** evidence through rows 1, 2 and 16.
 - `plan-01-kernels.md` §7c — the three acceptance scenarios: *Resume after a forced kill* (`S1-T19` + `S1-T18` + `S1-T07`), ***A sampled artifact is evidence, not a cache*** — which closes at **`S1-T08`**, **asserted through `S1-T22`** — and *Verification is not optional* (`S1-T10`, asserted through `S1-T19` step 9).
-- `plan-01-kernels.md` §13, Track 2 — the 17 committed fixtures, each named for the failure it provokes and each asserting a `reason.code`, never a message string; and the *"Sampling discipline"* golden evidence.
+- `plan-01-kernels.md` §13, Track 2 — the matrix's committed fixtures (`kernel-cli.md` §12's table: **14** committed fixtures across 16 rows, two rows marked `(no fixture)` as **procedures**), each named for the failure it provokes and each asserting a `reason.code`, never a message string; and the *"Sampling discipline"* golden evidence.
 - `plans/README.md` §4 — the harness chain *"cannot slip **past** `S1-T19`"*: without `S1-T22`, the 17-row matrix exists only as prose.
 
 **Out of scope for this issue**

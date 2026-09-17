@@ -68,7 +68,7 @@ Integration test + demo script
 - [ ] `docflow pause <job>` while units are in flight lets the in-flight work finish and leaves the ledger consistent; a subsequent plain `run` continues from the **exact** stage, and nothing already `done` re-runs.
 - [ ] `docflow stop --force` mid-`transform` leaves the interrupted stage reading **`running`** — not `pending` and not `done`.
 - [ ] The next `run` after that kill re-runs **at most one stage per in-flight unit**; everything before it is preserved and nothing after it had started.
-- [ ] There is **no separate `resume` verb** — continuing is *"run it again"*.
+- [ ] There is **no separate product `resume` verb** — continuing is *"run it again"*. Recovery is driven on the lab surface as `docflow-kernel orchestrator pause <job-id>` / `resume <job-id>`, which are port methods (`kernel-cli.md` §9, K1 row 5) and the surface this gate is observed on.
 - [ ] Deleting one `done` stage's artifact by hand and reading the ledger again marks that stage **incomplete**, with **no flag passed**.
 - [ ] A crash injected at the atomic-write boundary leaves `done` **absent** and `running` **present**.
 
@@ -90,7 +90,7 @@ Integration test + demo script
 
 **Test / evidence**
 - `plan-01-kernels.md` §7a — the happy-path test that must pass to close the flow: build the 3-stage synthetic graph over N units, run it to completion, assert every stage terminal with a verifying artifact, assert `rebuild_index()` reproduces `run.json` from the ledgers alone, and assert the same flow is invocable as `docflow-kernel orchestrator run descriptors/synthetic-3stage.yaml --out O`. **This is the only test whose passing is the gate.**
-- `plan-01-kernels.md` §3 — the closing criterion, the two acceptance commands, and the supporting command table (proves: the 8 kernels with determinism class and adapter availability; pause + run continues from the exact stage with no separate `resume` verb; `stop --force` + `ledger-read` → interrupted stage reads `running`; `manifest-rebuild` after `rm O/run.json`; `store ledger-read` reports the same verification outcome as K1's; `pytest tests/kernel_cli/` → 16 of the 17 rows).
+- `plan-01-kernels.md` §3 — the closing criterion, the two acceptance commands, and the supporting command table (proves: the 8 kernels with determinism class and adapter availability; pause + run continues from the exact stage with no separate *product* `resume` verb — the lab surface's `orchestrator pause`/`resume` are port methods and are how the interruption is driven; `stop --force` + `ledger-read` → interrupted stage reads `running`; `manifest-rebuild` after `rm O/run.json`; `store ledger-read` reports the same verification outcome as K1's; `pytest tests/kernel_cli/` → 16 of the 17 rows).
 - `plan-01-kernels.md` §3, observable evidence table — the eight rows this issue must reproduce: per-stage terminal states; a consistent `run.json`; the interrupted stage `running` after `stop --force`; at-most-one-stage re-run on the second run (`NFR-02`); a `run.json` rebuilt byte-for-byte; a deleted `done` artifact treated as incomplete with no flag (`ADR-006`, AC *Verification is not optional*); exit codes `0`/`2`/`3`/`4`/`1` reachable with valid JSON on the emitting exits; and a sampled kernel's deleted artifact reported `failed` with an evidence-missing reason (`FR-09`, AC *A sampled artifact is evidence, not a cache*).
 - `plan-01-kernels.md` §6 — the full 14-step runbook; steps 1–5 are the happy path, 6–10 the required interruptions, 11–13 the manifest, the exit contract and the suite, and step 14 is ticking §11's exit checklist. **This issue's acceptance criteria are steps 1–13.**
 - `kernel-cli.md` §11 **row 1** (a killed stage reported as never started, then resumed) and **row 2** (a stage marked `done` whose artifact is partial) — both `now`, both Stage 1 gate rows, both fixture `synthetic-3stage.yaml`, and both *procedures* that this issue's integration test drives end to end.
@@ -110,7 +110,7 @@ Integration test + demo script
 **Out of scope for this issue**
 - **No domain noun in the descriptor.** No field, no document type, no pipeline code — the flow is synthetic **by construction**, and a descriptor naming a pipeline code is the drift this guards against (`kernel-cli.md` §9, `plan-01-kernels.md` §6 step 1). **Never** in Stage 1.
 - **No real document, no real model, no real engine.** Track 1 closes over `S1-T11`'s **faked ports** — not Docling, not Ollama, not a provider (`plan-01-kernels.md` §13, Track 1). The real adapters land in parallel and are **not** on this flow's path.
-- **No second `resume` verb and no resume flag.** Continuing is *"run it again"*. **Never**.
+- **No second `resume` verb** — no product `resume` verb and no resume flag on `docflow`. Continuing is *"run it again"*. **Never** on the product surface. The lab surface's `orchestrator resume` is a port method (`kernel-cli.md` §9) and **is** part of this gate's observation path.
 - **No `--verify` flag and no ledger-trust `verify` subcommand.** Verification is an outcome of reading, and step 9 passes **no flag** (`ADR-006`). **Never**.
 - **No `--rebuild-index` flag.** `rebuild_index()` is a library call in the PoC; step 11 is a command, not a flag (`prd.md` §7). `# TODO: [MVP]`.
 - **No `--no-validate`.** **Never** (ADR-002).

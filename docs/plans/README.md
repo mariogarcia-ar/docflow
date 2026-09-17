@@ -81,7 +81,7 @@ Each plan can be decomposed into **capability epics** whose issues are one-per-`
 |---|---|---:|---:|
 | **Plan 1 — Kernels** | [`issues/plan-01-kernels/README.md`](issues/plan-01-kernels/README.md) | 8 | 22 |
 | **Plan 2 — Components** | [`issues/plan-02-components/README.md`](issues/plan-02-components/README.md) | 9 | 17 |
-| Plan 3 — Pipelines | *not yet decomposed* | — | (14) |
+| **Plan 3 — Pipelines** | [`issues/plan-03-pipelines/README.md`](issues/plan-03-pipelines/README.md) | 8 | 14 |
 
 **Plan 3 adds configuration and data only.** No new kernel, no new component, no new type: `wbs.md` §5 states Stage 3 is "largely data, not new code".
 
@@ -108,6 +108,8 @@ Read `plan-01-kernels.md` first: Plans 2 and 3 cite its frozen types by name and
 | `S` / `M` / `L` | Effort signal from `wbs.md` §7 — relative complexity of implementation **and verification**, not duration |
 
 **Unresolved decisions are not resolved here.** Every plan carries its own §12. A decision that belongs to a later stage is listed in the earlier plan only as a hand-off, and the plan that must act on it carries it in its own §12.
+
+**Reading order, and where the issue trees sit.** Read `plan-01-kernels.md` first, then `plan-02-components.md`, then `plan-03-pipelines.md` — each plan's §4 entry condition is the previous plan's §11 checklist. Each plan's §5 ends with a pointer to its own decomposition under `issues/`, and this document's §6 is the four-track model all three instantiate in their §13. The three decompositions are peers of the plans, not summaries of them: the plan remains the authority on sequence and the gate, and the issue set is the tracker-facing view.
 
 ---
 
@@ -167,7 +169,7 @@ What each layer has **instead** is golden evidence that cannot be self-graded:
 
 | Layer | The golden evidence | Why it cannot be self-graded |
 |---|---|---|
-| Plan 1 | The 17 committed fixtures, each named for the failure it provokes, each asserting a **`reason.code`** and never a message string | The assertion is on a closed vocabulary, not on a model's opinion |
+| Plan 1 | The committed fixtures of the silent-failure matrix — `kernel-cli.md` §12's table names **14** committed fixtures across its 16 rows (two rows are marked `(no fixture)`, being procedures), each named for the failure it provokes and each asserting a **`reason.code`**, never a message string | The assertion is on a closed vocabulary, not on a model's opinion |
 | Plan 2 | The contrast case and the documented demo — a `15400` that was really `1540` | Caught by **two independent readers disagreeing**, which no single reader can manufacture for itself |
 | Plan 3 | The shape-identity contract test over all 13 codes, plus the first full run's recorded baseline | A shape is compared against a documented shape, not scored by a model |
 

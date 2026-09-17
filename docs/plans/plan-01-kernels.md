@@ -411,7 +411,7 @@ Every layer is worked along four tracks at once (`plans/README.md` §6). They ar
 | Track | This layer's instance | Task |
 |---|---|---|
 | **1 — Fast flow** | `descriptors/synthetic-3stage.yaml`, three stages over a synthetic unit set, driven through orchestrator + store + ledger — with `S1-T11`'s **faked ports**, not Docling, not Ollama, not a provider | `S1-T19` (the gate) |
-| **2 — Golden set / tests** | The **17 committed fixtures**, one per row of the silent-failure matrix, each named for the failure it provokes and each asserting a **`reason.code`** — never a message string | `S1-T22` |
+| **2 — Golden set / tests** | The matrix's committed fixtures (the `kernel-cli.md` §12 table's 16 rows name **14** committed fixtures; two rows are marked `(no fixture)` because they are **procedures**), each named for the failure it provokes and each asserting a **`reason.code`** — never a message string. §12's own note: *"Four rows need no committed document (13, 14, 16 and row 1–2's generator)"* | `S1-T22` |
 | **3 — Code (for reuse)** | `docflow/kernels/` + `docflow/ports/` — the boundary types and the five port interfaces. Reusability is *tested*, not asserted: the import-isolation check plus a fake adapter satisfying each port | `S1-T01`–`S1-T17` |
 | **4 — CLI (to probe)** | `docflow-kernel`, a **package**, with one subcommand per port method and the 5-exit-code contract | `S1-T20`, `S1-T21` |
 

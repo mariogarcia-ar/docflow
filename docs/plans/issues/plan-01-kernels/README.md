@@ -211,4 +211,6 @@ The fixed decisions that hold across all three plans are tabulated in `plans/REA
 | `now` / `MVP` | `kernel-cli.md` §9 per-command status: `now` dispatches in Stage 1, `MVP` exits `4` naming the operation as unavailable. |
 | Status | `todo` for every issue here — no code exists (`plan-01-kernels.md` §4, entry condition 2). The placeholder is `todo`; update it in place as work lands. |
 
+**A stage is `done` only when its flow closes, and this directory does not restate that — it inherits it.** Ticking all 22 issues does **not** close Stage 1: `E08-01` (`S1-T19`) is the gate, and it closes when the synthetic flow is **observed** — run, killed, resumed and inspected from a shell (`plans/README.md` §2, `wbs.md` §1, `plan-01-kernels.md` §11). An issue can be `done` inside a plan whose gate is not, and it stays `done`; what it cannot do is authorise Plan 2. The three non-negotiables in §7 are the ones that make `done` mean something, and Track 3 in particular is judged at the gate rather than during the wave: reusability is a claim about a **consumer**, and no amount of green boxes here proves it.
+
 **Open decisions are not resolved in this directory.** Each belongs to the issue that touches it and is referenced by number from `plan-01-kernels.md` §12 — never silently closed.

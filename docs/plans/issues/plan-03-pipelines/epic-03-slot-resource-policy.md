@@ -55,6 +55,7 @@ Intra-epic: n/a. Inter-epic: none.
 
 **Acceptance criteria**
 - [ ] **`DOCFLOW_JOBS` bounds CPU work**: the number of concurrent CPU-bound operations (renders, CPU-side kernel work) never exceeds the value, and a run at `--jobs 8` is observably bounded.
+- [ ] **`--jobs` is the CLI counterpart of that bound**, and the pair is 1:1: `--jobs N` and `DOCFLOW_JOBS=N` resolve through the same precedence chain to the same slot bound, and the flag has no effect `DOCFLOW_JOBS` cannot also express (`plans/README.md` §6 Track 4: *no flag without a counterpart*). `--jobs` appears in the gate's command (`S3-T14`) because this issue is what defines it.
 - [ ] **`gpu` is bounded to one in-flight generation per device** — no two generations run concurrently on the same device, and the bound is enforced by the slot rather than by the caller's discipline.
 - [ ] **The Ollama model is loaded once across the run** (`keep_alive`): the model is warmed at the start and stays resident, so the first generation is not the only one paying load cost and later stages do not each reload it.
 - [ ] The slot bounds are **operational settings**, not policy assets: they carry the same CLI → env → `.env` → default chain as paths, model and host, and they are **not** among the five registry policy values (`prd.md` NFR-06, NFR-06a).

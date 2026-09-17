@@ -133,6 +133,7 @@ This issue fixes the **shape** the consuming system integrates against, and its 
 - [ ] The trace is present **per field** in the emitted output, with both `trace.page` and `trace.extractor` (continuity with `E06-01`).
 - [ ] The threshold that decides *what to do about* a verdict is **not** in the output: no default, no recommendation, no action field.
 - [ ] The emitted shape is **stable for a re-run** on the same inputs — a deterministic emission (the vector is not a sampled artifact).
+- [ ] **The Track 3 consumer test**: a module imports the frozen verdict-vector shape and the per-field trace shape **without defining a parallel type of its own** — `plans/README.md` §6 Track 3's *"a consumer imports it and adds **no new type**"*, and `plan-03-pipelines.md` §13 Track 3's *"configuration and data, no new code"*. Asserted as an **absence**: the shape has one definition, in `docflow/components/contract.py`, and a test fails if a second one appears.
 - [ ] Emitting a result **does not re-run any predecessor**: the Contract reads `work/<name>.consistency.json` (via `E05`) and writes its own artifact; the chain is not re-walked (`FR-12`'s property, asserted here at the artifact level).
 - [ ] The component imports **ports only**; the import-isolation check passes over the file it now extends.
 

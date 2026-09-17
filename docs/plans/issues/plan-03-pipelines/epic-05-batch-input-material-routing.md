@@ -62,6 +62,7 @@ CLI + Diagnosis selector — `docflow run --extractor r|p|rp <input> --out <dir>
 - [ ] The selection is a **quality** decision, not a presence check: a text PDF with an invisible or unusable text layer is not routed to conversion on the ground that characters exist (`FR-15`, `S2-T04`).
 - [ ] The chosen material for each file is **observable in the output** — the result and the ledger record which code ran, so the caller can audit the selection.
 - [ ] No default material is substituted when Diagnosis cannot classify a file: the file's outcome is a typed result, not a fallback route. **Never** a default model, engine or threshold (`prd.md` §10).
+- [ ] **`--model <provider:model>` is the batch surface's model selector, and it resolves through the same chain as the rest of the operational settings** — `--model` / `DOCFLOW_MODEL` / `.env` / default, CLI first (`S3-T12`). The `plan-03-pipelines.md` §3 acceptance commands carry it (`docflow run --extractor rp documentos/ --model ollama:qwen2.5 --out out/`) and the gate's single-file rungs carry it (`--model ollama:qwen2.5`, `--model ollama:llava`); this issue is where it must be accepted on the batch form. **No default or fallback model exists**: an unpulled or unknown model fails with a typed reason naming the remedy (`kernel-cli.md` §5 `model_not_pulled`, exit `3`), never a substituted one — the same discipline `E03-01` asserts for warming.
 - [ ] No new kernel-boundary type is introduced (`plan-03-pipelines.md` §10, Task DoD).
 
 **Test / evidence**

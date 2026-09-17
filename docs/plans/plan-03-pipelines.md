@@ -185,6 +185,8 @@ graph LR
 
 **No task dropped, none renumbered, none added.** Total: **14**.
 
+> **Epics and issues.** This plan is decomposed into 8 capability epics and the same 14 issues under [`issues/plan-03-pipelines/`](issues/plan-03-pipelines/README.md) — one issue per task, with acceptance criteria expanded into checkable boxes, the test and evidence for each, and an explicit out-of-scope list. The epic cut is **by capability**, so it is **orthogonal to the waves above**, not a restatement of them. This file remains the authority on sequence and the gate; the issue set is the tracker-facing view of it.
+
 ---
 
 ## §6 Flow-closing procedure

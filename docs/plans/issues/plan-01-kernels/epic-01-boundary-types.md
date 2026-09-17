@@ -54,6 +54,7 @@ None. Intra-epic: n/a. Inter-epic: n/a. This is the graph's only sourceless node
 - [ ] A `KernelResult` carrying a non-`None` `value` **cannot be constructed** with empty or absent `evidence`.
 - [ ] A `KernelResult` carrying `value=None` **cannot be constructed** without a populated `reason`.
 - [ ] The only two constructible states of `KernelResult` are *(value + evidence + `reason: None`)* and *(`value: None` + `reason`)*; a test enumerates the constructible states and asserts no third one exists.
+- [ ] **The Track 3 consumer test**: an import-isolation test asserts that `docflow/kernels/types.py` is importable by a module that imports **no adapter** — the property `plan-01-kernels.md` §13 Track 3 states as *"Plan 2 builds every component against these types and adds **no new kernel-boundary type**"*. This is a **static assertion over the module's imports**, not a prose claim: it passes today (Plan 2 does not exist) and **fails** the moment a component redefines one of the seven types or reaches through a port for an adapter.
 - [ ] `Reason` carries a machine-readable `code` member, not only a human message.
 - [ ] No type, field or member name contains a domain noun — not `invoice`, not `field`, not `verdict`, not a document type, not a pipeline code.
 - [ ] Every type carries an explicit type hint on every field.
@@ -61,7 +62,7 @@ None. Intra-epic: n/a. Inter-epic: n/a. This is the graph's only sourceless node
 **Test / evidence**
 - `plan-01-kernels.md` §7b row 1 — *"No third state at a kernel boundary"*: the unit test asserts `KernelResult` cannot express a value without evidence or a `None` without a reason. The wrong result it guards against is recorded there: someone returns `""`, `0`, `[]` or a default model as a stand-in *and the test still passes*.
 - `plan-01-kernels.md` §8 — proof is the unit test asserting no third state exists (requirements **FR-06**).
-- Downstream consumption: this file is the head of `plans/README.md` §3's Plan 1 frozen row; Plan 2's consumer test is that a component constructs these types **without redefining them**.
+- Downstream consumption: this file is the head of `plans/README.md` §3's Plan 1 frozen row; Plan 2's consumer test is that a component constructs these types **without redefining them**, i.e. **adds no new kernel-boundary type** — two statements of one criterion, and the criterion is asserted by this issue's import-isolation acceptance box rather than left as prose (`plan-01-kernels.md` §13 Track 3).
 
 **Out of scope for this issue**
 - **No behaviour.** No store, no ledger, no ports, no orchestrator — this issue is types and their constructibility only.
