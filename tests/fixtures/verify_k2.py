@@ -46,6 +46,7 @@ sys.path.insert(0, str(REPO / "src"))
 # installed copy, and a fresh clone has no install.
 import pymupdf  # noqa: E402
 
+from docflow.adapters.pdf import PyMuPdfVendor  # noqa: E402
 from docflow.kernels import pdf  # noqa: E402
 
 MANIFEST: pathlib.Path = REPO / "tests" / "fixtures" / "manifest.json"
@@ -54,6 +55,10 @@ ROOT: pathlib.Path = REPO / "tests" / "fixtures"
 #: The character threshold a caller would plausibly use. It is passed in because
 #: the kernel owns no threshold of its own.
 MIN_CHARS: int = 40
+
+#: The documented reader. The kernel receives one instead of reaching for
+#: a vendor itself, so a caller supplies it — this verifier is a caller.
+VENDOR = PyMuPdfVendor()
 
 #: The resolution the scans are asked to honour. Above what this corpus's scans
 #: hold, so the pass exercises the refusal rather than the happy path.
@@ -111,7 +116,7 @@ def classify_document(path: pathlib.Path, pages: int) -> tuple[Counter[str], lis
     blanks: list[int] = []
 
     for number in range(1, pages + 1):
-        result = pdf.classify(path, number, min_chars=MIN_CHARS)
+        result = pdf.classify(path, number, min_chars=MIN_CHARS, vendor=VENDOR)
         if result.value is None:
             code = result.reason.code if result.reason else "unknown"
             shapes[f"<{code}>"] += 1
@@ -206,14 +211,14 @@ def rendered_page(path: pathlib.Path, number: int) -> dict[str, Any]:
         The page's measured resolution and what the render did.
 
     """
-    dpi_result = pdf.effective_dpi(path, number)
+    dpi_result = pdf.effective_dpi(path, number, vendor=VENDOR)
     measured = (
         float(dpi_result.value.measurements["effective_dpi"])
         if dpi_result.value is not None
         else None
     )
 
-    result = pdf.render(path, [number], dpi=HIGH_DPI)
+    result = pdf.render(path, [number], dpi=HIGH_DPI, vendor=VENDOR)
 
     return {
         "effective_dpi": measured,
@@ -294,7 +299,7 @@ def pass_three(records: list[dict[str, Any]]) -> dict[str, Any]:
 
         for number in range(1, page_count(path) + 1):
             inspected += 1
-            result = pdf.classify(path, number, min_chars=MIN_CHARS)
+            result = pdf.classify(path, number, min_chars=MIN_CHARS, vendor=VENDOR)
             observed = (
                 result.value.observed
                 if result.value is not None

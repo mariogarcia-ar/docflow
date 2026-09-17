@@ -1,8 +1,9 @@
 # Quickstart — what K2 (`kernel.pdf`) can do today
 
-**Status: honest, and partial.** Three of the eight kernels have landed; this page
-covers the PDF one, which is the most complete. Everything below has been run and
-its output is quoted from a real invocation.
+**Status: honest, and complete for Stage 1.** Six of the eight kernels can serve a call;
+this page covers the PDF one, whose kernel **and** adapter have landed and whose split
+between them is now part of the design. Everything below has been run and its output is
+quoted from a real invocation.
 
 There is **no command line for kernels yet** (`S1-T20`/`S1-T21` build
 `docflow-kernel`). Everything here is the **library**, called from Python. That is
@@ -25,27 +26,70 @@ pip install pymupdf          # the page engine
 brew install poppler         # provides the `pdftotext` binary
 ```
 
-Both are resolved lazily. A missing one is a typed `Reason` with a remedy in the
-message — never a substitute engine, because a different engine reading the same
-bytes is a different measurement wearing this one's name.
+Both are resolved lazily, by the adapter. A missing one is a typed `Reason` with a
+remedy in the message — never a substitute engine, because a different engine reading
+the same bytes is a different measurement wearing this one's name.
+
+## Where the code lives — three files, and the direction matters
+
+| File | What it holds |
+|---|---|
+| `docflow/ports/pdf.py` | `PdfSource` — what a **caller above Stage 1** depends on |
+| `docflow/adapters/pdf.py` | `PdfEngine` (implements the port) and `PyMuPdfVendor` (owns `pymupdf` + `pdftotext`) |
+| `docflow/kernels/pdf_vendor.py` | `PdfVendor` — what the **analysis** asks a reader through |
+| `docflow/kernels/pdf.py` | the analysis: shapes, invisible text, producer contradictions |
+
+The direction is the opposite of the obvious one:
+
+```text
+ports/pdf.py            PdfSource        the caller's contract
+      ^
+adapters/pdf.py         PdfEngine        implements it; owns the vendors
+      |
+      v  calls
+kernels/pdf.py          analysis         shapes, invisible text — no vendor
+      |
+      v  asks through
+kernels/pdf_vendor.py   PdfVendor        the seam the analysis declares
+      ^
+adapters/pdf.py         PyMuPdfVendor    the implementation over the two vendors
+```
+
+**A kernel may not import an adapter** — the arrow points down, and the layer is
+guarded by a test. So the vendor arrives as an *argument*, the same inversion
+`PdfSource` uses one level up. `kernels/pdf.py` imports only `__future__`,
+`collections`, `contextlib`, `pathlib`, `re`, `types`, `typing` and `docflow` — **no
+PDF library at all.** It was 1689 lines when the vendors were inside it; it is 983.
 
 ## The whole surface
 
-Seven module-level functions in `docflow.kernels.pdf` — six that make up the port
-contract, plus `layout_text`, which is a convenience for callers that need the
-reader's own character grid. All of them return `KernelResult`, which has exactly
-two states: a value with evidence, or no value with a `Reason`. There is no third
-state and no exception for an expected negative outcome.
-
 ```python
-from pathlib import Path
-from docflow.kernels import pdf
+from docflow.adapters.pdf import PdfEngine   # the adapter
+from docflow.ports import PdfSource          # the contract
+
+engine = PdfEngine(min_chars=10)             # required, never defaulted
+isinstance(engine, PdfSource)                # True
 ```
+
+Five operations make up the port — `probe`, `classify`, `tokens`, `render`, `split`.
+The adapter also exposes `effective_dpi` and `layout_text`, which are **not** on
+`PdfSource`: the port is frozen by `plans/README.md` §3, so a sixth member would
+re-open `E04-01`'s gate. They are reachable because a caller needs them, and
+`kernel-cli.md` §9 already lists `pdf facts` as an `MVP` target.
+
+All of them return `KernelResult`, which has exactly two states: a value with
+evidence, or no value with a `Reason`. There is no third state and no exception for
+an expected negative outcome.
+
+The kernel's own functions take `vendor=` as a keyword-only argument and have **no
+default** — a default would have to name a concrete reader, which is the import the
+split exists to avoid. Call the adapter instead; reach for the kernel directly only
+when you are writing the reader.
 
 ## 1. `probe` — what is this file?
 
 ```python
-result = pdf.probe(Path("documento.pdf"))
+result = engine.probe(Path("documento.pdf"))
 result.value.observed
 # {'file': 'documento.pdf', 'page_sizes': [[612.0, 792.0]], 'producer': '...',
 #  'creator': '...', 'format': 'PDF 1.7', 'encrypted': False}
@@ -57,12 +101,14 @@ standing in for a successful probe.
 
 ## 2. `classify` — what shape is this page?
 
-**`min_chars` is required.** It is the caller's threshold, not the kernel's: what
+**`min_chars` is required, and it is on the constructor.** It is the caller's
+threshold, not the kernel's — and it is not a port member either, so it enters at the
+adapter: what
 counts as enough text to judge is a policy value (`prd.md` FR-15), and a kernel
 holding its own constant has made a routing decision whether or not it prints one.
 
 ```python
-result = pdf.classify(Path("documento.pdf"), page=1, min_chars=40)
+result = engine.classify(Path("documento.pdf"), page=1)
 result.value.observed["shape"]        # 'text' | 'image' | 'mixed' | 'blank'
 result.value.observed["invisible_text"]
 # False
@@ -86,7 +132,7 @@ placed in. Never from the request, never from metadata: metadata records what
 someone intended.
 
 ```python
-result = pdf.effective_dpi(Path("escaneo.pdf"), page=1)
+result = engine.effective_dpi(Path("escaneo.pdf"), page=1)
 result.value.measurements
 # {'effective_dpi': 100.07, 'image_count': 1.0}
 ```
@@ -107,7 +153,7 @@ about the document's kind.
 ## 4. `render` — a page as a bitmap, and it never upscales
 
 ```python
-result = pdf.render(Path("escaneo.pdf"), pages=[1], dpi=600)
+result = engine.render(Path("escaneo.pdf"), pages=[1], dpi=600)
 result.value                # None
 result.reason.code          # 'insufficient_effective_resolution'
 result.evidence.observed["files_written"]   # 0
@@ -137,14 +183,14 @@ resolution asked.
 Several pages are stacked vertically into one PNG, because `Bytes` is one buffer
 and inventing a container format here would be a second contract.
 
-## 5. `extract_tokens` — positioned words from the text layer
+## 5. `tokens` — positioned words from the text layer
 
 Read by the `pdftotext` binary in its `-bbox` mode, converted to **source page
 coordinates at the DPI you asked for** — so a token's box means the same thing as
 the box `render` produces.
 
 ```python
-result = pdf.extract_tokens(Path("documento.pdf"), pages=[1], dpi=300)
+result = engine.tokens(Path("documento.pdf"), pages=[1], dpi=300)
 [(t.text, round(t.bbox.x, 1), round(t.bbox.width, 1), t.confidence) for t in result.value][:2]
 # [('FACTURA', 1423.0, 239.6, None), ('0138-00000236-A', 1703.0, 405.1, None)]
 ```
@@ -157,14 +203,14 @@ Boxes scale with the requested DPI, so the same word at 144 DPI has a box twice
 the size of the one at 72:
 
 ```python
-at_72  = pdf.extract_tokens(path, [1], dpi=72).value[0].bbox.x
-at_144 = pdf.extract_tokens(path, [1], dpi=144).value[0].bbox.x
+at_72  = engine.tokens(path, [1], dpi=72).value[0].bbox.x
+at_144 = engine.tokens(path, [1], dpi=144).value[0].bbox.x
 round(at_144 / at_72, 2)   # 2.0
 ```
 
 ## 6. `split` — cut a page range out as a new document
 ```python
-result = pdf.split(Path("documento.pdf"), pages=[1])
+result = engine.split(Path("documento.pdf"), pages=[1])
 result.value.media_type                       # 'application/pdf'
 result.evidence.observed["source_pages"]
 # [{'source_page': 1, 'width': 595.0, 'height': 842.0}]
@@ -189,7 +235,7 @@ A repeated page is refused rather than silently duplicated.
 > optimisation for the text path; nothing depends on it today.
 
 ```python
-result = pdf.layout_text(Path("boleto.pdf"), pages=[1])
+result = engine.layout_text(Path("boleto.pdf"), pages=[1])
 result.value
 # 'Boleto:SUV-255671438-0                          Butaca: 56\n...'
 ```
@@ -213,7 +259,7 @@ The left column's "where it departs from" stays paired with the right column's
 ### Byte-identical to the previous system's command
 
 ```python
-pdf.layout_text(path, [1]).value == legacy_output_1_to_1   # True
+engine.layout_text(path, [1]).value == legacy_output_1_to_1   # True
 ```
 
 Verified against `pdftotext -layout -enc UTF-8 -q -f 1 -l 1 <file> -`. The encoding
@@ -249,12 +295,44 @@ reader's own output. The reader has the font metrics and emits the soft hyphen i
 broke a word on; a token box has neither. The coordinates carry the *structure* —
 which column a word sits in — and they do not carry the grid.
 
-That distinction is why both operations exist. Use `extract_tokens` when you need
+That distinction is why both operations exist. Use `tokens` when you need
 provenance; use `layout_text` when you need the text as a person reads it.
 
 Failure paths: a page that yields no text reports `blank_page` (that is what a scan
 looks like — pixels, not a text layer), and a missing binary reports
 `engine_unavailable` rather than falling back to another reader.
+
+---
+
+## The split, and what it buys
+
+`kernels/pdf.py` used to call `pymupdf` and the `pdftotext` binary itself. `sad.md` §1
+lists ``pdftotext`` among the **adapters**, so a vendor was living inside a kernel —
+and a pass-through shim would have satisfied the criterion while changing nothing.
+
+Measured on the split:
+
+| | before | after |
+|---|--:|--:|
+| `kernels/pdf.py` | 1689 lines | 983 |
+| vendor modules it imports | `pymupdf`, `subprocess`, `shutil`, `tempfile`, `xml.etree` | **none** |
+| `adapters/pdf.py` | did not exist | 947 lines |
+| the seam | did not exist | 363 lines |
+
+**What it buys, concretely.** The analysis — which shape a page has, whether its text
+is invisible, whether a producer contradicts its measurements — is now testable with a
+stub reader and no PDF library installed. And a different PDF library becomes possible
+without touching a single judgement: implement `PdfVendor` and pass it in.
+
+**What it does not buy.** It does not make the analysis *pure*: the shapes are still
+decided from measurements a vendor took, so a vendor that measures wrongly still
+misleads it. The split buys *replaceability and testability*, not correctness.
+
+**Verified by mutation.** Twelve mutations of the kernel and the adapter each break one
+guarded property and each fail the test that guards it — including three that exist
+because of this split: a missing reader must not fall back to a substitute; a missing
+reader must not be reported as a successful empty extraction; and the `min_chars`
+threshold must not be defaulted. Harness: `tests/adapters/mutation_pdf.py`.
 
 ---
 
@@ -315,8 +393,15 @@ search for real invisible text layers. Exits non-zero on a defect.
 
 | Kernel | State |
 |---|---|
+| K3 `image` | **Landed** — `info`, `legibility`, `crop`, `rescale` (`E04-03`) |
+| K4 `kernel.ocr` | **Landed** — Docling behind `OcrEngine` (`E04-04`) |
+| K5 `kernel.llm.local` | **Landed** — Ollama behind `LlmEngine` (`E04-05`) |
+| K6 `kernel.llm.frontier` | **Landed** — one provider behind `LlmEngine` (`E04-06`) |
 | K7 `store` | **Landed** — content-addressed put/get/verify + the ledger write path |
 | K8 `registry` | **Landed** — load, schema-validate, fail fast, `registry_hash` |
-| K3 `image` | Not yet (`E04-03`) |
-| K4 `ocr`, K5 `llm.local`, K6 `llm.frontier` | Not yet (`E04-04` … `E04-06`) |
-| K1 `orchestrator` | Not yet (`E05`) |
+| K1 `orchestrator` | Not yet (`E05-01`) |
+
+Six of the eight can serve a call in this workspace. **K6 is the exception among the
+landed ones**: its adapter exists, but its probe also requires a provider key and this
+workspace has none, so `docflow-kernel --list` correctly reports it unavailable —
+*available* would be a claim that a paid call could be made.

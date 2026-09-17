@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E04** |
 | Capability | The five port interfaces plus the thin acquisition (K2/K3) and generation (K4/K5/K6) adapters, and resolution by capability |
-| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 1 criterion unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 1 criterion unmet (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) — **`in progress`**, 0 criteria unmet, 3 documented deltas (§3) · `E04-06` (`S1-T16`) — **`in progress`**, 0 criteria unmet, 2 documented deltas (§3) · `E04-07` (`S1-T17`) — `todo` |
+| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 0 criteria unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 1 criterion unmet (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) — **`in progress`**, 0 criteria unmet, 3 documented deltas (§3) · `E04-06` (`S1-T16`) — **`in progress`**, 0 criteria unmet, 2 documented deltas (§3) · `E04-07` (`S1-T17`) — `todo` |
 | Issue count | **7** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/ports/`, `docflow/adapters/`, `docflow/kernels/` |
 | Wave span | **W2 → W4** (W2: 1 · W3: 5 · W4: 1) |
@@ -77,7 +77,14 @@ Everything above Stage 1 must be able to run without Poppler, without Docling, w
 - `kernel-cli.md` §13 — the three guardrails (one command = one port method; never emit a verdict; no silent fallback) are the same constraints restated at the CLI boundary; the port layer is where they originate.
 
 **Out of scope for this issue**
-- **No adapter.** The five adapters are `E04-02` … `E04-06`. This issue is interfaces and the isolation test.
+- **No adapter.** The five ports are `PdfSource`, `OcrEngine`, `LlmEngine`, `ArtifactStore`
+  and `Registry`; the five adapter-or-kernel modules are `E04-02` … `E04-06`. The two sets are
+  **not** the same five, and reading them as one is a mistake this line used to invite: `E04-02`
+  delivers `kernels/pdf.py` **and** `adapters/pdf.py` behind `PdfSource`; `E04-03` delivers
+  `kernels/image.py`, which is behind **no** port by design; and `LlmEngine` is covered by
+  **two** of them (`ollama.py`, `frontier.py`). `ArtifactStore` and `Registry` are satisfied by
+  K7's and K8's own kernels, which *are* the capability rather than wrappers over a vendor.
+  This issue is interfaces and the isolation test.
 - **No fake adapter shipped as production code.** A fake exists to satisfy the port *in tests*; shipping one as a default implementation would be a silent fallback in disguise. **Never**.
 - **No concrete engine, model, threshold or default as a port member.** No default or fallback model, engine or threshold exists anywhere (`plans/README.md` §2). **Never**.
 - **No domain noun.** **Never** (`kernel-cli.md` §10).
@@ -99,9 +106,7 @@ Everything above Stage 1 must be able to run without Poppler, without Docling, w
 **Title**
 K2 `kernel.pdf` thin: `probe`, `classify`, `effective_dpi`, `extract_tokens`, `render`, `split` — plus `layout_text`, which is **not** part of the port contract (`E04-01` carries the five frozen interfaces, and a sixth operation on `PdfSource` would re-open that gate).
 
-**Status — `in progress`, 1 criterion unmet**
-
-Recorded rather than implied, because a ticked box that is not true is the failure mode this project exists to prevent.
+**Status — `in progress`, 0 criteria unmet**
 
 | # | Criterion | Status |
 |---:|---|---|
@@ -112,10 +117,70 @@ Recorded rather than implied, because a ticked box that is not true is the failu
 | 5 | Effective DPI measured from embedded pixels | ✅ met |
 | 6 | `probe`, `extract_tokens` and `split` dispatch and return typed results | ✅ met |
 | 7 | `split` preserves page count and boxes; mapping recorded | ✅ met |
-| 8 | **The adapter is reachable only through `PdfSource`** | ❌ **NOT MET** — `docflow/adapters/` holds only `__init__.py`; there is no Poppler adapter |
+| 8 | **The adapter is reachable only through `PdfSource`** | ✅ **met** — `docflow/adapters/pdf.py` |
 | 9 | No threshold constant inside the module | ✅ met, guarded over public and private constants |
 
-**Resolution of #8 — a scoping question, not a defect.** `E04-02`'s deliverable is `docflow/kernels/pdf.py` alone, while a thin adapter behind `PdfSource` is what the criterion asks for. That adapter sits naturally with `E04-03`…`E04-06`, whose deliverables *are* the `docflow/adapters/` modules. Either the criterion moves to the issue that owns the adapters, or `E04-02` grows a deliverable. **The decision is not taken here** — the criterion is recorded as unmet so that nobody ticks it by reading the kernel and assuming the adapter came with it.
+**Resolution of #8 — the criterion was right and the deliverable was incomplete, and the
+work was larger than "a one-line deliverable change".** The previous reading recorded here
+said the adapter was missing. Measuring it showed the sharper problem: `kernels/pdf.py`
+**called the vendors itself** — `pymupdf` at line 233 and the `pdftotext` binary
+(`_READER_BINARY`) — and `sad.md` §1 lists ``pdftotext`` among the **adapters**. So the
+adapter was not merely absent; its work was fused into the kernel, and a pass-through shim
+would have satisfied the criterion while changing nothing that mattered.
+
+**What was done.** The split follows `ADR-004`'s arrow, and the direction is worth stating
+because it is the opposite of the obvious one — a kernel may not import an adapter, which
+`tests/kernels/test_store.py` enforces for the layer:
+
+```text
+ports/pdf.py            PdfSource        what a CALLER above Stage 1 depends on
+      ^
+adapters/pdf.py         PdfEngine        implements PdfSource; owns pymupdf + pdftotext
+      |
+      v  calls
+kernels/pdf.py          the analysis     shapes, invisible text, contradictions; no vendor
+      |
+      v  asks through
+kernels/pdf_vendor.py   PdfVendor        the seam the analysis declares
+      ^
+adapters/pdf.py         PyMuPdfVendor    the implementation over the two vendors
+```
+
+The consumer declares the interface and the implementer satisfies it — the same inversion
+`PdfSource` uses one level up. `docflow/ports/` is **untouched**, so `E04-01`'s gate stays
+closed: the page-fact surface the analysis needs is deliberately *not* a port member, and
+`kernel-cli.md` §9 already lists `pdf facts` as an `MVP` target rather than Stage 1 scope.
+
+**Measured outcome.** `isinstance(PdfEngine(min_chars=1), PdfSource)` is `True`, and all five
+signatures match the port parameter for parameter. `kernels/pdf.py` imports only
+`__future__`, `collections`, `contextlib`, `pathlib`, `re`, `types`, `typing` and
+`docflow` — **no vendor module at all**, checked with an AST walk. The kernel went from 1689
+to 983 lines; the vendor access it gave up is 947 lines in `adapters/pdf.py` plus the
+363-line seam.
+
+**`min_chars` is a required constructor argument, with no default.** `E04-02`'s criterion 9
+forbids a threshold constant in the kernel, `ADR-009` makes the value corpus policy with no
+override, and the port declares no threshold member — so the value enters at the adapter and
+is threaded to `classify`. Constructing `PdfEngine()` raises `TypeError`, which is the point:
+a default would be a routing decision taken by whichever layer happened to be constructed
+first. Stage 3 reads it from `registry/policies/thresholds.yaml`, which does not exist yet.
+
+**Two test defects were found by the mutation harness, not by reading the tests:**
+
+- **The coordinate-conversion test was relative, so a constant factor passed it.** It
+  compared a 72 DPI call against a 144 DPI one and asserted the ratio — which `scale = 1.0`
+  satisfies, because both calls then scale by the same wrong factor. The units would have been
+  wrong on every call while the suite stayed green. Fixed with an **absolute** anchor: at
+  72 DPI the conversion is the identity, so a box must equal the reader's own `xMin`, read
+  independently from `pdftotext -bbox` rather than from the kernel itself.
+- **The harness cited seven test names that do not exist.** A mutation whose expected-failure
+  set names a nonexistent test still reports `SURVIVED`, so the harness would have been
+  reporting on a fiction. Every name is now verified against the suite.
+
+**Verification.** **12 of 12 mutations falsified** (harness: `tests/adapters/mutation_pdf.py`),
+628 tests green, four QA gates green, and the golden-set verifier re-run over the real corpus
+with unchanged results — 5 scans refused, 0 files written while refusing, 0 invisible layers
+in 23 inspected pages.
 
 > **The same question recurs one issue later, and `E04-04` answers it by contrast.** `E04-03` carries the identical split: its deliverable is `docflow/kernels/image.py`, and its criterion asks for an adapter no issue in this epic names. But `E04-04`'s deliverable is *explicitly* `docflow/ports/ocr.py` **and** `docflow/adapters/docling.py` — and when the issue names the adapter as a deliverable, the criterion becomes satisfiable and was satisfied.
 >

@@ -1122,6 +1122,12 @@ def test_boundary_package_contains_only_the_expected_modules() -> None:
         "cache_key.py",
         "pdf.py",
         "image.py",
+        # `pdf_vendor.py` is the seam K2's analysis asks a reader through. It is
+        # declared here for the reason the docstring above states: the set is
+        # named rather than globbed, so a further module still fails this test
+        # until someone declares it. It holds a Protocol and value types and
+        # names no vendor — the implementation lives in `docflow/adapters/pdf.py`.
+        "pdf_vendor.py",
     }
     actual = {path.name for path in PACKAGE_ROOT.glob("*.py")}
 

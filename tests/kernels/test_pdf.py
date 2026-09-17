@@ -30,12 +30,28 @@ it asks for — that shadowing *is* the wiring.
 from __future__ import annotations
 
 import pathlib
+import re
+import shutil
+import subprocess
+import tempfile
 
 import pymupdf
 import pytest
 
+from docflow.adapters.pdf import PyMuPdfVendor
 from docflow.kernels import pdf
 from docflow.kernels.types import KernelResult
+
+#: The documented reader, bound once. The kernel no longer reaches for a
+#: vendor itself — it receives one — so the tests supply the real thing.
+#: That is the same inversion the adapter uses, and it is why these tests
+#: can keep asserting *analysis* over real bytes without naming a library.
+VENDOR = PyMuPdfVendor()
+
+#: The caller's blank threshold for the fixtures. Every test that needs a
+#: different one passes its own; this is the permissive value the suite
+#: used before the threshold became an explicit argument.
+MIN_CHARS = 1
 
 # --- Fixture construction ----------------------------------------------------
 
@@ -255,7 +271,7 @@ def test_probe_reports_the_page_count_and_declared_metadata(
 ) -> None:
     """``probe`` describes the file without rendering anything."""
 
-    result = pdf.probe(text_pdf)
+    result = pdf.probe(text_pdf, vendor=VENDOR)
 
     assert isinstance(result, KernelResult)
     assert result.reason is None
@@ -277,9 +293,9 @@ def test_the_evidence_accompanies_the_value_on_a_successful_call(
     a report that was not made.
     """
     results = (
-        pdf.probe(text_pdf),
-        pdf.classify(text_pdf, 1, min_chars=1),
-        pdf.effective_dpi(low_dpi_pdf, 1),
+        pdf.probe(text_pdf, vendor=VENDOR),
+        pdf.classify(text_pdf, 1, min_chars=1, vendor=VENDOR),
+        pdf.effective_dpi(low_dpi_pdf, 1, vendor=VENDOR),
     )
 
     for result in results:
@@ -298,7 +314,7 @@ def test_probe_of_a_missing_file_is_a_typed_reason_not_an_empty_observation(
     tmp_path: pathlib.Path,
 ) -> None:
     """A file that is not there reports why; it never returns empty observations."""
-    result = pdf.probe(tmp_path / "absent.pdf")
+    result = pdf.probe(tmp_path / "absent.pdf", vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -327,7 +343,7 @@ def test_probe_reports_an_encrypted_document_as_encrypted(
     )
     document.close()
 
-    result = pdf.probe(protected)
+    result = pdf.probe(protected, vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -348,7 +364,7 @@ def test_classify_reports_an_invisible_text_layer_as_evidence(
     detected as what it is — a no-draw rendering instruction — and reported
     alongside the shape.
     """
-    result = pdf.classify(hidden_layer_pdf, 1, min_chars=1)
+    result = pdf.classify(hidden_layer_pdf, 1, min_chars=1, vendor=VENDOR)
 
     assert result.value is not None
     observed = result.value.observed
@@ -371,7 +387,7 @@ def test_classify_does_not_report_an_invisible_layer_on_a_visible_page(
     Without this, an implementation that always answered ``True`` would satisfy
     the assertion above while carrying no information at all.
     """
-    result = pdf.classify(text_pdf, 1, min_chars=1)
+    result = pdf.classify(text_pdf, 1, min_chars=1, vendor=VENDOR)
 
     assert result.value is not None
     assert result.value.observed["invisible_text"] is False
@@ -381,8 +397,8 @@ def test_classify_reports_the_shape_from_the_measurement(
     text_pdf: pathlib.Path, low_dpi_pdf: pathlib.Path
 ) -> None:
     """The shape follows the measurements, in the closed set of four."""
-    text = pdf.classify(text_pdf, 1, min_chars=1)
-    scan = pdf.classify(low_dpi_pdf, 1, min_chars=1)
+    text = pdf.classify(text_pdf, 1, min_chars=1, vendor=VENDOR)
+    scan = pdf.classify(low_dpi_pdf, 1, min_chars=1, vendor=VENDOR)
 
     assert text.value is not None
     assert scan.value is not None
@@ -401,8 +417,8 @@ def test_classify_takes_the_character_threshold_from_the_caller(
     value, so a kernel holding a constant would make both calls agree and this
     assertion would fail.
     """
-    permissive = pdf.classify(text_pdf, 1, min_chars=1)
-    strict = pdf.classify(text_pdf, 1, min_chars=10_000)
+    permissive = pdf.classify(text_pdf, 1, min_chars=1, vendor=VENDOR)
+    strict = pdf.classify(text_pdf, 1, min_chars=10_000, vendor=VENDOR)
 
     assert permissive.value is not None
     assert strict.value is not None
@@ -424,7 +440,7 @@ def test_classify_reports_a_blank_page_as_blank_not_as_a_textless_page(
     about its text layer, and a page holding an image falls in the second category
     while being the opposite of blank.
     """
-    result = pdf.classify(blank_pdf, 1, min_chars=1)
+    result = pdf.classify(blank_pdf, 1, min_chars=1, vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -441,10 +457,10 @@ def test_classify_refuses_a_page_outside_the_document(text_pdf: pathlib.Path) ->
     exit 2.
     """
     with pytest.raises(ValueError, match="outside the document"):
-        pdf.classify(text_pdf, 7, min_chars=1)
+        pdf.classify(text_pdf, 7, min_chars=1, vendor=VENDOR)
 
     with pytest.raises(ValueError, match="outside the document"):
-        pdf.classify(text_pdf, 0, min_chars=1)
+        pdf.classify(text_pdf, 0, min_chars=1, vendor=VENDOR)
 
 
 # --- Criterion: contradicting producer metadata is reported, not resolved ----
@@ -486,7 +502,7 @@ def test_classify_reports_a_scan_producer_whose_page_carries_text(
     """
     path = _with_producer(tmp_path / "scan-producer.pdf", "HP ScanJet 5590", "HP Smart")
 
-    result = pdf.classify(path, 1, min_chars=10)
+    result = pdf.classify(path, 1, min_chars=10, vendor=VENDOR)
 
     assert result.value is not None
     assert result.value.observed["producer"] == "HP ScanJet 5590"
@@ -509,7 +525,7 @@ def test_classify_does_not_invent_a_contradiction_on_a_normal_producer(
         tmp_path / "word-producer.pdf", "Some Word Processor", "LibreOffice"
     )
 
-    result = pdf.classify(path, 1, min_chars=10)
+    result = pdf.classify(path, 1, min_chars=10, vendor=VENDOR)
 
     assert result.value is not None
     assert result.value.observed["producer_contradiction"] is False
@@ -527,7 +543,7 @@ def test_effective_dpi_is_measured_from_the_embedded_pixels(
     which means an implementation that echoed the request, or read a metadata
     field, could not produce this number.
     """
-    result = pdf.effective_dpi(low_dpi_pdf, 1)
+    result = pdf.effective_dpi(low_dpi_pdf, 1, vendor=VENDOR)
 
     assert result.value is not None
     assert result.value.measurements["effective_dpi"] == float(_LOW_DPI)
@@ -541,7 +557,7 @@ def test_effective_dpi_reports_an_absence_rather_than_a_zero(
     A zero would read as a measurement that was taken and came out at nothing,
     which is a different statement from *this measurement does not apply*.
     """
-    result = pdf.effective_dpi(text_pdf, 1)
+    result = pdf.effective_dpi(text_pdf, 1, vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -560,7 +576,7 @@ def test_render_refuses_a_resolution_the_source_cannot_supply(
     the request and reporting success — larger and no more legible. Breaking it
     looks like a value coming back where a ``Reason`` was required.
     """
-    result = pdf.render(low_dpi_pdf, [1], dpi=300)
+    result = pdf.render(low_dpi_pdf, [1], dpi=300, vendor=VENDOR)
 
     assert result.value is None, (
         "an upscaled page reported as a satisfied 300 DPI render is the failure "
@@ -583,7 +599,7 @@ def test_render_honours_a_resolution_the_source_can_supply(
     The pair with the test above is what proves the refusal is about the measured
     shortfall and not a blanket refusal of scans.
     """
-    result = pdf.render(low_dpi_pdf, [1], dpi=100)
+    result = pdf.render(low_dpi_pdf, [1], dpi=100, vendor=VENDOR)
 
     assert result.value is not None
     assert result.value.media_type == "image/png"
@@ -600,8 +616,8 @@ def test_render_never_reports_a_resolution_it_did_not_honour(
     pass a naive "did it succeed" check while being the exact silent failure the
     spec names.
     """
-    refused = pdf.render(low_dpi_pdf, [1], dpi=600)
-    accepted = pdf.render(low_dpi_pdf, [1], dpi=150)
+    refused = pdf.render(low_dpi_pdf, [1], dpi=600, vendor=VENDOR)
+    accepted = pdf.render(low_dpi_pdf, [1], dpi=150, vendor=VENDOR)
 
     assert refused.value is None
     assert refused.reason is not None
@@ -617,7 +633,7 @@ def test_render_renders_a_vector_page_at_any_requested_resolution(
     The check measures embedded pixels; a text page has none, and refusing it
     would make the kernel unusable for the case it was built for.
     """
-    result = pdf.render(text_pdf, [1], dpi=300)
+    result = pdf.render(text_pdf, [1], dpi=300, vendor=VENDOR)
 
     assert result.value is not None
     assert result.evidence.observed["dpi_applied"] == 300
@@ -626,7 +642,7 @@ def test_render_renders_a_vector_page_at_any_requested_resolution(
 def test_render_refuses_a_non_positive_dpi(text_pdf: pathlib.Path) -> None:
     """A zero or negative resolution is a usage error."""
     with pytest.raises(ValueError, match="dpi must be positive"):
-        pdf.render(text_pdf, [1], dpi=0)
+        pdf.render(text_pdf, [1], dpi=0, vendor=VENDOR)
 
 
 # --- Criterion: extract_tokens ----------------------------------------------
@@ -636,7 +652,7 @@ def test_extract_tokens_returns_positioned_tokens_with_boxes(
     text_pdf: pathlib.Path,
 ) -> None:
     """Tokens carry their text and a box in source page coordinates."""
-    result = pdf.extract_tokens(text_pdf, [1], dpi=72)
+    result = pdf.extract_tokens(text_pdf, [1], dpi=72, vendor=VENDOR)
 
     assert result.value is not None
     assert result.value, "the fixture carries text, so tokens must come back"
@@ -656,7 +672,7 @@ def test_extract_tokens_reports_no_confidence_rather_than_perfect_confidence(
     ``None`` is never coerced to ``1.0``: the text layer reports no confidence at
     all, and a perfect score would be a claim nobody made.
     """
-    result = pdf.extract_tokens(text_pdf, [1], dpi=72)
+    result = pdf.extract_tokens(text_pdf, [1], dpi=72, vendor=VENDOR)
 
     assert result.value is not None
     assert all(token.confidence is None for token in result.value), (
@@ -673,8 +689,8 @@ def test_extract_tokens_scales_boxes_to_the_requested_resolution(
     DPI they asked for, which is what makes a token's box comparable with the box
     ``render`` produces.
     """
-    at_72 = pdf.extract_tokens(text_pdf, [1], dpi=72)
-    at_144 = pdf.extract_tokens(text_pdf, [1], dpi=144)
+    at_72 = pdf.extract_tokens(text_pdf, [1], dpi=72, vendor=VENDOR)
+    at_144 = pdf.extract_tokens(text_pdf, [1], dpi=144, vendor=VENDOR)
 
     assert at_72.value is not None
     assert at_144.value is not None
@@ -682,6 +698,48 @@ def test_extract_tokens_scales_boxes_to_the_requested_resolution(
     assert at_144.value[0].bbox.width == pytest.approx(
         at_72.value[0].bbox.width * 2, rel=0.01
     )
+
+    # And the *absolute* anchor, which the ratio above cannot provide: at 72 DPI
+    # the conversion is the identity, so a box equals the reader's own points.
+    # Without this, dropping the conversion entirely (`scale = 1.0`) satisfies the
+    # ratio — both calls scale by the same wrong factor — and the units would be
+    # wrong on every call while the suite stayed green.
+    assert at_72.evidence.observed["dpi_applied"] == 72
+    assert at_72.value[0].bbox.x == pytest.approx(_reader_x_min(text_pdf), rel=0.01), (
+        "at 72 DPI a box must equal the reader's own points, not a rescaled copy"
+    )
+
+
+def _reader_x_min(path: pathlib.Path) -> float:
+    """Read the first word's left edge straight from the reader binary.
+
+    An independent measurement, so the assertion above is not the kernel comparing
+    against itself: the kernel is checked against ``pdftotext -bbox`` read here.
+
+    Args:
+        path: The PDF to read.
+
+    Returns:
+        The first word's ``xMin``, in PDF points.
+
+    """
+    binary = shutil.which("pdftotext")
+    if binary is None:  # pragma: no cover - the suite needs poppler
+        pytest.skip("pdftotext is not on PATH")
+
+    with tempfile.TemporaryDirectory() as workdir:
+        output = pathlib.Path(workdir) / "words.xml"
+        subprocess.run(
+            [binary, "-bbox", "-q", str(path), str(output)],
+            check=True,
+            capture_output=True,
+        )
+        raw = output.read_text(encoding="utf-8", errors="replace")
+
+    match = re.search(r'<word[^>]*xMin="([0-9.]+)"', raw)
+    assert match is not None, "the reader emitted no word"
+
+    return float(match.group(1))
 
 
 def test_extract_tokens_reports_the_page_accounting(
@@ -692,7 +750,7 @@ def test_extract_tokens_reports_the_page_accounting(
     A truncated read and a page with no text are different facts, and the only way
     to tell them apart is to report both numbers.
     """
-    result = pdf.extract_tokens(three_pages_pdf, [1, 2], dpi=72)
+    result = pdf.extract_tokens(three_pages_pdf, [1, 2], dpi=72, vendor=VENDOR)
 
     assert result.value is not None
     assert result.evidence.observed["pages_requested"] == [1, 2]
@@ -709,7 +767,7 @@ def test_extract_tokens_refuses_an_empty_selection(text_pdf: pathlib.Path) -> No
     class of error as doing less than asked.
     """
     with pytest.raises(ValueError, match="selection is empty"):
-        pdf.extract_tokens(text_pdf, [], dpi=72)
+        pdf.extract_tokens(text_pdf, [], dpi=72, vendor=VENDOR)
 
 
 def test_extract_tokens_refuses_a_page_outside_the_document(
@@ -717,7 +775,7 @@ def test_extract_tokens_refuses_a_page_outside_the_document(
 ) -> None:
     """A page the document does not have is a usage error."""
     with pytest.raises(ValueError, match="outside the document"):
-        pdf.extract_tokens(text_pdf, [1, 9], dpi=72)
+        pdf.extract_tokens(text_pdf, [1, 9], dpi=72, vendor=VENDOR)
 
 
 # --- Criterion: split --------------------------------------------------------
@@ -738,7 +796,7 @@ def test_split_preserves_the_page_count_and_boxes_of_the_range(
     ]
     source.close()
 
-    result = pdf.split(three_pages_pdf, [2, 3])
+    result = pdf.split(three_pages_pdf, [2, 3], vendor=VENDOR)
 
     assert result.value is not None
     assert result.evidence.measurements["pages_extracted"] == 2.0
@@ -752,7 +810,7 @@ def test_split_records_the_mapping_back_to_the_source(
     three_pages_pdf: pathlib.Path,
 ) -> None:
     """The descriptor states which source page each result page came from."""
-    result = pdf.split(three_pages_pdf, [3, 1])
+    result = pdf.split(three_pages_pdf, [3, 1], vendor=VENDOR)
 
     assert result.value is not None
     mapping = result.evidence.observed["source_pages"]
@@ -766,20 +824,20 @@ def test_split_records_the_mapping_back_to_the_source(
 def test_split_refuses_a_repeated_page(three_pages_pdf: pathlib.Path) -> None:
     """A duplicate page is refused instead of duplicating content silently."""
     with pytest.raises(ValueError, match="repeats a page"):
-        pdf.split(three_pages_pdf, [1, 1])
+        pdf.split(three_pages_pdf, [1, 1], vendor=VENDOR)
 
 
 def test_split_refuses_an_empty_selection(three_pages_pdf: pathlib.Path) -> None:
     """An empty selection is a usage error."""
     with pytest.raises(ValueError, match="selection is empty"):
-        pdf.split(three_pages_pdf, [])
+        pdf.split(three_pages_pdf, [], vendor=VENDOR)
 
 
 def test_split_output_is_a_pdf(
     three_pages_pdf: pathlib.Path, tmp_path: pathlib.Path
 ) -> None:
     """The extracted bytes are a readable PDF holding the requested pages."""
-    result = pdf.split(three_pages_pdf, [1, 2])
+    result = pdf.split(three_pages_pdf, [1, 2], vendor=VENDOR)
 
     assert result.value is not None
     assert result.value.media_type == "application/pdf"
@@ -853,10 +911,15 @@ def test_a_missing_reader_binary_is_a_typed_reason_and_not_a_substitute(
     `wbs.md` §9: a missing binary is a typed ``Reason``, never a fallback reader.
     A substitute extractor would report different tokens under this engine's
     identity, which is a different measurement wearing the same label.
-    """
-    monkeypatch.setattr(pdf.shutil, "which", lambda _name: None)
 
-    result = pdf.extract_tokens(text_pdf, [1], dpi=72)
+    The binary is resolved by the **vendor**, not by this module, so the patch is
+    applied to the standard library the vendor consults. Patching ``pdf.shutil``
+    would no longer reach the code that looks for it — which is the whole point of
+    the split.
+    """
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+
+    result = pdf.extract_tokens(text_pdf, [1], dpi=72, vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None

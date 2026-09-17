@@ -23,11 +23,13 @@ behaviour costs file length (``too-many-lines``, ``redefined-outer-name``).
 from __future__ import annotations
 
 import pathlib
+import shutil
 import subprocess
 
 import pymupdf
 import pytest
 
+from docflow.adapters.pdf import PyMuPdfVendor
 from docflow.kernels import pdf
 
 # --- Fixtures ----------------------------------------------------------------
@@ -37,6 +39,18 @@ from docflow.kernels import pdf
 TWO_COLUMN = pathlib.Path(
     "tests/fixtures/casos/9dfc597f-34c5-41ec-99ae-cf35544c7af8.pdf"
 )
+
+
+#: The documented reader, bound once. The kernel no longer reaches for a
+#: vendor itself — it receives one — so the tests supply the real thing.
+#: That is the same inversion the adapter uses, and it is why these tests
+#: can keep asserting *analysis* over real bytes without naming a library.
+VENDOR = PyMuPdfVendor()
+
+#: The caller's blank threshold for the fixtures. Every test that needs a
+#: different one passes its own; this is the permissive value the suite
+#: used before the threshold became an explicit argument.
+MIN_CHARS = 1
 
 
 def _multi_page(path: pathlib.Path, count: int = 3) -> pathlib.Path:
@@ -125,7 +139,7 @@ def test_layout_text_returns_the_readers_own_output_unchanged(
     Nothing is normalized, re-wrapped or trimmed. A caller comparing against output
     from the previous system gets an equality rather than a resemblance.
     """
-    result = pdf.layout_text(three_pages, [1])
+    result = pdf.layout_text(three_pages, [1], vendor=VENDOR)
 
     assert result.reason is None
     assert result.value == legacy_output(three_pages, 1, 1)
@@ -139,7 +153,7 @@ def test_layout_text_preserves_the_columns_of_a_two_column_document() -> None:
     flattening reader merges. The two fields must stay on one line with a wide gap
     between them, not become two lines.
     """
-    result = pdf.layout_text(TWO_COLUMN, [1])
+    result = pdf.layout_text(TWO_COLUMN, [1], vendor=VENDOR)
 
     assert result.value is not None
     lines = str(result.value).splitlines()
@@ -155,12 +169,19 @@ def test_layout_text_preserves_the_columns_of_a_two_column_document() -> None:
 
 
 def test_layout_text_reports_what_it_measured(three_pages: pathlib.Path) -> None:
-    """The evidence names the flag, the encoding and the page accounting."""
-    result = pdf.layout_text(three_pages, [1, 2])
+    """The evidence names the flag and the page accounting.
+
+    ``reader_encoding`` is deliberately **not** here any more. The kernel used to
+    report it because the kernel passed the flag; the encoding is the reader's
+    choice now, and re-reporting it from here would be the analysis claiming a
+    decision it does not take. What the kernel knows is the flag it asked for and
+    what came back, and that is what it reports.
+    """
+    result = pdf.layout_text(three_pages, [1, 2], vendor=VENDOR)
 
     assert result.value is not None
     assert result.evidence.observed["reader_flag"] == "-layout"
-    assert result.evidence.observed["reader_encoding"] == "UTF-8"
+    assert "reader_encoding" not in result.evidence.observed
     assert result.evidence.observed["pages_requested"] == [1, 2]
     assert result.evidence.measurements["pages_read"] == 2.0
     assert result.evidence.measurements["lines"] > 0
@@ -173,7 +194,7 @@ def test_a_contiguous_range_is_read_in_one_invocation(
     three_pages: pathlib.Path,
 ) -> None:
     """Two contiguous pages equal the binary's own range output."""
-    result = pdf.layout_text(three_pages, [2, 3])
+    result = pdf.layout_text(three_pages, [2, 3], vendor=VENDOR)
 
     assert result.value == legacy_output(three_pages, 2, 3)
 
@@ -188,7 +209,7 @@ def test_a_non_contiguous_selection_is_composed_from_per_page_reads(
     built from one read per page, and a difference here would be a different
     document under the same name.
     """
-    result = pdf.layout_text(three_pages, [1, 3])
+    result = pdf.layout_text(three_pages, [1, 3], vendor=VENDOR)
 
     expected = legacy_output(three_pages, 1, 1) + legacy_output(three_pages, 3, 3)
 
@@ -200,8 +221,11 @@ def test_reading_every_page_individually_equals_reading_the_whole_document(
     three_pages: pathlib.Path,
 ) -> None:
     """The composition rule holds for the full range, not only for a gap."""
-    whole = pdf.layout_text(three_pages, [1, 2, 3])
-    pieces = [pdf.layout_text(three_pages, [number]).value for number in (1, 2, 3)]
+    whole = pdf.layout_text(three_pages, [1, 2, 3], vendor=VENDOR)
+    pieces = [
+        pdf.layout_text(three_pages, [number], vendor=VENDOR).value
+        for number in (1, 2, 3)
+    ]
 
     assert whole.value == "".join(str(piece) for piece in pieces)
     assert whole.value == legacy_output(three_pages, 1, 3)
@@ -217,7 +241,7 @@ def test_a_scan_yields_no_text_and_reports_blank_page(scan: pathlib.Path) -> Non
     document — *this is a scan* — and not a failure of the call, which is why the
     code is ``blank_page`` rather than ``engine_unavailable``.
     """
-    result = pdf.layout_text(scan, [1])
+    result = pdf.layout_text(scan, [1], vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -234,10 +258,12 @@ def test_a_missing_reader_binary_is_a_typed_reason_and_not_a_substitute(
     """Without the binary the call reports why, and reads nothing.
 
     ``wbs.md`` §9: a missing binary is a typed ``Reason``, never a fallback reader.
+    The binary is resolved by the **vendor**, so the patch is applied to the
+    standard library the vendor consults.
     """
-    monkeypatch.setattr(pdf.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
 
-    result = pdf.layout_text(three_pages, [1])
+    result = pdf.layout_text(three_pages, [1], vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -247,7 +273,7 @@ def test_a_missing_reader_binary_is_a_typed_reason_and_not_a_substitute(
 
 def test_a_missing_file_is_a_typed_reason(tmp_path: pathlib.Path) -> None:
     """An absent file reports ``unsupported_format``, never empty text."""
-    result = pdf.layout_text(tmp_path / "no-existe.pdf", [1])
+    result = pdf.layout_text(tmp_path / "no-existe.pdf", [1], vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -260,13 +286,13 @@ def test_a_missing_file_is_a_typed_reason(tmp_path: pathlib.Path) -> None:
 def test_an_empty_selection_is_refused(three_pages: pathlib.Path) -> None:
     """An empty selection is a usage error, not a licence to read everything."""
     with pytest.raises(ValueError, match="selection is empty"):
-        pdf.layout_text(three_pages, [])
+        pdf.layout_text(three_pages, [], vendor=VENDOR)
 
 
 def test_a_page_outside_the_document_is_refused(three_pages: pathlib.Path) -> None:
     """A page the document does not have is a usage error."""
     with pytest.raises(ValueError, match="outside the document"):
-        pdf.layout_text(three_pages, [1, 9])
+        pdf.layout_text(three_pages, [1, 9], vendor=VENDOR)
 
 
 def test_a_reordered_selection_is_refused_rather_than_silently_sorted(
@@ -280,7 +306,7 @@ def test_a_reordered_selection_is_refused_rather_than_silently_sorted(
     would be a silent substitution.
     """
     with pytest.raises(ValueError, match="strictly ascending"):
-        pdf.layout_text(three_pages, [3, 1])
+        pdf.layout_text(three_pages, [3, 1], vendor=VENDOR)
 
 
 # --- The relationship to extract_tokens -------------------------------------
@@ -296,8 +322,8 @@ def test_layout_text_is_not_a_substitute_for_extract_tokens(
     use the former, and this test states that rather than leaving it to be
     discovered.
     """
-    tokens = pdf.extract_tokens(three_pages, [1], dpi=72)
-    layout = pdf.layout_text(three_pages, [1])
+    tokens = pdf.extract_tokens(three_pages, [1], dpi=72, vendor=VENDOR)
+    layout = pdf.layout_text(three_pages, [1], vendor=VENDOR)
 
     assert tokens.value is not None
     assert layout.value is not None
@@ -323,7 +349,7 @@ def test_a_token_reconstruction_does_not_match_the_readers_output() -> None:
     not made casually. The coordinates carry the **structure** — which column a word
     sits in — and they do not carry the reader's character grid.
     """
-    result = pdf.extract_tokens(TWO_COLUMN, [1], dpi=72)
+    result = pdf.extract_tokens(TWO_COLUMN, [1], dpi=72, vendor=VENDOR)
     assert result.value is not None
 
     tokens = result.value
