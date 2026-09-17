@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E01** |
 | Capability | Boundary types & contracts |
-| Issues | `E01-01` (`S1-T01`) — status `todo` |
+| Issues | `E01-01` (`S1-T01`) — status `done` |
 | Issue count | **1** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernels/` |
 | Wave span | **W1** |
@@ -39,6 +39,19 @@ No intra-epic edges exist: E01 has a single issue.
 **Title**
 Freeze kernel boundary types: `Token`, `KernelResult`, `Evidence`, `Reason`, `CallRecord`, `Bytes`, `Artifact`.
 
+**Status — `done` (implemented 2026-09-16)**
+
+| Item | Evidence |
+|---|---|
+| Deliverable | `docflow/kernels/types.py` — the seven frozen boundary types plus `Box` |
+| Test | `tests/kernels/test_types.py` — **76 passed** (`python -m pytest tests/ -q`) |
+| Lint / format | `ruff check` and `ruff format --check` clean |
+| Invariant falsified | Three separate mutations of `__post_init__` (value+reason allowed; `None`-without-reason allowed; evidence-optional) each made the enumeration test **fail**; the file was restored and the suite re-run green |
+| Static guards falsified | An injected domain noun (`invoice_total`) failed the vocabulary scan; an injected `import json` failed the import-isolation test |
+| Acceptance boxes | All boxes below satisfied **except** the `# TODO: [MVP]` notes recorded inline (none blocks a box) |
+
+Two PoC properties are recorded in the module docstring and pinned by tests rather than left to be discovered downstream: `Evidence` (and therefore a `KernelResult` carrying one) is **not hashable**, and its `MappingProxyType` mappings are **not JSON-encodable by default** — an obligation handed explicitly to `E07-01` (`S1-T20`), which owns the envelope.
+
 **Context**
 Every kernel in the system returns its answer through one shape, and until that shape exists there is no vocabulary in which a kernel can say *"no value, and here is why"*. Without it, the cheapest way to satisfy a caller is to return an empty string, a `0`, an empty list, or a default model — and each of those is a silent failure that looks like a successful answer. This issue makes that class of error impossible to write down rather than merely discouraged.
 
@@ -49,15 +62,15 @@ Every kernel in the system returns its answer through one shape, and until that 
 None. Intra-epic: n/a. Inter-epic: n/a. This is the graph's only sourceless node.
 
 **Acceptance criteria**
-- [ ] `docflow/kernels/types.py` exists and defines exactly the seven named types — `Token`, `KernelResult`, `Evidence`, `Reason`, `CallRecord`, `Bytes`, `Artifact` — as **frozen** dataclasses.
-- [ ] Mutating an instance of any of the seven types raises rather than succeeding.
-- [ ] A `KernelResult` carrying a non-`None` `value` **cannot be constructed** with empty or absent `evidence`.
-- [ ] A `KernelResult` carrying `value=None` **cannot be constructed** without a populated `reason`.
-- [ ] The only two constructible states of `KernelResult` are *(value + evidence + `reason: None`)* and *(`value: None` + `reason`)*; a test enumerates the constructible states and asserts no third one exists.
-- [ ] **The Track 3 consumer test**: an import-isolation test asserts that `docflow/kernels/types.py` is importable by a module that imports **no adapter** — the property `plan-01-kernels.md` §13 Track 3 states as *"Plan 2 builds every component against these types and adds **no new kernel-boundary type**"*. This is a **static assertion over the module's imports**, not a prose claim: it passes today (Plan 2 does not exist) and **fails** the moment a component redefines one of the seven types or reaches through a port for an adapter.
-- [ ] `Reason` carries a machine-readable `code` member, not only a human message.
-- [ ] No type, field or member name contains a domain noun — not `invoice`, not `field`, not `verdict`, not a document type, not a pipeline code.
-- [ ] Every type carries an explicit type hint on every field.
+- [x] `docflow/kernels/types.py` exists and defines exactly the seven named types — `Token`, `KernelResult`, `Evidence`, `Reason`, `CallRecord`, `Bytes`, `Artifact` — as **frozen** dataclasses. (`Box` is a supporting value type required by `Token.bbox`, not an eighth boundary state; `BOUNDARY_TYPE_NAMES` declares the seven.)
+- [x] Mutating an instance of any of the seven types raises rather than succeeding. (`dataclasses.FrozenInstanceError`, parametrized over all seven.)
+- [x] A `KernelResult` carrying a non-`None` `value` **cannot be constructed** with empty or absent `evidence`.
+- [x] A `KernelResult` carrying `value=None` **cannot be constructed** without a populated `reason`.
+- [x] The only two constructible states of `KernelResult` are *(value + evidence + `reason: None`)* and *(`value: None` + `reason`)*; a test enumerates the constructible states and asserts no third one exists. (Enumerates the 2×2×2 product and asserts exactly two succeed — falsified empirically by three separate mutations, each of which made it fail.)
+- [x] **The Track 3 consumer test**: an import-isolation test asserts that `docflow/kernels/types.py` is importable by a module that imports **no adapter** — the property `plan-01-kernels.md` §13 Track 3 states as *"Plan 2 builds every component against these types and adds **no new kernel-boundary type**"*. This is a **static assertion over the module's imports**, not a prose claim: it passes today (Plan 2 does not exist) and **fails** the moment a component redefines one of the seven types or reaches through a port for an adapter. (AST scan over imports **and** identifiers; falsified by injecting a disallowed import and by injecting a domain noun.)
+- [x] `Reason` carries a machine-readable `code` member, not only a human message.
+- [x] No type, field or member name contains a domain noun — not `invoice`, not `field`, not `verdict`, not a document type, not a pipeline code.
+- [x] Every type carries an explicit type hint on every field.
 
 **Test / evidence**
 - `plan-01-kernels.md` §7b row 1 — *"No third state at a kernel boundary"*: the unit test asserts `KernelResult` cannot express a value without evidence or a `None` without a reason. The wrong result it guards against is recorded there: someone returns `""`, `0`, `[]` or a default model as a stand-in *and the test still passes*.
