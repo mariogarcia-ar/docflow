@@ -748,6 +748,54 @@ E04 is **`done`** when:
 
 No other issue in E04 has an empty mapping.
 
+### Contradiction flagged — who binds `ArtifactStore`, and to what
+
+`E04-01`'s out-of-scope note says `ArtifactStore` and `Registry` *"are satisfied by K7's and
+K8's own kernels, which **are** the capability rather than wrappers over a vendor."*
+`ports/store.py` says the opposite in its own class docstring: *"The filesystem adapter binds
+this to ``docflow/kernels/store.py``."* Both sentences are in the specification, and until
+`docflow/adapters/store.py` was written, **no issue in this epic owned the module the port
+names.** `E04-07` is resolution of a *provider/model* by capability; it is not artifact
+storage, and no other issue in E04 or E07 names the file.
+
+- **Why the port's sentence won, for the store path.** The two claims are not equally
+  testable. *"The kernel is the capability"* is a statement about intent; *"a caller can
+  depend on `ArtifactStore`"* is a statement about the dependency arrow, and it was
+  **false**: `kernel_cli/main.py` imported `docflow.kernels.store` and never the port, so
+  the kernel had become the interface in fact regardless of what the port declared, and
+  `sad.md` §1's promise — *"moving from local files to object storage is a change at the
+  bottom and invisible above it"* — did not hold. `docflow/adapters/store.py` is that seam.
+  It hides no vendor (K7 imports only the standard library); what moves is the filesystem.
+- **What the adapter had to *not* do, and the contradiction this exposed.** It cannot
+  implement `rebuild_manifest`, because the port requires it to delegate to K1's
+  `rebuild_index()` and K1 does not exist yet (`E05-01`, `S1-T06`). It returns a typed
+  `engine_unavailable` naming the missing dependency rather than deriving a summary from a
+  rule of the store's own — a manifest K7 assembled would be the store claiming to know what
+  a run means, which `sad.md` §3 assigns to K1.
+- **A second defect the port's own wording forced out.** `verify` must answer `False` only
+  when the answer is *no*, and must carry a `Reason` when the question could not be **asked**.
+  `kernels/store.py` reduces it to `is_file()`, which answers `False` for *"no such file"* and
+  for *"I cannot look here"* alike — so an unreadable root came back as *"the artifact is
+  corrupt"*, which is precisely the collapse `ports/store.py` says it exists to prevent. The
+  distinction is drawn in the adapter, from the path parts, because `Path.exists()` discards
+  `ENOTDIR` along with `ENOENT` and cannot draw it at all.
+- **What this does *not* resolve, and is owed to the `Registry` path.** The epic's sentence
+  names `ArtifactStore` **and** `Registry`. K8 has the same shape as K7 — a kernel that is the
+  capability, with no vendor behind it — so if the port's sentence is right for the store it
+  is right for `Registry`, and if the epic's sentence is right for `Registry` the two rows of
+  the same sentence disagree. `ports/registry.py` has **not** been changed and no adapter for
+  it has been written. **This is a decision for the user**, not for the plan: the epic's
+  sentence and the port's sentence must end up saying the same thing, and which one moves is
+  a specification change.
+
+**Evidence for the store path** (recorded, not asserted): `docflow/adapters/store.py`;
+`tests/adapters/test_store.py` — 24 tests, including a signature-by-signature comparison
+against the port, since `runtime_checkable` asserts only that a member *exists* and an
+implementation taking an extra required argument would satisfy it while being uncallable as
+the port declares; `tests/adapters/mutation_store.py` — 20 mutations, all falsified, the
+harness **refusing to score a mutation whose anchor is absent** so that a missed anchor cannot
+report a pass.
+
 ---
 
 ## §6 Risks

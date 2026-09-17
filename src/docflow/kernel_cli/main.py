@@ -1056,6 +1056,12 @@ def _apply_save(call: Call, save_dir: object) -> Call | Invocation:
         ),
         call_record=call.call_record,
     )
+    # TODO: [MVP] The arrow here points at `docflow.kernels.store` because `E07-01`
+    # is the dispatcher *at the kernel layer*, and its own guard asserts exactly
+    # that. Routing this through `ArtifactStore` belongs to `E07-02`
+    # (`S1-T21`), whose deliverable is `docflow/kernel_cli/store.py` — the
+    # composition root. Until that lands, the adapter exists and nothing calls it;
+    # recorded rather than papered over.
     # TODO: [MVP] The `--save` directory doubles as K7's store root, which is
     # `plan-01-kernels.md` §12 open decision #2: whether `--save` needs an explicit
     # `--root`. A default root would make the recorded hash real while the bytes
