@@ -29,6 +29,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import enum
+import importlib
 import importlib.util
 import itertools
 import json
@@ -1099,14 +1100,30 @@ def test_boundary_package_contains_only_the_expected_modules() -> None:
     """No sibling module was introduced under ``docflow/kernels`` beyond the
     ones the plan names.
 
-    ``store.py`` is E02's deliverable (``S1-T02``/``S1-T03``) and is the first
-    sibling this guard has had to admit; it is named here explicitly rather than
-    the check being relaxed to a glob, so that a *third* module arriving still
-    fails this test until it too is declared.
+    ``store.py`` is E02's deliverable (``S1-T02``/``S1-T03``), ``registry.py`` is
+    E03-01's and ``cache_key.py`` is E03-02's. They are named here explicitly
+    rather than the check being relaxed to a glob, so that a *further* module
+    arriving still fails this test until it too is declared.
+
+    This guard used to also assert that ``docflow/ports`` and ``docflow/adapters``
+    did not exist. That was a statement about *scheduling* rather than about the
+    boundary types, and `E04-01` (`S1-T11`) is the issue whose deliverable creates
+    ``docflow/ports/`` — so the assertion would fail the moment the next issue
+    landed, which is a test reporting on the calendar instead of on the contract.
+    The port/adapter isolation rule is `E04-01`'s own acceptance criterion and is
+    asserted by that issue's tests; what belongs *here* is only that this package
+    keeps to its declared module set.
     """
-    expected = {"__init__.py", "types.py", "store.py"}
+    expected = {"__init__.py", "types.py", "store.py", "registry.py", "cache_key.py"}
     actual = {path.name for path in PACKAGE_ROOT.glob("*.py")}
 
     assert actual <= expected, f"unexpected modules: {sorted(actual - expected)}"
-    assert not (PACKAGE_ROOT.parent / "adapters").exists()
-    assert not (PACKAGE_ROOT.parent / "ports").exists()
+
+    # The boundary types stay in one declared ``__all__``: no sibling re-exports
+    # them, so a consumer cannot end up importing a copy from somewhere else.
+    for name in expected - {"__init__.py", "types.py"}:
+        module = importlib.import_module(f"docflow.kernels.{name[:-3]}")
+        assert not hasattr(module, "BOUNDARY_TYPE_NAMES"), (
+            f"{name} re-declares the boundary set: it must consume it from "
+            "docflow.kernels.types"
+        )
