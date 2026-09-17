@@ -166,8 +166,17 @@ EXPECTED_KERNEL_ROWS: tuple[tuple[str, str, str], ...] = (
 #: (`S1-T14`). A kernel is added here only when its module exists *and* its probe
 #: genuinely reports ``available``; the test below is what makes the addition
 #: deliberate rather than a way to silence a real failure.
+#: Kernels whose engine has landed in this workspace **and** whose precondition is
+#: satisfied here, so the probe reports them available. Widened as engines land —
+#: deliberately, never to silence a failure.
+#:
+#: `llm.frontier` is deliberately **absent**: its adapter has landed, but the probe
+#: also requires a provider key and this workspace has none, so K6 correctly reports
+#: unavailable. Adding it here would assert that a provider call can be served,
+#: which is false. The module landing is what
+#: `test_an_engine_that_landed_is_no_longer_reported_as_not_landed` asserts instead.
 ALWAYS_AVAILABLE_KERNELS: frozenset[str] = frozenset(
-    {"pdf", "image", "ocr", "store", "registry"}
+    {"pdf", "image", "ocr", "store", "registry", "llm.local"}
 )
 
 #: The forbidden flag vocabulary, restated from `kernel-cli.md` §10 and §14. Two
@@ -963,6 +972,7 @@ def test_kernels_whose_engine_is_absent_report_unavailable_with_the_reason() -> 
     """
     for row in inventory():
         name = str(row["kernel"])
+        detail = str(row["detail"])
         if name in ALWAYS_AVAILABLE_KERNELS:
             assert row["available"] is True, name
         else:
@@ -970,7 +980,51 @@ def test_kernels_whose_engine_is_absent_report_unavailable_with_the_reason() -> 
                 f"{name} reports available; either its module landed (then widen "
                 "ALWAYS_AVAILABLE_KERNELS deliberately) or the probe is wrong"
             )
-            assert "not landed" in str(row["detail"]), name
+            # Two legitimate reasons, and keeping them apart is the point: a module
+            # that has not landed, or one that landed and whose precondition is not
+            # met here (`llm.frontier` needs a provider key). A bare "unavailable"
+            # with no reason would make the two indistinguishable, which is the
+            # silent fallback this surface exists to refuse.
+            assert "not landed" in detail or "provider key" in detail, name
+
+
+def test_an_engine_that_landed_is_no_longer_reported_as_not_landed() -> None:
+    """A kernel whose module exists names its *precondition*, not its absence.
+
+    `llm.frontier`'s adapter landed, and K6 still reports unavailable — because the
+    probe also requires a provider key and this workspace has none. That is the
+    distinction the previous test's two branches exist to keep: *the module is not
+    there* and *the module is there but cannot serve a call* are different facts, and
+    collapsing them would make a landed adapter look unbuilt.
+
+    This is asserted against the workspace's real state. If the environment ever
+    gains a provider key, K6 becomes available and this test fails — which is the
+    moment to move `llm.frontier` into ``ALWAYS_AVAILABLE_KERNELS`` and look at the
+    probe, exactly as the docstring of the test above says.
+    """
+    rows = {str(row["kernel"]): row for row in inventory()}
+    frontier = rows["llm.frontier"]
+
+    assert importlib.util.find_spec("docflow.adapters.frontier") is not None, (
+        "this test is about a landed adapter; if it has not landed, delete the test"
+    )
+    assert frontier["available"] is False
+    assert "not landed" not in str(frontier["detail"]), (
+        "the module exists, so reporting it as missing would be false"
+    )
+    assert "provider key" in str(frontier["detail"])
+
+
+def test_an_engine_whose_precondition_is_met_reports_available() -> None:
+    """The pair above, from the other side: a landed engine with its precondition.
+
+    `llm.local` needs its adapter and the ollama binary, and this workspace has
+    both — so it is available, and the probes are not simply refusing everything.
+    """
+    rows = {str(row["kernel"]): row for row in inventory()}
+
+    assert rows["llm.local"]["available"] is True
+    assert rows["llm.local"]["detail"] is None
 
 
 def test_list_emits_the_inventory_as_an_envelope_on_exit_zero() -> None:

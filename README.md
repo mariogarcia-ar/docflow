@@ -23,9 +23,15 @@ Eleven thousand documents. Extract structured information from them and expose i
 | `docs/plans/issues/plan-01-kernels/` | Stage 1 split into 8 capability epics and 22 issues, with acceptance criteria and test evidence |
 | `docs/plans/plan-02-components.md` | Stage 2: the 17 domain-component tasks, closing on a real document |
 | `docs/plans/plan-03-pipelines.md` | Stage 3: the 14 pipeline tasks, closing on the 11k-file corpus |
+| `docs/quickstart-kernel-pdf.md` | What K2 (`kernel.pdf`) can do today — measured, not aspirational |
+| `docs/quickstart-kernel-image.md` | What K3 (`kernel.image`) can do today |
+| `docs/quickstart-kernel-ocr.md` | What K4 (`kernel.ocr`) can do today |
+| `docs/quickstart-kernel-llm-local.md` | What K5 (`kernel.llm.local`) can do today |
+| `docs/quickstart-kernel-llm-frontier.md` | What K6 (`kernel.llm.frontier`) can do today |
+| `docs/findings/` | Measurements taken while implementing, where the runtime disagreed with the specification |
 | `my_prompt.md` | The original specification — requirements and constraints |
 
-Start with `docs/idea/04-storytelling.md` for the reasoning, or `docs/idea/03-cli.md` if you need to run something. The `docs/artifacts/` set is the specification the PoC is built against; where an artifact and an `idea/` document disagree, the artifact is the decision and the `idea/` document is the exploration that led to it.
+Start with `docs/idea/04-storytelling.md` for the reasoning, or `docs/idea/03-cli.md` if you need to run something. The `docs/artifacts/` set is the specification the PoC is built against; where an artifact and an `idea/` document disagree, the artifact is the decision and the `idea/` document is the exploration that led to it. The **quickstarts** are the opposite direction: they record what a landed kernel *actually does*, verified by running it, so a page that strays from the specification says so and says why.
 
 ---
 

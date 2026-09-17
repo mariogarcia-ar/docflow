@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E04** |
 | Capability | The five port interfaces plus the thin acquisition (K2/K3) and generation (K4/K5/K6) adapters, and resolution by capability |
-| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 1 criterion unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 1 criterion unmet (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) · `E04-06` (`S1-T16`) · `E04-07` (`S1-T17`) — `todo` |
+| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 1 criterion unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 1 criterion unmet (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) — **`in progress`**, 0 criteria unmet, 3 documented deltas (§3) · `E04-06` (`S1-T16`) — **`in progress`**, 0 criteria unmet, 2 documented deltas (§3) · `E04-07` (`S1-T17`) — `todo` |
 | Issue count | **7** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/ports/`, `docflow/adapters/`, `docflow/kernels/` |
 | Wave span | **W2 → W4** (W2: 1 · W3: 5 · W4: 1) |
@@ -322,6 +322,88 @@ OCR output is the one place where the system cannot re-derive what it saw: a sam
 
 ### `E04-05` — implements `S1-T15`
 
+**Status — `in progress`, 0 criteria unmet; 3 documented deltas**
+
+| # | Criterion | Status |
+|--:|---|:---:|
+| 1 | Reachable only through `LlmEngine`; not importable from a port | met |
+| 2 | The digest is recorded at first use and **compared for the remainder of the run** | met |
+| 3 | `capabilities` reports the digest, never the tag alone | met |
+| 4 | A missing model raises a typed error naming `ollama pull <model>` (`model_not_pulled`, exit `3`) | met |
+| 5 | Truncation maps to a typed error (`truncated_output`, exit `2`) and is never parsed as complete | met |
+| 6 | The raw completion is preserved so a truncated one is distinguishable without re-invoking | met |
+| 7 | `structured`, `vision` and `warm` dispatch and return typed results | met |
+| 8 | `evidence` carries model digest, `num_ctx`, sampling parameters, adapter revision | met |
+| 9 | No `--api-key`-shaped flag and no secret in a flag | met |
+| 10 | No default or fallback model: an unknown name never resolves to a working model | met |
+
+**Verification performed.** Every row above is backed by a mutation that breaks it and a
+test that catches it — **12 of 12 mutations falsified**, with each failure attributed to
+the test named in its row (harness: `tests/adapters/mutation_ollama.py`). The four QA
+gates are green on the whole workspace (578 tests). Two measurements shaped the
+implementation and are **not** taken from the specification, because the specification
+states the *requirement* rather than the runtime's behaviour:
+
+- **`num_ctx` is the *loaded* window, not the declared one.** Measured on the live
+  runtime: `smollm2` declares `context_length: 8192` in `model_info` but loads under a
+  **4096** window when no `num_ctx` is named, and `/api/ps` reports the loaded value.
+  Reporting the declared figure would report a number nothing used, which is the same
+  class of error as keying on a moving tag. The adapter reads `/api/ps` and reports
+  `None` — *not loaded* — rather than falling back to the declared value, since the two
+  answer different questions.
+- **`adapter_revision` comes from `/api/version`** (`ollama 0.31.1` in this workspace).
+  When it cannot be read the term is `"ollama unknown"`, never a plausible-looking build:
+  a fabricated revision would enter the cache key and let two different engines share one.
+
+**Documented delta 1 — `model_unknown` is unreachable from `capabilities` on this path.**
+The closed set attributes **both** `model_not_pulled` and `model_unknown` to K5
+(`kernel-cli.md` §5), and the two are distinguished by *how* the name fails: absent
+locally → `model_not_pulled` with the `ollama pull` remedy; resolving to no known model →
+`model_unknown` with no default substituted. Against the real Ollama HTTP API **only the
+first is reachable**: `/api/tags` is a local catalogue, so a name that is not in it is
+absent, full stop — there is no registry lookup that could return *unknown* rather than
+*absent*. The adapter raises `model_unknown` on a **non-200 `/api/chat` response**, which
+is the one path where the catalogue and the runtime disagree, and the criterion's
+substance (*an unknown name never resolves to a working model*) is asserted through
+`model_not_pulled`. `E04-07`'s `--resolve-only` is where `model_unknown` becomes the
+primary outcome, because resolution there spans a provider prefix as well as a model name.
+
+**Documented delta 2 — the truncation assertion is made with `num_predict`, not a fixture.**
+Row 12's committed fixture is `oversized-prompt.txt`, and a prompt long enough to overflow
+`num_ctx` on a **128k** model is an impractical committed artifact. The test therefore cuts
+the generation with a small `num_predict` and asserts `done_reason: length` →
+`truncated_output`. This is the *same* signal (`done_reason`) and therefore the same code
+path; what the fixture would add is the *cause* of the cut, not a different branch. Recorded
+as a delta rather than presented as the fixture the row names.
+
+**A third silent failure was found while verifying row 12, and it is not the one the row names.**
+Row 12 is about the **output** being cut. Driving the real scenario against the live runtime
+surfaced a second cut with no signal at all: the runtime **truncates an oversized prompt**
+and reports nothing. Measured, one prompt of ~2,429 tokens with room left to answer came back
+evaluated at **130** tokens under `num_ctx: 256` with `done_reason: "stop"` — no failure, no
+`Reason`, and a confident answer to a question most of which had been discarded. At
+`num_ctx: 1024` the same prompt evaluated at 514 tokens and reported `length`, so **whether
+the cut surfaces at all depends on the window** — which is what makes it silent rather than
+merely unhandled.
+
+The adapter **cannot decide this without a tokenizer**, and a characters-per-token constant
+would be this kernel choosing a threshold (`prd.md` FR-15). It therefore records **both**
+sides — `prompt_characters` sent and `prompt_tokens` evaluated — so a caller can see the two
+disagree, rather than smoothing the difference into a confidence the adapter does not have.
+This is recorded as a **finding**, not presented as a satisfied criterion: row 12's assertion
+(`truncated_output`, never a parsed partial) is satisfied for the case the row names, and the
+input-side cut is a separate, previously unrecorded failure mode. **It belongs in
+`kernel-cli.md` §11 as a row of its own**, and that artifact is frozen, so the observation is
+recorded here for the plan owner rather than edited there.
+
+**Documented delta 3 — `judge` is implemented here, and its row is not this issue's to satisfy.**
+The epic lists K5's operations as `structured`, `vision`, `warm`, `capabilities` — and the
+port declares a fifth, `judge`. An adapter that omitted it would not satisfy `LlmEngine`,
+so the guard is implemented and the **role prohibition is enforced on this path too**: a
+model asked to grade samples it produced is refused with `role_conflict`, compared
+**tag-insensitively** so `smollm2` grading `smollm2:latest` is caught. Row 15's assertion
+still belongs to `E04-06`, whose command is `MVP` and exits `4`; nothing here ticks it.
+
 **Title**
 K5 `kernel.llm.local` port + Ollama adapter: `structured`, `vision`, `warm`, `capabilities`.
 
@@ -375,6 +457,65 @@ A local model is identified by a **digest**, not a tag: `qwen2.5` is a moving ta
 ---
 
 ### `E04-06` — implements `S1-T16`
+
+**Status — `in progress`, 0 criteria unmet; 2 documented deltas**
+
+| # | Criterion | Status |
+|--:|---|:---:|
+| 1 | Reachable only through `LlmEngine`; not importable from a port | met |
+| 2 | The raw completion is persisted before any parse | met |
+| 3 | `429` honours `retry-after` verbatim | met |
+| 4 | Sustained unavailability degrades to `provider_unavailable`, never to rejection | met |
+| 5 | Absence, `null` and a present value stay three distinguishable outcomes | met |
+| 6 | `call_record` is always populated: provider, revision, tokens, cost, latency, request id | met |
+| 7 | Secrets come from the environment only; no `--api-key` flag | met |
+| 8 | An unknown provider prefix fails with `provider_unknown`, exit `3`; no default provider | met |
+| 9 | `judge` exists and its `role_conflict` path is implemented | met |
+| 10 | `structured` and `vision` dispatch and return typed results | met |
+
+**Verification performed.** Every row above is backed by a mutation that breaks it and a
+test that catches it — **14 of 14 mutations falsified**, each attributed to the test
+named in its row (harness: `tests/adapters/mutation_frontier.py`). `tests/adapters/test_frontier.py`
+holds **45** tests; the workspace is at **628**, with all four QA gates green. No provider
+key exists in this workspace and the tests need none: the transport is stubbed, which is
+also what satisfies row 14's *"no committed fixture — the row needs an **unreachable
+provider**"* (`kernel-cli.md` §12) directly rather than by pointing a host setting at a
+closed port.
+
+**Two defects were found by the mutation harness, not by reading the code.** Both are
+recorded because each is an instance of the exact failure class this issue exists for:
+
+- **A `200` whose body is not JSON crashed the adapter.** `response.json()` was called
+  unguarded, so an intercepting proxy, a captive portal or a truncated response raised
+  `ValueError` straight out of the caller's stack. That is an *unhandled* failure where
+  the whole point is a *typed* one, and it also read as a failure of the document rather
+  than of the provider's response. Now guarded, reported as `unsupported_format` with
+  `body_is_json: false` in the evidence.
+- **The suite's stub answered `{}` where a real client raises.** The first version of the
+  stub returned an empty mapping for an unparseable body, so the test above passed against
+  a client that cannot exist — the *"a suite green for the wrong reason"* pattern. The stub
+  now raises, which is what made the mutation falsifiable.
+
+**Documented delta 1 — row 14's raw bytes and the `CallRecord` cannot ride on `KernelResult`.**
+`kernel-cli.md` §9 says *"the raw completion and the parsed structure are returned
+separately"* and *"`call_record` is always populated"*, while E01 froze `KernelResult` at
+three fields. The adapter therefore exposes both as **properties** — `last_raw_completion`
+and `last_call_record` — rather than growing the frozen type or adding a method to the port
+(which would re-open `E04-01`'s gate). `E07-02` composes the envelope and already carries a
+`CallRecord` field on its own `Call` type for exactly this reason. The two properties are
+deliberately **not** counted among the port's operations, and
+`test_the_adapter_exposes_the_ports_five_operations_and_no_more` asserts that.
+
+**Documented delta 2 — `model_revision` is `"unresolved"` on the paths that never reached the provider.**
+A rate limit, an outage and a rejected credential all happen before the provider says which
+revision answered, so no revision exists. The term says `"unresolved"` with the requested
+name beside it as `model_name`, because substituting the *name* for the revision would be
+the same class of mistake as keying a cache on a moving tag — a hosted model is updated
+under a fixed name. On success the term is the provider's own revision, and
+`test_a_resolved_call_reports_the_providers_revision_not_its_name` asserts the difference.
+`cost_usd` is likewise `None` on every path: the price is a billing fact this adapter does
+not look up, and a hardcoded rate card would be a number that silently goes stale
+(`# TODO: [MVP]`).
 
 **Title**
 K6 `kernel.llm.frontier` port + one provider adapter: `structured`, `vision`, `judge`, `CallRecord`.

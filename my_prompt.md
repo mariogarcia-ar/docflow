@@ -1,3 +1,9 @@
+hay que revisar que se cumpla 
+
+kernel, port, adapter 
+para desacoplar esto esta en epic04 con los ports y adpaters
+
+
 un punto importante por cada capa 
 
 - completar flujo rapido
