@@ -39,6 +39,13 @@ support from the ledgers.
 # *nothing was blocked* if the report were ever reshaped - the same reasoning
 # `tests/kernels/test_store.py` records for the same finding.
 # pylint: disable=use-implicit-booleaness-not-comparison
+#
+# `duplicate-code`: the ledger-record shapes are repeated from the sibling suites on
+# purpose. A shared builder would make the suites depend on one another's copies, so a
+# field added to `StageRecord` would be defaulted once in a helper instead of being
+# confronted in every suite that constructs one - which is exactly how a required field
+# stops being required in the tests that matter.
+# pylint: disable=duplicate-code
 
 from __future__ import annotations
 
@@ -411,7 +418,15 @@ def test_the_manifest_carries_the_five_reported_keys(
         (out / orchestrator.MANIFEST_NAME).read_text(encoding="utf-8")
     )
 
-    assert set(manifest) == {"state", "totals", "stages", "outcomes", "inflight"}
+    assert set(manifest) == {
+        "state",
+        "control",
+        "totals",
+        "stages",
+        "outcomes",
+        "attempts",
+        "inflight",
+    }
     assert manifest["state"] == "complete"
     assert manifest["inflight"] == []
     assert manifest["totals"]["units"] == len(UNIT_NAMES)
@@ -882,12 +897,14 @@ def test_the_input_hash_encoding_distinguishes_two_needs_from_two_names() -> Non
                 artifact_sha256="1" * 64,
                 reason_code=None,
                 cache_key="a" * 64,
+                attempts=1,
             ),
             "c": store.StageRecord(
                 state="done",
                 artifact_sha256="2" * 64,
                 reason_code=None,
                 cache_key="b" * 64,
+                attempts=1,
             ),
         },
     )
@@ -901,12 +918,14 @@ def test_the_input_hash_encoding_distinguishes_two_needs_from_two_names() -> Non
                 artifact_sha256="1" * 63 + "12",
                 reason_code=None,
                 cache_key="a" * 64,
+                attempts=1,
             ),
             "c": store.StageRecord(
                 state="done",
                 artifact_sha256="2" * 63 + "22",
                 reason_code=None,
                 cache_key="b" * 64,
+                attempts=1,
             ),
         },
     )
@@ -941,6 +960,7 @@ def test_a_need_that_recorded_no_artifact_is_refused_by_the_composition() -> Non
                     artifact_sha256=None,
                     reason_code=None,
                     cache_key=None,
+                    attempts=0,
                 )
             },
         )
@@ -1316,3 +1336,564 @@ def test_the_module_is_the_deliverable_path_the_issue_names() -> None:
     assert ORCHESTRATOR_PATH.name == "orchestrator.py"
     assert ORCHESTRATOR_PATH.parent.name == "kernels"
     assert "docflow" in sys.modules
+
+
+# --- W5: the control, so a pause can interrupt a run already in flight -------
+
+
+def test_an_absent_control_means_the_run_carries_on(tmp_path: pathlib.Path) -> None:
+    """The only default in this module, and it is about an operator's silence.
+
+    A run nobody has asked to hold is a run that runs. Nothing about a *value the
+    system would otherwise have to produce* is defaulted here - the class of default
+    the artifacts forbid.
+    """
+    out = tmp_path / "O"
+
+    assert orchestrator.read_control(out).state == "running"
+    assert orchestrator.read_control(out).holds is False
+    assert orchestrator.control_of(out) == "running"
+
+
+def test_a_pause_is_recorded_and_holds(tmp_path: pathlib.Path) -> None:
+    """``paused`` holds; ``running`` does not."""
+    out = tmp_path / "O"
+
+    orchestrator.write_control(out, "paused")
+
+    assert orchestrator.control_of(out) == "paused"
+    assert orchestrator.read_control(out).holds is True
+
+    orchestrator.write_control(out, "running")
+    assert orchestrator.read_control(out).holds is False
+
+
+def test_a_stopped_control_holds_at_the_same_checkpoint(tmp_path: pathlib.Path) -> None:
+    """``stopped`` is honoured where ``paused`` is: the signal differs, not the check.
+
+    `stop --force` also terminates the process. What this file adds is the case where
+    the signal has *not* yet been delivered - a scheduler that reaches a checkpoint
+    reads it and must not continue.
+    """
+    out = tmp_path / "O"
+
+    orchestrator.write_control(out, "stopped")
+
+    assert orchestrator.read_control(out).holds is True
+
+
+def test_an_unrecognised_control_state_is_refused(tmp_path: pathlib.Path) -> None:
+    """A control that cannot be read is not an instruction to carry on.
+
+    Reading an unknown value as ``running`` would silently resume a run somebody asked
+    to hold, which is the one failure this file exists to prevent.
+    """
+    out = tmp_path / "O"
+    out.mkdir()
+    (out / orchestrator.CONTROL_NAME).write_text('{"state": "maybe"}', encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        orchestrator.read_control(out)
+
+    assert "is not a control state" in str(excinfo.value)
+
+
+def test_a_control_that_is_not_an_object_is_refused(tmp_path: pathlib.Path) -> None:
+    """A malformed control names a problem rather than reading as an absent one."""
+    out = tmp_path / "O"
+    out.mkdir()
+    (out / orchestrator.CONTROL_NAME).write_text('["paused"]', encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        orchestrator.read_control(out)
+
+    assert "must hold an object" in str(excinfo.value)
+
+
+def test_a_paused_run_dispatches_nothing_and_reports_what_it_held(
+    descriptor: orchestrator.Descriptor,
+    recorder: Recorder,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A run asked to hold before it starts does no work, and says so.
+
+    The held work is reported **separately from ``skipped``**: a held stage has not
+    been done, and reporting it as skipped would read as complete.
+    """
+    out = tmp_path / "O"
+    orchestrator.write_control(out, "paused")
+
+    report = orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=recorder.table(),
+        keys=KEYS,
+    )
+
+    assert recorder.calls == []
+    assert report.dispatched == ()
+    assert report.skipped == ()
+    assert set(report.held) == set(UNIT_NAMES), "every unreached unit is reported"
+
+
+def test_a_pause_lands_at_a_stage_boundary_not_a_unit_boundary(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The checkpoint is per stage, which is what makes `pause` mean anything.
+
+    A unit of a real job is many stages. Holding only between units would make a pause
+    indistinguishable from *let the whole job finish* - and the operator who asked for
+    it would have no way to tell which had happened.
+    """
+    out = tmp_path / "O"
+    unit = UNIT_NAMES[0]
+
+    class PausingRecorder(Recorder):
+        """A recorder that asks the run to hold after its first dispatch."""
+
+        def _answer(
+            self, call: orchestrator.StageCall, *, payload: str
+        ) -> KernelResult[Artifact]:
+            """Record, then pause the run once ``acquire`` has run."""
+            result = super()._answer(call, payload=payload)
+            if call.stage.name == "acquire":
+                orchestrator.write_control(out, "paused")
+            return result
+
+    pausing = PausingRecorder()
+    report = orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=pausing.table(),
+        keys=KEYS,
+    )
+
+    assert [name for _unit, name in report.dispatched] == ["acquire"], (
+        "the run must stop at the stage boundary after the pause, not after the unit"
+    )
+    assert f"{unit}:transform" in report.held
+
+    ledger = store.read_ledger(out / unit)
+    assert ledger.stages["acquire"].state == "done"
+    assert ledger.stages["transform"].state == "pending", (
+        "a held stage is pending: it has not been begun, so it is not running"
+    )
+
+
+def test_resuming_continues_from_the_exact_stage(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Clearing the control lets a plain `run` continue - there is no `resume` verb.
+
+    `FR-02`: recovery *is* running it again. What makes that correct rather than a
+    restart is that the stages already terminal for their key are skipped, which is the
+    idempotency `E05-01` already established.
+    """
+    out = tmp_path / "O"
+    unit = UNIT_NAMES[0]
+
+    class PausingRecorder(Recorder):
+        """A recorder that pauses the run after ``acquire``."""
+
+        def _answer(
+            self, call: orchestrator.StageCall, *, payload: str
+        ) -> KernelResult[Artifact]:
+            """Record, then pause the run once ``acquire`` has run."""
+            result = super()._answer(call, payload=payload)
+            if call.stage.name == "acquire":
+                orchestrator.write_control(out, "paused")
+            return result
+
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=PausingRecorder().table(),
+        keys=KEYS,
+    )
+
+    orchestrator.write_control(out, "running")
+    resumed = Recorder()
+    report = orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=resumed.table(),
+        keys=KEYS,
+    )
+
+    assert (unit, "acquire") in report.skipped, "completed work is not re-run"
+    assert (unit, "transform") in report.dispatched, "the held stage now runs"
+    assert (unit, "persist") in report.dispatched
+    assert report.held == ()
+
+    ledger = store.read_ledger(out / unit)
+    assert {record.state for record in ledger.stages.values()} == {"done"}
+
+
+def test_the_manifest_reports_a_held_run_as_holding(
+    descriptor: orchestrator.Descriptor,
+    recorder: Recorder,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A paused run and a crashed run have the same ledgers and different causes.
+
+    ``incomplete`` would be indistinguishable from a crash, so the run's state says
+    ``holding`` and carries the control that produced it. The run state is a *third*
+    vocabulary - the seven durable states describe a stage, and a value no ledger may
+    carry has no business in ``run.json``.
+    """
+    out = tmp_path / "O"
+    orchestrator.write_control(out, "paused")
+
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=recorder.table(),
+        keys=KEYS,
+    )
+
+    manifest = json.loads(
+        (out / orchestrator.MANIFEST_NAME).read_text(encoding="utf-8")
+    )
+
+    assert manifest["state"] == "holding"
+    assert manifest["control"] == "paused"
+    assert manifest["inflight"] == [], (
+        "inflight is derived from the ledgers, and a run held before its first unit "
+        "has produced none - the state comes from the control, not from a claim about "
+        "units that were never reached"
+    )
+
+
+def test_a_run_held_before_its_first_unit_is_not_reported_complete(
+    descriptor: orchestrator.Descriptor,
+    recorder: Recorder,
+    tmp_path: pathlib.Path,
+) -> None:
+    """*No unfinished units* must not read as *finished*.
+
+    A pause taken before the first stage leaves the output root with an empty ledger
+    tree, which is the state a naive *is anything inflight?* check answers "no" to.
+    Reporting that as ``complete`` is the same class of error as a ``done`` claim about
+    bytes that do not exist, one level up - and it is exactly the case the first
+    checkpoint in ``run`` exists to produce, so it has to read correctly.
+    """
+    out = tmp_path / "O"
+    orchestrator.write_control(out, "paused")
+
+    manifest = orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=recorder.table(),
+        keys=KEYS,
+    ).manifest
+
+    assert manifest["state"] == "holding"
+    assert manifest["totals"]["units"] == 0, "no unit was reached, so none has a ledger"
+    assert manifest["state"] != "complete"
+
+
+def test_the_manifest_reports_a_completed_run_as_complete(
+    descriptor: orchestrator.Descriptor,
+    recorder: Recorder,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A finished run says so, and its control does not confuse the reading."""
+    out = tmp_path / "O"
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=recorder.table(),
+        keys=KEYS,
+    )
+    orchestrator.write_control(out, "paused")
+
+    manifest = orchestrator.rebuild_index(out)
+
+    assert manifest["state"] == "complete", (
+        "no work remains, so the run is complete whatever an operator last asked"
+    )
+    assert manifest["control"] == "paused", "the control is reported as a fact"
+
+
+def test_the_manifest_reports_attempt_counts_for_work_that_ran(
+    descriptor: orchestrator.Descriptor,
+    recorder: Recorder,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A stage that ran more than once is the visible trace of a retry.
+
+    `kernel-cli.md` §7 forbids *retry-until-agreement* and `plan-01-kernels.md` §9 says
+    the prohibition is enforceable only if the pattern can be **seen**. The count is
+    reported rather than policed, and a first run counts one.
+    """
+    out = tmp_path / "O"
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=recorder.table(),
+        keys=KEYS,
+    )
+
+    manifest = orchestrator.rebuild_index(out)
+
+    assert manifest["attempts"][UNIT_NAMES[0]]["acquire"] == 1
+
+
+def test_a_unit_failure_does_not_abort_the_run(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Failure is contained to the unit - what makes 11k files one command.
+
+    `FR-07`: one unit failing never aborts the run. The failing unit is reported against
+    **itself**, and every other unit completes.
+    """
+    out = tmp_path / "O"
+    failing = Recorder(fail_on="transform")
+
+    report = orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=failing.table(),
+        keys=KEYS,
+    )
+
+    for unit in UNIT_NAMES:
+        ledger = store.read_ledger(out / unit)
+        assert ledger.stages["acquire"].state == "done"
+        assert ledger.stages["transform"].state == "failed"
+        assert ledger.stages["transform"].reason_code == "blank_page"
+
+    manifest = orchestrator.rebuild_index(out)
+    assert manifest["state"] == "incomplete", "the run did not finish, and says so"
+    assert manifest["outcomes"]["blank_page"] == len(UNIT_NAMES), (
+        "the outcome is counted per unit, so the failure is attributed to the units"
+    )
+
+    # And the report names the failing unit's stages rather than the run's:
+    # `FR-07`'s containment means the failure is an outcome *of that unit*.
+    assert [name for _unit, name in report.dispatched].count("transform") == len(
+        UNIT_NAMES
+    ), "each unit's transform was attempted, and each reported its own failure"
+    assert report.dispatched, "the run dispatched despite a failing unit"
+
+
+class ObservingRecorder(Recorder):
+    """A recorder that reads the ledger **from inside** the operation.
+
+    This is the only vantage point from which the ordering is falsifiable. A test
+    that inspects the ledger after a run proves the stage reached a state; it cannot
+    tell whether the state was written before the work or after it, because both
+    orderings leave the same record when nothing interrupts the run.
+    """
+
+    def __init__(self) -> None:
+        """Initialize the recorder with an empty observation log."""
+        super().__init__()
+        #: ``(stage, state)`` as seen from inside each operation.
+        self.seen: list[tuple[str, str]] = []
+
+    def _answer(
+        self, call: orchestrator.StageCall, *, payload: str
+    ) -> KernelResult[Artifact]:
+        """Record the ledger's state for this stage, then answer normally.
+
+        Args:
+            call: The dispatch call.
+            payload: The text whose hash becomes the artifact.
+
+        Returns:
+            The stored artifact.
+
+        """
+        record = store.read_ledger(call.unit_dir).stages[call.stage.name]
+        self.seen.append((call.stage.name, record.state))
+        return super()._answer(call, payload=payload)
+
+
+def test_the_ledger_reads_running_from_inside_the_operation(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """``running`` is on disk **before** the work starts.
+
+    `plan-01-kernels.md` §7b row 3 and `sad.md` §7.1: a scheduler that wrote state
+    only on completion would report a killed stage as never having run. The state is
+    read from inside the operation, because that is the only place the two orderings
+    are distinguishable - afterwards they look identical.
+    """
+    out = tmp_path / "O"
+    observing = ObservingRecorder()
+
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=observing.table(),
+        keys=KEYS,
+    )
+
+    assert observing.seen, "the operations must have been called"
+    assert {state for _stage, state in observing.seen} == {"running"}, (
+        "every stage must already read `running` when its work begins; a stage the "
+        "operation sees as `pending` is one whose kill would be misread"
+    )
+    assert [stage for stage, _state in observing.seen] == [
+        "acquire",
+        "transform",
+        "persist",
+    ] * len(UNIT_NAMES), "in dispatch order"
+
+
+def test_the_cache_key_is_recorded_before_the_work_too(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The key ``begin`` wrote is the key the operation then ran under.
+
+    A stage cut off mid-work stays ``running`` with whatever was recorded when it
+    started, and the resume decision reads that record. Recording the state without
+    the key would leave every interrupted stage unkeyed - the ledger keyed exactly
+    where it matters least.
+    """
+    out = tmp_path / "O"
+    observing = ObservingRecorder()
+
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=observing.table(),
+        keys=KEYS,
+    )
+
+    for call in observing.calls:
+        record = store.read_ledger(out / call.unit).stages[call.stage.name]
+        assert record.cache_key == call.cache_key, call.stage.name
+
+
+def test_a_failure_is_recorded_as_failed_and_not_committed(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A refusal takes the ``fail`` path - it never reaches ``commit``.
+
+    ``commit`` takes the artifact ``put`` returned, so a refusal has nothing to pass
+    it. A scheduler that committed unconditionally would either write ``done`` about
+    no bytes or lose the typed reason.
+    """
+    out = tmp_path / "O"
+    failing = Recorder(fail_on="transform")
+
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=failing.table(),
+        keys=KEYS,
+    )
+
+    record = store.read_ledger(out / UNIT_NAMES[0]).stages["transform"]
+    assert record.state == "failed"
+    assert record.reason_code == "blank_page"
+    assert record.artifact_sha256 is None
+
+
+class PausingRecorder(Recorder):
+    """A recorder that asks the run to hold once ``acquire`` has run."""
+
+    def __init__(self, out_dir: pathlib.Path) -> None:
+        """Initialize the recorder.
+
+        Args:
+            out_dir: The run's output root, where the control is written.
+
+        """
+        super().__init__()
+        self.out_dir = out_dir
+
+    def _answer(
+        self, call: orchestrator.StageCall, *, payload: str
+    ) -> KernelResult[Artifact]:
+        """Answer, then pause the run if this was ``acquire``.
+
+        Args:
+            call: The dispatch call.
+            payload: The text whose hash becomes the artifact.
+
+        Returns:
+            The stored artifact.
+
+        """
+        result = super()._answer(call, payload=payload)
+        if call.stage.name == "acquire":
+            orchestrator.write_control(self.out_dir, "paused")
+        return result
+
+
+def test_a_run_paused_with_work_half_done_reports_holding(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """Work remains **and** an operator asked to hold: ``holding``, not ``incomplete``.
+
+    The ledger tree is not empty and a stage is left unfinished. Reading that as
+    ``incomplete`` is indistinguishable from a crash, so an operator could not tell
+    whether their pause took effect. This also exercises the branch that consults the
+    control *after* establishing that a unit is unfinished - the empty-tree test
+    returns earlier, so a mutation of that later branch would otherwise survive.
+    """
+    out = tmp_path / "O"
+
+    manifest = orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=PausingRecorder(out).table(),
+        keys=KEYS,
+    ).manifest
+
+    assert manifest["state"] == "holding"
+    assert manifest["totals"]["units"] > 0, (
+        "a unit was reached, so the tree is not empty"
+    )
+    assert manifest["inflight"], "the paused unit is unfinished, and says so"
+
+
+def test_the_same_partial_run_without_a_pause_reports_incomplete(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The control separates *paused* from *abandoned* - nothing else does.
+
+    Identical ledgers, identical unfinished work, a different control: the two runs
+    must report differently, or the run state is not carrying what it exists for.
+    """
+    out = tmp_path / "O"
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=PausingRecorder(out).table(),
+        keys=KEYS,
+    )
+    assert orchestrator.rebuild_index(out)["state"] == "holding"
+
+    orchestrator.write_control(out, "running")
+
+    rebuilt = orchestrator.rebuild_index(out)
+    assert rebuilt["state"] == "incomplete", (
+        "the ledgers are unchanged; only the operator's request changed"
+    )
+    assert rebuilt["inflight"], "the unfinished unit is still reported"

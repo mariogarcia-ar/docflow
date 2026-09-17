@@ -119,7 +119,11 @@ from docflow.kernels.cache_key import cache_key, make_terms
 from docflow.kernels.types import Artifact, KernelResult
 
 __all__: list[str] = [
+    "CONTROL_NAME",
+    "CONTROL_STATES",
+    "HOLDING_CONTROLS",
     "MANIFEST_NAME",
+    "Control",
     "Descriptor",
     "Graph",
     "KernelTerms",
@@ -130,13 +134,16 @@ __all__: list[str] = [
     "StageOperation",
     "Unit",
     "cache_key_for",
+    "control_of",
     "descriptor_from_mapping",
     "input_hash_for",
     "is_terminal",
+    "read_control",
     "read_descriptor",
     "rebuild_index",
     "run",
     "validate",
+    "write_control",
     "write_index",
 ]
 
@@ -150,6 +157,39 @@ MANIFEST_NAME: Final[str] = "run.json"
 #: `test_the_discovery_pattern_agrees_with_the_stores_suffix_rule` holds the two
 #: together so they cannot drift.
 _LEDGER_GLOB: Final[str] = "**/*.ledger.json"
+
+#: The run's control file, at the output root. It records what an operator has asked
+#: of a run, and it is **polled between stages** by :func:`run`.
+#:
+#: It exists because `FR-02`'s `pause` has to be able to interrupt a run that is
+#: already in flight, which means the decision cannot be a parameter passed in at the
+#: start. A file is the smallest mechanism that a *separate process* can write and a
+#: running orchestrator can read, and it is deliberately the same choice K7 makes for
+#: the ledger: the filesystem is the message bus, because it is the one both processes
+#: already share.
+CONTROL_NAME: Final[str] = "control.json"
+
+#: The control states that hold a run. ``stopped`` is a request the run honours at the
+#: same checkpoint ``paused`` uses - the difference between them is the *signal*, not
+#: the mechanism: `stop --force` also terminates the process, and this file is what
+#: tells a scheduler that had not yet reached a checkpoint that it must not continue.
+HOLDING_CONTROLS: Final[frozenset[str]] = frozenset({"paused", "stopped"})
+
+#: The control states an operator may write.
+CONTROL_STATES: Final[frozenset[str]] = HOLDING_CONTROLS | {"running"}
+
+#: The run state meaning *every unit is terminal*. The seven durable states describe a
+#: **stage**; a run is a third vocabulary, and conflating the two would put a value in
+#: ``run.json`` that no ledger may carry.
+_RUN_COMPLETE: Final[str] = "complete"
+
+#: The run state meaning at least one unit is unfinished **and** an operator asked the
+#: run to hold. Distinct from ``incomplete`` so a report says *paused* rather than
+#: *unfinished*, which would be indistinguishable from a crash.
+_RUN_HOLDING: Final[str] = "holding"
+
+#: The run state meaning at least one unit is unfinished and nothing asked it to stop.
+_RUN_INCOMPLETE: Final[str] = "incomplete"
 
 #: The states that are a *result*, as opposed to a position on the way to one. A
 #: terminal stage is not dispatched again **for the key it ran under**. The set is
@@ -479,6 +519,10 @@ class _Tally:
     dispatched: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     skipped: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     blocked: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+    #: Units and stages this pass did **not** touch because an operator's control asked
+    #: the run to hold. Kept apart from ``skipped``, which means *already done for this
+    #: key*: conflating them would report held work as complete.
+    held: list[str] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -495,6 +539,10 @@ class RunReport:
             their key.
         blocked: The ``(unit, stage)`` pairs that could not run because a need did not
             produce an artifact. They are left ``pending`` - see the note below.
+        held: The units and ``unit:stage`` checkpoints this pass did not reach because
+            an operator's control asked the run to hold. **Not** the same as
+            ``skipped``: held work has not been done, and reporting it as skipped would
+            read as complete.
         manifest: The manifest as written, which is what :func:`rebuild_index` returns.
 
     """
@@ -502,7 +550,150 @@ class RunReport:
     dispatched: tuple[tuple[str, str], ...]
     skipped: tuple[tuple[str, str], ...]
     blocked: tuple[tuple[str, str], ...]
+    held: tuple[str, ...]
     manifest: Mapping[str, object]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Control:
+    """What an operator has asked of a run, recorded at the output root.
+
+    Deliberately **two** states plus ``running``, not a full run-state vocabulary. A run
+    is otherwise described by its ledgers, and a second place that claimed to know
+    whether a run had finished would be a second authority - the drift `sad.md` §3
+    splits K7 and K1 to avoid. What a ledger cannot express is *an operator asked this
+    to hold*, so that is all this carries.
+
+    The *first* checkpoint is what makes a pause observable: a run reads the control
+    before its first stage as well as between stages, so writing ``paused`` after a run
+    has begun does not race the run's start.
+
+    Attributes:
+        state: ``running``, ``paused`` or ``stopped``.
+
+    Raises:
+        ValueError: On a state outside the three. An unrecognised value is refused
+            rather than treated as ``running``, because silently resuming a run an
+            operator asked to hold is the failure this file is read to prevent.
+
+    """
+
+    state: str
+
+    def __post_init__(self) -> None:
+        """Refuse a control state that is not one of the three.
+
+        Raises:
+            ValueError: On an unrecognised state.
+
+        """
+        if self.state not in CONTROL_STATES:
+            raise ValueError(
+                f"{self.state!r} is not a control state. The set is "
+                f"{sorted(CONTROL_STATES)}; an unrecognised value read as *carry on* "
+                "would resume a run somebody asked to hold."
+            )
+
+    @property
+    def holds(self) -> bool:
+        """Report whether this control asks the run to stop dispatching.
+
+        Returns:
+            True for ``paused`` and ``stopped``.
+
+        """
+        return self.state in HOLDING_CONTROLS
+
+
+def control_path(out_dir: Path) -> Path:
+    """Return the control file for a run.
+
+    Args:
+        out_dir: The run's output root.
+
+    Returns:
+        ``<out_dir>/control.json``.
+
+    """
+    return out_dir / CONTROL_NAME
+
+
+def read_control(out_dir: Path) -> Control:
+    """Read a run's control, defaulting to ``running`` when the file is absent.
+
+    Absent means ``running`` and nothing else: a run that has not been asked to hold is
+    a run that carries on. That is the only default in this module, and it is a default
+    about *an operator's absence of a request* rather than about a value the system
+    would otherwise have to produce - the class of default the artifacts forbid.
+
+    Args:
+        out_dir: The run's output root.
+
+    Returns:
+        The recorded control, or ``running`` when none is recorded.
+
+    Raises:
+        ValueError: If the file carries an unrecognised state, or is not an object with
+            a ``state``. A malformed control is refused rather than read as ``running``:
+            the file exists because somebody asked for something.
+
+    """
+    path = control_path(out_dir)
+    if not path.is_file():
+        return Control(state="running")
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError(
+            f"The control file at {path} must hold an object, not "
+            f"{type(payload).__name__}: a control that cannot be read is not an "
+            "instruction to carry on."
+        )
+    return Control(state=str(payload.get("state", "")))
+
+
+def write_control(out_dir: Path, state: str) -> Control:
+    """Record what an operator asks of a run, atomically.
+
+    Written through K7's atomic write for the same reason a ledger is: a half-written
+    control would be read as a state nobody asked for, and the run would either resume
+    against an operator's instruction or hold when none was given.
+
+    Args:
+        out_dir: The run's output root, created if it does not exist.
+        state: ``running``, ``paused`` or ``stopped``.
+
+    Returns:
+        The control as written.
+
+    Raises:
+        ValueError: On an unrecognised state.
+
+    """
+    control = Control(state=state)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # TODO: [MVP] K7 exposes no public atomic-write entry point, so this reaches the
+    # private helper. The right fix is a narrow `store.write_json_atomically` that both
+    # this and the ledger writer call, and it is not made here because it widens K7's
+    # surface - which is `E02`'s and `E07-02`'s to decide, not this issue's.
+    store._atomic_write(  # pylint: disable=protected-access
+        control_path(out_dir),
+        (json.dumps({"state": control.state}, indent=2) + "\n").encode("utf-8"),
+    )
+    return control
+
+
+def control_of(out_dir: Path) -> str:
+    """Return the control state recorded for a run.
+
+    Args:
+        out_dir: The run's output root.
+
+    Returns:
+        The state, or ``running`` when none is recorded.
+
+    """
+    return read_control(out_dir).state
 
 
 def is_terminal(state: str) -> bool:
@@ -772,7 +963,9 @@ def run(
 
     Returns:
         A :class:`RunReport` naming what this call dispatched, skipped and left
-        blocked, plus the manifest as written.
+        blocked, plus the manifest as written. A run that an operator's control asked
+        to hold reports the units and stages it did **not** reach under ``held`` rather
+        than pretending they were skipped.
 
     Raises:
         ValueError: If :func:`validate` refuses the run, or if a stage's key cannot
@@ -789,8 +982,15 @@ def run(
         keys=keys,
     )
 
+    # The control is read **before the first stage**, not only between them. A run that
+    # checked only between units would dispatch a whole unit of stages after an operator
+    # asked it to hold, and the pause would look like it had been ignored.
+    control = read_control(out_dir)
     for unit_name in descriptor.units:
-        _run_unit(run_context, unit_name, out_dir, tally)
+        if control.holds:
+            tally.held.append(unit_name)
+            continue
+        control = _run_unit(run_context, unit_name, out_dir, tally)
 
     manifest = write_index(out_dir)
 
@@ -798,18 +998,24 @@ def run(
         dispatched=tuple(tally.dispatched),
         skipped=tuple(tally.skipped),
         blocked=tuple(tally.blocked),
+        held=tuple(tally.held),
         manifest=manifest,
     )
 
 
 def _run_unit(
     run_context: _RunContext, unit_name: str, out_dir: Path, tally: _Tally
-) -> None:
+) -> Control:
     """Drive one unit's stages in dispatch order, recording outcomes as it goes.
 
     The ledger is re-read after each dispatch rather than patched in memory: the
     next stage's input hash and key are composed from what is **on disk**, so a
     composition cannot be built on a value that was never written.
+
+    The control is re-read **before every stage**, which is what makes a pause land at
+    a stage boundary rather than a unit boundary: a unit of a real job is many stages,
+    and holding only between units would make `pause` indistinguishable from *let the
+    whole job finish*.
 
     Args:
         run_context: The run-level context.
@@ -817,14 +1023,23 @@ def _run_unit(
         out_dir: The run's output root.
         tally: The accumulator for this pass.
 
+    Returns:
+        The control as of the last checkpoint, so the caller knows whether to continue
+        with the next unit without re-reading the file.
+
     """
     graph = run_context.descriptor.graph
     unit = Unit(name=unit_name, input_hash=run_context.input_hashes[unit_name])
     unit_dir = _unit_dir(out_dir, unit_name)
     _ensure_ledger(unit_dir, unit.name, tuple(stage.name for stage in graph.stages))
 
+    control = read_control(out_dir)
     recorded = store.read_ledger(unit_dir).stages
     for stage_name in graph.order:
+        if control.holds:
+            tally.held.append(f"{unit.name}:{stage_name}")
+            return control
+
         stage = graph.by_name[stage_name]
 
         upstream = _upstream_hashes(recorded, stage)
@@ -854,6 +1069,9 @@ def _run_unit(
         )
         tally.dispatched.append((unit.name, stage_name))
         recorded = store.read_ledger(unit_dir).stages
+        control = read_control(out_dir)
+
+    return control
 
 
 def rebuild_index(out_dir: Path) -> Mapping[str, object]:
@@ -880,35 +1098,73 @@ def rebuild_index(out_dir: Path) -> Mapping[str, object]:
     totals: dict[str, int] = {"units": len(ledgers), "stages": 0}
     totals.update(dict.fromkeys(store.DURABLE_STATE_ORDER, 0))
     outcomes: dict[str, int] = {}
+    attempts: dict[str, dict[str, int]] = {}
     inflight: list[str] = []
 
     for ledger in ledgers:
         unit_stages: dict[str, dict[str, object]] = {}
+        unit_attempts: dict[str, int] = {}
         unfinished = False
         for stage_name, record in ledger.stages.items():
-            unit_stages[stage_name] = {
-                "state": record.state,
-                "artifact_sha256": record.artifact_sha256,
-                "reason_code": record.reason_code,
-                "cache_key": record.cache_key,
-            }
+            unit_stages[stage_name] = dict(record.as_mapping())
             totals["stages"] += 1
             totals[record.state] += 1
             if record.reason_code is not None:
                 outcomes[record.reason_code] = outcomes.get(record.reason_code, 0) + 1
+            if record.attempts:
+                unit_attempts[stage_name] = record.attempts
             if not is_terminal(record.state):
                 unfinished = True
         stages[ledger.unit] = unit_stages
+        if unit_attempts:
+            attempts[ledger.unit] = unit_attempts
         if unfinished:
             inflight.append(ledger.unit)
 
     return {
-        "state": "incomplete" if inflight else "complete",
+        "state": _run_state(out_dir, len(ledgers), inflight),
+        "control": control_of(out_dir),
         "totals": totals,
         "stages": stages,
         "outcomes": outcomes,
+        # A stage whose attempt count exceeds one is the visible trace of a retry. It
+        # is reported rather than policed: retrying to obtain agreement is forbidden
+        # for a sampled kernel (`kernel-cli.md` §7) and the prohibition is enforceable
+        # only if the pattern can be seen (`plan-01-kernels.md` §9).
+        "attempts": attempts,
         "inflight": inflight,
     }
+
+
+def _run_state(out_dir: Path, units: int, inflight: Sequence[str]) -> str:
+    """Return the run's state, from its ledgers and its control.
+
+    Three values, and each is distinguishable from the other two: ``complete`` when
+    there is at least one ledger and every unit it covers is terminal; ``holding`` when
+    work remains **and** an operator asked the run to hold; ``incomplete`` otherwise.
+
+    **A run with no ledgers is never ``complete``.** It has produced nothing - which is
+    what a pause taken before the first unit looks like on disk - and reporting *no
+    unfinished units* as *finished* would be the same class of error as a `done` claim
+    about bytes that do not exist, one level up. That case is exactly what the first
+    checkpoint in :func:`run` exists to produce, so it has to read correctly.
+
+    Args:
+        out_dir: The run's output root.
+        units: How many units have a ledger.
+        inflight: The units with at least one non-terminal stage.
+
+    Returns:
+        The run state.
+
+    """
+    if units == 0:
+        return _RUN_HOLDING if read_control(out_dir).holds else _RUN_INCOMPLETE
+
+    if not inflight:
+        return _RUN_COMPLETE
+
+    return _RUN_HOLDING if read_control(out_dir).holds else _RUN_INCOMPLETE
 
 
 def write_index(out_dir: Path) -> Mapping[str, object]:

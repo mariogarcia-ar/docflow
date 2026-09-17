@@ -145,6 +145,16 @@ _DURABLE_STATES: Final[frozenset[str]] = frozenset(DURABLE_STATE_ORDER)
 #: the other five cannot, because the stage has not run under a key yet.
 _TERMINAL_OUTCOME_STATES: Final[frozenset[str]] = frozenset({"done", "failed"})
 
+#: The states that count as an **attempt** to produce something, as a reading of the
+#: state set this module owns. An attempt is *opened* by ``running`` and *closed* by an
+#: outcome; ``done`` is in the set because a stage that produced an artifact was run,
+#: whether or not the ``running`` write was seen.
+_ATTEMPTED_STATES: Final[frozenset[str]] = frozenset({"running", "done", "failed"})
+
+#: The states that *close* an attempt. Listed separately from the set above because the
+#: counting rule treats opening and closing differently - see :func:`_attempts_after`.
+_ATTEMPT_OUTCOMES: Final[frozenset[str]] = frozenset({"done", "failed"})
+
 #: The artifact directory under a store root. Content addressing means the file
 #: name is the hash, so no extension is appended: the name must stay the identity.
 _ARTIFACT_DIRECTORY: Final[str] = "artifacts"
@@ -195,13 +205,20 @@ class StageRecord:
             while the stage has not been dispatched. Required for ``done`` and
             ``failed``; never the empty string, which would read as *keyed* to
             an empty key (`prd.md` FR-08).
+        attempts: How many times this stage has been **run**, as opposed to how many
+            times it has reached a state. Counting is what makes
+            *"retry until two answers agree"* visible: `kernel-cli.md` §7 forbids the
+            practice for a sampled kernel, and this module's job is to record the
+            count rather than to enforce the policy
+            (`plan-01-kernels.md` §9). Complete on the first sight of the record.
 
     Raises:
         ValueError: If ``state`` is outside the seven durable states; if
             ``artifact_sha256``, ``reason_code`` or ``cache_key`` is the empty
             string; if ``state`` is ``done`` and no artifact hash is given; if
-            ``state`` is ``failed`` and no reason code is given; or if ``state``
-            is a terminal outcome and no cache key is given.
+            ``state`` is ``failed`` and no reason code is given; if ``state``
+            is a terminal outcome and no cache key is given; or if ``attempts``
+            is negative.
 
     """
 
@@ -209,6 +226,7 @@ class StageRecord:
     artifact_sha256: str | None
     reason_code: str | None
     cache_key: str | None
+    attempts: int
 
     def __post_init__(self) -> None:
         """Reject every record outside the seven states and the stated pairings.
@@ -219,8 +237,9 @@ class StageRecord:
 
         Raises:
             ValueError: On an unknown state, an empty-string stand-in, a ``done``
-                without an artifact hash, a ``failed`` without a reason code, or
-                a terminal outcome without the cache key it ran under.
+                without an artifact hash, a ``failed`` without a reason code, a
+                terminal outcome without the cache key it ran under, or a
+                negative attempt count.
 
         """
         if self.state not in _DURABLE_STATES:
@@ -257,6 +276,20 @@ class StageRecord:
                 "indistinguishable from one that is (FR-08, sad.md §5)."
             )
 
+        if self.attempts < 0:
+            raise ValueError(
+                f"attempts must not be negative (got {self.attempts}): a negative "
+                "count is not a count, and it would make a retry loop's accounting "
+                "read as if the stage had never run."
+            )
+
+        if self.state in _ATTEMPTED_STATES and self.attempts == 0:
+            raise ValueError(
+                f"A {self.state} stage has been run at least once, so its attempt "
+                "count cannot be zero: a zero count would hide the attempt that "
+                "produced this state, which is the one an operator needs to see."
+            )
+
         if self.state == "done" and self.artifact_sha256 is None:
             raise ValueError(
                 "A done stage must name the artifact it produced: done is a "
@@ -269,6 +302,28 @@ class StageRecord:
                 "A failed stage must carry a reason code: failure is a result, "
                 "not an absence, and a failure without a code cannot be asserted."
             )
+
+    def as_mapping(self) -> Mapping[str, object]:
+        """Return the record as the mapping it is stored and reported as.
+
+        The field list lives here, once. Two callers read it and must not diverge:
+        the ledger's own JSON writer, and K1's manifest rebuild, which reports every
+        ledger field in ``run.json``. A second copy of the list is a field that
+        reaches the ledger and not the manifest - a record an operator cannot see.
+
+        Returns:
+            The record's fields, in declaration order.
+
+        """
+        return MappingProxyType(
+            {
+                "state": self.state,
+                "artifact_sha256": self.artifact_sha256,
+                "reason_code": self.reason_code,
+                "cache_key": self.cache_key,
+                "attempts": self.attempts,
+            }
+        )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -311,7 +366,11 @@ def new_ledger(unit: str, stages: Iterable[str]) -> Ledger:
 
     """
     pending = StageRecord(
-        state="pending", artifact_sha256=None, reason_code=None, cache_key=None
+        state="pending",
+        artifact_sha256=None,
+        reason_code=None,
+        cache_key=None,
+        attempts=0,
     )
     return Ledger(
         unit=unit,
@@ -611,11 +670,13 @@ def _with_state(
             "stage outside it is a mistake in the caller, not a new stage."
         )
 
+    previous = ledger.stages[stage]
     record = StageRecord(
         state=state,
         artifact_sha256=artifact_sha256,
         reason_code=reason_code,
         cache_key=cache_key,
+        attempts=_attempts_after(previous, state),
     )
     updated = Ledger(
         unit=ledger.unit,
@@ -623,6 +684,44 @@ def _with_state(
     )
     write_ledger(unit_dir, updated)
     return updated
+
+
+def _attempts_after(previous: StageRecord, state: str) -> int:
+    """Return the attempt count a stage carries after a transition into ``state``.
+
+    The rule, stated once so it is not re-derived at three call sites:
+
+    - **``running`` opens an attempt**, so the count grows by one.
+    - **An outcome (``done``, ``failed``) closes the attempt ``running`` opened**, so it
+      does not grow. **Unless no ``running`` was seen** - a stage committed straight
+      from ``pending`` was still run, and a count that missed it would understate
+      exactly the runs nobody recorded.
+    - Everything else (``pending``, ``blocked``, ``stale``, ``skipped``) is not an
+      attempt and leaves the count alone.
+
+    Deriving the count from the transition rather than asking callers to pass one is
+    what keeps it a *count of runs* instead of a number somebody remembered to
+    increment.
+
+    The count is not a lock and enforces nothing: `kernel-cli.md` §7 forbids
+    *retry-until-agreement* for a sampled kernel, and the orchestrator's job is to make
+    the pattern **visible** rather than to prevent it (`plan-01-kernels.md` §9).
+
+    Args:
+        previous: The record being replaced.
+        state: The state being written.
+
+    Returns:
+        The attempt count for the new record.
+
+    """
+    if state == "running":
+        return previous.attempts + 1
+
+    if state in _ATTEMPT_OUTCOMES and previous.state != "running":
+        return previous.attempts + 1
+
+    return previous.attempts
 
 
 def _sha256(data: bytes) -> str:
@@ -748,13 +847,7 @@ def _ledger_to_json(ledger: Ledger) -> str:
     payload = {
         "unit": ledger.unit,
         "stages": {
-            name: {
-                "state": record.state,
-                "artifact_sha256": record.artifact_sha256,
-                "reason_code": record.reason_code,
-                "cache_key": record.cache_key,
-            }
-            for name, record in ledger.stages.items()
+            name: dict(record.as_mapping()) for name, record in ledger.stages.items()
         },
     }
     return json.dumps(payload, indent=2) + "\n"
@@ -785,6 +878,7 @@ def _ledger_from_json(text: str) -> Ledger:
             artifact_sha256=entry["artifact_sha256"],
             reason_code=entry["reason_code"],
             cache_key=entry["cache_key"],
+            attempts=entry["attempts"],
         )
         for name, entry in payload["stages"].items()
     }

@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E05** |
 | Capability | K1 Orchestrator: unit/stage/graph dispatch, the 7 durable states, determinism classes, typed slots and barriers, mandatory verification |
-| Issues | `E05-01` (`S1-T06`) — **`done`** (§3) · `E05-02` (`S1-T07`) · `E05-03` (`S1-T08`) · `E05-04` (`S1-T09`) · `E05-05` (`S1-T10`) — `todo` |
+| Issues | `E05-01` (`S1-T06`) — **`done`** (§3) · `E05-02` (`S1-T07`) — **`done`** (§3) · `E05-03` (`S1-T08`) · `E05-04` (`S1-T09`) · `E05-05` (`S1-T10`) — `todo` |
 | Issue count | **5** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernels/` |
 | Wave span | **W4 → W6** (W4: 1 · W5: 2 · W6: 2) |
@@ -140,6 +140,51 @@ Nothing above the store can run until something reads a graph, decides what is r
 
 **Title**
 K1 durable states: the 7 states, with `running` written **before** the work starts.
+
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | Exactly **seven** durable states exist; no eighth is writable and none is missing | ✅ met — `DURABLE_STATE_ORDER` (E02) refuses an eighth by construction |
+| 2 | `running` is written **before** the work starts — demonstrable by killing a stage mid-work | ✅ met — and demonstrable **without** a kill, see the note below |
+| 3 | A kill mid-stage leaves the ledger reading `running` — not `pending`, not `done` | ✅ met — `begin` is the first thing `_dispatch` does |
+| 4 | *"Never `done` about a non-durable artifact"* holds under an injected crash | ✅ met — E02's `commit`-requires-`put` ordering, unchanged |
+| 5 | The injected-crash test **fails** if the ordering is moved | ✅ met — `M1`/`M2` in the new harness redden it |
+| 6 | A resumed run re-runs **at most one stage per in-flight unit** | ✅ met — a stage terminal for its key is skipped, so at most the interrupted one re-runs |
+| 7 | A stage that completed before the kill does **not** re-run | ✅ met |
+| 8 | No code path writes a state other than one of the seven, and none writes `running` after the work started | ✅ met — `_dispatch` writes it first, in one place |
+
+**On #2 — the criterion asks for a kill, and a kill is not the only way to falsify it.** The property is *the order of two writes*, and a test that kills a process proves it only by inference: afterwards, both orderings leave the same record. So the ordering is read **from inside the operation** — a recorder that consults the ledger while the stage's work is executing, which is the one vantage point from which *before* and *after* are distinguishable. `M1` (moving the `begin` after the dispatch) and `M2` (dropping it) both redden that test, which is what `plan-01-kernels.md` §7b row 3 requires.
+
+**The control: how `pause` reaches a run already in flight.** The criterion for this issue is the state ordering; the *interruptions* run through it, and a scheduler that cannot be interrupted cannot be observed to resume. So a run's control is a file at its output root, polled **before every stage**:
+
+- `paused` and `stopped` both hold; the difference is the *signal* (§9 of the epic table names K1's `pause`/`stop` as port methods).
+- An **unrecognised** control state is refused, never read as `running`: silently resuming a run somebody asked to hold is the failure the file exists to prevent.
+- It is read **before the first unit** as well as between stages. A per-unit-only check would let a pause land a whole unit late, which is indistinguishable from *let the job finish*.
+- `read_control` on an absent file returns `running` — **the only default in the module**, and it is about an operator's silence rather than about a value the system would otherwise have to produce.
+
+**Two reporting defects the work found, both by a failing test rather than by reading.**
+
+1. **A run with no ledgers read as `complete`.** A pause taken before the first stage leaves the output root empty, and *no unfinished units* answered *finished* — the same class of error as a `done` claim about bytes that do not exist, one level up. The run state now consults the ledger **count** first.
+2. **A paused run and a crashed run were indistinguishable.** Both leave unfinished work; only one has an operator's request behind it. The run state gains `holding`, and it is a **third vocabulary** — the seven durable states describe a *stage*, and a value no ledger may carry has no business in `run.json`.
+
+**The attempt count, which this issue's criterion 8 implies and `E05-03` will consume.** `StageRecord` gained `attempts`, **derived** from the transition rather than passed by a caller: `running` opens an attempt, an outcome closes the one it opened, and an outcome arriving from `pending` counts one because the stage was still run. A count a caller increments is a count somebody forgets to increment, and the one time it matters is the retry loop it exists to make visible — `kernel-cli.md` §7 forbids *retry-until-agreement* for a sampled kernel, and `plan-01-kernels.md` §9 says the prohibition is enforceable only if the pattern can be **seen**. It is reported in `run.json` under `attempts`, and it **enforces nothing**: recording is this issue's, policy is not.
+
+**A real duplication, extracted rather than suppressed.** The manifest rebuild originally re-listed the ledger record's fields, which Pylint flagged as `duplicate-code` against the ledger writer. The finding was **correct**: a second copy of the field list is a field that reaches the ledger and not `run.json` — a record an operator cannot see. `StageRecord.as_mapping()` is now the single source, read by both.
+
+**Effort**
+**L** — a load-bearing invariant, an interruption mechanism, and a count whose rule had to be derived rather than declared. Three of the four defects above were found by tests or by the mutation harness, not by reading.
+
+**Test / evidence**
+- `tests/kernels/test_orchestrator.py` — **65 tests**, all green. The ordering is falsified by `test_the_ledger_reads_running_from_inside_the_operation` and `test_the_cache_key_is_recorded_before_the_work_too`.
+- `tests/kernels/mutation_ordering.py` — **15 mutations, all falsified.** Four survivor investigations are recorded in the harness's own docstring; two were **ambiguous anchors** (a repeated literal landing in the wrong function) and one was a **real gap** — nothing exercised the branch that consults the control *after* establishing that a unit is unfinished, so `test_a_run_paused_with_work_half_done_reports_holding` was added. The harness now **refuses an ambiguous anchor** rather than scoring it.
+- `tests/kernels/test_store.py` — 109 tests, including the count rule and two new hand-edited-ledger corruptions (an attempt state claiming it never ran; a negative count).
+- `plan-01-kernels.md` §6 steps 7–8 — `stop --force` mid-`transform` then `ledger-read` → `running`; then resume → **at most one stage per in-flight unit**. Requirements **FR-03**, **FR-04**, **NFR-02**.
+- `kernel-cli.md` §11 **rows 1 and 2** — both `now`, both Stage 1 gate rows. The *procedures* are driven here; the CLI invocations are `E07-02`'s.
+- All four QA gates green: `pytest` (794 passed), `ruff check`, `ruff format --check`, `pylint src tests`.
+- `tests/kernels/mutation_orchestrator.py` — re-run after this issue's refactor and **re-anchored**: making the ledger writer delegate to `as_mapping()` moved one anchor, which reported as a survivor until it was fixed. The lesson is recorded in the harness.
+
+**Open state carried forward.** `store._atomic_write` is reached privately for the control file. `# TODO: [MVP]`: a narrow public `store.write_json_atomically` that both the ledger writer and this call — a widening of K7's surface, which belongs to `E02`/`E07-02` and is deliberately not taken from here.
 
 **Context**
 The difference between a resume that is correct and one that silently skips work is *when* the state is written. If `running` is written only on completion, a killed stage reads as one that never began — so the resume path treats it as fresh work and the next run does something different from what the ledger claimed. This issue is the ordering itself, and the plan calls it *"the whole crash-recovery design"* (`wbs.md` §6.1).

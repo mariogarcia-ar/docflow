@@ -99,19 +99,20 @@ STAGE_NAMES: tuple[str, ...] = ("acquire", "transform", "persist")
 #: verifies. ``running`` may also carry a reason code at this layer; only the
 #: ``done``/``failed`` pairings are closed by ``StageRecord``.
 #:
-#: The fourth element is the cache key. It is required for a **terminal outcome**
-#: (``done``, ``failed``) and optional for the states on the way there, because a
-#: stage that has not been dispatched under a key has none to record.
-LEGAL_STATE_RECORDS: tuple[tuple[str, str | None, str | None, str | None], ...] = (
-    ("running", None, None, None),
-    ("running", None, None, SOME_CACHE_KEY),
-    ("done", SOME_SHA256, None, SOME_CACHE_KEY),
-    ("failed", None, "artifact_missing", SOME_CACHE_KEY),
-    ("pending", None, None, None),
-    ("blocked", None, None, None),
-    ("stale", None, None, None),
-    ("skipped", None, None, None),
-    ("failed", SOME_SHA256, "evidence_missing", SOME_CACHE_KEY),
+#: The fourth element is the cache key, required for a **terminal outcome**
+#: (``done``, ``failed``) and optional for the states on the way there. The fifth is
+#: the attempt count, and it follows from the state: an attempt state has been run at
+#: least once, and the states that are not attempts cannot claim one.
+LEGAL_STATE_RECORDS: tuple[tuple[str, str | None, str | None, str | None, int], ...] = (
+    ("running", None, None, None, 1),
+    ("running", None, None, SOME_CACHE_KEY, 1),
+    ("done", SOME_SHA256, None, SOME_CACHE_KEY, 1),
+    ("failed", None, "artifact_missing", SOME_CACHE_KEY, 1),
+    ("pending", None, None, None, 0),
+    ("blocked", None, None, None, 0),
+    ("stale", None, None, None, 0),
+    ("skipped", None, None, None, 0),
+    ("failed", SOME_SHA256, "evidence_missing", SOME_CACHE_KEY, 2),
 )
 
 #: Values that look like a state and are not one. ``not_applicable`` is included
@@ -843,13 +844,15 @@ def test_verify_says_nothing_about_ledger_trust(root: pathlib.Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("state", "artifact_sha256", "reason_code", "cache_key"), LEGAL_STATE_RECORDS
+    ("state", "artifact_sha256", "reason_code", "cache_key", "attempts"),
+    LEGAL_STATE_RECORDS,
 )
 def test_every_legal_state_record_is_constructible(
     state: str,
     artifact_sha256: str | None,
     reason_code: str | None,
     cache_key: str | None,
+    attempts: int,
 ) -> None:
     """Each durable state is writable with a legal field pairing.
 
@@ -858,6 +861,7 @@ def test_every_legal_state_record_is_constructible(
         artifact_sha256: The artifact claim, or None.
         reason_code: The reason code, or None.
         cache_key: The key the stage ran under, or None before dispatch.
+        attempts: The attempt count that state permits.
 
     """
     record = StageRecord(
@@ -865,12 +869,14 @@ def test_every_legal_state_record_is_constructible(
         artifact_sha256=artifact_sha256,
         reason_code=reason_code,
         cache_key=cache_key,
+        attempts=attempts,
     )
 
     assert record.state in DURABLE_STATE_ORDER
     assert record.artifact_sha256 == artifact_sha256
     assert record.reason_code == reason_code
     assert record.cache_key == cache_key
+    assert record.attempts == attempts
 
 
 @pytest.mark.parametrize("state", EIGHTH_STATE_CANDIDATES)
@@ -883,7 +889,11 @@ def test_no_eighth_state_is_writable(state: object) -> None:
     """
     with pytest.raises(ValueError) as excinfo:
         StageRecord(  # type: ignore[arg-type]
-            state=state, artifact_sha256=None, reason_code=None, cache_key=None
+            state=state,
+            artifact_sha256=None,
+            reason_code=None,
+            cache_key=None,
+            attempts=0,
         )
 
     assert "seven durable ledger states" in str(excinfo.value)
@@ -907,6 +917,7 @@ def test_not_applicable_is_a_stage_list_and_never_a_state() -> None:
             artifact_sha256=None,
             reason_code=None,
             cache_key=None,
+            attempts=0,
         )
 
 
@@ -922,6 +933,7 @@ def test_a_done_record_requires_an_artifact_hash() -> None:
             artifact_sha256=None,
             reason_code=None,
             cache_key=SOME_CACHE_KEY,
+            attempts=1,
         )
 
     assert "must name the artifact" in str(excinfo.value)
@@ -935,6 +947,7 @@ def test_a_failed_record_requires_a_reason_code() -> None:
             artifact_sha256=None,
             reason_code=None,
             cache_key=SOME_CACHE_KEY,
+            attempts=1,
         )
 
     assert "must carry a reason code" in str(excinfo.value)
@@ -961,6 +974,7 @@ def test_a_terminal_outcome_requires_the_cache_key_it_ran_under(
         "artifact_sha256": SOME_SHA256 if state == "done" else None,
         "reason_code": None if state == "done" else "artifact_missing",
         "cache_key": None,
+        "attempts": 1,
     }
 
     with pytest.raises(ValueError) as excinfo:
@@ -982,7 +996,11 @@ def test_a_non_terminal_state_is_not_required_to_name_a_key(state: str) -> None:
 
     """
     record = StageRecord(
-        state=state, artifact_sha256=None, reason_code=None, cache_key=None
+        state=state,
+        artifact_sha256=None,
+        reason_code=None,
+        cache_key=None,
+        attempts=1 if state == "running" else 0,
     )
 
     assert record.cache_key is None
@@ -1001,6 +1019,7 @@ def test_an_empty_string_is_refused_where_none_is_the_absence(field_name: str) -
         "artifact_sha256": None,
         "reason_code": None,
         "cache_key": None,
+        "attempts": 0,
     }
     arguments[field_name] = ""
 
@@ -1017,6 +1036,7 @@ def test_stage_records_are_frozen_and_hashable() -> None:
         artifact_sha256=SOME_SHA256,
         reason_code=None,
         cache_key=SOME_CACHE_KEY,
+        attempts=1,
     )
 
     assert dataclasses.is_dataclass(record)
@@ -1027,6 +1047,7 @@ def test_stage_records_are_frozen_and_hashable() -> None:
             artifact_sha256=SOME_SHA256,
             reason_code=None,
             cache_key=SOME_CACHE_KEY,
+            attempts=1,
         )
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -1086,6 +1107,7 @@ def test_write_ledger_and_read_ledger_round_trip(unit_dir: pathlib.Path) -> None
                 artifact_sha256=None,
                 reason_code=None,
                 cache_key=None,
+                attempts=0,
             ),
         },
     )
@@ -1165,6 +1187,76 @@ def test_commit_records_the_artifact_hash_and_the_key_it_ran_under(
     assert record.reason_code is None
     assert record.cache_key == SOME_CACHE_KEY
     assert artifact.sha256 == hashlib.sha256(FIRST_BYTES).hexdigest()
+
+
+def test_the_attempt_count_grows_with_each_write_that_is_an_attempt(
+    unit_dir: pathlib.Path,
+) -> None:
+    """The count is of **runs**, derived from the transition rather than passed in.
+
+    A count a caller increments is a count somebody will forget to increment - and the
+    one time it matters is the retry loop the count exists to make visible
+    (`kernel-cli.md` §7). So ``running`` counts, and ``done`` completes the attempt
+    that ``running`` opened rather than adding a second one.
+    """
+    assert read_stage(unit_dir, "transform").attempts == 0
+
+    store.begin(unit_dir, "transform", SOME_CACHE_KEY)
+    assert read_stage(unit_dir, "transform").attempts == 1, "an attempt was opened"
+
+    artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
+    store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
+    assert read_stage(unit_dir, "transform").attempts == 1, (
+        "done completes the attempt running opened; it is not a second one"
+    )
+
+
+def test_a_second_run_of_the_same_stage_is_counted(unit_dir: pathlib.Path) -> None:
+    """Re-running a stage is a second attempt, and the count says so.
+
+    This is the mechanism behind the recorded prohibition: retrying a sampled kernel
+    to obtain agreement is forbidden, and the orchestrator's job is to make the
+    pattern **visible** rather than to prevent it (`plan-01-kernels.md` §9). A stage
+    that went round three times is legible as exactly that.
+    """
+    artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
+    store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
+    store.begin(unit_dir, "transform", SOME_CACHE_KEY)
+    store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
+
+    assert read_stage(unit_dir, "transform").attempts == 2
+
+
+def test_a_failed_stage_counts_the_attempt_that_failed(unit_dir: pathlib.Path) -> None:
+    """A failure is an attempt's outcome, so it is counted rather than lost."""
+    reason = Reason(code="blank_page", message="The page carries no content.")
+
+    store.begin(unit_dir, "transform", SOME_CACHE_KEY)
+    ledger = store.fail(unit_dir, "transform", reason, SOME_CACHE_KEY)
+
+    assert ledger.stages["transform"].attempts == 1
+
+
+def test_states_that_are_not_attempts_do_not_grow_the_count(
+    unit_dir: pathlib.Path,
+) -> None:
+    """``pending``/``stale``/``skipped``/``blocked`` are not attempts to produce.
+
+    Counting them would make the number mean *how many times this stage's state was
+    written*, which is a different and useless fact.
+    """
+    ledger = store.read_ledger(unit_dir)
+    for state in ("skipped", "stale", "blocked"):
+        record = store.StageRecord(
+            state=state,
+            artifact_sha256=None,
+            reason_code=None,
+            cache_key=None,
+            attempts=0,
+        )
+        assert record.attempts == 0, state
+
+    assert ledger.stages["persist"].attempts == 0
 
 
 def test_fail_records_the_reason_code_and_the_key_it_ran_under(
@@ -1600,6 +1692,7 @@ def test_the_ledger_records_the_unit_inside_the_file(unit_dir: pathlib.Path) -> 
         "artifact_sha256": None,
         "reason_code": None,
         "cache_key": None,
+        "attempts": 0,
     }
 
 
@@ -1611,24 +1704,28 @@ def test_the_ledger_records_the_unit_inside_the_file(unit_dir: pathlib.Path) -> 
             "artifact_sha256": None,
             "reason_code": None,
             "cache_key": None,
+            "attempts": 0,
         },
         {
             "state": "done",
             "artifact_sha256": None,
             "reason_code": None,
             "cache_key": SOME_CACHE_KEY,
+            "attempts": 1,
         },
         {
             "state": "failed",
             "artifact_sha256": None,
             "reason_code": None,
             "cache_key": SOME_CACHE_KEY,
+            "attempts": 1,
         },
         {
             "state": "done",
             "artifact_sha256": "",
             "reason_code": None,
             "cache_key": SOME_CACHE_KEY,
+            "attempts": 1,
         },
         # A terminal outcome with no key: legal in shape, illegal in meaning.
         {
@@ -1636,6 +1733,7 @@ def test_the_ledger_records_the_unit_inside_the_file(unit_dir: pathlib.Path) -> 
             "artifact_sha256": SOME_SHA256,
             "reason_code": None,
             "cache_key": None,
+            "attempts": 1,
         },
         # ``""`` reads as *keyed to nothing*, which is the stand-in shape.
         {
@@ -1643,6 +1741,25 @@ def test_the_ledger_records_the_unit_inside_the_file(unit_dir: pathlib.Path) -> 
             "artifact_sha256": None,
             "reason_code": "blank_page",
             "cache_key": "",
+            "attempts": 1,
+        },
+        # A run state claiming it was never run: the attempt count is what makes
+        # *"retry until two answers agree"* visible, so a zero count on a state
+        # that only an attempt can produce is refused.
+        {
+            "state": "running",
+            "artifact_sha256": None,
+            "reason_code": None,
+            "cache_key": None,
+            "attempts": 0,
+        },
+        # A negative count is not a count.
+        {
+            "state": "pending",
+            "artifact_sha256": None,
+            "reason_code": None,
+            "cache_key": None,
+            "attempts": -1,
         },
     ],
 )

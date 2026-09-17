@@ -135,7 +135,7 @@ MUTATIONS: list[tuple[str, Path, str, str, set[str]]] = [
     (
         "M9: stop writing the key to the ledger file",
         STORE,
-        '                "cache_key": record.cache_key,',
+        '                "cache_key": self.cache_key,',
         '                "cache_key": None,',
         {"test_fail_records_the_reason_code_and_the_key_it_ran_under"},
     ),
