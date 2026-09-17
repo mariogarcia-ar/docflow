@@ -98,6 +98,12 @@ KERNEL_TERMS: Mapping[str, orchestrator.KernelTerms] = MappingProxyType(
 #: The registry hash and per-kernel terms, as one value.
 KEYS = orchestrator.KeyContext(registry_hash=REGISTRY_HASH, kernels=KERNEL_TERMS)
 
+#: The slot bounds every test declares unless it is testing the declaration itself.
+#: Stated rather than defaulted, so a suite that forgot to declare a bound would fail
+#: to run rather than silently take the scheduler's baseline - the same reason the
+#: kernel has no default on `run`.
+SLOTS = orchestrator.SLOT_BOUNDS
+
 #: The synthetic descriptor of `plan-01-kernels.md` §6 step 1, in its parsed form:
 #: three stages, no domain noun, operations that are kernel ops only. The unit set is
 #: declared explicitly so the flow runs over N > 1 units, which is the criterion.
@@ -387,6 +393,7 @@ def test_a_three_stage_graph_runs_over_n_units(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     assert len(UNIT_NAMES) > 1, "N > 1 is the criterion, not a preference"
@@ -420,6 +427,7 @@ def test_the_manifest_carries_the_five_reported_keys(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
     manifest = json.loads(
         (out / orchestrator.MANIFEST_NAME).read_text(encoding="utf-8")
@@ -461,6 +469,7 @@ def test_rebuild_index_reproduces_the_manifest_from_the_ledgers_alone(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     manifest_path = out / orchestrator.MANIFEST_NAME
@@ -496,6 +505,7 @@ def test_the_manifest_is_written_by_deriving_it_never_by_assembling_it(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     assert dict(report.manifest) == dict(orchestrator.rebuild_index(out))
@@ -514,6 +524,7 @@ def test_a_hand_deleted_manifest_leaves_the_run_intact(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
     (out / orchestrator.MANIFEST_NAME).unlink()
 
@@ -546,6 +557,7 @@ def test_rebuild_index_ignores_an_existing_manifest_entirely(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     poison = {
@@ -596,6 +608,7 @@ def test_a_terminal_stage_under_the_same_key_is_not_re_run(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
     first_pass = len(recorder.calls)
 
@@ -605,6 +618,7 @@ def test_a_terminal_stage_under_the_same_key_is_not_re_run(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     assert second.dispatched == ()
@@ -629,6 +643,7 @@ def test_a_changed_registry_hash_makes_every_keyed_stage_new_work(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     changed = orchestrator.KeyContext(registry_hash="d00d" * 16, kernels=KERNEL_TERMS)
@@ -638,6 +653,7 @@ def test_a_changed_registry_hash_makes_every_keyed_stage_new_work(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=changed,
+        slots=SLOTS,
     )
 
     assert second.skipped == (), "a different key is different work"
@@ -663,6 +679,7 @@ def test_a_changed_unit_input_makes_a_downstream_stage_new_work(
         input_hashes=_input_hashes(),
         operations=first.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     second = Recorder()
@@ -672,6 +689,7 @@ def test_a_changed_unit_input_makes_a_downstream_stage_new_work(
         input_hashes={name: _hash_of("different input") for name in UNIT_NAMES},
         operations=second.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     assert report.skipped == ()
@@ -696,6 +714,7 @@ def test_a_stage_whose_key_differs_is_re_dispatched_even_though_it_is_done(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
     before = store.read_ledger(out / UNIT_NAMES[0]).stages["acquire"].cache_key
 
@@ -706,6 +725,7 @@ def test_a_stage_whose_key_differs_is_re_dispatched_even_though_it_is_done(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=changed,
+        slots=SLOTS,
     )
     after = store.read_ledger(out / UNIT_NAMES[0]).stages["acquire"].cache_key
 
@@ -731,6 +751,7 @@ def test_every_term_of_the_key_reaches_the_operation(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     acquire = next(call for call in recorder.calls if call.stage.name == "acquire")
@@ -766,6 +787,7 @@ def test_a_stage_whose_need_produced_no_artifact_is_not_dispatched(
         input_hashes=_input_hashes(),
         operations=failing.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     unit = UNIT_NAMES[0]
@@ -797,6 +819,7 @@ def test_a_failed_stage_records_the_key_it_ran_under(
         input_hashes=_input_hashes(),
         operations=failing.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     record = store.read_ledger(out / UNIT_NAMES[0]).stages["transform"]
@@ -820,6 +843,7 @@ def test_the_unit_input_hash_is_the_first_key_term_for_a_root_stage(
         input_hashes=inputs,
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     acquire = next(call for call in recorder.calls if call.stage.name == "acquire")
@@ -840,6 +864,7 @@ def test_a_downstream_stage_sees_the_hashes_its_needs_produced(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     unit = UNIT_NAMES[0]
@@ -1093,7 +1118,7 @@ def test_validate_writes_nothing_and_dispatches_nothing(
     """
     out = tmp_path / "O"
 
-    orchestrator.validate(descriptor, _input_hashes(), recorder.table(), KEYS)
+    orchestrator.validate(descriptor, _input_hashes(), recorder.table(), KEYS, SLOTS)
 
     assert recorder.calls == []
     assert not out.exists(), "a plan must not create the output tree"
@@ -1104,7 +1129,7 @@ def test_validate_refuses_a_missing_unit_input(
 ) -> None:
     """A unit with no declared input hash has no first key term."""
     with pytest.raises(ValueError) as excinfo:
-        orchestrator.validate(descriptor, {}, recorder.table(), KEYS)
+        orchestrator.validate(descriptor, {}, recorder.table(), KEYS, SLOTS)
 
     assert "No input hash is declared" in str(excinfo.value)
 
@@ -1124,7 +1149,7 @@ def test_validate_refuses_a_stage_with_no_operation(
     """An operation table that lacks a stage is a configuration error, not a skip."""
     with pytest.raises(ValueError) as excinfo:
         orchestrator.validate(
-            descriptor, _input_hashes(), {("store", "put"): PUT_ONLY}, KEYS
+            descriptor, _input_hashes(), {("store", "put"): PUT_ONLY}, KEYS, SLOTS
         )
 
     assert "no operation for" in str(excinfo.value)
@@ -1143,6 +1168,7 @@ def test_validate_refuses_a_kernel_with_no_key_terms(
                 registry_hash=REGISTRY_HASH,
                 kernels=MappingProxyType({"store": KERNEL_TERMS["store"]}),
             ),
+            SLOTS,
         )
 
     assert "No key terms are declared" in str(excinfo.value)
@@ -1437,6 +1463,7 @@ def test_a_paused_run_dispatches_nothing_and_reports_what_it_held(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     assert recorder.calls == []
@@ -1477,6 +1504,7 @@ def test_a_pause_lands_at_a_stage_boundary_not_a_unit_boundary(
         input_hashes=_input_hashes(),
         operations=pausing.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     assert [name for _unit, name in report.dispatched] == ["acquire"], (
@@ -1522,6 +1550,7 @@ def test_resuming_continues_from_the_exact_stage(
         input_hashes=_input_hashes(),
         operations=PausingRecorder().table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     orchestrator.write_control(out, "running")
@@ -1532,6 +1561,7 @@ def test_resuming_continues_from_the_exact_stage(
         input_hashes=_input_hashes(),
         operations=resumed.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     assert (unit, "acquire") in report.skipped, "completed work is not re-run"
@@ -1564,6 +1594,7 @@ def test_the_manifest_reports_a_held_run_as_holding(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     manifest = json.loads(
@@ -1601,6 +1632,7 @@ def test_a_run_held_before_its_first_unit_is_not_reported_complete(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     ).manifest
 
     assert manifest["state"] == "holding"
@@ -1621,6 +1653,7 @@ def test_the_manifest_reports_a_completed_run_as_complete(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
     orchestrator.write_control(out, "paused")
 
@@ -1650,6 +1683,7 @@ def test_the_manifest_reports_attempt_counts_for_work_that_ran(
         input_hashes=_input_hashes(),
         operations=recorder.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     manifest = orchestrator.rebuild_index(out)
@@ -1675,6 +1709,7 @@ def test_a_unit_failure_does_not_abort_the_run(
         input_hashes=_input_hashes(),
         operations=failing.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     for unit in UNIT_NAMES:
@@ -1750,6 +1785,7 @@ def test_the_ledger_reads_running_from_inside_the_operation(
         input_hashes=_input_hashes(),
         operations=observing.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     assert observing.seen, "the operations must have been called"
@@ -1784,6 +1820,7 @@ def test_the_cache_key_is_recorded_before_the_work_too(
         input_hashes=_input_hashes(),
         operations=observing.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     for call in observing.calls:
@@ -1810,6 +1847,7 @@ def test_a_failure_is_recorded_as_failed_and_not_committed(
         input_hashes=_input_hashes(),
         operations=failing.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     record = store.read_ledger(out / UNIT_NAMES[0]).stages["transform"]
@@ -1870,6 +1908,7 @@ def test_a_run_paused_with_work_half_done_reports_holding(
         input_hashes=_input_hashes(),
         operations=PausingRecorder(out).table(),
         keys=KEYS,
+        slots=SLOTS,
     ).manifest
 
     assert manifest["state"] == "holding"
@@ -1895,6 +1934,7 @@ def test_the_same_partial_run_without_a_pause_reports_incomplete(
         input_hashes=_input_hashes(),
         operations=PausingRecorder(out).table(),
         keys=KEYS,
+        slots=SLOTS,
     )
     assert orchestrator.rebuild_index(out)["state"] == "holding"
 
@@ -1928,6 +1968,7 @@ def test_a_ledger_read_carries_its_verification_outcome(
         input_hashes=_input_hashes(),
         operations=fresh.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     unit = out / UNIT_NAMES[0]
@@ -1965,6 +2006,7 @@ def test_a_deleted_artifact_makes_its_stage_read_as_unverified(
         input_hashes=_input_hashes(),
         operations=fresh.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     unit = out / UNIT_NAMES[0]
@@ -1994,6 +2036,7 @@ def test_a_truncated_artifact_is_as_unverified_as_a_deleted_one(
         input_hashes=_input_hashes(),
         operations=Recorder().table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     unit = out / UNIT_NAMES[0]
@@ -2044,6 +2087,7 @@ def test_the_unverified_code_is_the_closed_sets_artifact_missing(
         input_hashes=_input_hashes(),
         operations=Recorder().table(),
         keys=KEYS,
+        slots=SLOTS,
     )
     record = store.read_ledger(unit).stages["acquire"]
     assert record.artifact_sha256 is not None
@@ -2071,6 +2115,7 @@ def test_the_manifest_reports_the_unverified_claims(
         input_hashes=_input_hashes(),
         operations=Recorder().table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     healthy = orchestrator.rebuild_index(out)
@@ -2107,6 +2152,7 @@ def test_a_run_re_dispatches_a_stage_whose_artifact_was_deleted(
         input_hashes=_input_hashes(),
         operations=Recorder().table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     unit = out / UNIT_NAMES[0]
@@ -2121,6 +2167,7 @@ def test_a_run_re_dispatches_a_stage_whose_artifact_was_deleted(
         input_hashes=_input_hashes(),
         operations=second.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     assert (unit.name, "acquire") in report.unverified, (
@@ -2163,6 +2210,7 @@ def test_a_stage_left_unverified_and_blocked_does_not_lend_its_stale_hash(
         input_hashes=_input_hashes(),
         operations=Recorder().table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     unit = out / UNIT_NAMES[0]
@@ -2181,6 +2229,7 @@ def test_a_stage_left_unverified_and_blocked_does_not_lend_its_stale_hash(
         input_hashes=_input_hashes(),
         operations=failing.table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     after = store.read_ledger(unit).stages
@@ -2284,6 +2333,7 @@ def test_the_check_reads_the_store_not_the_ledgers_own_claim(
         input_hashes=_input_hashes(),
         operations=Recorder().table(),
         keys=KEYS,
+        slots=SLOTS,
     )
 
     unit = out / UNIT_NAMES[0]

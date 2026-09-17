@@ -634,6 +634,7 @@ def _verb_run(
         input_hashes=_input_hashes(descriptor),
         operations=_operations(out_dir),
         keys=_key_context(),
+        slots=_slot_bounds(env),
     )
 
     return Invocation(
@@ -642,6 +643,7 @@ def _verb_run(
             f"job {job.job_id} — {len(report.dispatched)} stage(s) run, "
             f"{len(report.skipped)} already done, {len(report.held)} held\n"
             f"state: {report.manifest['state']}\n"
+            f"{_failure_line(report.failed)}"
         ),
         stderr="",
     )
@@ -825,6 +827,70 @@ def _key_context() -> orchestrator.KeyContext:
             }
         ),
     )
+
+
+def _slot_bounds(env: Mapping[str, str] | None) -> orchestrator.SlotBounds:
+    """Resolve the per-slot bounds from the environment and the defaults.
+
+    `NFR-04` puts ``--jobs``/``DOCFLOW_JOBS`` on the `cpu` slot, and `sad.md` §7.2
+    bounds `gpu` to one generation per device. So the only slot the environment can
+    move is `cpu`, and the other two are declared at their documented bounds - which is
+    why this reads one variable rather than parsing a general ``--slots`` grammar:
+    a parser for a set of bounds that nothing sets yet would be surface with no caller.
+    ``# TODO: [MVP]``: `--slots cpu=n,gpu=n,remote=n` is in the allowed vocabulary
+    (`kernel-cli.md` §8) and `S3-T11` owns resolving it.
+
+    A value that is not a number, or is negative, is **refused** rather than ignored:
+    falling back to the default would run at a bound the operator did not ask for while
+    reporting success.
+
+    Args:
+        env: The environment, or None for the real one.
+
+    Returns:
+        The bounds.
+
+    Raises:
+        UsageError: If ``DOCFLOW_JOBS`` is present but is not a non-negative integer.
+
+    """
+    resolved = resolve_setting("jobs", None, env=env, dotenv={})
+    if resolved is None:
+        return orchestrator.SLOT_BOUNDS
+
+    try:
+        cpu = int(str(resolved))
+    except ValueError as exc:
+        raise UsageError(
+            f"DOCFLOW_JOBS must be an integer, got {resolved!r}. Ignoring it would run "
+            "at a bound the operator did not ask for while reporting success."
+        ) from exc
+
+    try:
+        return orchestrator.SlotBounds(
+            bounds=MappingProxyType(
+                {"cpu": cpu, "gpu": 1, "remote": 1},
+            )
+        )
+    except ValueError as exc:
+        raise UsageError(f"DOCFLOW_JOBS is out of range: {exc}") from exc
+
+
+def _failure_line(failed: Sequence[tuple[str, tuple[str, ...]]]) -> str:
+    """Render the units that did not complete, or nothing when the run was clean.
+
+    Reported per unit rather than as one count, because that is what `FR-07`'s
+    containment means to an operator: *this unit failed*, not *the run failed*. The
+    manifest's state already says the latter.
+
+    Args:
+        failed: Unit name to the stages of that unit that did not complete.
+
+    Returns:
+        One line per failing unit, or an empty string when every unit completed.
+
+    """
+    return "".join(f"failed: {unit} ({', '.join(stages)})\n" for unit, stages in failed)
 
 
 def _now() -> str:

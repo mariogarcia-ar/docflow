@@ -511,6 +511,48 @@ def test_run_without_an_output_root_is_a_usage_error(
     assert "--out <dir> or DOCFLOW_OUT" in refused.stderr
 
 
+# --- The slot bounds the surface resolves ----------------------------------
+
+
+def test_run_resolves_the_cpu_slot_from_the_environment() -> None:
+    """`NFR-04`: ``DOCFLOW_JOBS`` bounds the `cpu` slot, and only that one.
+
+    Asserted through the resolved bound set rather than through a run's behaviour,
+    because the PoC scheduler is sequential: a bound of 4 and a bound of 1 dispatch
+    differently only once there is more than one stage in flight, and there never is.
+    The value the operator set is therefore the observable, and reading it is what makes
+    the resolution falsifiable.
+    """
+    bounds = cli._slot_bounds({"DOCFLOW_JOBS": "4"})  # pylint: disable=protected-access
+
+    assert bounds.bounds["cpu"] == 4
+    assert bounds.bounds["gpu"] == 1, "the GPU bound is not the operator's to raise"
+    assert bounds.bounds["remote"] == 1
+
+
+def test_the_slot_bounds_default_to_the_declared_baseline() -> None:
+    """Nothing set is a real state, and it reads as the declared baseline."""
+    bounds = cli._slot_bounds({})  # pylint: disable=protected-access
+
+    assert dict(bounds.as_mapping()) == {"cpu": 1, "gpu": 1, "remote": 1}
+
+
+def test_a_non_numeric_jobs_value_is_refused_rather_than_ignored() -> None:
+    """Falling back to the baseline would run at a bound nobody asked for."""
+    with pytest.raises(cli.UsageError) as excinfo:
+        cli._slot_bounds({"DOCFLOW_JOBS": "many"})  # pylint: disable=protected-access
+
+    assert "must be an integer" in str(excinfo.value)
+
+
+def test_a_negative_jobs_value_is_refused() -> None:
+    """A negative capacity is a caller's arithmetic error, not a bound."""
+    with pytest.raises(cli.UsageError) as excinfo:
+        cli._slot_bounds({"DOCFLOW_JOBS": "-1"})  # pylint: disable=protected-access
+
+    assert "out of range" in str(excinfo.value)
+
+
 # --- 4. Two surfaces, never crossed -----------------------------------------
 
 

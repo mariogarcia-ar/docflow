@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E05** |
 | Capability | K1 Orchestrator: unit/stage/graph dispatch, the 7 durable states, determinism classes, typed slots and barriers, mandatory verification |
-| Issues | `E05-01` (`S1-T06`) — **`done`** (§3) · `E05-02` (`S1-T07`) — **`done`** (§3) · `E05-03` (`S1-T08`) — **`done`** (§3) · `E05-04` (`S1-T09`) · `E05-05` (`S1-T10`) — **`done`** (§3) |
+| Issues | `E05-01` (`S1-T06`) — **`done`** (§3) · `E05-02` (`S1-T07`) — **`done`** (§3) · `E05-03` (`S1-T08`) — **`done`** (§3) · `E05-04` (`S1-T09`) — **`done`** (§3) · `E05-05` (`S1-T10`) — **`done`** (§3) |
 | Issue count | **5** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernels/` |
 | Wave span | **W4 → W6** (W4: 1 · W5: 2 · W6: 2) |
@@ -326,6 +326,47 @@ Some artifacts can be recomputed and some cannot — and the difference decides 
 
 **Title**
 Typed slots (`cpu`/`gpu`/`remote`) + barriers (dependency on a set) + unit-contained failure.
+
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | Three typed slots exist: `cpu`, `gpu`, `remote` | ✅ met — `SLOT_NAMES`, a **closed** set (a fourth name is refused), asserted as an equality rather than a membership so `"cpu" in SLOT_NAMES` cannot pass against a module that also accepts `tpu` |
+| 2 | A unit failing **does not abort the run** — the remaining units complete and the failed unit is reported with its reason | ✅ met — `test_one_unit_failing_leaves_the_other_unit_complete`. **Dispatch was already sequential**, so the invariant held before this issue; what was missing was the *reporting*, which is criterion 7 |
+| 3 | A **partial barrier set does not release**; the barrier releases when **every** member is terminal | ✅ met — the blocked branch of `_advance` *is* the barrier: `_upstream_hashes` returns None unless every member is terminal with an artifact that still verifies. `test_a_partial_barrier_set_does_not_release` asserts the join's operation was **never called** |
+| 4 | A barrier whose members are all terminal releases exactly once, and not before the last member is terminal | ⚠️ **half met** — *releases* and *not before the last member* are met (`test_a_partial_barrier_set_does_not_release` + `test_a_complete_barrier_set_releases_exactly_once`). The *exactly once* half holds **within and across runs** for the reason `E05-01` established: the join is terminal for its key on the second pass (`test_a_released_barrier_is_not_released_again_by_a_second_run`). Because dispatch is sequential, no observer can catch the barrier mid-release, so *once* is asserted as *idempotent* rather than as *one dispatch under concurrency* |
+| 5 | Work exceeds neither the `--jobs` bound for `cpu` nor the declared `gpu`/`remote` bounds | ⚠️ **met by construction, and the construction is stated rather than claimed** — see the note below |
+| 6 | `gpu` is bounded to **one** in-flight generation per device | ✅ met — and **enforced at construction** (`SlotBounds` refuses `gpu > 1`), not merely documented. `M12` is the mutation |
+| 7 | A unit's failure is reported against **that unit**, not against the run | ✅ met — `RunReport.failed` is a tuple of `(unit, stages)`, and the stages named are those that did **not reach a successful outcome**: the one that reported the reason *and* the work it stopped |
+| 8 | A synthetic graph test exercises a failing unit alongside succeeding ones | ✅ met — `test_one_unit_failing_leaves_the_other_unit_complete` runs the three-slot graph over two units with `read` failing in both |
+
+**On #5 — why the bound is a refusal rather than a semaphore.** The PoC scheduler dispatches **one stage at a time**, so the in-flight level is at most one, and one is within every bound a caller can legally declare. A semaphore here would be an object that never blocks, and the criterion *"work exceeds neither bound"* would pass against it whether or not the bound were read. So the bound is enforced where it **can** be violated, which is three places, each with a distinct test and mutation:
+- a slot declared with **zero capacity** is refused at validation, before the first ledger is touched (`M13`, `M15`);
+- a **negative** capacity is refused at construction (`M11`);
+- a `gpu` bound above one is refused, because the sharing policy is an open decision (`M12`).
+
+The consequence is recorded honestly: **there is no test that observes a concurrent run being throttled, because there is no concurrent run.** If `E05-04`'s criterion is read as requiring one, it is unmet as written; the *class* of event it guards against (work admitted against a bound that was never read, or a bound the deployment cannot honour) is what the three refusals cover.
+
+**On #4 — the limit that is stated rather than papered over.** `test_a_released_barrier_is_not_released_again_by_a_second_run` proves idempotency, which is the observable a sequential scheduler has. It is **not** the same claim as *a barrier cannot release twice under concurrency*, and no test here asserts that one.
+
+**Where the guard around the failure measurement is reachable, and where it is not.** `_run_unit` measures a unit's unfinished stages only when the pass was **not** held, so a pause is not reported as a crash. A control written *before* the run never enters `_run_unit` at all - so the guard is unreachable that way, and `M6` survived against a test that only asserted *nothing was driven*. The reachable case is a pause that arrives **between two stages of a unit**, which is also what an operator's `pause` actually does: `test_a_pause_that_arrives_mid_unit_does_not_report_the_unit_as_failed` has the *operation* write the control, the same mechanism the surface uses. With that test, `M6` is caught.
+
+**A frozen contract, consumed additively.** `plans/README.md` §3 freezes *the descriptor shape* for Plan 1, so `slot` reaching a stage entry is a change to a frozen surface and is recorded as one. It is **additive**: a stage entry that names no slot is understood (defaults to `cpu`), the key is optional, and no existing descriptor stops loading. `_STAGE_KEYS` grows by the one key. The alternative - a per-run slot map - was rejected because a stage's resource is a property of the stage, not of the invocation, and a map would be a second place for the same fact.
+
+**The manifest reports no slot, and that is the `rebuild_index` contract working.** A slot is an attribute of a *descriptor* stage and a bound belongs to a caller's invocation; neither is a fact about what happened, so neither can be read out of a ledger tree. Reporting them would make `rebuild_index` read the descriptor - the second authority `E05-01` exists to not have. `test_the_manifest_reports_no_slot_because_a_ledger_carries_none` asserts the *absence*, so a future addition is confronted rather than absorbed.
+
+**Effort**
+**M** — three interacting concerns (slots, barriers, contained failure) with a distinct test each, and one criterion (#5) whose honest answer required restating rather than satisfying.
+
+**Test / evidence**
+- `tests/kernels/test_orchestrator_slots.py` — **25 tests**, all green.
+- `tests/cli/test_main.py` — **4 tests** for `_slot_bounds`, added because mutation `M16` survived against **no test at all**: the CLI's slot resolution was unreachable surface.
+- `tests/kernels/mutation_slots.py` — **16 mutations, all falsified.** Four survived on the first run and **each had a different cause, three of them real defects in my own tests**: `M5` (an assertion that name-checked the failing stage but not the work it stopped), `M6` (an unreachable mutation, fixed by writing the test that reaches it), `M8` (caught by collection error, so the expectation was corrected to name the module), `M16` (a genuine coverage hole).
+- `plan-01-kernels.md` §7b — *"a partial barrier set releases when every member is terminal"*; *"one unit failing does not abort the run"*. Requirements **FR-07**, **NFR-04**.
+- `sad.md` §7.2 — the slot table, *"barriers are dependencies on a set"*, *"a failure does not deadlock the barrier"*, and the `gpu` bound of one.
+- `kernel-cli.md` §8 — `--jobs`, `--slots cpu=n,gpu=n,remote=n` are in the allowed vocabulary; §9 (K1) — `orchestrator run` accepts both.
+- All four QA gates green: `pytest` (907 passed), `ruff check`, `ruff format --check` (79 files), `pylint src tests`.
+- **All eight harnesses re-run green**, which the `_run_unit` change required: `mutation_verification` 15, `mutation_cli` 18, `mutation_determinism` 15, `mutation_resolution` 18, `mutation_store` 20, `mutation_ordering` 15, `mutation_orchestrator` 13, `mutation_slots` 16. **No anchor drifted**, because every anchor the older harnesses mutate is in `_dispatch`, `_already_done`, `_upstream_hashes` or `rebuild_index` - all of which were left alone this time.
 
 **Context**
 Two failure modes at scale: one bad unit aborting an 11k-file run, and a stage whose result is only meaningful once *several* predecessors completed starting too early. This issue adds the scheduling vocabulary that makes both expressible — and it keeps the failure *contained*, so a run continues and reports the failing unit rather than dying and losing the accounting.

@@ -58,9 +58,14 @@ What this module deliberately does not do
 - **No determinism classes.** Whether a missing artifact may be regenerated depends
   on the class of the kernel that produced it; that is `E05-03` (`S1-T08`). This
   module re-runs nothing and regenerates nothing: a terminal stage is left alone.
-- **No slots, no barriers, no unit-contained failure.** `E05-04` (`S1-T09`). Dispatch
-  here is sequential and in one deterministic order; a unit failing stops nothing
-  because nothing is concurrent, and the loop simply moves on.
+- **Sequential dispatch, and that is the honest reading of the slot model here.**
+  `E05-04` (`S1-T09`) declares the three typed slots and refuses a bound this
+  scheduler cannot honour. It does **not** add concurrency: the PoC dispatches one
+  stage at a time, which is within every bound a caller can legally declare, so a
+  semaphore would be an object that never blocks. The bound is enforced where it can
+  actually be violated - a slot the caller declares with no capacity dispatches
+  nothing, and `gpu` above one generation per device is refused - and the manifest
+  reports each stage under the slot it contended for.
 - **No verification on ledger read.** `E05-05` (`S1-T10`, ADR-006). The read path
   here reports what the ledger records and does not check the bytes, so there is no
   ``--verify``-shaped seam to remove later - the check is added in one place.
@@ -123,6 +128,8 @@ __all__: list[str] = [
     "CONTROL_STATES",
     "HOLDING_CONTROLS",
     "MANIFEST_NAME",
+    "SLOT_BOUNDS",
+    "SLOT_NAMES",
     "UNVERIFIED_KEY",
     "Control",
     "Descriptor",
@@ -130,6 +137,7 @@ __all__: list[str] = [
     "KernelTerms",
     "KeyContext",
     "RunReport",
+    "SlotBounds",
     "Stage",
     "StageCall",
     "StageOperation",
@@ -212,11 +220,37 @@ _RUN_INCOMPLETE: Final[str] = "incomplete"
 #: does not export it, and the orchestrator needs it for a decision K7 does not take.
 _TERMINAL_STATES: Final[frozenset[str]] = frozenset({"done", "failed", "skipped"})
 
+#: The states that mean a stage's work **succeeded**. Deliberately narrower than
+#: :data:`_TERMINAL_STATES`: a `failed` stage is terminal for dispatch - it is a result,
+#: and it must not be re-run on the strength of that - but it is not a success, and a
+#: report that folded the two would say a unit was fine because its stages had stopped.
+_SUCCESSFUL_STATES: Final[frozenset[str]] = frozenset({"done", "skipped"})
+
+#: The three typed slots work contends for (`prd.md` FR-07, `sad.md` §7.2). They are
+#: a closed set for the same reason the reason codes are: a fourth name would enter
+#: every bound declaration and every manifest without anything able to honour it, and
+#: a caller who typed ``gpus`` would get the default rather than an error.
+#:
+#: The reason there are three and not one is measured rather than stylistic - eight
+#: page renders and eight generations are not eight of the same thing, because they
+#: contend for different resources and fail at different limits (`sad.md` §7.2).
+SLOT_NAMES: Final[frozenset[str]] = frozenset({"cpu", "gpu", "remote"})
+
+#: The slot every stage occupies unless it declares another. `cpu` is the only slot a
+#: stage may **fail to name** and still be understood: not claiming a device is not a
+#: reservation, whereas claiming one is, and a stage that silently landed on the GPU
+#: slot would consume a bound nobody declared it against.
+_SLOT_DEFAULT: Final[str] = "cpu"
+
+#: The bounds a caller that states nothing else should use, named so a call site has
+#: to *say* it is taking the baseline rather than inheriting it invisibly. Defined
+#: after :class:`SlotBounds`, because it is one.
+
 #: The keys a stage entry may carry, and no others. An unknown key is refused, which
 #: is how *"a descriptor naming a pipeline code is not a shape this module accepts"*
 #: is enforced - structurally, without a vocabulary to keep in step.
 _STAGE_KEYS: Final[frozenset[str]] = frozenset(
-    {"name", "kernel", "op", "needs", "params"}
+    {"name", "kernel", "op", "needs", "params", "slot"}
 )
 
 #: The keys a descriptor may carry, and no others.
@@ -267,6 +301,116 @@ class KeyContext:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class SlotBounds:
+    """How much work may be in flight per slot, as the caller declares it.
+
+    Each slot carries its own bound because the three contend for different resources
+    and fail at different limits: cores and page-sized bitmaps for `cpu`, VRAM and
+    one model load per device for `gpu`, a provider's token and concurrency ceilings
+    for `remote` (`sad.md` §7.2). A single number would have to be the smallest of
+    the three, which throttles the cheap slots to the bound of the expensive one.
+
+    **Every slot must be stated, and a zero is a real bound.** That is the deliberate
+    asymmetry with :class:`Stage`'s ``slot``: a stage not claiming a device is not a
+    reservation, but a caller *declaring* a slot has stated a resource, and a slot
+    declared with capacity ``0`` means *this deployment has none*. Defaulting it to
+    ``1`` would invent a device, which is the stand-in this layer refuses.
+
+    Deliberately **not** derived from a single ``--jobs`` here. `NFR-04` puts
+    ``--jobs``/``DOCFLOW_JOBS`` on the `cpu` slot; resolving an environment variable
+    is the surface's job, and a kernel that read one could not be tested without
+    mutating a process.
+
+    Attributes:
+        bounds: Slot name to its in-flight bound. The keys must be exactly
+            :data:`SLOT_NAMES`, and an unknown name is refused at construction.
+
+    Raises:
+        ValueError: If a slot is missing, if a bound is negative, if an unknown slot
+            name is declared, or if `gpu` exceeds one in-flight generation per device.
+
+    """
+
+    bounds: Mapping[str, int]
+
+    def __post_init__(self) -> None:
+        """Refuse an incomplete, unknown or negative bound set.
+
+        Raises:
+            ValueError: As described on the class.
+
+        """
+        declared = set(self.bounds)
+        unknown = sorted(declared - SLOT_NAMES)
+        missing = sorted(SLOT_NAMES - declared)
+        if unknown or missing:
+            raise ValueError(
+                "A slot bound set must name exactly the typed slots "
+                f"{sorted(SLOT_NAMES)}; unknown: {unknown}, missing: {missing}. An "
+                "unknown name would be a bound nothing can honour, and a missing one "
+                "would silently take whatever default the scheduler happened to have."
+            )
+
+        for name, bound in self.bounds.items():
+            if not isinstance(bound, int) or isinstance(bound, bool):
+                raise TypeError(
+                    f"The bound for slot {name!r} must be an int: a fractional or "
+                    "non-numeric capacity cannot be counted against."
+                )
+            if bound < 0:
+                raise ValueError(
+                    f"The bound for slot {name!r} must not be negative; got {bound}. "
+                    "A negative capacity is not a bound, and treating it as zero "
+                    "would hide a caller's arithmetic error."
+                )
+
+        # The declared simplification, enforced rather than documented: concurrent OCR
+        # and generation compete for VRAM on one device and the competition policy is
+        # undefined (`sad.md` §7.2). # TODO: [MVP]: per-device slot policy beyond
+        # `gpu=1` - `plan-01-kernels.md` §12 open decision #7, needed before `S3-T11`.
+        gpu = self.bounds["gpu"]
+        if gpu > 1:
+            raise ValueError(
+                f"The gpu slot is bounded to one in-flight generation per device; got "
+                f"{gpu}. This is a declared simplification, not a discovered limit: "
+                "the policy for two generators sharing one device's VRAM is an open "
+                "decision, so a larger bound would be honoured without anything "
+                "having decided how the device is shared."
+            )
+
+    def allows(self, slot: str) -> bool:
+        """Report whether any work may run in a slot.
+
+        Args:
+            slot: The slot name, which must be one of :data:`SLOT_NAMES`.
+
+        Returns:
+            True when the slot's bound is at least one.
+
+        """
+        return self.bounds[slot] > 0
+
+    def as_mapping(self) -> Mapping[str, int]:
+        """Return the bounds as a plain, JSON-encodable mapping.
+
+        Returns:
+            Slot name to bound, in the declared slot order so a manifest is stable.
+
+        """
+        return {name: self.bounds[name] for name in sorted(SLOT_NAMES)}
+
+
+#: The bounds a caller who wants the stated baseline passes in. Not a default on
+#: :func:`run`: a bound is the caller's to declare, and an invisible one would let a
+#: run be dispatched against a device nobody named. ``cpu`` and ``remote`` are one
+#: because that is a bound the sequential PoC scheduler can honour; an operator who
+#: wants the ``DOCFLOW_JOBS`` bound resolves it (`NFR-04`) and passes its own set.
+SLOT_BOUNDS: Final[SlotBounds] = SlotBounds(
+    bounds=MappingProxyType({"cpu": 1, "gpu": 1, "remote": 1})
+)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class Stage:
     """One step of a graph: a kernel operation, its settings and its needs.
 
@@ -281,10 +425,14 @@ class Stage:
         params: The stage's own settings, as strings, and they feed the cache key.
             Ordered by name when the key is composed, so iteration order cannot
             change a key.
-
+        slot: The typ to contend for, one of :data:`SLOT_NAMES`. Defaults to
+            ``"cpu"``: a stage that claims no device contends for no device, and
+            defaulting it to a device slot would charge work against a bound nobody
+            declared it against.
     Raises:
-        ValueError: On an empty name, kernel or operation, or on an empty string in
-            ``params`` - each of which is a stand-in rather than a value.
+        ValueError: On an empty name, kernel or operation, on an empty string in
+            ``params``, or on a slot outside the typed set - each of which is a
+            stand-in rather than a value.
 
     """
 
@@ -293,13 +441,14 @@ class Stage:
     op: str
     needs: tuple[str, ...]
     params: Mapping[str, str]
+    slot: str = _SLOT_DEFAULT
 
     def __post_init__(self) -> None:
         """Refuse a stage whose fields are empty or whose needs name itself.
 
         Raises:
-            ValueError: On an empty string field, a non-string parameter value, or a
-                need naming this stage.
+            ValueError: On an empty string field, a non-string parameter value, a
+                need naming this stage, or a slot outside the typed set.
 
         """
         for field_name, value in (("name", self.name), ("kernel", self.kernel)):
@@ -313,6 +462,14 @@ class Stage:
             raise ValueError(
                 "A stage's op must be stated: a stage that names no operation is a "
                 "step nobody can dispatch."
+            )
+
+        if self.slot not in SLOT_NAMES:
+            raise ValueError(
+                f"Stage {self.name!r} claims slot {self.slot!r}, which is not one of "
+                f"the typed slots {sorted(SLOT_NAMES)}. Refusing is the only honest "
+                "answer: an unrecognised slot would be scheduled against no bound at "
+                "all, and would report as though it had been admitted."
             )
 
         if self.name in self.needs:
@@ -502,7 +659,6 @@ class StageOperation(Protocol):
 @dataclasses.dataclass(frozen=True, slots=True)
 class Verified:
     """A ledger, together with what the filesystem says about its claims.
-
     Verification is an **outcome of reading**, so the two travel as one value and there
     is no way to obtain the ledger without it: :func:`read_ledger` is the only public
     read, and it returns this. That is what makes *"a ledger is never returned without a
@@ -547,6 +703,7 @@ class _RunContext:
     input_hashes: Mapping[str, str]
     operations: Mapping[tuple[str, str], StageOperation]
     keys: KeyContext
+    slots: SlotBounds
 
 
 @dataclasses.dataclass(slots=True)
@@ -574,6 +731,11 @@ class _Tally:
     #: were therefore dispatched rather than skipped. Kept apart from ``dispatched``
     #: so a run can report *why* it redid work an operator thought was finished.
     unverified: list[tuple[str, str]] = dataclasses.field(default_factory=list)
+    #: The units whose stages ran and reported a typed reason, and the stages that could
+    #: not run because such a stage was one of their needs. This is `FR-07`'s
+    #: **containment** as a value: the run continues, and the failure is reported
+    #: against the unit it happened in.
+    failed: list[tuple[str, tuple[str, ...]]] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -597,6 +759,10 @@ class RunReport:
         unverified: The ``(unit, stage)`` pairs whose recorded artifact did not verify
             and were therefore **re-dispatched** rather than skipped. Empty on a healthy
             run, and the reason a run redid work an operator believed was finished.
+        failed: Unit name to the stages of that unit that did **not** complete, in
+            dispatch order. This is `FR-07`'s containment as a value: a unit failing
+            never aborts the run, and the run says which unit it happened in instead of
+            reporting one failure for the whole job. Empty on a healthy run.
         manifest: The manifest as written, which is what :func:`rebuild_index` returns.
 
     """
@@ -606,6 +772,7 @@ class RunReport:
     blocked: tuple[tuple[str, str], ...]
     held: tuple[str, ...]
     unverified: tuple[tuple[str, str], ...]
+    failed: tuple[tuple[str, tuple[str, ...]], ...]
     manifest: Mapping[str, object]
 
 
@@ -1024,11 +1191,12 @@ def read_descriptor(
     return descriptor_from_mapping(read_mapping(path))
 
 
-def validate(
+def validate(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     descriptor: Descriptor,
     input_hashes: Mapping[str, str],
     operations: Mapping[tuple[str, str], StageOperation],
     keys: KeyContext,
+    slots: SlotBounds,
 ) -> None:
     """Check that a run could proceed, without writing anything.
 
@@ -1037,16 +1205,24 @@ def validate(
     public because that is the operation `orchestrator plan` needs
     (`kernel-cli.md` §9): validate only, and dispatch nothing.
 
+    A slot with **no capacity** is reported the same way a missing operation is,
+    because both are the same fact: a stage the deployment cannot run. The one
+    difference the caller can act on is the remedy - one is a configuration error,
+    the other is a resource a deployment does not have - so the two messages stay
+    distinct.
+
     Args:
         descriptor: The descriptor to run.
         input_hashes: Unit name to the unit's own input hash. Every unit the
             descriptor declares must be present.
         operations: The operation table, keyed by ``(kernel, op)``.
         keys: The registry hash and the per-kernel terms.
+        slots: The per-slot in-flight bounds the caller declares.
 
     Raises:
         ValueError: If a declared unit has no input hash, if a stage names an
-            operation the table does not provide, or if a kernel has no key terms.
+            operation the table does not provide, if a kernel has no key terms, or if
+            a stage's slot has zero capacity.
 
     """
     missing_units = sorted(set(descriptor.units) - set(input_hashes))
@@ -1074,14 +1250,30 @@ def validate(
                 "stages they are not the same work as."
             )
 
+    starved = sorted(
+        {
+            stage.slot
+            for stage in descriptor.graph.stages
+            if not slots.allows(stage.slot)
+        }
+    )
+    if starved:
+        raise ValueError(
+            f"Slot(s) {starved} are declared with no capacity above zero, and the "
+            "graph has stages that contend for them. The run would wait forever on "
+            "a resource the caller has said does not exist; the honest answer is to "
+            "name it here, while the output tree is still empty."
+        )
 
-def run(
+
+def run(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     descriptor: Descriptor,
     out_dir: Path,
     *,
     input_hashes: Mapping[str, str],
     operations: Mapping[tuple[str, str], StageOperation],
     keys: KeyContext,
+    slots: SlotBounds,
 ) -> RunReport:
     """Drive a descriptor's graph over its units, and write the manifest.
 
@@ -1094,12 +1286,20 @@ def run(
     second code path - the manifest is written by calling :func:`rebuild_index`, so
     what is on disk is what the ledgers say, always.
 
+    **A failing unit does not abort the run** (`FR-07`, `prd.md` FR-07). Dispatch is
+    one stage at a time, so nothing unwinds: a stage that reported a typed reason
+    leaves its unit's dependants runnable-but-unsatisfied, they are recorded
+    ``blocked``, and the loop moves to the next unit. The failure is reported **against
+    the unit** under ``failed``, and the manifest's state reads ``incomplete`` rather
+    than ``complete``.
+
     Args:
         descriptor: The descriptor to run.
         out_dir: The run's output root. Unit directories and the manifest live here.
         input_hashes: Unit name to the unit's own input hash.
         operations: The operation table, keyed by ``(kernel, op)``.
         keys: The registry hash and the per-kernel terms.
+        slots: The per-slot in-flight bounds, as the caller declares them.
 
     Returns:
         A :class:`RunReport` naming what this call dispatched, skipped and left
@@ -1112,7 +1312,7 @@ def run(
             be composed.
 
     """
-    validate(descriptor, input_hashes, operations, keys)
+    validate(descriptor, input_hashes, operations, keys, slots)
 
     tally = _Tally()
     run_context = _RunContext(
@@ -1120,6 +1320,7 @@ def run(
         input_hashes=input_hashes,
         operations=operations,
         keys=keys,
+        slots=slots,
     )
 
     # The control is read **before the first stage**, not only between them. A run that
@@ -1140,6 +1341,7 @@ def run(
         blocked=tuple(tally.blocked),
         held=tuple(tally.held),
         unverified=tuple(tally.unverified),
+        failed=tuple(tally.failed),
         manifest=manifest,
     )
 
@@ -1157,6 +1359,13 @@ def _run_unit(
     a stage boundary rather than a unit boundary: a unit of a real job is many stages,
     and holding only between units would make `pause` indistinguishable from *let the
     whole job finish*.
+
+    **Failure is contained to the unit** (`FR-07`). The unit's ledger is read once and
+    its non-terminal stages are exactly the ones that did not complete - a stage that
+    reported a typed reason is terminal as `failed`, and a stage whose need failed is
+    left as it was and reported `blocked`. So completion is measured from the ledger
+    the run just wrote rather than tracked in a counter, which is the same discipline
+    the manifest follows: one authority, read back.
 
     Args:
         run_context: The run-level context.
@@ -1178,16 +1387,53 @@ def _run_unit(
     # The verified read, not `store.read_ledger`: this is the only read path, so no
     # caller of this function can obtain a ledger without the check having run.
     verified = read_ledger(unit_dir)
+    held = False
     for stage_name in graph.order:
         if control.holds:
             tally.held.append(f"{unit.name}:{stage_name}")
-            return control
+            held = True
+            break
 
         control, verified = _advance(
             run_context, unit, unit_dir, stage_name, verified, tally
         )
 
+    if not held:
+        _record_unit_failure(unit.name, graph, read_ledger(unit_dir), tally)
+
     return control
+
+
+def _record_unit_failure(
+    unit_name: str, graph: Graph, verified: Verified, tally: _Tally
+) -> None:
+    """Name the stages that did not complete, and attribute them to their unit.
+
+    Called only for a unit the pass actually finished walking. A held unit is not
+    reported here: its stages have not been *attempted*, and reporting them as
+    incomplete would put a `pause` in the same column as a crash (`E05-02`).
+
+    What counts is every stage that did **not reach a successful outcome** - so a stage
+    whose operation reported a typed reason is named, and so is a stage that could not
+    run because such a stage was one of its needs. Both are what an operator has to fix,
+    and reporting only the first would name a symptom without the work it stopped.
+
+    A **held** unit is not measured here at all: its stages have not been *attempted*,
+    and reporting them would put a `pause` in the same column as a crash (`E05-02`).
+
+    Args:
+        unit_name: The unit's name.
+        graph: The graph, for the dispatch order.
+        verified: The verified read taken after the unit's last stage.
+        tally: The accumulator, appended to in dispatch order.
+
+    """
+    recorded = verified.ledger.stages
+    unfinished = tuple(
+        name for name in graph.order if recorded[name].state not in _SUCCESSFUL_STATES
+    )
+    if unfinished:
+        tally.failed.append((unit_name, unfinished))
 
 
 # Six parameters, and the count is the job's: four name the run, the stage and the
@@ -1210,6 +1456,14 @@ def _advance(
     scheduler's policy and reading them together is what makes the ordering visible - in
     particular that the *verified* status is consulted on every stage, from a read taken
     immediately before the decision.
+
+    **Barriers are the ``blocked`` branch, and they are already correct.** A barrier is
+    a dependency on a *set* - the same ``needs`` tuple every stage has - and
+    :func:`_upstream_hashes` returns None unless **every** member is terminal with an
+    artifact that still verifies. So a partial set releases nothing, and a member that
+    failed releases nothing either: the barrier does not deadlock, because a failure is
+    terminal, and the dependant is reported rather than waited on forever (`sad.md`
+    §7.2).
 
     Args:
         run_context: The run-level context.
@@ -1269,6 +1523,14 @@ def rebuild_index(out_dir: Path) -> Mapping[str, object]:
     ``*.ledger.json`` under ``out_dir``; it does not read the descriptor, the run's
     arguments, or any previously written manifest - a manifest is read only by being
     rebuilt, which is what makes *derived* a fact rather than an intention.
+
+    **No slot appears here, and the reason is this function's own contract.** A slot is
+    an attribute of a *stage* in a descriptor, and the declared bounds belong to the
+    caller's run invocation; neither is a fact about what happened, so neither can be
+    read out of a ledger tree. Reporting them would mean reading the descriptor, which
+    is exactly the second authority this function exists to not have. A reader who wants
+    to know what contended for what has the descriptor; what the manifest owes is what
+    the work *produced*.
 
     Args:
         out_dir: The run's output root.
@@ -1600,12 +1862,21 @@ def _stage_from_mapping(raw: object) -> Stage:
     ):
         raise TypeError("A stage's 'params' must be a mapping of string to string.")
 
+    raw_slot = raw.get("slot", _SLOT_DEFAULT)
+    if not isinstance(raw_slot, str):
+        raise TypeError(
+            "A stage's 'slot' must be a string naming one of the typed slots. A "
+            "non-string cannot be matched against the closed set, and coercing it "
+            "would schedule against whatever its rendering happened to be."
+        )
+
     return Stage(
         name=name,
         kernel=kernel,
         op=op,
         needs=tuple(raw_needs),
         params=MappingProxyType(dict(raw_params)),
+        slot=raw_slot,
     )
 
 
