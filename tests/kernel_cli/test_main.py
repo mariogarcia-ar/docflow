@@ -162,11 +162,12 @@ EXPECTED_KERNEL_ROWS: tuple[tuple[str, str, str], ...] = (
 
 #: Kernels whose probe succeeds without an adapter — the two filesystem ones, plus
 #: ``pdf`` and ``image``, whose engines landed with `E04-02` (`S1-T12`) and
-#: `E04-03` (`S1-T13`). A kernel is added here only when its module exists *and*
-#: its probe genuinely reports ``available``; the test below is what makes the
-#: addition deliberate rather than a way to silence a real failure.
+#: `E04-03` (`S1-T13`), and ``ocr``, whose Docling adapter landed with `E04-04`
+#: (`S1-T14`). A kernel is added here only when its module exists *and* its probe
+#: genuinely reports ``available``; the test below is what makes the addition
+#: deliberate rather than a way to silence a real failure.
 ALWAYS_AVAILABLE_KERNELS: frozenset[str] = frozenset(
-    {"pdf", "image", "store", "registry"}
+    {"pdf", "image", "ocr", "store", "registry"}
 )
 
 #: The forbidden flag vocabulary, restated from `kernel-cli.md` §10 and §14. Two

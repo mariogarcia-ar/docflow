@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E04** |
 | Capability | The five port interfaces plus the thin acquisition (K2/K3) and generation (K4/K5/K6) adapters, and resolution by capability |
-| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 1 criterion unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 1 criterion unmet (§3) · `E04-04` (`S1-T14`) · `E04-05` (`S1-T15`) · `E04-06` (`S1-T16`) · `E04-07` (`S1-T17`) — `todo` |
+| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 1 criterion unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 1 criterion unmet (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) · `E04-06` (`S1-T16`) · `E04-07` (`S1-T17`) — `todo` |
 | Issue count | **7** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/ports/`, `docflow/adapters/`, `docflow/kernels/` |
 | Wave span | **W2 → W4** (W2: 1 · W3: 5 · W4: 1) |
@@ -117,7 +117,9 @@ Recorded rather than implied, because a ticked box that is not true is the failu
 
 **Resolution of #8 — a scoping question, not a defect.** `E04-02`'s deliverable is `docflow/kernels/pdf.py` alone, while a thin adapter behind `PdfSource` is what the criterion asks for. That adapter sits naturally with `E04-03`…`E04-06`, whose deliverables *are* the `docflow/adapters/` modules. Either the criterion moves to the issue that owns the adapters, or `E04-02` grows a deliverable. **The decision is not taken here** — the criterion is recorded as unmet so that nobody ticks it by reading the kernel and assuming the adapter came with it.
 
-> **The same question recurs one issue later, and that makes it a pattern rather than an accident.** `E04-03` carries the identical split: its deliverable is `docflow/kernels/image.py`, and its criterion 8 is *"The adapter is reachable only through `RasterImage`"* — an adapter that no issue in this epic names as a deliverable. Two consecutive issues asking for an artefact neither owns is a gap in the epic's cut, not two oversights. It is recorded in both places so that resolving it happens once, deliberately, rather than twice by improvisation.
+> **The same question recurs one issue later, and `E04-04` answers it by contrast.** `E04-03` carries the identical split: its deliverable is `docflow/kernels/image.py`, and its criterion asks for an adapter no issue in this epic names. But `E04-04`'s deliverable is *explicitly* `docflow/ports/ocr.py` **and** `docflow/adapters/docling.py` — and when the issue names the adapter as a deliverable, the criterion becomes satisfiable and was satisfied.
+>
+> That is the whole answer: **the gap is in `E04-02`'s and `E04-03`'s `Deliverable` lines, not in their criteria.** `E04-04` through `E04-06` name their adapters (`docling.py`, `ollama.py`, `frontier.py`) because those engines need a module of their own. `E04-02` and `E04-03` were written as kernel-only issues, so their adapter criterion asks for something nobody was assigned — the criterion is right and the deliverable is incomplete. Recorded here with that reading; **the fix is a one-line deliverable change on each**, and it is not made in this pass because it moves work between issues and that decision is the plan owner's.
 
 **On #2, one thing the row does not ask for.** The page's shape is measured with invisible text **excluded**: a scan with a stale hidden layer reports `image`, not `mixed`. Counting those characters would name the page a text page, the document would never be converted, and the content a person can see would never be read — which is the silent failure the row exists to prevent. The check was built against a real `Tr 3` no-draw layer because the naive one is fooled: the engine's own text extraction returns invisible text as ordinary text.
 
@@ -248,6 +250,27 @@ A photo read sideways loses a whole page and reports no error; a blurred bitmap 
 
 **Title**
 K4 `kernel.ocr` port + Docling adapter: `capabilities`, `read`, `engine_info`.
+
+**Status — `in progress`, 2 criteria unmet**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | The port and the adapter exist; the adapter is reachable only through the port | ✅ met — `isinstance(DoclingEngine(), OcrEngine)` holds, and `ports/ocr.py` imports no adapter (asserted over its syntax tree) |
+| 2 | `read` returns positioned items with **no reading order resolved** | ✅ met — the engine's own order is preserved and never re-sorted; `reading_order: not_resolved` is in the evidence |
+| 3 | Docling's layout output is dropped at the boundary | ✅ met — only text-bearing items with provenance leave; `layout_dropped: true` is asserted, and no layout or order field exists on the result |
+| 4 | `read` returns a per-page status distinguishing `read` / `blank` / `unreadable` | ⚠️ **partially met** — `read` and `blank` are produced; **`unreadable` is never produced**, because Docling reports on the document rather than per page: a page it cannot read fails the whole conversion, which this adapter reports as one typed reason for the call |
+| 5 | A blank page reports `blank`, never `read` with invented tokens | ✅ met |
+| 6 | Token confidence is `float \| null`, and `null` is never coerced to `1.0` | ✅ met, and stronger than the row assumes — see below |
+| 7 | `pages_requested` and `pages_read` are both reported | ✅ met, on the value and in the evidence |
+| 8 | **No `--engine` flag and no engine setting anywhere** | ⚠️ **not verifiable here** — no CLI exists yet (`S1-T20`/`S1-T21`). The adapter exposes no engine selection, and a test asserts the constructor's `engine` argument is an injected converter rather than a setting; the flag-level assertion is `E07-02`'s and cannot run before its command does |
+| 9 | `engine_info` is populated and feeds the cache key | ✅ met — `terms` carry `engine` and `engine_version` |
+| 10 | Importable from the composition root, **not** from `docflow/ports/ocr.py` | ✅ met, both halves asserted |
+
+**On #6 — the engine reports no confidence at all.** This is not a value that could have been coerced; `ProvenanceItem` carries `bbox`, `charspan` and `page_no` and nothing else, and no class in Docling's document model has a confidence or score field. So `Token.confidence` is `None` throughout. `capabilities` reports `reports_confidence: false` so that no caller reads a value the engine never produced, and row 10's assertion holds trivially and honestly rather than by a guard.
+
+**A limitation a caller will meet, stated rather than discovered.** Docling reports **one item per text block, not one per word**. The command surface names its operation `read` and describes tokens; this adapter returns the engine's actual granularity. Splitting blocks on whitespace to look finer would give every word the *line's* box — a fabricated position, which is worse than a coarse one because it looks precise. The evidence carries `granularity: block` so the difference is visible at the boundary rather than inferred from short token counts.
+
+**Two coordinate conversions happen, and one of them was nearly guessed.** Docling boxes use a **bottom-left** origin, where `t` is the greater y; source page coordinates grow downward from the top. The flip needs the page's height, which the box does not carry — and it has to come from `document.pages[n].size.height`, because deriving it from the box (`t + b`) measures **349.3** against a real height of **300.0** on the first fixture tried. A box whose page height is unknown is therefore **dropped**, not guessed: a coordinate computed from a guess is worse than a missing one. The units also scale by `dpi / 72`, because the engine reports points and the caller asked for a resolution.
 
 **Context**
 OCR output is the one place where the system cannot re-derive what it saw: a sampled artifact is evidence and is never regenerated (`plans/README.md` §2 non-negotiable 3), so a lost OCR result makes that document permanently unreproducible. Two things follow. The engine must be **fixed** — Docling and only Docling — so the OCR path is not a matrix of behaviours. And the boundary must **drop what it does not contract for**: positioned tokens leave, Docling's layout and reading order do not, because a reading order injected here would be a domain-level interpretation performed by a kernel.
