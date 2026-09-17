@@ -84,8 +84,8 @@ MUTATIONS: list[tuple[str, Path, str, str, set[str]]] = [
     (
         "M4: poll the control only between units, not between stages",
         ORCHESTRATOR,
-        "        recorded = store.read_ledger(unit_dir).stages\n        control = read_control(out_dir)\n\n    return control",
-        "        recorded = store.read_ledger(unit_dir).stages\n\n    return control",
+        "    for stage_name in graph.order:\n        if control.holds:",
+        "    for stage_name in graph.order:\n        if False:",
         {"test_a_pause_lands_at_a_stage_boundary_not_a_unit_boundary"},
     ),
     (

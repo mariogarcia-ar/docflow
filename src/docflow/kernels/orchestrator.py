@@ -123,6 +123,7 @@ __all__: list[str] = [
     "CONTROL_STATES",
     "HOLDING_CONTROLS",
     "MANIFEST_NAME",
+    "UNVERIFIED_KEY",
     "Control",
     "Descriptor",
     "Graph",
@@ -132,7 +133,7 @@ __all__: list[str] = [
     "Stage",
     "StageCall",
     "StageOperation",
-    "Unit",
+    "Verified",
     "cache_key_for",
     "control_of",
     "descriptor_from_mapping",
@@ -140,9 +141,11 @@ __all__: list[str] = [
     "is_terminal",
     "read_control",
     "read_descriptor",
+    "read_ledger",
     "rebuild_index",
     "run",
     "validate",
+    "verify_ledger",
     "write_control",
     "write_index",
 ]
@@ -177,6 +180,18 @@ HOLDING_CONTROLS: Final[frozenset[str]] = frozenset({"paused", "stopped"})
 
 #: The control states an operator may write.
 CONTROL_STATES: Final[frozenset[str]] = HOLDING_CONTROLS | {"running"}
+
+#: The reason code a `done` stage produces when its artifact is no longer there. In the
+#: closed set (`kernel-cli.md` §5), exit `2` - an expected negative rather than a
+#: precondition failure.
+_CODE_ARTIFACT_MISSING: Final[str] = "artifact_missing"
+
+#: The manifest key reporting the `done` stages whose artifact is no longer there. It
+#: is **additive**: those stages keep their recorded state, and this says which of them
+#: the filesystem no longer supports. A reader that ignored this key would see the same
+#: numbers it saw before the artifact was deleted, which is why the key is derived
+#: rather than stored.
+UNVERIFIED_KEY: Final[str] = "unverified"
 
 #: The run state meaning *every unit is terminal*. The seven durable states describe a
 #: **stage**; a run is a third vocabulary, and conflating the two would put a value in
@@ -485,6 +500,38 @@ class StageOperation(Protocol):
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class Verified:
+    """A ledger, together with what the filesystem says about its claims.
+
+    Verification is an **outcome of reading**, so the two travel as one value and there
+    is no way to obtain the ledger without it: :func:`read_ledger` is the only public
+    read, and it returns this. That is what makes *"a ledger is never returned without a
+    verification result"* structural rather than a rule somebody remembers.
+
+    Attributes:
+        ledger: The unit's ledger as recorded. **Not corrected** - a `done` stage whose
+            artifact is gone still reads `done`, because rewriting the record would
+            destroy the fact that it was ever claimed.
+        unverified: Stage name to reason code, for each `done` stage whose artifact is
+            not on disk or does not hash to its name. Empty when every claim holds.
+
+    """
+
+    ledger: store.Ledger
+    unverified: Mapping[str, str]
+
+    @property
+    def trustworthy(self) -> bool:
+        """Report whether every claim in this ledger is supported by the filesystem.
+
+        Returns:
+            True when nothing is `done` over absent bytes.
+
+        """
+        return not self.unverified
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _RunContext:
     """The run-level values every unit's pass needs, gathered so the pass takes one.
 
@@ -523,6 +570,10 @@ class _Tally:
     #: the run to hold. Kept apart from ``skipped``, which means *already done for this
     #: key*: conflating them would report held work as complete.
     held: list[str] = dataclasses.field(default_factory=list)
+    #: The ``(unit, stage)`` pairs whose recorded artifact did not verify, and which
+    #: were therefore dispatched rather than skipped. Kept apart from ``dispatched``
+    #: so a run can report *why* it redid work an operator thought was finished.
+    unverified: list[tuple[str, str]] = dataclasses.field(default_factory=list)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -543,6 +594,9 @@ class RunReport:
             an operator's control asked the run to hold. **Not** the same as
             ``skipped``: held work has not been done, and reporting it as skipped would
             read as complete.
+        unverified: The ``(unit, stage)`` pairs whose recorded artifact did not verify
+            and were therefore **re-dispatched** rather than skipped. Empty on a healthy
+            run, and the reason a run redid work an operator believed was finished.
         manifest: The manifest as written, which is what :func:`rebuild_index` returns.
 
     """
@@ -551,6 +605,7 @@ class RunReport:
     skipped: tuple[tuple[str, str], ...]
     blocked: tuple[tuple[str, str], ...]
     held: tuple[str, ...]
+    unverified: tuple[tuple[str, str], ...]
     manifest: Mapping[str, object]
 
 
@@ -707,6 +762,91 @@ def is_terminal(state: str) -> bool:
 
     """
     return state in _TERMINAL_STATES
+
+
+def verify_ledger(unit_dir: Path) -> Mapping[str, str]:
+    """Report which `done` stages of a unit no longer have the artifact they claim.
+
+    The check reads **the store**, never a cached copy of the ledger's own claim: the
+    claim is exactly what is in question, so consulting it would answer the question
+    with itself. `store.verify` is used directly rather than
+    :func:`docflow.kernels.determinism.artifact_is_present` because that helper is the
+    same call behind a name about *determinism classes*, and this check is deliberately
+    **class-agnostic**: whether an absence is recoverable is `E05-03`'s decision, and it
+    is taken by the caller, not here.
+
+    A truncated file counts as absent. It is the same defect as a missing one - the
+    bytes
+    a claim names are not there - and K7's ``verify`` already answers that way, so there
+    is
+    one definition of *the bytes are there* rather than two that could disagree.
+
+    Args:
+        unit_dir: The unit's directory.
+
+    Returns:
+        Stage name to reason code, for every `done` stage that does not verify. Empty
+        when every claim holds, which is the common case and therefore the one that must
+        be cheap: the check is a hash read per `done` stage, and running it on every
+        read
+        is the point.
+
+    Raises:
+        FileNotFoundError: If the unit has no ledger - K7's own refusal, unchanged.
+
+    """
+    return _unverified_stages(store.read_ledger(unit_dir), unit_dir)
+
+
+def _unverified_stages(ledger: store.Ledger, unit_dir: Path) -> Mapping[str, str]:
+    """Return the `done` stages of **one** ledger whose artifact does not verify.
+
+    Takes the ledger rather than reading one, so a caller that already holds it verifies
+    *that* ledger instead of a second read of the same file. Two reads can see different
+    bytes, and the difference would be a claim checked against a ledger that had already
+    moved on - the same class of defect as verifying a cached claim.
+
+    Args:
+        ledger: The ledger whose claims are to be checked.
+        unit_dir: The unit's directory, which is the store root.
+
+    Returns:
+        Stage name to reason code, for every `done` stage that does not verify.
+
+    """
+    return MappingProxyType(
+        {
+            name: _CODE_ARTIFACT_MISSING
+            for name, record in ledger.stages.items()
+            if record.state == "done"
+            and record.artifact_sha256 is not None
+            and not store.verify(unit_dir, record.artifact_sha256)
+        }
+    )
+
+
+def read_ledger(unit_dir: Path) -> Verified:
+    """Read a unit's ledger and verify it against the filesystem, in one step.
+
+    **The only public read path.** There is no second one that skips the check, and no
+    flag that makes it optional: verification has to be an outcome of reading, because
+    the run that most needs it is the one immediately after a forced kill - which is
+    also
+    the run whose operator is least likely to think to ask for it (`ADR-006`).
+
+    Args:
+        unit_dir: The unit's directory. It doubles as the unit's store root, which is
+            how `_unit_dir` and K7's own artifact directory compose.
+
+    Returns:
+        The ledger as recorded, plus every unsupported claim.
+
+    Raises:
+        FileNotFoundError: If the unit has no ledger.
+
+    """
+    ledger = store.read_ledger(unit_dir)
+    return Verified(ledger=ledger, unverified=_unverified_stages(ledger, unit_dir))
 
 
 def input_hash_for(
@@ -999,6 +1139,7 @@ def run(
         skipped=tuple(tally.skipped),
         blocked=tuple(tally.blocked),
         held=tuple(tally.held),
+        unverified=tuple(tally.unverified),
         manifest=manifest,
     )
 
@@ -1034,44 +1175,91 @@ def _run_unit(
     _ensure_ledger(unit_dir, unit.name, tuple(stage.name for stage in graph.stages))
 
     control = read_control(out_dir)
-    recorded = store.read_ledger(unit_dir).stages
+    # The verified read, not `store.read_ledger`: this is the only read path, so no
+    # caller of this function can obtain a ledger without the check having run.
+    verified = read_ledger(unit_dir)
     for stage_name in graph.order:
         if control.holds:
             tally.held.append(f"{unit.name}:{stage_name}")
             return control
 
-        stage = graph.by_name[stage_name]
-
-        upstream = _upstream_hashes(recorded, stage)
-        if upstream is None:
-            tally.blocked.append((unit.name, stage_name))
-            continue
-
-        stage_input = input_hash_for(unit, graph, stage_name, recorded)
-        key = cache_key_for(stage, stage_input, run_context.keys)
-
-        if is_terminal(recorded[stage_name].state) and (
-            recorded[stage_name].cache_key == key
-        ):
-            tally.skipped.append((unit.name, stage_name))
-            continue
-
-        call = StageCall(
-            unit=unit.name,
-            unit_dir=unit_dir,
-            stage=stage,
-            cache_key=key,
-            input_hash=stage_input,
-            needs=MappingProxyType(dict(upstream)),
+        control, verified = _advance(
+            run_context, unit, unit_dir, stage_name, verified, tally
         )
-        _dispatch(
-            run_context.operations[(stage.kernel, stage.op)], unit_dir, call, stage.name
-        )
-        tally.dispatched.append((unit.name, stage_name))
-        recorded = store.read_ledger(unit_dir).stages
-        control = read_control(out_dir)
 
     return control
+
+
+# Six parameters, and the count is the job's: four name the run, the stage and the
+# ledger the decision is taken against, one is the directory, and the last is the
+# accumulator. Packing them into a value object would move the names away from the
+# call site that has to get them right, which is the opposite of what this needs.
+# pylint: disable=too-many-arguments,too-many-positional-arguments
+def _advance(
+    run_context: _RunContext,
+    unit: Unit,
+    unit_dir: Path,
+    stage_name: str,
+    verified: Verified,
+    tally: _Tally,
+) -> tuple[Control, Verified]:
+    """Consider one stage: skip it, block it, or dispatch it.
+
+    A function rather than a loop body because the three outcomes are the whole of
+    the
+    scheduler's policy and reading them together is what makes the ordering visible - in
+    particular that the *verified* status is consulted on every stage, from a read taken
+    immediately before the decision.
+
+    Args:
+        run_context: The run-level context.
+        unit: The unit being driven.
+        unit_dir: The unit's directory.
+        stage_name: The stage to consider.
+        verified: The ledger read this decision is taken against.
+        tally: The accumulator.
+
+    Returns:
+        The control as of the end of this stage, and the ledger re-read afterwards - so
+        the next stage's input hash and key are composed from what is **on disk** rather
+        than from a value that was only in memory.
+
+    """
+    graph = run_context.descriptor.graph
+    stage = graph.by_name[stage_name]
+    recorded = verified.ledger.stages
+
+    upstream = _upstream_hashes(recorded, verified.unverified, stage)
+    if upstream is None:
+        tally.blocked.append((unit.name, stage_name))
+        return read_control(unit_dir.parent), verified
+
+    stage_input = input_hash_for(unit, graph, stage_name, recorded)
+    key = cache_key_for(stage, stage_input, run_context.keys)
+
+    if _already_done(recorded[stage_name], key, verified.unverified, stage_name):
+        tally.skipped.append((unit.name, stage_name))
+        return read_control(unit_dir.parent), verified
+
+    if stage_name in verified.unverified:
+        # A stage whose artifact did not verify is **re-dispatched**, and the pair is
+        # recorded so a run can say why it redid work an operator believed was finished.
+        tally.unverified.append((unit.name, stage_name))
+
+    call = StageCall(
+        unit=unit.name,
+        unit_dir=unit_dir,
+        stage=stage,
+        cache_key=key,
+        input_hash=stage_input,
+        needs=MappingProxyType(dict(upstream)),
+    )
+    _dispatch(
+        run_context.operations[(stage.kernel, stage.op)], unit_dir, call, stage_name
+    )
+    tally.dispatched.append((unit.name, stage_name))
+
+    return read_control(unit_dir.parent), read_ledger(unit_dir)
 
 
 def rebuild_index(out_dir: Path) -> Mapping[str, object]:
@@ -1086,22 +1274,25 @@ def rebuild_index(out_dir: Path) -> Mapping[str, object]:
         out_dir: The run's output root.
 
     Returns:
-        The manifest, with ``state``, ``totals``, ``stages``, ``outcomes`` and
-        ``inflight``.
+        The manifest, with ``state``, ``totals``, ``stages``, ``outcomes``,
+        ``unverified`` and ``inflight``.
 
     """
-    ledgers = [
-        store.read_ledger(path.parent) for path in sorted(out_dir.glob(_LEDGER_GLOB))
-    ]
+    # The verified read, so the manifest cannot report a `done` stage the filesystem no
+    # longer supports without saying so. `run.json` is a *reading* of the ledgers, and
+    # every reading verifies - there is no second read path that skips it (`ADR-006`).
+    verified = [read_ledger(path.parent) for path in sorted(out_dir.glob(_LEDGER_GLOB))]
 
     stages: dict[str, dict[str, dict[str, object]]] = {}
-    totals: dict[str, int] = {"units": len(ledgers), "stages": 0}
+    totals: dict[str, int] = {"units": len(verified), "stages": 0}
     totals.update(dict.fromkeys(store.DURABLE_STATE_ORDER, 0))
     outcomes: dict[str, int] = {}
     attempts: dict[str, dict[str, int]] = {}
+    unverified: dict[str, list[str]] = {}
     inflight: list[str] = []
 
-    for ledger in ledgers:
+    for check in verified:
+        ledger = check.ledger
         unit_stages: dict[str, dict[str, object]] = {}
         unit_attempts: dict[str, int] = {}
         unfinished = False
@@ -1118,11 +1309,13 @@ def rebuild_index(out_dir: Path) -> Mapping[str, object]:
         stages[ledger.unit] = unit_stages
         if unit_attempts:
             attempts[ledger.unit] = unit_attempts
+        if check.unverified:
+            unverified[ledger.unit] = sorted(check.unverified)
         if unfinished:
             inflight.append(ledger.unit)
 
     return {
-        "state": _run_state(out_dir, len(ledgers), inflight),
+        "state": _run_state(out_dir, len(verified), inflight),
         "control": control_of(out_dir),
         "totals": totals,
         "stages": stages,
@@ -1132,6 +1325,11 @@ def rebuild_index(out_dir: Path) -> Mapping[str, object]:
         # for a sampled kernel (`kernel-cli.md` §7) and the prohibition is enforceable
         # only if the pattern can be seen (`plan-01-kernels.md` §9).
         "attempts": attempts,
+        # The `done` stages whose artifact the filesystem no longer supports. Additive
+        # on purpose: the recorded state is left alone, because rewriting it would
+        # destroy the fact that the claim was ever made - and an operator comparing this
+        # run to the last one needs to see that it changed.
+        UNVERIFIED_KEY: unverified,
         "inflight": inflight,
     }
 
@@ -1239,25 +1437,74 @@ def _dispatch(
     store.fail(unit_dir, stage_name, reason, call.cache_key)
 
 
+def _already_done(
+    record: store.StageRecord,
+    key: str,
+    unverified: Mapping[str, str],
+    stage_name: str,
+) -> bool:
+    """Report whether a stage may be skipped: terminal, same key, **and verified**.
+
+    The third condition is what makes *verification is not optional* an action rather
+    than a report. Without it a `done` stage whose artifact was deleted is skipped as
+    complete, and the run reports success over bytes that are not there - the failure
+    `ADR-006` and `plan-01-kernels.md` §6 step 9 both name.
+
+    *Verified* means the ledger's own claim is not among the unverified ones, which is
+    computed from the **store** on every read rather than remembered. A stage that
+    fails only the third condition is dispatched, and the caller reports it under
+    ``unverified`` so a run says *why* it redid work an operator thought was finished.
+
+    Args:
+        record: The stage's recorded state.
+        key: The key the stage would run under now.
+        unverified: Stage name to reason code, from the verified read.
+        stage_name: The stage being considered.
+
+    Returns:
+        True when the stage may be skipped.
+
+    """
+    return (
+        is_terminal(record.state)
+        and record.cache_key == key
+        and stage_name not in unverified
+    )
+
+
 def _upstream_hashes(
-    recorded: Mapping[str, store.StageRecord], stage: Stage
+    recorded: Mapping[str, store.StageRecord],
+    unverified: Mapping[str, str],
+    stage: Stage,
 ) -> Mapping[str, str] | None:
-    """Collect the artifact hashes a stage's needs produced.
+    """Collect the artifact hashes a stage's needs produced, if they are still there.
+
+    A need whose artifact does not verify counts as **not produced**, for the same
+    reason
+    a truncated file counts as absent: the bytes this stage would consume are not the
+    bytes the ledger says they are. Returning their recorded hash would build a cache
+    key over content that is gone, and the stage would run on an input nothing can
+    supply.
 
     Args:
         recorded: The unit's recorded stage records.
+        unverified: Stage name to reason code, from the verified read.
         stage: The stage whose needs are being resolved.
 
     Returns:
         Need name to artifact hash, or None when a need is terminal but produced no
-        artifact, or is not terminal yet. None means *this stage cannot run*, which is
-        a different fact from *this stage produced nothing*.
+        artifact, is not terminal yet, or no longer verifies. None means *this stage
+        cannot run*, which is a different fact from *this stage produced nothing*.
 
     """
     upstream: dict[str, str] = {}
     for need in stage.needs:
         record = recorded[need]
-        if not is_terminal(record.state) or record.artifact_sha256 is None:
+        if (
+            not is_terminal(record.state)
+            or record.artifact_sha256 is None
+            or need in unverified
+        ):
             return None
         upstream[need] = record.artifact_sha256
     return upstream

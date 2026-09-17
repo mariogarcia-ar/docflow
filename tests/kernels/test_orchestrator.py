@@ -243,7 +243,12 @@ class Recorder:
             )
 
         artifact = store.put(
-            call.unit_dir / "artifacts",
+            # The unit directory **is** the store root, so bytes land at
+            # `<unit>/artifacts/<sha256>` - the layout `_unit_dir` and K7's own artifact
+            # directory compose, and the layout verification looks in. Passing
+            # `<unit>/artifacts` here would nest a second `artifacts/` and every claim
+            # would fail to verify, which is exactly what this used to do.
+            call.unit_dir,
             payload.encode("utf-8"),
             media_type="application/octet-stream",
         )
@@ -396,7 +401,9 @@ def test_a_three_stage_graph_runs_over_n_units(
         assert {record.state for record in ledger.stages.values()} == {"done"}
         for record in ledger.stages.values():
             assert record.artifact_sha256 is not None
-            assert store.verify(out / unit / "artifacts", record.artifact_sha256)
+            # The unit directory **is** the store root, so verification is asked there -
+            # the same root `store.put` wrote to.
+            assert store.verify(out / unit, record.artifact_sha256)
 
 
 def test_the_manifest_carries_the_five_reported_keys(
@@ -425,6 +432,7 @@ def test_the_manifest_carries_the_five_reported_keys(
         "stages",
         "outcomes",
         "attempts",
+        "unverified",
         "inflight",
     }
     assert manifest["state"] == "complete"
@@ -1897,3 +1905,400 @@ def test_the_same_partial_run_without_a_pause_reports_incomplete(
         "the ledgers are unchanged; only the operator's request changed"
     )
     assert rebuilt["inflight"], "the unfinished unit is still reported"
+
+
+# --- W6: verification on every read, with no flag ----------------------------
+
+
+def test_a_ledger_read_carries_its_verification_outcome(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The read returns the ledger **and** what the filesystem says about it.
+
+    `plan-01-kernels.md` §7b row 4: breaking this looks like *"a code path returns a
+    ledger without verifying it"*. There is one public read and it returns both, so
+    there is no way to obtain one without the other.
+    """
+    out = tmp_path / "O"
+    fresh = Recorder()
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=fresh.table(),
+        keys=KEYS,
+    )
+
+    unit = out / UNIT_NAMES[0]
+    healthy = orchestrator.read_ledger(unit)
+    assert healthy.ledger.unit == UNIT_NAMES[0]
+    assert healthy.unverified == {}
+    assert healthy.trustworthy is True
+
+    # Asserting only `== {}` would pass against a read that never verified at all, so
+    # the outcome is observed **changing** with the filesystem: break one claim and the
+    # same read must say so.
+    record = store.read_ledger(unit).stages["acquire"]
+    assert record.artifact_sha256 is not None
+    (unit / "artifacts" / record.artifact_sha256).unlink()
+
+    damaged = orchestrator.read_ledger(unit)
+    assert damaged.unverified == {"acquire": "artifact_missing"}
+    assert damaged.trustworthy is False
+
+
+def test_a_deleted_artifact_makes_its_stage_read_as_unverified(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """`plan-01-kernels.md` §6 step 9: delete a `done` stage's artifact by hand.
+
+    The recorded state is left alone - rewriting it would destroy the fact that the
+    claim was ever made - and the verification outcome is what reports the absence.
+    """
+    out = tmp_path / "O"
+    fresh = Recorder()
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=fresh.table(),
+        keys=KEYS,
+    )
+
+    unit = out / UNIT_NAMES[0]
+    record = store.read_ledger(unit).stages["acquire"]
+    assert record.artifact_sha256 is not None
+    (unit / "artifacts" / record.artifact_sha256).unlink()
+
+    verified = orchestrator.read_ledger(unit)
+
+    assert verified.unverified == {"acquire": "artifact_missing"}
+    assert verified.trustworthy is False
+    assert verified.ledger.stages["acquire"].state == "done", (
+        "the recorded state is not corrected: the ledger says what happened, and the "
+        "verification outcome says what is still true"
+    )
+
+
+def test_a_truncated_artifact_is_as_unverified_as_a_deleted_one(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The bytes a claim names are not there, whether the file is gone or wrong."""
+    out = tmp_path / "O"
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=Recorder().table(),
+        keys=KEYS,
+    )
+
+    unit = out / UNIT_NAMES[0]
+    record = store.read_ledger(unit).stages["transform"]
+    assert record.artifact_sha256 is not None
+    (unit / "artifacts" / record.artifact_sha256).write_bytes(b"truncated")
+
+    assert orchestrator.verify_ledger(unit) == {"transform": "artifact_missing"}
+
+
+def test_the_unverified_code_is_the_closed_sets_artifact_missing(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """`kernel-cli.md` §5: `artifact_missing`, exit `2`.
+
+    Exit `2` follows from the code being an expected negative rather than a precondition
+    failure, so the code is the assertion target and never the message.
+    """
+    closed = {
+        "illegible",
+        "insufficient_effective_resolution",
+        "blank_page",
+        "truncated_output",
+        "model_not_pulled",
+        "model_unknown",
+        "provider_unknown",
+        "engine_unavailable",
+        "provider_unavailable",
+        "asset_invalid",
+        "asset_missing",
+        "artifact_missing",
+        "evidence_missing",
+        "encrypted",
+        "unsupported_format",
+        "role_conflict",
+    }
+
+    assert orchestrator._CODE_ARTIFACT_MISSING in closed  # pylint: disable=protected-access
+
+    # And the code a deleted artifact *produces* is that one - not merely *a* code in
+    # the set, which any valid member would satisfy.
+    unit = tmp_path / "O" / UNIT_NAMES[0]
+    out = tmp_path / "O"
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=Recorder().table(),
+        keys=KEYS,
+    )
+    record = store.read_ledger(unit).stages["acquire"]
+    assert record.artifact_sha256 is not None
+    (unit / "artifacts" / record.artifact_sha256).unlink()
+
+    assert orchestrator.verify_ledger(unit) == {"acquire": "artifact_missing"}, (
+        "the consequence must report artifact_missing specifically: a different valid "
+        "code is a different fact, and the assertion targets the fact"
+    )
+
+
+def test_the_manifest_reports_the_unverified_claims(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """`run.json` is a *reading* of the ledgers, so it verifies as it reads.
+
+    A manifest that reported `done` without saying which claims the filesystem no longer
+    supports would be a manifest whose counters agree with a ledger that is lying.
+    """
+    out = tmp_path / "O"
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=Recorder().table(),
+        keys=KEYS,
+    )
+
+    healthy = orchestrator.rebuild_index(out)
+    assert healthy[orchestrator.UNVERIFIED_KEY] == {}, "a healthy run reports nothing"
+
+    unit = out / UNIT_NAMES[0]
+    record = store.read_ledger(unit).stages["persist"]
+    assert record.artifact_sha256 is not None
+    (unit / "artifacts" / record.artifact_sha256).unlink()
+
+    damaged = orchestrator.rebuild_index(out)
+
+    assert damaged[orchestrator.UNVERIFIED_KEY] == {UNIT_NAMES[0]: ["persist"]}
+    assert damaged["totals"]["done"] == healthy["totals"]["done"], (
+        "the recorded states are unchanged - only the verification outcome moved, "
+        "which is what makes the two readings comparable"
+    )
+
+
+def test_a_run_re_dispatches_a_stage_whose_artifact_was_deleted(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """The criterion's action, not merely its report: the stage **runs again**.
+
+    `plan-01-kernels.md` §6 step 9's wrong result is *"skipped as complete - AC
+    Verification is not optional fails silently if this passes"*. So the assertion is on
+    the dispatch, and the stage's second artifact must be a real one.
+    """
+    out = tmp_path / "O"
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=Recorder().table(),
+        keys=KEYS,
+    )
+
+    unit = out / UNIT_NAMES[0]
+    record = store.read_ledger(unit).stages["acquire"]
+    assert record.artifact_sha256 is not None
+    (unit / "artifacts" / record.artifact_sha256).unlink()
+
+    second = Recorder()
+    report = orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=second.table(),
+        keys=KEYS,
+    )
+
+    assert (unit.name, "acquire") in report.unverified, (
+        "the run says which claim it could not honour"
+    )
+    assert (unit.name, "acquire") in report.dispatched, "and it ran the stage again"
+    assert (
+        any(
+            call.stage.name == "acquire" and call.unit == unit.name
+            for call in second.calls
+        )
+        is not False
+    ), "the stage's operation was actually called"
+
+    restored = store.read_ledger(unit).stages["acquire"]
+    assert restored.artifact_sha256 is not None
+    assert store.verify(unit, restored.artifact_sha256) is True
+
+
+def test_a_stage_left_unverified_and_blocked_does_not_lend_its_stale_hash(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A need that is `done` but unverified must not satisfy its dependants.
+
+    The construction that reaches this is narrower than it looks, and worth spelling out
+    because the obvious version does **not** reach it: deleting a middle stage's
+    artifact normally restores it on the next run - with the *identical* hash, since
+    the key did not change - so its dependant correctly skips rather than blocks.
+
+    The branch is reached when the unverified stage **cannot be restored**, because its
+    own need failed. It then stays `done` with a recorded hash whose bytes are gone, and
+    its dependant is the thing at risk: without the check, that dependant would take the
+    stale hash and compose a key over content nothing can supply.
+    """
+    out = tmp_path / "O"
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=Recorder().table(),
+        keys=KEYS,
+    )
+
+    unit = out / UNIT_NAMES[0]
+    records = store.read_ledger(unit).stages
+    for stage_name in ("acquire", "transform"):
+        digest = records[stage_name].artifact_sha256
+        assert digest is not None
+        (unit / "artifacts" / digest).unlink()
+
+    # `acquire` fails on this run, so `transform` cannot be restored and stays `done`
+    # with a hash whose bytes are gone.
+    failing = Recorder(fail_on="acquire")
+    report = orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=failing.table(),
+        keys=KEYS,
+    )
+
+    after = store.read_ledger(unit).stages
+    assert after["acquire"].state == "failed"
+    assert after["transform"].state == "done", "it kept its old record"
+
+    assert (unit.name, "transform") in report.blocked
+    assert (unit.name, "persist") in report.blocked, (
+        "the dependant of an unverified need is blocked rather than handed a hash for "
+        "bytes that are not there"
+    )
+    assert not any(
+        call.stage.name == "persist" and call.unit == unit.name
+        for call in failing.calls
+    ), "a blocked stage never reaches its operation"
+
+
+def test_the_raw_ledger_read_is_reached_only_from_the_verification_layer() -> None:
+    """There is **no code path that skips the check** - asserted over the source.
+
+    Two functions read the ledger raw, and both are the verification layer:
+    :func:`verify_ledger` reads for itself because a standalone verifier has no ledger
+    in hand, and :func:`read_ledger` reads once and verifies **that** ledger so two
+    reads cannot see different bytes. Every other function reaches it through
+    :func:`read_ledger`.
+
+    A third raw call site - a fast path, a `--force`-shaped shortcut, an internal
+    caller that knows better - reddens this, which is the structural form of it.
+    """
+    calls = [
+        node
+        for node in ast.walk(ORCHESTRATOR_TREE)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "read_ledger"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "store"
+    ]
+
+    readers = sorted(
+        {
+            node.name
+            for node in ast.walk(ORCHESTRATOR_TREE)
+            if isinstance(node, ast.FunctionDef)
+            and any(call in ast.walk(node) for call in calls)
+        }
+    )
+
+    assert readers == ["read_ledger", "verify_ledger"], (
+        "the raw read belongs to the verification layer and to nothing else; it is "
+        f"reached from {readers}"
+    )
+    assert len(calls) == 2, (
+        f"one raw site per verifying function; found {len(calls)} - a third would be a "
+        "read that does not verify, and two in one function would verify a ledger the "
+        "reader no longer holds"
+    )
+
+
+def test_the_module_offers_no_flag_shaped_way_to_skip_verification() -> None:
+    """No `verify` / `force` / `skip` parameter exists on any public read path.
+
+    A parameter that turned the check off would be the `--verify`-shaped escape the
+    artifacts forbid, wearing a signature instead of a flag (`ADR-006`).
+    """
+    public = [
+        node
+        for node in ast.walk(ORCHESTRATOR_TREE)
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_")
+    ]
+    assert public, "the scan found no public function, so it is asserting nothing"
+
+    offenders = [
+        f"{node.name}.{argument.arg}"
+        for node in public
+        for argument in [*node.args.args, *node.args.kwonlyargs]
+        if argument.arg.lower() in {"verify", "force", "skip", "trust", "checked"}
+    ]
+
+    assert offenders == [], f"a read path exposes a way to skip the check: {offenders}"
+    assert not hasattr(orchestrator, "verify"), (
+        "a ledger-trust `verify` operation must not exist: verification is an outcome "
+        "of reading, never a request (`kernel-cli.md` §9)"
+    )
+
+
+def test_the_check_reads_the_store_not_the_ledgers_own_claim(
+    descriptor: orchestrator.Descriptor,
+    tmp_path: pathlib.Path,
+) -> None:
+    """A cached answer would be the claim asked about itself.
+
+    Falsified by the *store* disagreeing with the ledger: the ledger says `done` with a
+    hash, and the store says the bytes are gone. A check that consulted the ledger's
+    claim would answer *verified*.
+    """
+    out = tmp_path / "O"
+    orchestrator.run(
+        descriptor,
+        out,
+        input_hashes=_input_hashes(),
+        operations=Recorder().table(),
+        keys=KEYS,
+    )
+
+    unit = out / UNIT_NAMES[0]
+    record = store.read_ledger(unit).stages["acquire"]
+    assert record.artifact_sha256 is not None
+
+    ledger_claim = store.read_ledger(unit).stages["acquire"].state
+    bytes_are_there = store.verify(unit, record.artifact_sha256)
+    assert ledger_claim == "done" and bytes_are_there is True
+
+    (unit / "artifacts" / record.artifact_sha256).unlink()
+
+    assert store.read_ledger(unit).stages["acquire"].state == "done", (
+        "the ledger's claim does not change when the bytes go"
+    )
+    assert orchestrator.verify_ledger(unit) == {"acquire": "artifact_missing"}, (
+        "the check follows the bytes, not the claim"
+    )

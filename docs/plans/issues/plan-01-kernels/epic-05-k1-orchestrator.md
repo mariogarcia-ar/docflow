@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E05** |
 | Capability | K1 Orchestrator: unit/stage/graph dispatch, the 7 durable states, determinism classes, typed slots and barriers, mandatory verification |
-| Issues | `E05-01` (`S1-T06`) — **`done`** (§3) · `E05-02` (`S1-T07`) — **`done`** (§3) · `E05-03` (`S1-T08`) — **`done`** (§3) · `E05-04` (`S1-T09`) · `E05-05` (`S1-T10`) — `todo` |
+| Issues | `E05-01` (`S1-T06`) — **`done`** (§3) · `E05-02` (`S1-T07`) — **`done`** (§3) · `E05-03` (`S1-T08`) — **`done`** (§3) · `E05-04` (`S1-T09`) · `E05-05` (`S1-T10`) — **`done`** (§3) |
 | Issue count | **5** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernels/` |
 | Wave span | **W4 → W6** (W4: 1 · W5: 2 · W6: 2) |
@@ -375,6 +375,44 @@ Two failure modes at scale: one bad unit aborting an 11k-file run, and a stage w
 **Title**
 Mandatory verification on every ledger read, with **no flag**.
 
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | A `done` stage whose artifact was **deleted** reads as **incomplete**, **with no flag passed** | ✅ met — `test_a_deleted_artifact_makes_its_stage_read_as_unverified`, and end to end in `test_a_run_re_dispatches_a_stage_whose_artifact_was_deleted` |
+| 2 | Every ledger read reports the **verification outcome alongside the ledger** | ✅ met — `read_ledger` returns `Verified` (the ledger **and** the unverified map); `test_a_ledger_read_carries_its_verification_outcome`. `Verified` is a pair rather than a ledger with an optional field, so a caller *cannot* take the ledger without seeing the verdict |
+| 3 | **No code path skips the check** — not a fast path, not `--force`, not an internal shortcut | ✅ met — `store.read_ledger` is reached from exactly **two** places, both in the verification layer, asserted structurally by `test_the_raw_ledger_read_is_reached_only_from_the_verification_layer` (AST); `M11` and `M12` are the mutations that would have added a third and a skipping parameter |
+| 4 | There is **no `--verify` flag** and **no ledger-trust `verify` subcommand** on either surface | ✅ met — `test_the_module_offers_no_flag_shaped_way_to_skip_verification`; `M13` adds the operation and is refused |
+| 5 | The check reads **the store**, not a cached copy of the ledger's own claim | ✅ met — `test_the_check_reads_the_store_not_the_ledgers_own_claim`; `M10` answers from the ledger's claim and is caught |
+| 6 | `store ledger-read` and `orchestrator ledger-read` report the **same** verification outcome | ⚠️ **deferred to `E07-02` (`S1-T21`)**, which owns the dispatch of both surfaces — the shared function is what makes them agree (`docflow/kernels/orchestrator.py` is their one source), but no test in this issue can observe two CLI surfaces that do not yet dispatch |
+| 7 | `artifact_missing` is what a deleted artifact produces | ✅ met — `test_the_unverified_code_is_the_closed_sets_artifact_missing` asserts the code a **consequence** produces, not the constant (`M9` changes the produced code and is caught) |
+
+**Two defects the tests found, and neither was found by reading.**
+1. **`read_ledger` read the ledger twice.** The first cut read the file to get the stages and then re-read it inside `_unverified_stages` — two reads can see two different byte sequences, so a ledger could be verified against *a different version of itself*. Fixed by reading **once** and verifying that ledger: `_unverified_stages(ledger, unit_dir)`.
+2. **The store root was nested one level too deep.** Both `_operations` (the product surface) and the test `Recorder` passed `<unit>/artifacts` as the store root, so the store wrote under `artifacts/artifacts/`. Harmless while nothing read the tree back; adding verification made 14 tests fail at once and exposed it. Fixed to `call.unit_dir`.
+
+**On #3 — the absence is asserted structurally, because a behavioural test cannot prove one.** A test can show that the paths it *takes* verify; it cannot show there is no path that does not. So the claim is carried by an **AST assertion**: `store.read_ledger` has exactly two call sites, and both are `verify_ledger` / `read_ledger` in the verification layer. A third read site anywhere in the module reddens the test. `Verified` being a value rather than an optional field is the second half: there is no shape in which a caller holds a ledger and no verdict.
+
+**The three conditions of *may be skipped*, and why the third is the issue.** `_already_done(record, key, unverified, stage_name)` requires **terminal** *and* **same key** *and* **verified**. The first two are `E05-01`'s and `E05-02`'s; the third is what makes *verification is not optional* an **action** rather than a report. Without it a `done` stage whose artifact was deleted by hand is skipped as complete and the run reports success over bytes that are not there — the failure `ADR-006` and `plan-01-kernels.md` §6 step 9 both name. `M1` (skip a done stage for its key, verified or not) is that mutation.
+
+**`unverified` is additive, never corrective.** The ledger's recorded states are returned as recorded; the manifest carries an **extra** key (`unverified`) naming the claims the run could not honour, and re-dispatches them. A run that silently *rewrote* a `done` to `pending` on read would destroy the evidence that the claim was ever made — and `E05-03`'s `stale` state exists precisely so a kept-but-invalidated result stays visible.
+
+**A stage left both unverified and blocked must not lend its stale hash downstream.** `test_a_stage_left_unverified_and_blocked_does_not_lend_its_stale_hash` — an unverified stage's artifact hash is not posted as its output, so a dependant is blocked rather than fed a hash whose bytes are gone. `M6` (let an unverified need satisfy its dependant) is the mutation.
+
+**A consequence of the refactor: the two older harnesses drifted.** Extracting `_run_unit`'s loop body into `_advance()` moved every anchor the two `E05-01`/`E05-02` harnesses mutated — a skip decision, an upstream check, a manifest line, a control poll. Five anchors were re-pointed and every mutation re-confirmed caught; the detail is in **§4**. This is the third time anchor drift has produced *survivors that were harness defects, not code defects*, and the lesson is recorded: **after refactoring a file under test, re-run every harness that mutates it — before believing any of them.**
+
+**Effort**
+**S** — a single concept with a straightforward test (delete a file, read, assert incomplete). The cost is in the *absence* guarantee, which is why it is checked by an AST assertion and a value shape rather than by a fixture.
+
+**Test / evidence**
+- `tests/kernels/test_orchestrator.py` — **10 new tests** (`test_a_ledger_read_carries_its_verification_outcome` … `test_the_check_reads_the_store_not_the_ledgers_own_claim`); the file holds **69**.
+- `tests/kernels/mutation_verification.py` — **15 mutations, all falsified**, including the three that target the *absence* (`M11` a second read path, `M12` a skipping parameter, `M13` a ledger-trust `verify` operation).
+- `plan-01-kernels.md` §7b row 4 — *"Verification on every ledger read, no flag"*: delete a `done` stage's artifact, read again; breaking it looks like *"a code path returns a ledger without verifying it; a `--verify`-shaped escape appears"*. Requirement **FR-05**.
+- `plan-01-kernels.md` §6 step 9 — after interrupt #3, the correct result is *treated as incomplete and re-run*.
+- `kernel-cli.md` §9 (K1) — *"Verification is an **outcome** of reading a ledger, never a request."*
+- All four QA gates green: `pytest` (878 passed), `ruff check`, `ruff format --check` (77 files), `pylint src tests`.
+- All seven mutation harnesses re-run green: `mutation_verification` 15, `mutation_cli` 18, `mutation_determinism` 15, `mutation_resolution` 18, `mutation_store` 20, `mutation_ordering` 15, `mutation_orchestrator` 13.
+
 **Context**
 A `done` stage whose artifact was deleted by hand is not done. If verification has to be *requested*, then the one time it matters — the time nobody remembered to ask — it does not happen, and the stage is skipped as complete. This issue makes the check an **outcome of reading**, so there is no code path that returns a ledger without it.
 
@@ -428,6 +466,14 @@ E05 is **`done`** when:
 2. the capability is **demonstrable**, from outside the process: a 3-stage synthetic graph runs over N units; `rm run.json` followed by `manifest-rebuild` reproduces it from the ledgers alone through **both** doors; a kill mid-stage leaves `running`; a crash injected between write and rename leaves `done` absent; a deleted `done` artifact is treated as incomplete with no flag; and a deleted sampled artifact reports `failed` without producing a fresh sample.
 
 **Does E05 gate `S1-T19`?** **Yes, directly and heavily.** Two of its issues are named in `S1-T19`'s dependency set — `S1-T09` and `S1-T10` — making E05 → E08 a **direct inter-epic edge**. Indirectly, `S1-T06` and `S1-T07` are links 6 and 7 of the 9-link serial spine and `S1-T18`/`S1-T19` sit behind them. E05 owns the largest share of the gate's riskiest assertions.
+
+### Verification discipline — anchoring the harnesses after a refactor
+
+**A survivor is either a code defect or a harness defect, and the second is silent.** `E05-05` extracted `_run_unit`'s loop body into a new `_advance()`, which moved the text five mutations anchored on: the skip decision (now `_already_done(...)`), the upstream check (now `_upstream_hashes(recorded, verified.unverified, stage)`), a `rebuild_index` line (now the verified read), and the per-stage control poll (now the loop head). Five anchors were re-pointed and every mutation re-confirmed caught; the two harnesses are back to **15/15** and **13/13**.
+
+**This is the third time the same defect has appeared**, so it is a rule rather than an incident: **after refactoring a file under test, re-run every harness that mutates it — before trusting any of them.** The pattern of the trap is that a drifted anchor produces the *same output* as a mutation that was caught for the wrong reason, so the only safe reading is that an unre-anchored harness has proven nothing since the last refactor. The corollary, from `E05-03`: **an expectation that cannot fail is a citation, not a proof** — `M14` there survived against a test that asserted a *constant* was in a closed set, which any valid code satisfies.
+
+**Re-anchoring is itself a mutation of the harness, so it is a source edit like any other.** Two failures this session, both mine: a tuple-shaped replacement with the wrong arity corrupted the mutation table, and a first re-anchor of `mutation_ordering`'s `M4` changed the mutation's *meaning* (from *poll the control too rarely* to *verify against a stale ledger*, which a test must not catch) while still printing `[SURVIVED]`. Both were caught by running the harness and reading the label against the anchor, not by reading the diff.
 
 ---
 
