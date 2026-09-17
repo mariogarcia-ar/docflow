@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E04** |
 | Capability | The five port interfaces plus the thin acquisition (K2/K3) and generation (K4/K5/K6) adapters, and resolution by capability |
-| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 0 criteria unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 1 criterion unmet (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) — **`in progress`**, 0 criteria unmet, 3 documented deltas (§3) · `E04-06` (`S1-T16`) — **`in progress`**, 0 criteria unmet, 2 documented deltas (§3) · `E04-07` (`S1-T17`) — `todo` |
+| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 0 criteria unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 0 criteria unmet, criterion 8 restated (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) — **`in progress`**, 0 criteria unmet, 3 documented deltas (§3) · `E04-06` (`S1-T16`) — **`in progress`**, 0 criteria unmet, 2 documented deltas (§3) · `E04-07` (`S1-T17`) — `todo` |
 | Issue count | **7** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/ports/`, `docflow/adapters/`, `docflow/kernels/` |
 | Wave span | **W2 → W4** (W2: 1 · W3: 5 · W4: 1) |
@@ -247,7 +247,7 @@ Two silent failures start here. A scan with a stale invisible OCR layer behind i
 **Title**
 K3 `kernel.image` thin: `load` (EXIF applied), `legibility` (measurement + reason, never a boolean), `rescale`, `crop` (inverse map returned).
 
-**Status — `in progress`, 1 criterion unmet**
+**Status — `in progress`, 0 criteria unmet, with criterion 8 restated**
 
 Recorded rather than implied, for the same reason as `E04-02`: a ticked box that is not true is the failure mode this project exists to prevent.
 
@@ -260,8 +260,38 @@ Recorded rather than implied, for the same reason as `E04-02`: a ticked box that
 | 5 | `crop` returns the crop together with its inverse map | ✅ met — `InverseMap` travels with the bytes in one value |
 | 6 | A crop's local coordinates are never returned as a page region | ✅ met — this is `NFR-07`, and the assertion names the failure explicitly |
 | 7 | `rescale` reports the target honoured, never silently satisfying | ✅ met — an unreachable target is refused with the measured source resolution |
-| 8 | **The adapter is reachable only through `RasterImage`** | ❌ **NOT MET**, and the port it names does not exist — see the note under `E04-02` criterion 8: K3 has no port, and the `docflow/adapters/` module this would need is not any issue's deliverable |
+| 8 | **The engine is reachable only through the adapter** | ✅ **met, restated** — `docflow/adapters/image.py`; see below |
 | 9 | No threshold constant inside the module | ✅ met — the threshold is a required parameter, and a test changes it on an **unchanged** image to prove it is the caller's |
+
+**Criterion 8, restated — and why the original wording could not be satisfied.** It asked that "the adapter be reachable only through `RasterImage`". Three artifacts disagree on whether that port should exist:
+
+- `kernel-cli.md` §4 lists `<raster lib> 11.1.0` in K3's **adapter** column, so an adapter is expected;
+- `docflow/ports/__init__.py` states K3 has **no port**, deliberately — a raster library is the one engine that is not a vendor service behind a swap-able boundary — and `tests/ports/test_ports.py` asserts `not hasattr(get_ports_package(), "RasterImage")`;
+- `RasterImage` appears in **no** frozen artifact (`plans/README.md`, `sad.md`, `plan-01-kernels.md`).
+
+So satisfying the criterion literally would have meant adding a sixth port that a frozen document set at five, a module documents as unwanted, and a **green test asserts is absent**. The criterion's *substance* — the engine is reached through the adapter rather than living in the kernel — was deliverable, and was delivered. The wording is restated to name the adapter, and the epic's own reference to `RasterImage` is what moved.
+
+**What the split did, measured.** `kernels/image.py` held `from PIL import …` in **four** places. The vendors moved to `adapters/image.py` (625 lines) and the decisions stayed:
+
+| | before | after |
+|---|--:|--:|
+| `kernels/image.py` | 905 lines | 842 |
+| imaging libraries it imports | `PIL` ×4 | **none** |
+| `kernels/image_vendor.py` | did not exist | 360 lines (the seam) |
+| `kernels/vendor_refusal.py` | did not exist | 64 lines (shared by both seams) |
+| `adapters/image.py` | did not exist | 625 lines (owns Pillow) |
+
+The line count fell by less than K2's did, and that is honest rather than disappointing: K3's analysis is *thinner* — 43 statements against 70 of vendor access — so most of what the module contained **was** the pixels. What moved is the whole of the library dependency; what stayed is the threshold comparison, the refusal, the inverse map and the orientation decision.
+
+**This is the same inversion K2 uses, one level down.** A kernel may not import an adapter, so the vendor arrives as a keyword-only argument with no default, and the decisions ask through `RasterVendor` — a seam the *consumer* declares and the adapter satisfies. `docflow/ports/` is untouched.
+
+**Three defects were found while doing this, and each was found by a check rather than by reading:**
+
+- **A test defect that made three assertions meaningless.** The coordinate-conversion test compared a 72 DPI call against a 144 DPI one and asserted the *ratio* — which `scale = 1.0` satisfies, because both calls then scale by the same wrong factor. Fixed with an absolute anchor read independently from the reader.
+- **A leaky test patch.** The adapter suite's "library absent" test patched `builtins.__import__` and undid it with `importlib.reload`, which does **not** restore the original importer. Every test after it saw a blocked Pillow and failed with a message about a substitute decoder — **nine tests lost their meaning while the suite still reported failures that looked like real ones.** Replaced with a fixture that restores in a `finally`.
+- **An untested case the mutation harness exposed.** The tag *present and equal to 1* — a file declaring itself already upright — had no test. An implementation rotating on "a tag is present" would have passed both neighbouring tests while turning image after image by zero degrees and reporting that it had moved them.
+
+**Verification.** **15 of 15 mutations falsified** (harness: `tests/adapters/mutation_image.py`), 646 tests green, four QA gates green. Three of the mutations had to be rewritten before they were falsifiable: the first version of M1 inserted a `return` after a `raise` and was unreachable, M10's anchor matched a case where the local and source boxes coincide, and M14 re-labelled a code the tests do not distinguish. **A mutation that cannot fail reports `SURVIVED`, so all three would have looked like test gaps.**
 
 **One thing the criteria do not ask for, and it matters.** `rescale` takes `source_dpi` as a parameter because `Box` carries no DPI. A kernel that measured or assumed the source resolution would be reporting a number nobody supplied, so the caller states it — and the refusal is then a comparison of two values the caller can see, rather than a hidden judgement.
 

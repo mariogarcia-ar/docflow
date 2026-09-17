@@ -1128,6 +1128,17 @@ def test_boundary_package_contains_only_the_expected_modules() -> None:
         # until someone declares it. It holds a Protocol and value types and
         # names no vendor — the implementation lives in `docflow/adapters/pdf.py`.
         "pdf_vendor.py",
+        # `image_vendor.py` is the same seam for K3. K3 has **no port** — the set
+        # is frozen at five and a raster library is not a swap-able vendor boundary
+        # — but that is a statement about which engine answers, not about where the
+        # library may be imported from. The implementation lives in
+        # `docflow/adapters/image.py`.
+        "image_vendor.py",
+        # `vendor_refusal.py` is the refusal both seams raise. It is a shape, not a
+        # boundary type: it carries no outcome of its own, the same standing `Box`
+        # has in the frozen module. It lives here because two seams need it and
+        # duplicating the constructor made the two diverge in prose only.
+        "vendor_refusal.py",
     }
     actual = {path.name for path in PACKAGE_ROOT.glob("*.py")}
 

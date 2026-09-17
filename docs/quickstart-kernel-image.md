@@ -1,8 +1,9 @@
 # Quickstart — what K3 (`kernel.image`) can do today
 
-**Status: honest, and partial.** Four of the eight kernels have landed; this page
-covers the image one. Everything below has been run and its output is quoted from a
-real invocation.
+**Status: honest, and complete for Stage 1.** Six of the eight kernels can serve a call;
+this page covers the image one, whose kernel **and** adapter have landed and whose split
+between them is part of the design now. Everything below has been run and its output is
+quoted from a real invocation.
 
 There is **no command line for kernels yet** (`S1-T20`/`S1-T21` build
 `docflow-kernel`). Everything here is the **library**, called from Python. That is
@@ -18,22 +19,55 @@ pip install -e ".[dev]"      # pytest, ruff, pylint
 pip install pillow           # the raster engine
 ```
 
-Pillow is resolved lazily. It is **not** a declared dependency yet
+Pillow is resolved lazily, by the adapter. It is **not** a declared dependency yet
 (`pyproject.toml` has `dependencies = []` until the adapters are tallied), and a
 missing one is a typed `Reason` with a remedy in the message — never a substitute
 engine, because a different decoder reading the same bytes is a different
 measurement wearing this one's name.
 
+## Where the code lives — and K3 has *no port*, deliberately
+
+| File | What it holds |
+|---|---|
+| `docflow/adapters/image.py` | `RasterEngine` (the four operations) and `PillowVendor` (owns `PIL`) |
+| `docflow/kernels/image_vendor.py` | `RasterVendor` — what the **decisions** ask a library through |
+| `docflow/kernels/vendor_refusal.py` | the refusal both seams raise |
+| `docflow/kernels/image.py` | the decisions: thresholds, refusals, the inverse map, orientation |
+
+```text
+(no port — K3's set is frozen at five, and a raster library is not a
+ swap-able vendor boundary; a sixth interface would put a boundary
+ where the architecture did not ask for one)
+adapters/image.py    RasterEngine     the four operations; owns Pillow
+      |
+      v  calls
+kernels/image.py     decisions        thresholds, refusals, inverse map; no Pillow
+      |
+      v  asks through
+kernels/image_vendor.py  RasterVendor    the seam the decisions declare
+      ^
+adapters/image.py    PillowVendor     the implementation over Pillow
+```
+
+**K2 has a port and K3 does not, and that difference is deliberate.** A PDF engine is a
+vendor you might replace; a raster library is not — the architecture says so in
+`ports/__init__.py`, and a test asserts `RasterImage` is absent. What that means is that
+K3 has no *outer* boundary. It does not mean the imaging library belongs inside the
+kernel: `sad.md` §1 requires every kernel to be usable without its engine installed, and
+this module used to hold `from PIL import …` in **four** places.
+
+So the seam is an **inner** one — the consumer declares what it needs, the adapter
+satisfies it — and its point is testability and replaceability of the library, not engine
+selection. **A kernel may not import an adapter**, so the vendor arrives as a
+keyword-only argument with no default.
+
 ## The whole surface
 
-Five module-level operations in `docflow.kernels.image`, plus the `InverseMap` type
-`crop` returns. All of them return `KernelResult`, which has exactly two states: a
-value with evidence, or no value with a `Reason`.
-
 ```python
-from pathlib import Path
-from docflow.kernels import image
+from docflow.adapters.image import RasterEngine   # the adapter
 from docflow.kernels.types import Box
+
+engine = RasterEngine()      # the threshold is per call, never a setting
 ```
 
 | Operation | Question it answers |
@@ -44,10 +78,15 @@ from docflow.kernels.types import Box
 | `rescale` | Give me a different resolution |
 | `crop` | Give me a region, and tell me where it came from |
 
+The kernel's own functions take `vendor=` as a keyword-only argument with **no default** —
+a default would have to name a concrete library, which is the import the split exists to
+avoid. Call the adapter instead; reach for the kernel directly only when you are writing
+the vendor.
+
 ## 1. `info` — what is this image, and which way is up?
 
 ```python
-result = image.info(Path("foto.jpg"))
+result = engine.info(Path("foto.jpg"))
 result.value.observed
 # {'file': 'foto.jpg', 'width': 80, 'height': 40, 'mode': 'RGB', 'format': 'JPEG',
 #  'exif_orientation': 6, 'exif_orientation_applied': True, 'exif_orientation_tag': 274}
@@ -64,7 +103,7 @@ zero.
 ## 2. `load` — the pixels, upright
 
 ```python
-result = image.load(Path("foto.jpg"))       # stored 80×40, declares rotate-90
+result = engine.load(Path("foto.jpg"))       # stored 80×40, declares rotate-90
 from io import BytesIO
 from PIL import Image
 Image.open(BytesIO(result.value.data)).size
@@ -87,7 +126,7 @@ one that does declare it would have been silently sideways.
 ## 3. `legibility` — sharpness, against *your* threshold
 
 ```python
-result = image.legibility(Path("escaneo.jpg"), threshold=100.0)
+result = engine.legibility(Path("escaneo.jpg"), threshold=100.0)
 
 result.value.measurements
 # {'laplacian_variance': 318.6709, 'contrast': 0.070666,
@@ -102,7 +141,7 @@ When the measurement falls below the threshold, the result carries **no value, a
 typed reason, and the same measurements**:
 
 ```python
-blurred = image.legibility(Path("borroso.jpg"), threshold=100.0)
+blurred = engine.legibility(Path("borroso.jpg"), threshold=100.0)
 blurred.value                          # None
 blurred.reason.code                    # 'illegible'
 blurred.evidence.measurements
@@ -149,11 +188,11 @@ same value that passes most of this corpus refuses a sixth of it.
 ## 4. `rescale` — a different resolution, and it never upscales
 
 ```python
-result = image.rescale(Path("pagina.png"), target_dpi=100, source_dpi=200)
+result = engine.rescale(Path("pagina.png"), target_dpi=100, source_dpi=200)
 result.evidence.measurements["dpi_honoured"]     # 100.0
 result.evidence.observed["result_size"]          # [300, 200]   (from 600×400)
 
-refused = image.rescale(Path("pagina.png"), target_dpi=400, source_dpi=200)
+refused = engine.rescale(Path("pagina.png"), target_dpi=400, source_dpi=200)
 refused.value                # None
 refused.reason.code          # 'insufficient_effective_resolution'
 ```
@@ -173,7 +212,7 @@ would break a caller that simply passes through what it measured.
 ## 5. `crop` — the region, and where it came from
 
 ```python
-result = image.crop(Path("pagina.png"), Box(100.0, 200.0, 300.0, 80.0))
+result = engine.crop(Path("pagina.png"), Box(100.0, 200.0, 300.0, 80.0))
 
 result.value.observed["source_box"]     # [100.0, 200.0, 400.0, 280.0]
 result.value.observed["local_size"]     # [300, 80]  <- the crop's own frame
@@ -194,6 +233,37 @@ origin *in the page*, and its far corner to the region's far corner.
 A region outside the image is a usage error and raises, rather than being clamped —
 a clamp would return a crop of a different size than the one asked for, with an
 inverse map that still looked right.
+
+---
+
+## The split, and what it buys
+
+`kernels/image.py` held `from PIL import …` in **four** places. The library moved to
+`adapters/image.py`; the decisions stayed.
+
+| | before | after |
+|---|--:|--:|
+| `kernels/image.py` | 905 lines | 842 |
+| imaging libraries it imports | `PIL` ×4 | **none** |
+| `kernels/image_vendor.py` | did not exist | 360 lines (the seam) |
+| `adapters/image.py` | did not exist | 625 lines (owns Pillow) |
+
+**The line count fell by less than K2's did, and that is worth stating rather than
+glossing.** K3's analysis is thin — 43 statements against 70 of vendor access — so most
+of what the module contained *was* the pixels. What moved is the whole of the library
+dependency; what stayed is the threshold comparison, the refusal, the inverse map and the
+orientation decision.
+
+**What it buys.** The decisions are testable with a stub vendor and no imaging library
+installed, and a different raster library becomes possible without touching a judgement:
+satisfy `RasterVendor` and pass it in.
+
+**What it does not buy.** It does not make the decisions pure. A blurred image is still
+*measured* by the library, and a library that measures wrongly still misleads them. The
+split buys **replaceability and testability**, not correctness.
+
+**Verified by mutation.** Fifteen mutations each break one guarded property and each fail
+the test that guards it — harness: `tests/adapters/mutation_image.py`.
 
 ---
 
@@ -253,7 +323,7 @@ root = pathlib.Path("tests/fixtures")
 entries = json.loads((root / "manifest.json").read_text())["entries"]
 for entry in entries:
     if entry["extension"] in ("jpg", "jpeg", "png"):
-        result = image.info(root / entry["path"])
+        result = engine.info(root / entry["path"])
         print(entry["path"], result.reason.code if result.reason else "ok")
 PY
 ```
@@ -267,7 +337,14 @@ than by the fixture set.
 | Kernel | State |
 |---|---|
 | K2 `pdf` | **Landed** — see `quickstart-kernel-pdf.md` |
+| K4 `kernel.ocr` | **Landed** — Docling behind `OcrEngine` (`E04-04`) |
+| K5 `kernel.llm.local` | **Landed** — Ollama behind `LlmEngine` (`E04-05`) |
+| K6 `kernel.llm.frontier` | **Landed** — one provider behind `LlmEngine` (`E04-06`) |
 | K7 `store` | **Landed** — content-addressed put/get/verify + the ledger write path |
 | K8 `registry` | **Landed** — load, schema-validate, fail fast, `registry_hash` |
-| K4 `ocr`, K5 `llm.local`, K6 `llm.frontier` | Not yet (`E04-04` … `E04-06`) |
-| K1 `orchestrator` | Not yet (`E05`) |
+| K1 `orchestrator` | Not yet (`E05-01`) |
+
+Six of the eight can serve a call in this workspace. **K6 is the exception among the
+landed ones**: its adapter exists, but its probe also requires a provider key and this
+workspace has none, so `docflow-kernel --list` correctly reports it unavailable —
+*available* would be a claim that a paid call could be made.

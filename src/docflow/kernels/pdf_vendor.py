@@ -63,7 +63,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from docflow.kernels.types import Reason
+from docflow.kernels.vendor_refusal import VendorRefusal
 
 __all__: list[str] = [
     "CutDocument",
@@ -196,37 +196,13 @@ class CutDocument:
     page_sizes: tuple[tuple[float, float], ...]
 
 
-class PdfVendorError(Exception):
+class PdfVendorError(VendorRefusal):
     """A reader that cannot serve a call, carrying the ``Reason`` that says why.
 
-    An exception rather than a ``(None, Reason)`` pair, because these are raised
-    from inside loops and across several frames — a return value would have to be
-    checked at every one of them, and the check that gets forgotten is the one that
-    lets a refusal be reported as a measurement.
-
-    ``measurements`` and ``observed`` travel with the reason because a refusal
-    frequently *is* the measurement: ``insufficient_effective_resolution`` is only
-    diagnosable if the page's actual DPI comes with it.
+    Subclasses :class:`~docflow.kernels.vendor_refusal.VendorRefusal`, which
+    carries the constructor and the two attributes a caller reads: ``reason``
+    and the evidence taken before the refusal.
     """
-
-    def __init__(
-        self,
-        reason: Reason,
-        measurements: Mapping[str, float] | None = None,
-        observed: Mapping[str, object] | None = None,
-    ) -> None:
-        """Store the reason and whatever was measured before refusing.
-
-        Args:
-            reason: Why no value could be produced.
-            measurements: The numeric measurements taken before the refusal.
-            observed: The remaining observations taken before the refusal.
-
-        """
-        super().__init__(reason.message)
-        self.reason = reason
-        self.measurements: dict[str, float] = dict(measurements or {})
-        self.observed: dict[str, object] = dict(observed or {})
 
 
 @runtime_checkable

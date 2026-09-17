@@ -38,8 +38,16 @@ import pathlib
 import pytest
 from PIL import Image, ImageFilter
 
+from docflow.adapters.image import PillowVendor
 from docflow.kernels import image
-from docflow.kernels.types import Box
+from docflow.kernels.image_vendor import RasterVendorError
+from docflow.kernels.types import Box, Reason
+
+#: The documented raster implementation, bound once. The kernel no longer reaches
+#: for a library itself — it receives one — so the tests supply the real thing.
+#: That is the same inversion the adapter uses, and it is why these tests can keep
+#: asserting *decisions* over real pixels without naming an imaging library.
+VENDOR = PillowVendor()
 
 # --- Fixture construction ----------------------------------------------------
 
@@ -185,7 +193,7 @@ def test_module_exports_the_four_operations_plus_the_inverse_map() -> None:
 def test_info_reports_the_orientation_it_found(rotated_jpeg: pathlib.Path) -> None:
     """``info`` reports the EXIF tag the file declares."""
 
-    result = image.info(rotated_jpeg)
+    result = image.info(rotated_jpeg, vendor=VENDOR)
 
     assert result.value is not None
     assert result.value.observed["exif_orientation"] == _ROTATE_90_CW
@@ -201,10 +209,40 @@ def test_info_reports_no_orientation_on_an_upright_image(
     implementation that always reported ``6`` would satisfy that assertion while
     telling the caller nothing about the file.
     """
-    result = image.info(sharp_png)
+    result = image.info(sharp_png, vendor=VENDOR)
 
     assert result.value is not None
     assert result.value.observed["exif_orientation"] is None
+    assert result.value.observed["exif_orientation_applied"] is False
+
+
+def test_an_image_declaring_itself_upright_reports_no_rotation(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A file declaring orientation ``1`` reports the tag *and* no rotation.
+
+    This is the case between the two above, and it was untested until a mutation
+    survived here: a *declared* orientation and an *absent* one are different files,
+    and an implementation that rotated on "a tag is present" would pass both of the
+    other tests while turning image after image by zero degrees and reporting that it
+    had moved them.
+
+    Orientation 1 means *already upright*, so the tag is reported as found and
+    ``applied`` is ``False`` — the two facts the module exists to keep apart.
+    """
+    path = tmp_path / "declared-upright.png"
+    picture = Image.new("RGB", _STORED_SIZE, "white")
+    exif = picture.getexif()
+    exif[_ORIENTATION_TAG] = 1
+    picture.save(path, exif=exif)
+
+    result = image.info(path, vendor=VENDOR)
+
+    assert result.value is not None, "the file is readable and must report"
+    assert result.value.observed["exif_orientation"] == 1, (
+        "the tag that was *found* is reported, so a declared upright and an absent "
+        "tag stay distinguishable"
+    )
     assert result.value.observed["exif_orientation_applied"] is False
 
 
@@ -221,7 +259,7 @@ def test_load_applies_the_orientation_before_the_bytes_leave(
     stored = Image.open(rotated_jpeg)
     assert stored.size == _STORED_SIZE, "the fixture must be stored landscape"
 
-    result = image.load(rotated_jpeg)
+    result = image.load(rotated_jpeg, vendor=VENDOR)
 
     assert result.value is not None
     decoded = Image.open(io.BytesIO(result.value.data))
@@ -236,7 +274,7 @@ def test_load_reports_the_orientation_it_applied(
     rotated_jpeg: pathlib.Path,
 ) -> None:
     """``load`` says a rotation happened, so the caller can undo it if it must."""
-    result = image.load(rotated_jpeg)
+    result = image.load(rotated_jpeg, vendor=VENDOR)
 
     assert result.value is not None
     assert result.evidence.observed["exif_orientation"] == _ROTATE_90_CW
@@ -251,7 +289,7 @@ def test_load_does_not_rotate_an_image_that_declares_nothing(
     Without this, an implementation that rotated unconditionally would satisfy the
     row's assertions while corrupting every upright image.
     """
-    result = image.load(sharp_png)
+    result = image.load(sharp_png, vendor=VENDOR)
 
     assert result.value is not None
     decoded = Image.open(io.BytesIO(result.value.data))
@@ -273,7 +311,7 @@ def test_legibility_reports_a_measurement_and_a_reason(
     measured, and the threshold that decision was taken against is policy the
     caller owns.
     """
-    result = image.legibility(blurred_png, threshold=_BLUR_THRESHOLD)
+    result = image.legibility(blurred_png, threshold=_BLUR_THRESHOLD, vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -292,7 +330,7 @@ def test_legibility_returns_a_value_for_a_sharp_image(
     The pair with the test above proves the refusal is about the measurement rather
     than a blanket refusal of images.
     """
-    result = image.legibility(sharp_png, threshold=_BLUR_THRESHOLD)
+    result = image.legibility(sharp_png, threshold=_BLUR_THRESHOLD, vendor=VENDOR)
 
     assert result.reason is None
     assert result.value is not None
@@ -308,8 +346,8 @@ def test_the_threshold_is_the_callers_by_changing_it_on_an_unchanged_image(
     return the same answer twice and this assertion would fail — which is why the
     threshold is a required parameter with no default.
     """
-    permissive = image.legibility(sharp_png, threshold=1.0)
-    strict = image.legibility(sharp_png, threshold=10**9)
+    permissive = image.legibility(sharp_png, threshold=1.0, vendor=VENDOR)
+    strict = image.legibility(sharp_png, threshold=10**9, vendor=VENDOR)
 
     assert permissive.value is not None
     assert strict.value is None
@@ -325,8 +363,8 @@ def test_legibility_never_returns_a_bare_boolean(
     Asserted structurally, because the failure this guards against is someone
     "simplifying" the result to a boolean, which the row forbids explicitly.
     """
-    failed = image.legibility(blurred_png, threshold=_BLUR_THRESHOLD)
-    passed = image.legibility(blurred_png, threshold=0.0)
+    failed = image.legibility(blurred_png, threshold=_BLUR_THRESHOLD, vendor=VENDOR)
+    passed = image.legibility(blurred_png, threshold=0.0, vendor=VENDOR)
 
     assert not isinstance(failed.value, bool)
     assert not isinstance(passed.value, bool)
@@ -340,7 +378,7 @@ def test_legibility_emits_no_aggregate_grade(blurred_png: pathlib.Path) -> None:
     A number that aggregates the measurements is a decision wearing a number's
     clothes, and `kernel-cli.md` §3 forbids it at a kernel boundary.
     """
-    result = image.legibility(blurred_png, threshold=_BLUR_THRESHOLD)
+    result = image.legibility(blurred_png, threshold=_BLUR_THRESHOLD, vendor=VENDOR)
     forbidden = {"score", "quality", "confidence", "grade"}
 
     assert not forbidden & set(result.evidence.measurements)
@@ -362,7 +400,7 @@ def test_crop_maps_local_coordinates_back_to_the_source(
     """
     region = Box(100.0, 200.0, 300.0, 80.0)
 
-    result = image.crop(page_png, region)
+    result = image.crop(page_png, region, vendor=VENDOR)
 
     assert result.value is not None
     inverse = result.value.observed["inverse_map"]
@@ -384,7 +422,7 @@ def test_crop_never_reports_local_coordinates_as_the_source_region(
     The distinction is what makes the failure silent: a crop taken at ``(100, 200)``
     whose box is reported as ``(0, 0, 300, 80)`` is a valid, wrong answer.
     """
-    result = image.crop(page_png, Box(100.0, 200.0, 300.0, 80.0))
+    result = image.crop(page_png, Box(100.0, 200.0, 300.0, 80.0), vendor=VENDOR)
 
     assert result.value is not None
     source_box = result.value.observed["source_box"]
@@ -403,7 +441,7 @@ def test_crop_returns_bytes_with_its_map(page_png: pathlib.Path) -> None:
     Separating them would make the map a step the caller has to remember, which is
     the design that produced the failure in the first place.
     """
-    result = image.crop(page_png, Box(10.0, 20.0, 50.0, 60.0))
+    result = image.crop(page_png, Box(10.0, 20.0, 50.0, 60.0), vendor=VENDOR)
 
     assert result.value is not None
     payload = result.value.observed["image"]
@@ -420,13 +458,13 @@ def test_crop_refuses_a_region_outside_the_image(page_png: pathlib.Path) -> None
     an inverse map that still looked right.
     """
     with pytest.raises(ValueError, match="falls outside the image"):
-        image.crop(page_png, Box(500.0, 300.0, 300.0, 300.0))
+        image.crop(page_png, Box(500.0, 300.0, 300.0, 300.0), vendor=VENDOR)
 
 
 def test_crop_refuses_a_degenerate_region(page_png: pathlib.Path) -> None:
     """A zero-width or zero-height region is a usage error."""
     with pytest.raises(ValueError, match="positive extent"):
-        image.crop(page_png, Box(10.0, 10.0, 0.0, 50.0))
+        image.crop(page_png, Box(10.0, 10.0, 0.0, 50.0), vendor=VENDOR)
 
 
 # --- rescale -----------------------------------------------------------------
@@ -434,7 +472,7 @@ def test_crop_refuses_a_degenerate_region(page_png: pathlib.Path) -> None:
 
 def test_rescale_reports_the_target_it_honoured(page_png: pathlib.Path) -> None:
     """A reachable target is honoured and named in the evidence."""
-    result = image.rescale(page_png, target_dpi=100, source_dpi=200)
+    result = image.rescale(page_png, target_dpi=100, source_dpi=200, vendor=VENDOR)
 
     assert result.value is not None
     assert result.evidence.measurements["dpi_honoured"] == 100.0
@@ -454,7 +492,7 @@ def test_rescale_refuses_a_target_the_source_cannot_reach(
     in K2, and deliberately the same reason code so a caller matching on it does
     not have to know which kernel declined.
     """
-    result = image.rescale(page_png, target_dpi=400, source_dpi=200)
+    result = image.rescale(page_png, target_dpi=400, source_dpi=200, vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -471,7 +509,7 @@ def test_rescale_accepts_the_source_resolution_as_satisfiable(
     The boundary case matters: refusing it would make the operation unusable for a
     caller that simply passes through whatever it measured.
     """
-    result = image.rescale(page_png, target_dpi=200, source_dpi=200)
+    result = image.rescale(page_png, target_dpi=200, source_dpi=200, vendor=VENDOR)
 
     assert result.value is not None
     assert result.evidence.measurements["dpi_honoured"] == 200.0
@@ -482,10 +520,10 @@ def test_rescale_refuses_a_non_positive_resolution(
 ) -> None:
     """Zero or negative resolutions are usage errors."""
     with pytest.raises(ValueError, match="target_dpi must be positive"):
-        image.rescale(page_png, target_dpi=0, source_dpi=200)
+        image.rescale(page_png, target_dpi=0, source_dpi=200, vendor=VENDOR)
 
     with pytest.raises(ValueError, match="source_dpi must be positive"):
-        image.rescale(page_png, target_dpi=100, source_dpi=0)
+        image.rescale(page_png, target_dpi=100, source_dpi=0, vendor=VENDOR)
 
 
 # --- Typed failure paths -----------------------------------------------------
@@ -494,11 +532,15 @@ def test_rescale_refuses_a_non_positive_resolution(
 def test_a_missing_file_is_a_typed_reason(tmp_path: pathlib.Path) -> None:
     """An absent file reports ``unsupported_format``, never an empty bitmap."""
     for operation in (
-        lambda: image.load(tmp_path / "no.png"),
-        lambda: image.info(tmp_path / "no.png"),
-        lambda: image.legibility(tmp_path / "no.png", threshold=1.0),
-        lambda: image.rescale(tmp_path / "no.png", target_dpi=10, source_dpi=10),
-        lambda: image.crop(tmp_path / "no.png", Box(0.0, 0.0, 10.0, 10.0)),
+        lambda: image.load(tmp_path / "no.png", vendor=VENDOR),
+        lambda: image.info(tmp_path / "no.png", vendor=VENDOR),
+        lambda: image.legibility(tmp_path / "no.png", threshold=1.0, vendor=VENDOR),
+        lambda: image.rescale(
+            tmp_path / "no.png", target_dpi=10, source_dpi=10, vendor=VENDOR
+        ),
+        lambda: image.crop(
+            tmp_path / "no.png", Box(0.0, 0.0, 10.0, 10.0), vendor=VENDOR
+        ),
     ):
         result = operation()
         assert result.value is None
@@ -513,7 +555,7 @@ def test_bytes_that_are_not_an_image_are_a_typed_reason(
     impostor = tmp_path / "not-an-image.png"
     impostor.write_bytes(b"this is not a PNG, however it is named")
 
-    result = image.info(impostor)
+    result = image.info(impostor, vendor=VENDOR)
 
     assert result.value is None
     assert result.reason is not None
@@ -521,21 +563,69 @@ def test_bytes_that_are_not_an_image_are_a_typed_reason(
 
 
 def test_a_missing_engine_is_a_typed_reason_and_not_a_substitute(
-    sharp_png: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+    sharp_png: pathlib.Path,
 ) -> None:
     """Without the engine the call reports why, and decodes nothing.
 
     ``wbs.md`` §9: a missing engine is a typed ``Reason``, never a substitute.
-    """
-    monkeypatch.setattr(
-        image, "_engine", lambda: (None, image.Reason("engine_unavailable", "missing"))
-    )
 
-    result = image.load(sharp_png)
+    The absence is modelled by a **vendor that refuses**, rather than by patching a
+    module-level accessor — the kernel no longer has one to patch. That is the shape
+    a real missing library takes through the seam, and it keeps the test asserting on
+    the kernel's reporting rather than on its internals.
+    """
+    refusing = _RefusingVendor()
+
+    result = image.load(sharp_png, vendor=refusing)
 
     assert result.value is None
     assert result.reason is not None
     assert result.reason.code == "engine_unavailable"
+    assert refusing.decode_calls == 1, (
+        "the refusal comes *from* the decode that could not happen, so the call was "
+        "attempted exactly once — and the value above is None rather than a "
+        "substitute engine's output"
+    )
+
+
+class _RefusingVendor:
+    """A vendor whose library is not installed, so every call refuses."""
+
+    def __init__(self) -> None:
+        """Initialise with no calls recorded."""
+        self.decode_calls = 0
+
+    def _refuse(self) -> None:
+        """Raise the refusal the real vendor raises for a missing library."""
+        raise RasterVendorError(
+            Reason(
+                code="engine_unavailable",
+                message=(
+                    "the 'PIL' library is not installed, so images cannot be decoded"
+                ),
+            )
+        )
+
+    def decode(self, path: pathlib.Path) -> None:  # pylint: disable=unused-argument
+        """Refuse, recording that the call was attempted.
+
+        The path is accepted because the seam requires the argument; this stub refuses
+        before it would have needed it.
+
+        Args:
+            path: The image the caller asked for.
+
+        Raises:
+            RasterVendorError: Always — the library is absent.
+
+        """
+        self.decode_calls += 1
+        self._refuse()
+
+    def engine_terms(self) -> dict[str, str]:
+        """Refuse: an uninstalled library has no identity to report."""
+        self._refuse()
+        return {}
 
 
 # --- The reason vocabulary ---------------------------------------------------

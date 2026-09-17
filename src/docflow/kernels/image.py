@@ -1,7 +1,20 @@
 """K3 ``kernel.image`` — load with EXIF applied, legibility, rescale, crop.
 
-The image kernel, thin and deterministic (`sad.md` §3, `E04-03` / ``S1-T13``). One
-engine sits behind it: **Pillow**, for decoding, rotating, measuring and encoding.
+The image *decisions*: whether a bitmap is legible against the caller's threshold,
+whether a rescale target is reachable, what a crop's inverse map is, and which
+orientation was found and whether it was applied (`sad.md` §3, `E04-03` / ``S1-T13``).
+
+**The raster library is not imported here, not named here, and not callable from
+here.** Pillow lives in `docflow/adapters/image.py`, which reaches this module
+through the :class:`~docflow.kernels.image_vendor.RasterVendor` seam declared in
+`docflow/kernels/image_vendor.py`. `sad.md` §1 requires every kernel to be usable
+without its engine installed, and this module used to hold `from PIL import …` in
+four places — an engine inside a kernel.
+
+Every operation takes ``vendor`` as a keyword-only argument with **no default**. A
+default would have to name a concrete library, which is the import this module
+exists not to have, and an unbound seam must be a typed failure rather than a
+substitute engine.
 
 Three silent failures live here, and all three are failures of *honesty about what
 was observed* rather than failures of computation.
@@ -52,12 +65,18 @@ DPI and the kernel must not invent one.
 from __future__ import annotations
 
 import dataclasses
-import io
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final
 
+from docflow.kernels.image_vendor import (
+    EXIF_ORIENTATION_TAG,
+    EXIF_UPRIGHT,
+    RasterFrame,
+    RasterVendor,
+    RasterVendorError,
+)
 from docflow.kernels.types import Box, Bytes, Evidence, KernelResult, Reason
 
 # Pylint sees the decode-refusal shape below as a duplicate of the one in
@@ -80,27 +99,16 @@ __all__: list[str] = [
 # --- Reason codes, from the closed set of `kernel-cli.md` §5 -----------------
 
 _CODE_ILLEGIBLE: Final[str] = "illegible"
-_CODE_UNSUPPORTED_FORMAT: Final[str] = "unsupported_format"
-_CODE_ENGINE_UNAVAILABLE: Final[str] = "engine_unavailable"
+#: Public because the *adapter* raises it for a file it cannot decode, and a
+#: caller matching on the code must not have to know which layer produced it.
+CODE_UNSUPPORTED_FORMAT: Final[str] = "unsupported_format"
+CODE_ENGINE_UNAVAILABLE: Final[str] = "engine_unavailable"
 #: The requested resolution exceeds what the source pixels hold. The same
 #: condition K2's ``render`` refuses on, and deliberately the same word: a caller
 #: matching on the code must not have to know which kernel declined.
 _CODE_INSUFFICIENT_RESOLUTION: Final[str] = "insufficient_effective_resolution"
 
 # --- Engine identity ---------------------------------------------------------
-
-#: The raster engine. Imported lazily so this module imports without it, and a
-#: missing library becomes a typed ``Reason`` rather than an `ImportError` raised
-#: at import time.
-_ENGINE_PACKAGE: Final[str] = "PIL"
-
-#: The EXIF tag that carries the orientation. It is a tag number and not a name
-#: because that is what the format defines.
-_EXIF_ORIENTATION_TAG: Final[int] = 274
-
-#: The orientation that means *already upright*. Applying it is a no-op, and every
-#: other value means the pixels have to move.
-_EXIF_UPRIGHT: Final[int] = 1
 
 #: PNG, because it is lossless: a rescaled or cropped page must not acquire JPEG
 #: artefacts on its way to OCR.
@@ -203,51 +211,29 @@ class _Refused(Exception):
 # --- Engine access -----------------------------------------------------------
 
 
-def _engine() -> tuple[Any | None, Reason | None]:
-    """Import the raster engine, or explain why it is unavailable.
+def _identity_terms(vendor: RasterVendor) -> Mapping[str, str]:
+    """Report the library's identity terms, or nothing when it cannot answer.
 
-    The import is inside the function by design: ``pyproject.toml`` declares no
-    runtime dependency, so importing this module must not require the engine, and a
-    missing library must arrive as a ``Reason`` rather than as an `ImportError`
-    raised at import time.
-
-    Returns:
-        The ``PIL.Image`` module, or ``None`` with a typed ``Reason``.
-
-    """
-    try:
-        from PIL import Image  # pylint: disable=import-outside-toplevel
-    except ImportError:
-        return None, Reason(
-            code=_CODE_ENGINE_UNAVAILABLE,
-            message=(
-                f"the {_ENGINE_PACKAGE!r} library is not installed, so images "
-                f"cannot be decoded. Install it (`pip install pillow`); no "
-                "substitute engine is used, because a different decoder reading "
-                "the same bytes is a different measurement reported as this one."
-            ),
-        )
-
-    return Image, None
-
-
-def _terms(engine: Any) -> Mapping[str, str]:
-    """Report the engine's revision, as a cache-key term.
+    A cache-key term must be a non-empty string, so an unavailable library contributes
+    **nothing** rather than an ``"unknown"`` placeholder — a placeholder would key two
+    genuinely different engines the same way, which is the failure the engine-version
+    term exists to prevent (`sad.md` §5).
 
     Args:
-        engine: The engine module.
+        vendor: The raster implementation.
 
     Returns:
-        The adapter revision terms. The version is a key term because the same call
-        against a different engine build is different work (`sad.md` §5).
+        The engine identity terms, or an empty mapping.
 
     """
-    return MappingProxyType(
-        {
-            "engine": _ENGINE_PACKAGE,
-            "engine_version": str(getattr(engine, "__version__", "unknown")),
-        }
-    )
+
+    terms: dict[str, str] = {}
+    try:
+        terms |= dict(vendor.engine_terms())
+    except RasterVendorError:
+        return MappingProxyType({})
+
+    return MappingProxyType(terms)
 
 
 def _evidence(
@@ -331,78 +317,46 @@ def _failure(
 # --- Decoding ----------------------------------------------------------------
 
 
-def _decode(path: Path, engine: Any) -> tuple[Any, int | None]:
+def _decode(vendor: RasterVendor, path: Path) -> tuple[RasterFrame, int | None]:
     """Decode an image and read the orientation its EXIF declares.
 
     Args:
+        vendor: The raster implementation.
         path: The image to decode.
-        engine: The engine module.
 
     Returns:
-        The decoded image and the orientation tag's value, or ``None`` when the
-        image declares none. The image is returned **unrotated**: applying the
-        rotation is the caller's next step, so that the tag can be reported before
-        it is consumed.
+        The decoded frame and the orientation tag's value, or ``None`` when the file
+        declares none. The frame comes back **unrotated**: applying the rotation is the
+        next step, so that the tag can be reported before it is consumed.
 
     Raises:
-        _Refused: When the file is absent or the bytes are not a format the engine
-            accepts.
+        RasterVendorError: When the file is absent or is not a decodable image.
 
     """
-    if not path.exists():
-        raise _Refused(
-            Reason(
-                code=_CODE_UNSUPPORTED_FORMAT,
-                message=f"{path.name!r} does not exist at {path}",
-            )
-        )
 
-    try:
-        image = engine.open(path)
-        image.load()
-    except Exception as exc:
-        raise _Refused(
-            Reason(
-                code=_CODE_UNSUPPORTED_FORMAT,
-                message=(
-                    f"{path.name!r} could not be decoded as an image: "
-                    f"{type(exc).__name__}: {exc}"
-                ),
-            )
-        ) from exc
+    frame, meta = vendor.decode(path)
 
-    orientation: int | None = None
-    try:
-        raw = image.getexif().get(_EXIF_ORIENTATION_TAG)
-        if raw is not None:
-            orientation = int(raw)
-    except Exception:  # pylint: disable=broad-exception-caught
-        # An unreadable EXIF block means *no declared orientation*, which is a
-        # valid observation — and the alternative, failing the whole decode over
-        # optional metadata, would reject images that are perfectly readable.
-        orientation = None
-
-    return image, orientation
+    return frame, meta.exif_orientation
 
 
-def _upright(image: Any) -> Any:
-    """Return the image with its declared orientation applied.
+def _upright(vendor: RasterVendor, frame: RasterFrame) -> RasterFrame:
+    """Return the frame with its declared orientation applied.
 
-    ``ImageOps.exif_transpose`` both reads the tag and performs the rotation, which
-    is what makes a sideways photo unrepresentable in the value that leaves this
-    module: there is no code path that returns the stored pixels unrotated.
+    The rotation is the vendor's; the *decision* that it must happen is this module's,
+    and it is what makes a sideways photo unrepresentable in the value that leaves:
+    there is no code path that returns the stored pixels unrotated.
 
     Args:
-        image: The decoded image.
+        vendor: The raster implementation.
+        frame: The decoded frame.
 
     Returns:
-        The rotated image. When nothing was declared, or the declaration is
-        *already upright*, the image is returned unchanged.
+        The rotated frame. When nothing was declared, or the declaration is *already
+        upright*, the frame comes back unchanged.
 
     """
-    from PIL import ImageOps  # pylint: disable=import-outside-toplevel
 
-    return ImageOps.exif_transpose(image) or image
+    return vendor.upright(frame)
 
 
 def _orientation_to_apply(orientation: int | None) -> bool:
@@ -421,139 +375,106 @@ def _orientation_to_apply(orientation: int | None) -> bool:
     if orientation is None:
         return False
 
-    return orientation != _EXIF_UPRIGHT
+    return orientation != EXIF_UPRIGHT
 
 
-def _encoded(image: Any) -> bytes:
-    """Encode an image as PNG bytes.
-
-    Args:
-        image: The image to encode.
-
-    Returns:
-        The encoded buffer.
-
-    """
-    buffer = io.BytesIO()
-    target = image if image.mode in {"RGB", "RGBA", "L"} else image.convert("RGB")
-    target.save(buffer, format="PNG", optimize=True)
-
-    return buffer.getvalue()
-
-
-# --- Measurements ------------------------------------------------------------
-
-
-def _luminance(image: Any) -> Any:
-    """Reduce an image to the single channel the measurements are taken in.
-
-    Args:
-        image: The image.
-
-    Returns:
-        A luminance-mode copy.
-
-    """
-    return image if image.mode == _LUMINANCE else image.convert(_LUMINANCE)
-
-
-def _laplacian_variance(image: Any, filters: Any, stats: Any) -> float:
+def _sharpness(vendor: RasterVendor, luminance: RasterFrame) -> float:
     """Measure how much fine detail the image carries.
 
-    The variance of the discrete Laplacian. Sharp edges produce a large response
-    and a blurred image produces almost none, which is what makes this the standard
-    sharpness measurement rather than an arbitrary number.
+    The variance of the discrete Laplacian. Sharp edges produce a large response and a
+    blurred image produces almost none, which is what makes this the standard sharpness
+    measurement rather than an arbitrary number.
+
+    The *matrix* is supplied from here because which kernel defines sharpness is a
+    decision; applying a convolution is the library's business.
 
     Args:
-        image: The luminance image.
-        ImageFilter: The engine's filter module.
-        ImageStat: The engine's statistics module.
+        vendor: The raster implementation.
+        luminance: The single-channel frame.
 
     Returns:
-        The variance, in the engine's own units. It is a measurement, not a verdict.
+        The variance, in the library's own units. It is a measurement, not a verdict.
 
     """
-    kernel = filters.Kernel(_LAPLACIAN_SIZE, list(_LAPLACIAN_KERNEL), scale=1, offset=0)
-    filtered = image.filter(kernel)
 
-    return float(stats.Stat(filtered).var[0])
+    convolved = vendor.convolved(luminance, _LAPLACIAN_KERNEL, _LAPLACIAN_SIZE)
+
+    return vendor.statistics(convolved).variance
 
 
-def _contrast(image: Any, stats: Any) -> float:
+def _contrast(vendor: RasterVendor, luminance: RasterFrame) -> float:
     """Measure how far apart the image's brightness values sit.
 
     Normalized by the full channel range so the number is comparable across images
     rather than only within one.
 
     Args:
-        image: The luminance image.
-        ImageStat: The engine's statistics module.
+        vendor: The raster implementation.
+        luminance: The single-channel frame.
 
     Returns:
         A value in ``[0, 1]``: zero for a flat field, approaching one for an image
         using the whole range.
 
     """
-    deviation = float(stats.Stat(image).stddev[0])
+
+    deviation = vendor.statistics(luminance).stddev
 
     return min(1.0, deviation / (_CHANNEL_MAXIMUM / 2.0))
 
 
-def _row_profile_variance(image: Any, angle: float, engine: Any, stats: Any) -> float:
+def _row_profile_variance(
+    vendor: RasterVendor, luminance: RasterFrame, angle: float
+) -> float:
     """Measure how strongly text lines separate when the image is rotated.
 
-    The skew estimate works by projection: at the correct angle the dark rows of
-    text line up and the row profile becomes strongly bimodal, so its spread peaks.
-    At any other angle the rows smear together and the spread collapses. This is
-    the standard deskew criterion, used here only to *report* the angle rather than
-    to correct it.
+    The skew estimate works by projection: at the correct angle the dark rows of text
+    line up and the row profile becomes strongly bimodal, so its spread peaks. At any
+    other angle the rows smear together and the spread collapses. This is the standard
+    deskew criterion, used here only to *report* the angle rather than to correct it.
 
     Args:
-        image: The luminance image, already downsampled.
+        vendor: The raster implementation.
+        luminance: The single-channel frame, already downsampled.
         angle: The candidate rotation, in degrees.
-        engine: The engine module, for the resampling constant the call accepts.
-        stats: The engine's statistics module.
 
     Returns:
-        The spread of the rotated image's row profile. Higher means the rows
-        separate more cleanly.
+        The spread of the rotated frame's row profile. Higher means the rows separate
+        more cleanly.
 
     """
-    rotated = image.rotate(
-        angle,
-        resample=engine.Resampling.BILINEAR,
-        expand=False,
-        fillcolor=_ROTATION_FILL,
-    )
 
-    return float(stats.Stat(rotated).stddev[0])
+    turned = vendor.rotated(luminance, angle, _ROTATION_FILL)
+
+    return vendor.statistics(turned).stddev
 
 
-def _skew_estimate(image: Any, engine: Any, stats: Any) -> float:
+def _skew_estimate(vendor: RasterVendor, luminance: RasterFrame) -> float:
     """Estimate how far the page is rotated, in degrees.
 
-    A bounded sweep around zero, on a downsampled copy: skew is an angle, so
-    reducing the width does not change the answer while it does make the sweep
-    cheap enough to run on every measurement.
+    A bounded sweep around zero, on a downsampled copy: skew is an angle, so reducing
+    the width does not change the answer while it does make the sweep cheap enough to
+    run on every measurement.
 
     Args:
-        image: The luminance image.
-        engine: The engine module.
-        stats: The engine's statistics module.
+        vendor: The raster implementation.
+        luminance: The single-channel frame.
 
     Returns:
         The angle at which the row profile separates most cleanly. Its sign is
         meaningful and its magnitude is bounded by the sweep.
 
     """
-    width, height = image.size
+
+    width, height = luminance.size
     if width == 0 or height == 0:
         return 0.0
 
     scale = _SKEW_ANALYSIS_WIDTH / width
-    reduced = image.resize(
+    reduced = vendor.resized(
+        luminance,
         (_SKEW_ANALYSIS_WIDTH, max(1, int(height * scale))),
-        resample=engine.Resampling.BILINEAR,
+        smooth=False,
     )
 
     best_angle = 0.0
@@ -562,7 +483,7 @@ def _skew_estimate(image: Any, engine: Any, stats: Any) -> float:
     steps = int((_SKEW_RANGE_DEGREES * 2) / _SKEW_STEP_DEGREES) + 1
     for index in range(steps):
         angle = -_SKEW_RANGE_DEGREES + index * _SKEW_STEP_DEGREES
-        score = _row_profile_variance(reduced, angle, engine, stats)
+        score = _row_profile_variance(vendor, reduced, angle)
         if score > best_score:
             best_score = score
             best_angle = angle
@@ -570,14 +491,12 @@ def _skew_estimate(image: Any, engine: Any, stats: Any) -> float:
     return round(best_angle, 2)
 
 
-# --- The four operations -----------------------------------------------------
-
-
-def load(path: Path) -> KernelResult[Bytes]:
+def load(path: Path, *, vendor: RasterVendor) -> KernelResult[Bytes]:
     """Load a bitmap, with its declared orientation already applied.
 
     Args:
         path: The image to load.
+        vendor: The raster implementation.
 
     Returns:
         The decoded and rotated bitmap as PNG bytes, or no value and a typed
@@ -586,27 +505,30 @@ def load(path: Path) -> KernelResult[Bytes]:
         rotated is reported by :func:`info`, because the caller may need to undo it.
 
     """
-    engine, failure = _engine()
-    if engine is None:
-        return _failure(failure or Reason("engine_unavailable", ""), {}, {}, {})
+    terms = _identity_terms(vendor)
 
     try:
-        image, orientation = _decode(path, engine)
-    except _Refused as refused:
-        return _failure(refused.reason, _terms(engine), {}, {"file": path.name})
+        frame, orientation = _decode(vendor, path)
+    except RasterVendorError as refused:
+        return _failure(refused.reason, terms, {}, {"file": path.name})
 
-    rotated = _orientation_to_apply(orientation)
-    upright = _upright(image)
+    applied = _orientation_to_apply(orientation)
+    upright = _upright(vendor, frame)
     width, height = upright.size
 
+    try:
+        payload = vendor.encoded_png(upright)
+    except RasterVendorError as refused:
+        return _failure(refused.reason, terms, {}, {"file": path.name})
+
     return KernelResult(
-        value=Bytes(data=_encoded(upright), media_type=_MEDIA_TYPE),
+        value=Bytes(data=payload, media_type=_MEDIA_TYPE),
         evidence=_evidence(
-            _terms(engine),
+            terms,
             {"width": float(width), "height": float(height)},
             {
                 "file": path.name,
-                "source_mode": str(image.mode),
+                "source_mode": str(frame.mode),
                 "width": width,
                 "height": height,
                 "media_type": _MEDIA_TYPE,
@@ -614,18 +536,19 @@ def load(path: Path) -> KernelResult[Bytes]:
                 # loads without asking is still entitled to know the bytes it holds
                 # are not the bytes on disk.
                 "exif_orientation": orientation,
-                "exif_orientation_applied": rotated,
+                "exif_orientation_applied": applied,
             },
         ),
         reason=None,
     )
 
 
-def info(path: Path) -> KernelResult[Evidence]:
+def info(path: Path, *, vendor: RasterVendor) -> KernelResult[Evidence]:
     """Report what the image is, including the orientation that was applied.
 
     Args:
         path: The image to inspect.
+        vendor: The raster implementation.
 
     Returns:
         The dimensions, the colour model, and both halves of the orientation
@@ -634,35 +557,36 @@ def info(path: Path) -> KernelResult[Evidence]:
         rotation indistinguishable from a file that needed none.
 
     """
-    engine, failure = _engine()
-    if engine is None:
-        return _failure(failure or Reason("engine_unavailable", ""), {}, {}, {})
+    terms = _identity_terms(vendor)
 
     try:
-        image, orientation = _decode(path, engine)
-    except _Refused as refused:
-        return _failure(refused.reason, _terms(engine), {}, {"file": path.name})
+        frame, meta = vendor.decode(path)
+    except RasterVendorError as refused:
+        return _failure(refused.reason, terms, {}, {"file": path.name})
 
+    orientation = meta.exif_orientation
     applied = _orientation_to_apply(orientation)
-    width, height = image.size
+    width, height = frame.size
 
     return _observed(
-        _terms(engine),
+        terms,
         {"width": float(width), "height": float(height)},
         {
             "file": path.name,
             "width": width,
             "height": height,
-            "mode": str(image.mode),
-            "format": str(image.format or "unknown"),
+            "mode": str(frame.mode),
+            "format": meta.format,
             "exif_orientation": orientation,
             "exif_orientation_applied": applied,
-            "exif_orientation_tag": _EXIF_ORIENTATION_TAG,
+            "exif_orientation_tag": EXIF_ORIENTATION_TAG,
         },
     )
 
 
-def legibility(path: Path, threshold: float) -> KernelResult[Evidence]:
+def legibility(
+    path: Path, threshold: float, *, vendor: RasterVendor
+) -> KernelResult[Evidence]:
     """Measure how legible an image is, against the caller's threshold.
 
     Args:
@@ -671,6 +595,7 @@ def legibility(path: Path, threshold: float) -> KernelResult[Evidence]:
             measurement. It is a required parameter with no default, because the
             value to compare against is policy and belongs to the caller
             (`prd.md` FR-15).
+        vendor: The raster implementation.
 
     Returns:
         The raw measurements — sharpness, contrast, skew — or, when the sharpness
@@ -680,28 +605,20 @@ def legibility(path: Path, threshold: float) -> KernelResult[Evidence]:
         of receiving a bare boolean.
 
     """
-    engine, failure = _engine()
-    if engine is None:
-        return _failure(failure or Reason("engine_unavailable", ""), {}, {}, {})
+    terms = _identity_terms(vendor)
 
     try:
-        image, _orientation = _decode(path, engine)
-    except _Refused as refused:
-        return _failure(refused.reason, _terms(engine), {}, {"file": path.name})
+        frame, _meta = vendor.decode(path)
+        luminance = vendor.greyscale(frame)
+    except RasterVendorError as refused:
+        return _failure(refused.reason, terms, {}, {"file": path.name})
 
-    # Imported here, not at module scope, for the same reason `_engine` is: the
-    # module must import without Pillow so a missing library arrives as a typed
-    # `Reason` rather than as an `ImportError` at import time.
-    # pylint: disable=import-outside-toplevel
-    from PIL import ImageFilter as PillowFilter
-    from PIL import ImageStat as PillowStat
-
-    # pylint: enable=import-outside-toplevel
-
-    luminance = _luminance(image)
-    sharpness = _laplacian_variance(luminance, PillowFilter, PillowStat)
-    contrast = _contrast(luminance, PillowStat)
-    skew = _skew_estimate(luminance, engine, PillowStat)
+    try:
+        sharpness = _sharpness(vendor, luminance)
+        contrast = _contrast(vendor, luminance)
+        skew = _skew_estimate(vendor, luminance)
+    except RasterVendorError as refused:
+        return _failure(refused.reason, terms, {}, {"file": path.name})
 
     measurements: dict[str, float] = {
         "laplacian_variance": round(sharpness, 4),
@@ -711,8 +628,8 @@ def legibility(path: Path, threshold: float) -> KernelResult[Evidence]:
     }
     observed: dict[str, object] = {
         "file": path.name,
-        "width": image.size[0],
-        "height": image.size[1],
+        "width": frame.size[0],
+        "height": frame.size[1],
         "threshold_applied": threshold,
     }
 
@@ -728,24 +645,27 @@ def legibility(path: Path, threshold: float) -> KernelResult[Evidence]:
                     "decision, taken against its own policy."
                 ),
             ),
-            _terms(engine),
+            terms,
             measurements,
             observed,
         )
 
-    return _observed(_terms(engine), measurements, observed)
+    return _observed(terms, measurements, observed)
 
 
 def rescale(  # pylint: disable=too-many-locals
-    path: Path, target_dpi: int, source_dpi: int
+    path: Path, target_dpi: int, source_dpi: int, *, vendor: RasterVendor
 ) -> KernelResult[Bytes]:
     """Rescale an image to a target resolution.
 
     The variable count is one over Pylint's ceiling and the suppression is stated
-    rather than the function reshaped: the names are the two resolutions, the
-    decoded image, its size, the scale factor, the resized image and its size, and
-    the evidence record's two mappings. Grouping them into a helper would move the
-    same count one frame away without making the refusal-vs-resize logic clearer.
+    rather than the function reshaped. The names are the two resolutions, the decoded
+    frame, its size, the scale factor, the resampled frame, its size, the payload, the
+    identity terms, the evidence record's two mappings and the observed base — the
+    count grew by one when the vendor stopped being module-level and became a
+    parameter. Extracting the result assembly was tried and made it worse: it moved
+    these names into a second function that then needed seven arguments, which is two
+    findings rather than one.
 
     Args:
         path: The image to rescale.
@@ -753,6 +673,7 @@ def rescale(  # pylint: disable=too-many-locals
         source_dpi: The resolution the image's pixels already hold. It is a
             parameter because ``Box`` carries no DPI and a kernel that invented one
             would be reporting a number nobody measured.
+        vendor: The raster implementation.
 
     Returns:
         The rescaled bitmap, with the target it actually honoured in the evidence,
@@ -771,16 +692,13 @@ def rescale(  # pylint: disable=too-many-locals
     if source_dpi <= 0:
         raise ValueError(f"source_dpi must be positive, got {source_dpi}")
 
-    engine, failure = _engine()
-    if engine is None:
-        return _failure(failure or Reason("engine_unavailable", ""), {}, {}, {})
+    terms = _identity_terms(vendor)
 
     try:
-        image, _orientation = _decode(path, engine)
-    except _Refused as refused:
-        return _failure(refused.reason, _terms(engine), {}, {"file": path.name})
+        frame, _meta = vendor.decode(path)
+    except RasterVendorError as refused:
+        return _failure(refused.reason, terms, {}, {"file": path.name})
 
-    terms = _terms(engine)
     observed_base: dict[str, object] = {
         "file": path.name,
         "source_dpi": source_dpi,
@@ -806,15 +724,22 @@ def rescale(  # pylint: disable=too-many-locals
         )
 
     factor = target_dpi / source_dpi
-    width, height = image.size
-    resized = image.resize(
-        (max(1, round(width * factor)), max(1, round(height * factor))),
-        engine.Resampling.LANCZOS,
-    )
+    width, height = frame.size
+
+    try:
+        resized = vendor.resized(
+            frame,
+            (max(1, round(width * factor)), max(1, round(height * factor))),
+            smooth=True,
+        )
+        payload = vendor.encoded_png(resized)
+    except RasterVendorError as refused:
+        return _failure(refused.reason, terms, {}, {"file": path.name})
+
     new_width, new_height = resized.size
 
     return KernelResult(
-        value=Bytes(data=_encoded(resized), media_type=_MEDIA_TYPE),
+        value=Bytes(data=payload, media_type=_MEDIA_TYPE),
         evidence=_evidence(
             terms,
             {
@@ -836,12 +761,21 @@ def rescale(  # pylint: disable=too-many-locals
     )
 
 
-def crop(path: Path, region: Box) -> KernelResult[Evidence]:
+def crop(  # pylint: disable=too-many-locals
+    path: Path, region: Box, *, vendor: RasterVendor
+) -> KernelResult[Evidence]:
     """Cut a region out of an image and map its coordinates back to the source.
+
+    The variable count is over Pylint's ceiling and the suppression is stated rather
+    than the function reshaped. The names are the source rectangle's four edges, the
+    frame and its size, the cropped frame, the payload, the inverse map, the identity
+    terms and the evidence record's two mappings — four of them grew when the vendor
+    became a parameter and the encoded bytes became explicit.
 
     Args:
         path: The image to crop.
         region: The region in **source page coordinates**.
+        vendor: The raster implementation.
 
     Returns:
         The evidence for the crop — its bytes in ``observed["image"]`` and the
@@ -862,16 +796,14 @@ def crop(path: Path, region: Box) -> KernelResult[Evidence]:
             f"region must have a positive extent, got {region.width}x{region.height}"
         )
 
-    engine, failure = _engine()
-    if engine is None:
-        return _failure(failure or Reason("engine_unavailable", ""), {}, {}, {})
+    terms = _identity_terms(vendor)
 
     try:
-        image, _orientation = _decode(path, engine)
-    except _Refused as refused:
-        return _failure(refused.reason, _terms(engine), {}, {"file": path.name})
+        frame, _meta = vendor.decode(path)
+    except RasterVendorError as refused:
+        return _failure(refused.reason, terms, {}, {"file": path.name})
 
-    width, height = image.size
+    width, height = frame.size
     left = round(region.x)
     top = round(region.y)
     right = left + round(region.width)
@@ -882,11 +814,16 @@ def crop(path: Path, region: Box) -> KernelResult[Evidence]:
             f"region {region} falls outside the image, which is {width}x{height}"
         )
 
-    cropped = image.crop((left, top, right, bottom))
+    try:
+        cropped = vendor.cropped(frame, (left, top, right, bottom))
+        payload = vendor.encoded_png(cropped)
+    except RasterVendorError as refused:
+        return _failure(refused.reason, terms, {}, {"file": path.name})
+
     inverse = InverseMap(offset_x=float(left), offset_y=float(top), scale=1.0)
 
     return _observed(
-        _terms(engine),
+        terms,
         {
             "source_x": float(left),
             "source_y": float(top),
@@ -898,7 +835,7 @@ def crop(path: Path, region: Box) -> KernelResult[Evidence]:
             "source_box": [float(left), float(top), float(right), float(bottom)],
             "source_size": [width, height],
             "local_size": [cropped.size[0], cropped.size[1]],
-            "image": Bytes(data=_encoded(cropped), media_type=_MEDIA_TYPE),
+            "image": Bytes(data=payload, media_type=_MEDIA_TYPE),
             "inverse_map": inverse,
             "coordinate_space": "source_page",
         },
