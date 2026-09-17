@@ -549,11 +549,17 @@ def test_the_committed_exclusions_are_exactly_the_python_sources(
     They are present on disk, so they must appear as exclusions rather than
     being silently absent — that is what makes the two lists add up to the
     folder. A ``.pyc`` cache entry is deliberately *not* here; it is skipped.
+
+    The set is written out by hand rather than globbed, so a *fourth* source
+    arriving fails here until it is declared. ``verify_k2.py`` is such an
+    arrival: it verifies the PDF kernel against this folder, it is a tool rather
+    than a fixture, and it is excluded for the same reason as the other three.
     """
     assert _reasons(manifest) == {
         "__init__.py": "python_source",
         "build_manifest.py": "python_source",
         "test_manifest.py": "python_source",
+        "verify_k2.py": "python_source",
     }
 
 

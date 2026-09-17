@@ -49,6 +49,10 @@
     {
       "path": "test_manifest.py",
       "reason": "python_source"
+    },
+    {
+      "path": "verify_k2.py",
+      "reason": "python_source"
     }
   ],
   "entries": [

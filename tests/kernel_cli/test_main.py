@@ -160,8 +160,12 @@ EXPECTED_KERNEL_ROWS: tuple[tuple[str, str, str], ...] = (
     ("K8", "registry", "deterministic"),
 )
 
-#: Kernels whose probe succeeds without an adapter — the two filesystem ones.
-ALWAYS_AVAILABLE_KERNELS: frozenset[str] = frozenset({"store", "registry"})
+#: Kernels whose probe succeeds without an adapter — the two filesystem ones, plus
+#: ``pdf``, whose engine (PyMuPDF) and reader (``pdftotext``) both landed with
+#: `E04-02` (`S1-T12`). A kernel is added here only when its module exists *and*
+#: its probe genuinely reports ``available``; the test below is what makes the
+#: addition deliberate rather than a way to silence a real failure.
+ALWAYS_AVAILABLE_KERNELS: frozenset[str] = frozenset({"pdf", "store", "registry"})
 
 #: The forbidden flag vocabulary, restated from `kernel-cli.md` §10 and §14. Two
 #: groups: document concepts, and the six flags the artifacts forbid outright.
@@ -944,11 +948,15 @@ def test_list_never_reports_an_unavailable_kernel_as_available() -> None:
 
 
 def test_kernels_whose_engine_is_absent_report_unavailable_with_the_reason() -> None:
-    """Every kernel but the two filesystem ones names what is missing.
+    """Every kernel but the ones with a landed engine names what is missing.
 
     Asserted against the workspace's real state rather than mocked: if an adapter
     lands, this test telling the truth about it is the point. The reason is a fact
     for a human, never an exit code.
+
+    ``ALWAYS_AVAILABLE_KERNELS`` is widened deliberately as engines land — never
+    to silence a failure. The assertion below fails on the *fact* of availability
+    changing, which is exactly the moment someone should look at the probe.
     """
     for row in inventory():
         name = str(row["kernel"])

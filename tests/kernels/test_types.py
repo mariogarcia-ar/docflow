@@ -1101,9 +1101,10 @@ def test_boundary_package_contains_only_the_expected_modules() -> None:
     ones the plan names.
 
     ``store.py`` is E02's deliverable (``S1-T02``/``S1-T03``), ``registry.py`` is
-    E03-01's and ``cache_key.py`` is E03-02's. They are named here explicitly
-    rather than the check being relaxed to a glob, so that a *further* module
-    arriving still fails this test until it too is declared.
+    E03-01's and ``cache_key.py`` is E03-02's. ``pdf.py`` is E04-02's
+    (`S1-T12`). They are named here explicitly rather than the check being relaxed
+    to a glob, so that a *further* module arriving still fails this test until it
+    too is declared.
 
     This guard used to also assert that ``docflow/ports`` and ``docflow/adapters``
     did not exist. That was a statement about *scheduling* rather than about the
@@ -1114,7 +1115,14 @@ def test_boundary_package_contains_only_the_expected_modules() -> None:
     asserted by that issue's tests; what belongs *here* is only that this package
     keeps to its declared module set.
     """
-    expected = {"__init__.py", "types.py", "store.py", "registry.py", "cache_key.py"}
+    expected = {
+        "__init__.py",
+        "types.py",
+        "store.py",
+        "registry.py",
+        "cache_key.py",
+        "pdf.py",
+    }
     actual = {path.name for path in PACKAGE_ROOT.glob("*.py")}
 
     assert actual <= expected, f"unexpected modules: {sorted(actual - expected)}"
