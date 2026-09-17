@@ -23,11 +23,7 @@ Eleven thousand documents. Extract structured information from them and expose i
 | `docs/plans/issues/plan-01-kernels/` | Stage 1 split into 8 capability epics and 22 issues, with acceptance criteria and test evidence |
 | `docs/plans/plan-02-components.md` | Stage 2: the 17 domain-component tasks, closing on a real document |
 | `docs/plans/plan-03-pipelines.md` | Stage 3: the 14 pipeline tasks, closing on the 11k-file corpus |
-| `docs/quickstart-kernel-pdf.md` | What K2 (`kernel.pdf`) can do today — measured, not aspirational |
-| `docs/quickstart-kernel-image.md` | What K3 (`kernel.image`) can do today |
-| `docs/quickstart-kernel-ocr.md` | What K4 (`kernel.ocr`) can do today |
-| `docs/quickstart-kernel-llm-local.md` | What K5 (`kernel.llm.local`) can do today |
-| `docs/quickstart-kernel-llm-frontier.md` | What K6 (`kernel.llm.frontier`) can do today |
+| `docs/quickstart/` | What each landed kernel *actually does* today, verified by running it — K2 `kernel-pdf.md`, K3 `kernel-image.md`, K4 `kernel-ocr.md`, K5 `kernel-llm-local.md`, K6 `kernel-llm-frontier.md`, and the lab surface `lab-cli.md` |
 | `docs/findings/` | Measurements taken while implementing, where the runtime disagreed with the specification — and `03-kernel-port-adapter-compliance.md` measures whether the kernel/port/adapter separation actually holds |
 | `my_prompt.md` | The original specification — requirements and constraints |
 

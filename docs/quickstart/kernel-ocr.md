@@ -252,8 +252,8 @@ different engine, it supplies a different instance of the same one.
 
 | Kernel | State |
 |---|---|
-| K2 `pdf` | **Landed** — see `quickstart-kernel-pdf.md` |
-| K3 `image` | **Landed** — see `quickstart-kernel-image.md` |
+| K2 `pdf` | **Landed** — see `kernel-pdf.md` |
+| K3 `image` | **Landed** — see `kernel-image.md` |
 | K7 `store` | **Landed** — content-addressed put/get/verify + the ledger write path |
 | K8 `registry` | **Landed** — load, schema-validate, fail fast, `registry_hash` |
 | K5 `llm.local`, K6 `llm.frontier` | Not yet (`E04-05`, `E04-06`) |

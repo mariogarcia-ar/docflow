@@ -372,11 +372,11 @@ than left silent.
 
 | Kernel | State | Quickstart |
 |---|---|---|
-| K2 `pdf` | **Landed** | `quickstart-kernel-pdf.md` |
-| K3 `image` | **Landed** — and behind no port, deliberately | `quickstart-kernel-image.md` |
-| K4 `ocr` | **Landed** | `quickstart-kernel-ocr.md` |
-| K5 `llm.local` | **Landed** | `quickstart-kernel-llm-local.md` |
-| K6 `llm.frontier` | **Landed**, unavailable without a provider key | `quickstart-kernel-llm-frontier.md` |
+| K2 `pdf` | **Landed** | `kernel-pdf.md` |
+| K3 `image` | **Landed** — and behind no port, deliberately | `kernel-image.md` |
+| K4 `ocr` | **Landed** | `kernel-ocr.md` |
+| K5 `llm.local` | **Landed** | `kernel-llm-local.md` |
+| K6 `llm.frontier` | **Landed**, unavailable without a provider key | `kernel-llm-frontier.md` |
 | K7 `store` | **Landed** — put/get/verify + the ledger, `ArtifactStore`'s adapter | — |
 | K8 `registry` | **Landed** — load, schema-validate, `registry_hash` | — |
 | K1 `orchestrator` | **Not yet** (`E05`) | — |

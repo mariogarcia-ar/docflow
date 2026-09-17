@@ -336,7 +336,7 @@ than by the fixture set.
 
 | Kernel | State |
 |---|---|
-| K2 `pdf` | **Landed** — see `quickstart-kernel-pdf.md` |
+| K2 `pdf` | **Landed** — see `kernel-pdf.md` |
 | K4 `kernel.ocr` | **Landed** — Docling behind `OcrEngine` (`E04-04`) |
 | K5 `kernel.llm.local` | **Landed** — Ollama behind `LlmEngine` (`E04-05`) |
 | K6 `kernel.llm.frontier` | **Landed** — one provider behind `LlmEngine` (`E04-06`) |
