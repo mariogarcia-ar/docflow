@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E04** |
 | Capability | The five port interfaces plus the thin acquisition (K2/K3) and generation (K4/K5/K6) adapters, and resolution by capability |
-| Issues | `E04-01` (`S1-T11`) · `E04-02` (`S1-T12`) · `E04-03` (`S1-T13`) · `E04-04` (`S1-T14`) · `E04-05` (`S1-T15`) · `E04-06` (`S1-T16`) · `E04-07` (`S1-T17`) — all `todo` |
+| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 1 criterion unmet (§3) · `E04-03` (`S1-T13`) · `E04-04` (`S1-T14`) · `E04-05` (`S1-T15`) · `E04-06` (`S1-T16`) · `E04-07` (`S1-T17`) — `todo` |
 | Issue count | **7** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/ports/`, `docflow/adapters/`, `docflow/kernels/` |
 | Wave span | **W2 → W4** (W2: 1 · W3: 5 · W4: 1) |
@@ -22,6 +22,8 @@ It is a separate deliverable because the whole reuse claim of the project rests 
 
 E04 also carries the layer's worst failure. *"A silent fallback to a default model is the worst failure this layer can have"* (`kernel-cli.md` §3) — so `E04-07` exists to make *there is no fallback* an **assertable fact** with typed, reachable failure paths (`model_unknown`, `provider_unknown`) rather than a stated intention.
 
+**One operation was added during implementation, and it is not part of the contract.** `E04-02` gained `kernel.pdf.layout_text`, which returns the reader's own character grid (`pdftotext -layout`). It is deliberately **kernel-only**: `plans/README.md` §3 freezes the port interfaces, so an operation added to `PdfSource` would re-open `E04-01`'s gate. It is not wired into any flow, nothing depends on it, and it is recorded here rather than silently absorbed. Its relationship to `extract_tokens` is measured, not asserted — see §3 `E04-02`.
+
 **Position on the critical path — read this before scheduling.** E04 is **not** on the serial kernel spine: `wbs.md` §6.2 lists `S1-T11`, `S1-T12`, `S1-T13` and `S1-T16` as *able to slip without delaying a stage close*, and the plan's Track 1 closes over **faked ports**, not these adapters (`plan-01-kernels.md` §13). But **E07's suite needs them**: the matrix rows for K2–K6 are `now` rows, so `E07-02` (`S1-T21`) cannot complete and `E07-03` (`S1-T22`) cannot assert rows 3–14 until these adapters are terminal and `E04-07` has resolved them. E04 is therefore off the spine and **unconditionally required by the arm that converges on the gate anyway**.
 
 ---
@@ -31,7 +33,7 @@ E04 also carries the layer's worst failure. *"A silent fallback to a default mod
 | Issue | `wbs.md` task | Title | Wave | Depends on | Effort | PoC markers |
 |---|---||---|---|:---:|---|:---:|---|
 | `E04-01` | `S1-T11` | Ports: `PdfSource`, `OcrEngine`, `LlmEngine`, `ArtifactStore`, `Registry` | W2 | `S1-T01` → **E01** (inter) | M | — |
-| `E04-02` | `S1-T12` | K2 `kernel.pdf` thin: `probe`, `classify`, `extract_tokens`, `render`, `split` | W3 | `S1-T11` → **E04** (intra) | L | `# TODO: [MVP]`: full `page_facts`, `images`, `merge` |
+| `E04-02` | `S1-T12` | K2 `kernel.pdf` thin: `probe`, `classify`, `effective_dpi`, `extract_tokens`, `render`, `split` (+ `layout_text`, kernel-only) | W3 | `S1-T11` → **E04** (intra) | L | `# TODO: [MVP]`: full `page_facts`, `images`, `merge` |
 | `E04-03` | `S1-T13` | K3 `kernel.image` thin: `load` (EXIF applied), `legibility`, `rescale`, `crop` (inverse map returned) | W3 | `S1-T11` → **E04** (intra) | M | `# TODO: [MVP]`: deskew, denoise, tile, phash |
 | `E04-04` | `S1-T14` | K4 `kernel.ocr` port + Docling adapter: `capabilities`, `read`, `engine_info` | W3 | `S1-T11` → **E04** (intra) | L | `# TODO: [MVP]`: OCR correction pass |
 | `E04-05` | `S1-T15` | K5 `kernel.llm.local` port + Ollama adapter: `structured`, `vision`, `warm`, `capabilities` | W3 | `S1-T11` → **E04** (intra) | L | `# TODO: [MVP]`: `ps`, `pull`, `generate` |
@@ -95,7 +97,27 @@ Everything above Stage 1 must be able to run without Poppler, without Docling, w
 ### `E04-02` — implements `S1-T12`
 
 **Title**
-K2 `kernel.pdf` thin: `probe`, `classify`, `extract_tokens`, `render`, `split`.
+K2 `kernel.pdf` thin: `probe`, `classify`, `effective_dpi`, `extract_tokens`, `render`, `split` — plus `layout_text`, which is **not** part of the port contract (`E04-01` carries the five frozen interfaces, and a sixth operation on `PdfSource` would re-open that gate).
+
+**Status — `in progress`, 1 criterion unmet**
+
+Recorded rather than implied, because a ticked box that is not true is the failure mode this project exists to prevent.
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | `classify` returns `text`/`image`/`mixed`/`blank` | ✅ met |
+| 2 | `classify` detects invisible text and reports it as evidence | ✅ met, and stronger than the row requires — see below |
+| 3 | `classify` reports contradicting producer metadata in `evidence` | ✅ met — asserted on a declared scanner whose page carries text, with a non-capture producer as the control so the flag is shown to carry information |
+| 4 | `render` never upscales, no larger file produced | ✅ met, and verified against all 5 committed scans |
+| 5 | Effective DPI measured from embedded pixels | ✅ met |
+| 6 | `probe`, `extract_tokens` and `split` dispatch and return typed results | ✅ met |
+| 7 | `split` preserves page count and boxes; mapping recorded | ✅ met |
+| 8 | **The adapter is reachable only through `PdfSource`** | ❌ **NOT MET** — `docflow/adapters/` holds only `__init__.py`; there is no Poppler adapter |
+| 9 | No threshold constant inside the module | ✅ met, guarded over public and private constants |
+
+**Resolution of #8 — a scoping question, not a defect.** `E04-02`'s deliverable is `docflow/kernels/pdf.py` alone, while a thin adapter behind `PdfSource` is what the criterion asks for. That adapter sits naturally with `E04-03`…`E04-06`, whose deliverables *are* the `docflow/adapters/` modules. Either the criterion moves to the issue that owns the adapters, or `E04-02` grows a deliverable. **The decision is not taken here** — the criterion is recorded as unmet so that nobody ticks it by reading the kernel and assuming the adapter came with it.
+
+**On #2, one thing the row does not ask for.** The page's shape is measured with invisible text **excluded**: a scan with a stale hidden layer reports `image`, not `mixed`. Counting those characters would name the page a text page, the document would never be converted, and the content a person can see would never be read — which is the silent failure the row exists to prevent. The check was built against a real `Tr 3` no-draw layer because the naive one is fooled: the engine's own text extraction returns invisible text as ordinary text.
 
 **Context**
 Two silent failures start here. A scan with a stale invisible OCR layer behind it reads as a *text* PDF, so the document is never converted and the text on the page is never seen. And a 150-DPI scan rendered at 300 is reported as satisfying the resolution the caller asked for — larger and no more legible. This issue makes both of them statements about the bytes: the classification is a measurement, and a render that cannot honour the requested DPI says so instead.
@@ -124,6 +146,8 @@ Two silent failures start here. A scan with a stale invisible OCR layer behind i
 - `plan-01-kernels.md` §7b — *"`render` never upscales"*: test is `pdf render` at 300 on a 150 DPI fixture, assigned to `S1-T12` (row 4).
 - `plan-01-kernels.md` §8 — rows 3, 4, 5. Requirement **FR-15** (the measurements the Diagnosis gate consumes).
 - `kernel-cli.md` §9 (K2) — `pdf probe`, `pdf classify`, `pdf tokens`, `pdf render`, `pdf split` are `now`; `pdf facts` and `pdf images` are `MVP` and exit `4`.
+- **`layout_text` has no matrix row and no command in §9**, which is consistent: the matrix is the silent-failure suite, and the text path's failures are already asserted through rows 3–5. What it has instead is a **measured** relationship to `extract_tokens`: reconstructing the grid from token boxes matches the reader's own output on **0 of 68 lines** of `casos/9dfc597f`, because the reader holds the font metrics and emits the soft hyphen it broke a word on, and a token box has neither. The two operations are therefore **not interchangeable** — one carries provenance, the other carries the text as a person reads it — and that is asserted by a test rather than left as a comment.
+- **Equivalence with the previous system is asserted, not assumed.** `layout_text(path, [1])` is byte-identical to `pdftotext -layout -enc UTF-8 -q -f 1 -l 1 <file> -`, and a non-contiguous selection is byte-identical to the concatenation of its per-page reads. The encoding is passed explicitly because the default follows the host locale, and two machines would otherwise disagree on the bytes without disagreeing on the document.
 
 **Out of scope for this issue**
 - **No full `page_facts`.** Beyond classification. `# TODO: [MVP]` — `pdf facts` stays `MVP` and exits `4`.
@@ -132,6 +156,7 @@ Two silent failures start here. A scan with a stale invisible OCR layer behind i
 - **No decision.** `classify` returns a measurement, not a routing outcome (`kernel-cli.md` §3, guardrail 2). Routing a stale-layer page *away from conversion* is Diagnosis's decision, `S2-T04`.
 - **No threshold as a kernel constant.** **Never** (FR-15).
 - **No `--engine`-shaped flag** and no fallback reader: a missing `pdftotext` binary is a typed `Reason`, never a substitute reader (`wbs.md` §9, owner stage 2). `# TODO: [MVP]` for pinning the binary version.
+- **No `layout_text` anywhere in the frozen contract.** It is not on `PdfSource`, not a command in `kernel-cli.md` §9, and not part of any flow. Moving it onto the port is a contract decision that re-opens `E04-01`, not a convenience to be taken while editing a kernel.
 
 **Effort**
 **L** — a heavyweight external dependency (`pdftotext`/Poppler) plus three distinct silent-failure rows to make assertable, each needing a committed fixture that provokes the failure rather than a happy-path call (`wbs.md` §7).
@@ -141,6 +166,10 @@ Two silent failures start here. A scan with a stale invisible OCR layer behind i
 
 **Frozen contract touched**
 **Consumes** `plans/README.md` §3, Plan 1 row — `PdfSource` from `docflow/ports/` and the closed `reason.code` set (`insufficient_effective_resolution`, `blank_page`, `encrypted`, `unsupported_format`, `kernel-cli.md` §5).
+
+**It adds nothing to that set.** `layout_text` reports an empty text layer as `blank_page` and a missing binary as `engine_unavailable`, both already in the closed vocabulary; a non-contiguous page selection is served by composing per-page reads — measured byte-identical to a contiguous one — rather than by introducing a code for *"the reader cannot express this selection"*.
+
+**It touches no boundary type.** `layout_text` returns the frozen `str`. A geometry-bearing result would have needed a new type, which `E01-01` forbids — and that is the reason the operation returns text rather than a structure.
 
 ---
 

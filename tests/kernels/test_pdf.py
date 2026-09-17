@@ -447,6 +447,74 @@ def test_classify_refuses_a_page_outside_the_document(text_pdf: pathlib.Path) ->
         pdf.classify(text_pdf, 0, min_chars=1)
 
 
+# --- Criterion: contradicting producer metadata is reported, not resolved ----
+
+
+def _with_producer(path: pathlib.Path, producer: str, creator: str) -> pathlib.Path:
+    """Write a one-page text PDF carrying the given declared producer.
+
+    The metadata is what the file *claims*; the page's text layer is what it
+    *has*. A disagreement between the two is the thing the criterion is about.
+
+    Args:
+        path: Where to write the file.
+        producer: The declared producer string.
+        creator: The declared creator string.
+
+    Returns:
+        The written path.
+
+    """
+    document = pymupdf.open()
+    page = document.new_page(width=200, height=200)
+    page.insert_text((30, 100), "TEXTO VISIBLE EN LA PAGINA")
+    document.set_metadata({"producer": producer, "creator": creator})
+    document.save(path)
+    document.close()
+
+    return path
+
+
+def test_classify_reports_a_scan_producer_whose_page_carries_text(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Declared capture metadata that contradicts the text layer is reported.
+
+    The file says a scanner wrote it, and it nevertheless has a text layer. That is
+    a contradiction worth surfacing: resolving it means choosing which of the two
+    to believe, and the caller is the one entitled to make that choice.
+    """
+    path = _with_producer(tmp_path / "scan-producer.pdf", "HP ScanJet 5590", "HP Smart")
+
+    result = pdf.classify(path, 1, min_chars=10)
+
+    assert result.value is not None
+    assert result.value.observed["producer"] == "HP ScanJet 5590"
+    assert result.value.observed["producer_contradiction"] is True, (
+        "a declared capture device whose page carries text is a contradiction; "
+        "reporting it as False would resolve the disagreement silently"
+    )
+
+
+def test_classify_does_not_invent_a_contradiction_on_a_normal_producer(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A non-capture producer with text reports no contradiction.
+
+    The pair with the test above is what proves the flag carries information: an
+    implementation that always answered ``True`` would satisfy that assertion while
+    telling the caller nothing.
+    """
+    path = _with_producer(
+        tmp_path / "word-producer.pdf", "Some Word Processor", "LibreOffice"
+    )
+
+    result = pdf.classify(path, 1, min_chars=10)
+
+    assert result.value is not None
+    assert result.value.observed["producer_contradiction"] is False
+
+
 # --- Criterion: effective DPI is measured, never taken from the request ------
 
 
