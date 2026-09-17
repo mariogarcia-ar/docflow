@@ -2,6 +2,7 @@
   "root": "tests/fixtures",
   "files": 94,
   "bytes": 71729780,
+  "pdf_detector": "voucherflow",
   "by_folder": {
     "casos": {
       "files": 8,
@@ -73,7 +74,8 @@
       "name": "66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0",
       "extension": "pdf",
       "bytes": 85342,
-      "sha256": "a51f05dda6efe13ee4ca4d2d57375991231e930e55af85d8b0a6f046a68cdf27"
+      "sha256": "a51f05dda6efe13ee4ca4d2d57375991231e930e55af85d8b0a6f046a68cdf27",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "casos/66e6e0ea-e910-41f4-9037-13f0309812c1.jpg",
@@ -89,7 +91,8 @@
       "name": "9dfc597f-34c5-41ec-99ae-cf35544c7af8",
       "extension": "pdf",
       "bytes": 194423,
-      "sha256": "9fa8c42702dc2b1cbfbee40ac67c0746a58100b9f8545b1d07e945e011c3759a"
+      "sha256": "9fa8c42702dc2b1cbfbee40ac67c0746a58100b9f8545b1d07e945e011c3759a",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "casos/a6d79e19-8ddf-45b2-8dfe-4a056c7ca5c3.png",
@@ -113,7 +116,8 @@
       "name": "af9f596b-bab2-4e69-b82a-c61fcdacdcbd",
       "extension": "pdf",
       "bytes": 190706,
-      "sha256": "81e57e1bb0f175f3144066befd997ffdb951573f29358a7ec4fae325dbce9705"
+      "sha256": "81e57e1bb0f175f3144066befd997ffdb951573f29358a7ec4fae325dbce9705",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "chicos/22f0e9af-6bd6-4882-bb69-0991ef3db3ed.pdf",
@@ -121,7 +125,8 @@
       "name": "22f0e9af-6bd6-4882-bb69-0991ef3db3ed",
       "extension": "pdf",
       "bytes": 8260,
-      "sha256": "1436282d88c85e3266600a422c3e4d201b770e07210b73e142e3874c6fbc2f68"
+      "sha256": "1436282d88c85e3266600a422c3e4d201b770e07210b73e142e3874c6fbc2f68",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "chicos/243a8b81-eca0-4841-ab69-72adf519a843.png",
@@ -137,7 +142,8 @@
       "name": "56517e08-4e12-498a-a26e-9d56fa754541",
       "extension": "pdf",
       "bytes": 9667,
-      "sha256": "a6b14cf7c740ecdcd7e8b223211f31347d8389e78f50a605df9e5c77196ca9a6"
+      "sha256": "a6b14cf7c740ecdcd7e8b223211f31347d8389e78f50a605df9e5c77196ca9a6",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "chicos/629608b8-7cb3-4580-9b4d-dcdc722a14c9.pdf",
@@ -145,7 +151,8 @@
       "name": "629608b8-7cb3-4580-9b4d-dcdc722a14c9",
       "extension": "pdf",
       "bytes": 8564,
-      "sha256": "8458f617638e4fca5e399d228bf4a75937cb85c0be50f02f22fced049f1ae7cf"
+      "sha256": "8458f617638e4fca5e399d228bf4a75937cb85c0be50f02f22fced049f1ae7cf",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "chicos/83fe1dc1-d0d9-4b4c-8dfc-326feecb110b.pdf",
@@ -153,7 +160,8 @@
       "name": "83fe1dc1-d0d9-4b4c-8dfc-326feecb110b",
       "extension": "pdf",
       "bytes": 9552,
-      "sha256": "d7fb237f1070a832179d60f67a30885ea6092deb04fb76cf4c095c798b1cc1a7"
+      "sha256": "d7fb237f1070a832179d60f67a30885ea6092deb04fb76cf4c095c798b1cc1a7",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "chicos/a6d79e19-8ddf-45b2-8dfe-4a056c7ca5c3.png",
@@ -169,7 +177,8 @@
       "name": "b073927b-e9d7-48fc-8f4b-8d2ef0896f97",
       "extension": "pdf",
       "bytes": 8486,
-      "sha256": "ced2742d14acd419851f35aa587094711ff00bd70a40058a069dd31e35f0b848"
+      "sha256": "ced2742d14acd419851f35aa587094711ff00bd70a40058a069dd31e35f0b848",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "chicos/bab5e67d-a778-4237-ad5c-fe8c230875bc.jpeg",
@@ -193,7 +202,8 @@
       "name": "ff3797bb-3f79-469f-a693-e0534ad94250",
       "extension": "pdf",
       "bytes": 4275,
-      "sha256": "c30e37448b18d09a667c6d0fad18543a9678df8fb63559dfcc6ae5efdad2e1f0"
+      "sha256": "c30e37448b18d09a667c6d0fad18543a9678df8fb63559dfcc6ae5efdad2e1f0",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "expected-extraction/0fc44015-8d00-4bf0-bdac-ce41f695d8c6.jpg",
@@ -521,7 +531,8 @@
       "name": "neg_2026-06_correo_liquidacion",
       "extension": "pdf",
       "bytes": 762,
-      "sha256": "049de1dbb7b2ddea644b6e9144fa7ffea00a9840a8aaab78f126b21ecf2b6953"
+      "sha256": "049de1dbb7b2ddea644b6e9144fa7ffea00a9840a8aaab78f126b21ecf2b6953",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "negativos/neg_2026-07_resumen_tarjeta.pdf",
@@ -529,7 +540,8 @@
       "name": "neg_2026-07_resumen_tarjeta",
       "extension": "pdf",
       "bytes": 755,
-      "sha256": "b7ada192a3c65f9e3f49b111c8c2c3c197004c299f222521c84f5e749d6355b6"
+      "sha256": "b7ada192a3c65f9e3f49b111c8c2c3c197004c299f222521c84f5e749d6355b6",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "negativos/neg_2026-08_memo_interno.png",
@@ -545,7 +557,8 @@
       "name": "neg_2026-09_presupuesto",
       "extension": "pdf",
       "bytes": 732,
-      "sha256": "9ac68735f02c36f7529fb2efc57d1a121ba1f17402052f7d8a65adae3e4d429e"
+      "sha256": "9ac68735f02c36f7529fb2efc57d1a121ba1f17402052f7d8a65adae3e4d429e",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "negativos/neg_2026-10_pantalla_aprobacion.png",
@@ -729,7 +742,8 @@
       "name": "242823d2-afd3-4107-a49c-ce382592c6a5",
       "extension": "pdf",
       "bytes": 50454,
-      "sha256": "7573a61e3ce3da476ac8f2e1cc40285731958c244c703bb0efd3c4465602f668"
+      "sha256": "7573a61e3ce3da476ac8f2e1cc40285731958c244c703bb0efd3c4465602f668",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "pdf_aptos_layout/36744cc6-2ed9-47e5-b4b8-66c31768164b.pdf",
@@ -737,7 +751,8 @@
       "name": "36744cc6-2ed9-47e5-b4b8-66c31768164b",
       "extension": "pdf",
       "bytes": 12912,
-      "sha256": "b5cfc20400e4a9672ff098acaa79d8be662451b98d31235b3ce29e534732005d"
+      "sha256": "b5cfc20400e4a9672ff098acaa79d8be662451b98d31235b3ce29e534732005d",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "pdf_aptos_layout/5b2e1460-197a-436e-b8cc-df5a99f77a43.pdf",
@@ -745,7 +760,8 @@
       "name": "5b2e1460-197a-436e-b8cc-df5a99f77a43",
       "extension": "pdf",
       "bytes": 211864,
-      "sha256": "17d1598969924be010f0c8add79c3f9f5a2afffa9a85ffe821542dd95703e035"
+      "sha256": "17d1598969924be010f0c8add79c3f9f5a2afffa9a85ffe821542dd95703e035",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf",
@@ -753,7 +769,8 @@
       "name": "9073693b-f8bf-4f9b-88e0-1008de266c0e",
       "extension": "pdf",
       "bytes": 278833,
-      "sha256": "86b9e21cd38dae83886213098e71ab30a616eb16334fac84b077ff922e021c19"
+      "sha256": "86b9e21cd38dae83886213098e71ab30a616eb16334fac84b077ff922e021c19",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "pdf_aptos_layout/c9946aa2-0979-4b5c-9265-77e4f126b978.pdf",
@@ -761,7 +778,8 @@
       "name": "c9946aa2-0979-4b5c-9265-77e4f126b978",
       "extension": "pdf",
       "bytes": 57715,
-      "sha256": "3b69b2831f85c0415db31992af7839ffe55be51afe256a72cbdd707ef332da16"
+      "sha256": "3b69b2831f85c0415db31992af7839ffe55be51afe256a72cbdd707ef332da16",
+      "pdf_type": "pdf_texto"
     },
     {
       "path": "pdf_escaneados/3ac5a2ec-d129-47c0-947a-4680c7e25f06.pdf",
@@ -769,7 +787,8 @@
       "name": "3ac5a2ec-d129-47c0-947a-4680c7e25f06",
       "extension": "pdf",
       "bytes": 42388,
-      "sha256": "40fd56e2a19bd1ac711f46f24c1c17945aeab8dd118a866db7f22a2d6b254dd1"
+      "sha256": "40fd56e2a19bd1ac711f46f24c1c17945aeab8dd118a866db7f22a2d6b254dd1",
+      "pdf_type": "pdf_escaneado"
     },
     {
       "path": "pdf_escaneados/68623f4b-775d-44cc-8f9c-369d441ef315.pdf",
@@ -777,7 +796,8 @@
       "name": "68623f4b-775d-44cc-8f9c-369d441ef315",
       "extension": "pdf",
       "bytes": 75003,
-      "sha256": "4b08f7cf9a831919013728e08af7f6b61fa23fd695892b2d4e017613c7df0eb6"
+      "sha256": "4b08f7cf9a831919013728e08af7f6b61fa23fd695892b2d4e017613c7df0eb6",
+      "pdf_type": "pdf_escaneado"
     },
     {
       "path": "pdf_escaneados/722106ec-ad35-4d09-879f-b2da6f8897ad.pdf",
@@ -785,7 +805,8 @@
       "name": "722106ec-ad35-4d09-879f-b2da6f8897ad",
       "extension": "pdf",
       "bytes": 1687905,
-      "sha256": "7d7bc247820c01dd1a407930bf4070ab62297ffacecdc3e2dab40b90b3e799ac"
+      "sha256": "7d7bc247820c01dd1a407930bf4070ab62297ffacecdc3e2dab40b90b3e799ac",
+      "pdf_type": "pdf_escaneado"
     },
     {
       "path": "pdf_escaneados/9b7a423c-189c-4b9b-8ab1-23b38d4518b4.pdf",
@@ -793,7 +814,8 @@
       "name": "9b7a423c-189c-4b9b-8ab1-23b38d4518b4",
       "extension": "pdf",
       "bytes": 87601,
-      "sha256": "f8198787e68e5fa6f798d80536ef2fb084a6f9ecdab98b5ad8b457f34ac07537"
+      "sha256": "f8198787e68e5fa6f798d80536ef2fb084a6f9ecdab98b5ad8b457f34ac07537",
+      "pdf_type": "pdf_escaneado"
     },
     {
       "path": "pdf_escaneados/bddb529d-11ef-4380-92c3-56bdecf2acc2.pdf",
@@ -801,7 +823,8 @@
       "name": "bddb529d-11ef-4380-92c3-56bdecf2acc2",
       "extension": "pdf",
       "bytes": 437854,
-      "sha256": "0f1499d0bd76bdbab9331434d741a3588fb73c36e49d3fb16c6d9b82ccafd390"
+      "sha256": "0f1499d0bd76bdbab9331434d741a3588fb73c36e49d3fb16c6d9b82ccafd390",
+      "pdf_type": "pdf_escaneado"
     }
   ]
 }

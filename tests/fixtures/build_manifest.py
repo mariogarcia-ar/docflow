@@ -1,9 +1,26 @@
 """Build ``manifest.json``: a basic inventory of the committed fixture files.
 
 Basic data only — path, folder, name, extension, size and content hash, all read
-from the filesystem with the standard library. Nothing here measures what a file
-*contains*: that needs PyMuPDF and Pillow, and a manifest that costs more to
-regenerate than to read is a manifest nobody regenerates.
+from the filesystem with the standard library. Nothing else is measured *about*
+the bytes: a manifest that costs more to regenerate than to read is a manifest
+nobody regenerates.
+
+The one exception is a PDF's **type**. A fixture's extension says nothing about
+whether a PDF holds text or is a scan, and that is the first question anything
+aimed at these documents has to answer. So each PDF also records
+``pdf_type`` — ``pdf_texto`` when the pages carry a text layer, ``pdf_escaneado``
+when they do not — as decided by ``voucherflow``'s input-type detector
+(``type_detector.detectar``), the legacy PoC's own answer rather than a
+reimplementation of it. The values are that detector's vocabulary verbatim, and
+its ``motivo`` prose is deliberately **not** recorded: a message string drifts,
+and the repo's rule is that assertions target codes, never messages.
+
+The detector is used **only when ``voucherflow`` is importable**. It is a legacy
+package, it is not declared in ``pyproject.toml``, and ``legacy/`` is
+git-ignored, so a fresh clone will not have it. Without it ``pdf_type`` is
+**absent** rather than filled with a guess — a stand-in is worse than an
+absence, and ``test_manifest.py`` asserts the difference instead of letting a
+missing key read as a missing fact.
 
 Two kinds of file are left out, and the difference matters:
 
@@ -40,7 +57,8 @@ import hashlib
 import json
 import os
 import pathlib
-from typing import TypedDict
+from collections.abc import Callable
+from typing import Any, TypedDict
 
 #: Suffixes left out of the inventory, mapped to the reason recorded for them.
 #: Excluding by *rule* rather than by name: a list of names is forgotten the
@@ -55,12 +73,30 @@ EXCLUDED_DIRECTORIES: dict[str, str] = {"__pycache__": "cache"}
 #: the digest is computed in chunks rather than by reading whole files.
 _CHUNK_BYTES = 1 << 20
 
+#: The one extension that carries a type.
+_PDF_SUFFIX = ".pdf"
+
+#: The two answers the detector gives for a PDF, taken from ``voucherflow``
+#: (``type_detector.TIPOS_VALIDOS``) rather than re-spelled here. A third value
+#: would mean the detector answered about something other than a PDF, which is a
+#: broken assumption rather than a new type.
+PDF_TYPES: tuple[str, ...] = ("pdf_texto", "pdf_escaneado")
+
+#: The detector, named once so the recorded provenance and the import agree.
+_DETECTOR = "voucherflow"
+
 _HERE = pathlib.Path(__file__).resolve().parent
 _REPO_ROOT = _HERE.parents[1]
 
 
-class FixtureRecord(TypedDict):
-    """One inventoried fixture file."""
+class FixtureRecord(TypedDict, total=False):
+    """One inventoried fixture file.
+
+    ``total=False`` because ``pdf_type`` is present only for PDFs and only when
+    the detector is importable. Both absences are meaningful, and
+    ``test_manifest.py`` asserts them rather than letting a missing key read as a
+    missing fact.
+    """
 
     path: str
     folder: str
@@ -68,6 +104,7 @@ class FixtureRecord(TypedDict):
     extension: str
     bytes: int
     sha256: str
+    pdf_type: str
 
 
 class ExcludedPath(TypedDict):
@@ -83,6 +120,7 @@ class Manifest(TypedDict):
     root: str
     files: int
     bytes: int
+    pdf_detector: str
     by_folder: dict[str, dict[str, int]]
     excluded: list[ExcludedPath]
     entries: list[FixtureRecord]
@@ -130,35 +168,101 @@ def _sha256(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
-def _record(path: pathlib.Path, root: pathlib.Path) -> FixtureRecord:
+def _record(
+    path: pathlib.Path,
+    root: pathlib.Path,
+    detector: Callable[[pathlib.Path], Any] | None,
+) -> FixtureRecord:
     """Return the inventory record for one fixture file.
 
     Args:
         path: Fixture file, inside ``root``.
         root: Directory being inventoried.
+        detector: The legacy type detector, or ``None`` when it is not
+            importable. ``None`` leaves the ``pdf_type`` key off rather than
+            filling it with a guess.
 
     Returns:
-        The record, with ``path`` and ``folder`` relative to ``root``.
+        The record, with ``path`` and ``folder`` relative to ``root``, and
+        ``pdf_type`` for a PDF when the detector is available.
     """
     relative = path.relative_to(root)
-    return {
-        "path": relative.as_posix(),
-        "folder": relative.parent.as_posix(),
-        "name": path.stem,
-        "extension": path.suffix.lower().lstrip("."),
-        "bytes": path.stat().st_size,
-        "sha256": _sha256(path),
-    }
+    record = FixtureRecord(
+        path=relative.as_posix(),
+        folder=relative.parent.as_posix(),
+        name=path.stem,
+        extension=path.suffix.lower().lstrip("."),
+        bytes=path.stat().st_size,
+        sha256=_sha256(path),
+    )
+    if detector is not None and path.suffix.lower() == _PDF_SUFFIX:
+        record["pdf_type"] = _pdf_type(path, detector)
+    return record
+
+
+def _detector() -> Callable[[pathlib.Path], Any] | None:
+    """Return ``voucherflow``'s type detector, or ``None`` when unavailable.
+
+        Imported inside the function so the inventory still runs in a checkout that
+        has no ``legacy/``, which is the normal case: the package is a legacy
+    dependency and is not declared in ``pyproject.toml``.
+
+        Returns:
+            The detector callable, or ``None``. The caller decides what an
+            undetected PDF means; this function does not substitute a default.
+    """
+    try:
+        # Imported here rather than at module scope so the inventory still runs in
+        # a checkout with no ``legacy/``: the detector is a legacy dependency that
+        # ``pyproject.toml`` does not declare, so its absence is the normal case.
+        from voucherflow.processing.type_detector import (  # pylint: disable=import-outside-toplevel
+            detectar,
+        )
+    except ImportError:  # pragma: no cover - depends on the environment
+        return None
+    return detectar
+
+
+def _pdf_type(path: pathlib.Path, detector: Callable[[pathlib.Path], Any]) -> str:
+    """Ask the legacy detector whether one PDF is text or a scan.
+
+    The detector decides by counting pages whose ``get_text`` yields something
+    besides whitespace, which is why it cannot see a stale *invisible* text
+    layer: such a scan is reported ``pdf_texto``. That blindness is the
+    detector's, and it is recorded here as the detector's answer rather than
+    corrected — an inventory of a legacy answer is only useful if it is the
+    legacy answer. The kernel that supersedes it measures the hidden layer.
+
+    Args:
+        path: The PDF to detect.
+        detector: ``voucherflow``'s ``detectar``.
+
+    Returns:
+        One of :data:`PDF_TYPES`.
+
+    Raises:
+        ValueError: If the detector answers with anything else. That is a
+            vocabulary breach — a PDF detected as an image or as unsupported —
+            and recording it as a type would put a value in the manifest that
+            the field does not mean.
+    """
+    answer = detector(path).tipo
+    if answer not in PDF_TYPES:
+        raise ValueError(f"{path.name}: detector answered {answer!r} for a PDF")
+    return answer
 
 
 def _scan(
-    root: pathlib.Path, output: pathlib.Path
+    root: pathlib.Path,
+    output: pathlib.Path,
+    detector: Callable[[pathlib.Path], Any] | None,
 ) -> tuple[list[FixtureRecord], list[ExcludedPath]]:
     """Split ``root`` into inventoried records and recorded exclusions.
 
     Args:
         root: Directory being inventoried.
         output: The manifest's own path, resolved; skipped without a record.
+        detector: The legacy type detector, or ``None``.
 
     Returns:
         The records and the exclusions, both in path order.
@@ -170,7 +274,7 @@ def _scan(
             continue
         reason = _exclusion_reason(path, root)
         if reason is None:
-            entries.append(_record(path, root))
+            entries.append(_record(path, root, detector))
         elif reason in EXCLUDED_SUFFIXES.values():
             excluded.append(
                 {"path": path.relative_to(root).as_posix(), "reason": reason}
@@ -199,26 +303,53 @@ def _by_folder(entries: list[FixtureRecord]) -> dict[str, dict[str, int]]:
     }
 
 
-def build(root: pathlib.Path, output: pathlib.Path) -> Manifest:
+def build(root: pathlib.Path, output: pathlib.Path, *, detect: bool = True) -> Manifest:
     """Return the inventory of ``root``, leaving ``output`` out of it.
 
     Args:
         root: Directory holding the fixture files.
         output: Path the manifest is written to; skipped, so the inventory never
             lists its own output.
+        detect: Whether to ask the detector for each PDF's type. ``True`` still
+            records no ``pdf_type`` key when ``voucherflow`` is unavailable, so
+            this flag says what was *attempted* and ``pdf_detector`` says what
+            was *achieved*.
 
     Returns:
         The manifest, with every count and total derived from ``entries``.
     """
-    entries, excluded = _scan(root, output.resolve())
+    detector = _detector() if detect else None
+    entries, excluded = _scan(root, output.resolve(), detector)
     return {
         "root": pathlib.Path(os.path.relpath(root, _REPO_ROOT)).as_posix(),
         "files": len(entries),
         "bytes": sum(entry["bytes"] for entry in entries),
+        "pdf_detector": _DETECTOR if detector is not None else "absent",
         "by_folder": _by_folder(entries),
         "excluded": excluded,
         "entries": entries,
     }
+
+
+def _type_tally(entries: list[FixtureRecord]) -> str:
+    """Summarize the detected PDF types for the run's one-line report.
+
+    Args:
+        entries: The inventoried records.
+
+    Returns:
+        A ``"pdf_texto=17 pdf_escaneado=5"`` style tally, or ``"undetected"``
+        when no PDF was detected. Reading it back from the records is what keeps
+        the summary and the file from disagreeing.
+    """
+    tally: dict[str, int] = {}
+    for entry in entries:
+        answer = entry.get("pdf_type")
+        if answer is not None:
+            tally[answer] = tally.get(answer, 0) + 1
+    if not tally:
+        return "undetected"
+    return " ".join(f"{answer}={tally[answer]}" for answer in sorted(tally))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -233,12 +364,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Inventory the fixture files.")
     parser.add_argument("--root", type=pathlib.Path, default=_HERE)
     parser.add_argument("--out", type=pathlib.Path, default=_HERE / "manifest.json")
+    parser.add_argument(
+        "--no-pdf-types",
+        action="store_true",
+        help="skip PDF type detection, leaving the inventory to the stdlib",
+    )
     args = parser.parse_args(argv)
-    manifest = build(args.root, args.out)
+    manifest = build(args.root, args.out, detect=not args.no_pdf_types)
     args.out.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(
         f"{args.out}: {manifest['files']} files, {manifest['bytes']} bytes, "
-        f"{len(manifest['excluded'])} excluded"
+        f"{len(manifest['excluded'])} excluded, "
+        f"detector={manifest['pdf_detector']}, {_type_tally(manifest['entries'])}"
     )
     return 0
 

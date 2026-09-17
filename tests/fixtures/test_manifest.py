@@ -54,15 +54,22 @@ import json
 import pathlib
 import subprocess
 import sys
+from collections import Counter
 
 import pytest
 
 from .build_manifest import (
+    _DETECTOR,
     EXCLUDED_DIRECTORIES,
     EXCLUDED_SUFFIXES,
+    PDF_TYPES,
+    FixtureRecord,
     # Private on purpose: the precedence between the two exclusion rules is the
     # property under test, and it has no public surface to exercise instead.
     _exclusion_reason,
+    _pdf_type,
+    _record,
+    _type_tally,
     build,
     main,
 )
@@ -561,20 +568,231 @@ def test_the_committed_manifest_records_no_expected_content(manifest: dict) -> N
     data nobody agreed to. Scanning the serialized file for words would not do:
     the folder names are legitimate content and colliding with them is not a
     finding.
+
+    ``pdf_type`` is allowed and is not a violation of this: it is a *detected*
+    type with its detector named beside it, not an expected extraction value. The
+    distinction is the field's presence in the allowed set, deliberately written
+    down rather than left to judgement.
     """
     assert set(manifest) == {
         "root",
         "files",
         "bytes",
+        "pdf_detector",
         "by_folder",
         "excluded",
         "entries",
     }
-    record_fields = {"path", "folder", "name", "extension", "bytes", "sha256"}
+    base_fields = {"path", "folder", "name", "extension", "bytes", "sha256"}
     assert manifest["entries"]
     for entry in manifest["entries"]:
-        assert set(entry) == record_fields, entry["path"]
+        expected = base_fields | (
+            {"pdf_type"} if entry["extension"] == "pdf" else set()
+        )
+        assert set(entry) == expected, entry["path"]
     for item in manifest["excluded"]:
         assert set(item) == {"path", "reason"}, item["path"]
     for bucket in manifest["by_folder"].values():
         assert set(bucket) == {"files", "bytes"}
+
+
+# --- The detected PDF types --------------------------------------------------
+
+
+def _pdf_entries(manifest: dict) -> list[dict]:
+    """Return the committed PDF records."""
+    return [entry for entry in manifest["entries"] if entry["extension"] == "pdf"]
+
+
+def test_the_committed_manifest_detected_at_least_one_pdf(manifest: dict) -> None:
+    """Control for this section: a section of no PDFs would assert nothing.
+
+    The folder labels below are only meaningful if there are files under them, so
+    the population is stated before any property of it.
+    """
+    assert _pdf_entries(manifest)
+
+
+def test_every_committed_pdf_carries_a_detected_type(manifest: dict) -> None:
+    """Every PDF has a ``pdf_type``; the detection was not partial.
+
+    A record missing the key would be indistinguishable from a non-PDF record,
+    and a PDF that silently went undetected is the failure this makes visible.
+    """
+    for entry in _pdf_entries(manifest):
+        assert entry.get("pdf_type"), entry["path"]
+
+
+def test_no_committed_non_pdf_carries_a_pdf_type(manifest: dict) -> None:
+    """The key is PDF-only: a JPEG is not text or a scan, it is an image.
+
+    Applying the PDF vocabulary to an image would make the same two words mean
+    two different things depending on which record reads them.
+    """
+    for entry in manifest["entries"]:
+        if entry["extension"] != "pdf":
+            assert "pdf_type" not in entry, entry["path"]
+
+
+def test_every_detected_type_is_in_the_detectors_vocabulary(manifest: dict) -> None:
+    """The values are ``voucherflow``'s own, not a new vocabulary invented here.
+
+    Asserted against the detector's declared set rather than against a literal
+    pair, so a value the detector could never return is caught as a value this
+    file made up.
+    """
+    from voucherflow.processing.type_detector import (  # pylint: disable=import-outside-toplevel
+        TIPOS_VALIDOS,
+    )
+
+    for entry in _pdf_entries(manifest):
+        assert entry["pdf_type"] in TIPOS_VALIDOS, entry["path"]
+        assert entry["pdf_type"] in PDF_TYPES, entry["path"]
+
+
+def test_the_committed_detector_is_recorded(manifest: dict) -> None:
+    """The file names the detector that produced the types.
+
+    Without it, ``pdf_texto`` is an unattributed assertion; with it, a change of
+    detector is visible in the diff rather than hidden behind unchanged values.
+    """
+    assert manifest["pdf_detector"] == _DETECTOR
+
+
+def test_the_detected_types_agree_with_the_curated_folders(manifest: dict) -> None:
+    """The gate: the detector reproduces the human's folder labels.
+
+    ``pdf_aptos_layout`` and ``pdf_escaneados`` are the one axis a person
+    labelled by hand, so they are the only ground truth available. This is what
+    the recorded type is worth checking against — without it, the field could be
+    populated with any consistent answer.
+    """
+    labels = {"pdf_aptos_layout": "pdf_texto", "pdf_escaneados": "pdf_escaneado"}
+    checked = 0
+    for entry in _pdf_entries(manifest):
+        expected = labels.get(entry["folder"])
+        if expected is not None:
+            assert entry["pdf_type"] == expected, entry["path"]
+            checked += 1
+    assert checked == len(labels) * 5
+
+
+def test_the_type_split_is_stated_in_full(manifest: dict) -> None:
+    """Both answers are present, so neither branch is untested by the fixtures.
+
+    A corpus of only text PDFs would leave the scanned branch never exercised
+    against real data, and the count would not say so.
+    """
+    tally: Counter[str] = Counter(entry["pdf_type"] for entry in _pdf_entries(manifest))
+    assert set(tally) == set(PDF_TYPES), tally
+    assert sum(tally.values()) == len(_pdf_entries(manifest))
+
+
+def test_detection_is_skipped_without_the_detector(tmp_path: pathlib.Path) -> None:
+    """Without the detector the key is absent, not guessed.
+
+    This is the difference between an absence and a stand-in: ``detect=False``
+    records no ``pdf_type`` at all, so a reader can tell "not detected" from
+    "detected as text".
+    """
+    root = _tree(tmp_path / "fx", **{"a.pdf": "not a real pdf"})
+    result = build(root, tmp_path / "out.json", detect=False)
+    assert result["pdf_detector"] == "absent"
+    assert "pdf_type" not in result["entries"][0]
+
+
+def test_the_detector_answers_with_the_declared_pair() -> None:
+    """``PDF_TYPES`` is the two answers a PDF can get, and no others."""
+    assert set(PDF_TYPES) == {"pdf_texto", "pdf_escaneado"}
+
+
+def test_a_detector_answer_outside_the_pair_is_refused() -> None:
+    """A PDF detected as something else is a broken assumption, not a new type.
+
+    The stub returns ``imagen`` — a real answer from the detector's vocabulary,
+    just not one a PDF can get. Recording it would put a value in the manifest
+    that the field does not mean.
+    """
+
+    class _Answer:  # pylint: disable=too-few-public-methods
+        """A stub detector answer: the field ``_pdf_type`` reads."""
+
+        tipo = "imagen"
+
+    with pytest.raises(ValueError, match="answered 'imagen' for a PDF"):
+        _pdf_type(pathlib.Path("a.pdf"), lambda _: _Answer())
+
+
+def test_the_detectors_answer_is_what_reaches_the_record(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The recorded value is the detector's answer, not a constant beside it.
+
+    Driven through ``_record`` with a stub, so the case is provable without a
+    real PDF on disk. A hardcoded ``pdf_texto`` passes every assertion about the
+    committed file while making the detection decorative; this is the assertion
+    that fails instead.
+    """
+    scanned = tmp_path / "fx" / "a.pdf"
+    scanned.parent.mkdir(parents=True)
+    scanned.write_bytes(b"%PDF-1.4 stub")
+
+    class _Answer:  # pylint: disable=too-few-public-methods
+        """A stub detector answer carrying the type it was built with."""
+
+        def __init__(self, tipo: str) -> None:
+            self.tipo = tipo
+
+    for answer in PDF_TYPES:
+        record = _record(scanned, scanned.parent, lambda _, a=answer: _Answer(a))
+        assert record["pdf_type"] == answer
+
+
+def test_a_non_pdf_never_reaches_the_detector(tmp_path: pathlib.Path) -> None:
+    """The detector is not called for a JPEG: the vocabulary is PDF-specific."""
+    image = tmp_path / "fx" / "a.jpg"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"\xff\xd8\xff")
+    called: list[pathlib.Path] = []
+
+    def _spy(path: pathlib.Path) -> object:
+        called.append(path)
+        raise AssertionError("the detector must not be asked about an image")
+
+    record = _record(image, image.parent, _spy)
+    assert "pdf_type" not in record
+    # Compared to ``[]`` on purpose: ``assert not called`` would also pass if the
+    # spy replaced the list with ``None``, which is a different bug.
+    assert called == []  # pylint: disable=use-implicit-booleaness-not-comparison
+
+
+def test_the_tally_counts_each_type_from_the_records() -> None:
+    """The run's summary line is read back from the records, not assembled apart.
+
+    A tally that names a type the entries do not hold would make the console
+    report disagree with the file it just wrote.
+    """
+    entries = [
+        FixtureRecord(path="a.pdf", pdf_type="pdf_texto"),
+        FixtureRecord(path="b.pdf", pdf_type="pdf_texto"),
+        FixtureRecord(path="c.pdf", pdf_type="pdf_escaneado"),
+        FixtureRecord(path="d.jpg"),
+    ]
+    assert _type_tally(entries) == "pdf_escaneado=1 pdf_texto=2"
+
+
+def test_the_tally_says_undetected_when_nothing_was_detected() -> None:
+    """An empty tally says so, rather than reading as zero of every type."""
+    entries = [FixtureRecord(path="a.pdf"), FixtureRecord(path="b.jpg")]
+    assert _type_tally(entries) == "undetected"
+
+
+def test_the_tally_names_every_type_it_counts() -> None:
+    """Both vocabulary values can appear, so neither branch is dead code."""
+    entries = [
+        FixtureRecord(path="a.pdf", pdf_type="pdf_texto"),
+        FixtureRecord(path="b.pdf", pdf_type="pdf_escaneado"),
+    ]
+    tally = _type_tally(entries)
+    for answer in PDF_TYPES:
+        assert answer in tally
