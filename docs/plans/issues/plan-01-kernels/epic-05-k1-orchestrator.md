@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E05** |
 | Capability | K1 Orchestrator: unit/stage/graph dispatch, the 7 durable states, determinism classes, typed slots and barriers, mandatory verification |
-| Issues | `E05-01` (`S1-T06`) — **`done`** (§3) · `E05-02` (`S1-T07`) — **`done`** (§3) · `E05-03` (`S1-T08`) · `E05-04` (`S1-T09`) · `E05-05` (`S1-T10`) — `todo` |
+| Issues | `E05-01` (`S1-T06`) — **`done`** (§3) · `E05-02` (`S1-T07`) — **`done`** (§3) · `E05-03` (`S1-T08`) — **`done`** (§3) · `E05-04` (`S1-T09`) · `E05-05` (`S1-T10`) — `todo` |
 | Issue count | **5** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernels/` |
 | Wave span | **W4 → W6** (W4: 1 · W5: 2 · W6: 2) |
@@ -237,6 +237,44 @@ The difference between a resume that is correct and one that silently skips work
 
 **Title**
 Determinism classes + resume consequence.
+
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | Exactly three determinism classes exist: **deterministic**, **sampled**, **external** | ✅ met — `CLASS_NAMES`; a fourth is refused by a test that asserts the tuple |
+| 2 | A **deterministic** artifact is recomputable — byte-identical, its hash the evidence | ✅ met — the one class whose absence yields `recompute=True` |
+| 3 | A **sampled** artifact with a missing file reports **`failed`** with an `evidence_missing` reason | ✅ met |
+| 4 | A sampled artifact is **never regenerated**; a test would detect a fresh sample reported as `done` | ✅ met — and the strongest available form, below |
+| 5 | An **external** artifact's missing evidence is a typed outcome, never asserted reproducible | ✅ met — same consequence as `sampled`; a later call is a new observation, not a correction |
+| 6 | The class is **read from the artifact's producing kernel**, not guessed, defaulted or set per run | ✅ met — one table keyed by kernel, and an unknown kernel is **refused** |
+| 7 | Deleting a sampled artifact proves `failed` and **no fresh sample**; the test fails if regeneration occurs | ✅ met — `test_a_done_stage_whose_sampled_artifact_is_deleted_fails` |
+| 8 | The recorded attempt count is visible, so *retry until agreement* would be detectable | ✅ met — `E05-02` recorded it; `M1` here is the mutation that would have hidden it |
+| 9 | The classes match `kernel-cli.md` §7 | ✅ met, asserted against a copy of the artifact's table rather than the table itself |
+
+**On #4 — *never regenerated* cannot be proven behaviourally, so the absence is asserted structurally.** A behavioural test can only show that the paths it takes do not regenerate; it cannot show there is no path that does. So two assertions carry the claim: the module exposes **no function whose return type mentions ``Artifact``** — it *decides*, it does not produce — and `MissingEvidence` has no member that could carry a value, so *a fresh sample reported as `done`* is not a shape the decision can express. `M1` (letting `sampled` take the recompute branch) reddens six tests, which is what `plan-01-kernels.md` §7b row 5 asks for.
+
+**Where the class is declared, and why it is not anywhere else.** An adapter cannot carry it: the port declares no such member, and adding one would re-open `E04-01`'s gate. A descriptor must not: a class **set per run** is precisely what the criterion forbids. So it is a fact about the **kernel**, in one table, and the orchestrator reads it. The alternative — discovering the class by running the operation twice and comparing hashes — is the *regeneration* the issue exists to prevent, performed to decide whether it is allowed.
+
+**An unknown kernel is refused, not defaulted.** Both available defaults change results: `deterministic` makes the system regenerate a sampled artifact, and `sampled` makes it discard recomputable work. Refusing names the real problem. `M5` and `M6` are the two mutations that prove the refusal is not a fall-through.
+
+**A cross-module check, and why it is here rather than in `E04-07`.** `test_the_kernels_resolution_declares_are_all_classified` asserts that every kernel `resolution.py` can resolve to has a class. A capability that resolved and then had no resume behaviour would fail at the worst possible moment — the one after a crash. `M15` proves the assertion is not vacuous.
+
+**The three steps a caller would otherwise have to remember, composed.** :func:`resume_decision` reads the class from the producing kernel, asks whether the artifact is still there, and applies the class's consequence. Skipping the first step is guessing; skipping the second is trusting a claim about bytes. A stage that is not `done` has no artifact claim and answers None — a `running` stage has no artifact to lose, and asking would report *missing evidence* about a stage that never claimed any.
+
+**Effort**
+**M** — one classification with two distinct consequences, and an invariant whose test had to be *structural* because a behavioural one cannot prove an absence.
+
+**Test / evidence**
+- `tests/kernels/test_determinism.py` — **33 tests**, all green.
+- `tests/kernels/mutation_determinism.py` — **15 mutations, all falsified.** Five survivors were investigated, each with a different cause, and **one was a real test defect**: `test_the_reason_code_is_in_the_closed_set` asserted that the module's *constant* was in the closed set, which any valid code satisfies — so `M14`, which changed the constant to a **different valid code**, went unnoticed. It now asserts the code an actual consequence produces. Two more were the **parametrized-suffix** trap; one an assertion against a **module constant that the mutation also moved** (fixed by asserting the literal); and one was an expectation that could not fail, corrected rather than left as a citation.
+- `plan-01-kernels.md` §7b row 5 — *"A sampled artifact is never regenerated"*; breaking it looks like *"the stage re-runs and reports `done` with a fresh sample, changing the result while reporting success"*. Requirement **FR-09**.
+- `plan-01-kernels.md` §3, acceptance scenario *A sampled artifact is evidence, not a cache* (`prd.md` §8) — closes at **`S1-T08`**; asserted through `S1-T22`, which is `E07-03`'s.
+- `kernel-cli.md` §7 — the class table, and the prohibition on `--repeat` as retry-until-agreement.
+- All four QA gates green: `pytest` (827 passed), `ruff check`, `ruff format --check`, `pylint src tests`.
+- The four earlier harnesses re-run and still falsify: `mutation_ordering` 15, `mutation_orchestrator` 13, `mutation_resolution` 18, `mutation_store` 20.
+
+**Open state carried forward.** `plan-01-kernels.md` §12 open decision **#6** (whether a sampled artifact may ever be regenerated, with the new observation recorded) is **carried, not resolved**: Stage 1 fixes *never regenerate*, and relaxing it would change this issue's done-when and re-open this gate. Open decision **#5** (whether a pinned Docling is in fact deterministic) is likewise carried — K4 reports `sampled` per `sad.md` §4.
 
 **Context**
 Some artifacts can be recomputed and some cannot — and the difference decides what the system is allowed to do when one goes missing. Recomputing a **deterministic** artifact is free and correct. Recomputing a **sampled** one produces a different answer, reported as `done`, so the run silently changes its result while claiming success. This issue makes the class an input to the resume decision rather than a documentation note.

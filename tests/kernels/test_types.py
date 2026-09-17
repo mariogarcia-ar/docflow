@@ -1143,8 +1143,14 @@ def test_boundary_package_contains_only_the_expected_modules() -> None:
         # arrives in the same package because K1 is a kernel like the others, and
         # `E05-02`, `E05-04` and `E05-05` each continue *in this file* rather than
         # adding siblings - which is why only one name is declared here for five
-        # issues. `determinism.py` (`E05-03`) is named when it lands.
+        # issues.
         "orchestrator.py",
+        # `determinism.py` is `E05-03`'s (`S1-T08`) deliverable. It is the one place
+        # the three classes are declared, and the reason it is a module rather than a
+        # table inside the orchestrator: an adapter cannot carry the class (the port
+        # declares no such member) and a descriptor must not (a class set per run is
+        # what the criterion forbids), so the fact belongs to the kernel layer.
+        "determinism.py",
         # `resolution.py` is `E04-07`'s (`S1-T17`) deliverable: which engine answers
         # a capability, and what the cache key will therefore be. A kernel-layer
         # module, not a port - the adapters are reached through the caller's own
