@@ -1095,9 +1095,16 @@ def test_box_is_a_supporting_value_type_and_not_a_boundary_state() -> None:
     assert "source page coordinates" in (Box.__doc__ or "")
 
 
-def test_boundary_package_contains_only_the_types_module() -> None:
-    """No sibling module was introduced under ``docflow/kernels``."""
-    expected = {"__init__.py", "types.py"}
+def test_boundary_package_contains_only_the_expected_modules() -> None:
+    """No sibling module was introduced under ``docflow/kernels`` beyond the
+    ones the plan names.
+
+    ``store.py`` is E02's deliverable (``S1-T02``/``S1-T03``) and is the first
+    sibling this guard has had to admit; it is named here explicitly rather than
+    the check being relaxed to a glob, so that a *third* module arriving still
+    fails this test until it too is declared.
+    """
+    expected = {"__init__.py", "types.py", "store.py"}
     actual = {path.name for path in PACKAGE_ROOT.glob("*.py")}
 
     assert actual <= expected, f"unexpected modules: {sorted(actual - expected)}"
