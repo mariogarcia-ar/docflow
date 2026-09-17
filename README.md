@@ -28,7 +28,7 @@ Eleven thousand documents. Extract structured information from them and expose i
 | `docs/quickstart-kernel-ocr.md` | What K4 (`kernel.ocr`) can do today |
 | `docs/quickstart-kernel-llm-local.md` | What K5 (`kernel.llm.local`) can do today |
 | `docs/quickstart-kernel-llm-frontier.md` | What K6 (`kernel.llm.frontier`) can do today |
-| `docs/findings/` | Measurements taken while implementing, where the runtime disagreed with the specification |
+| `docs/findings/` | Measurements taken while implementing, where the runtime disagreed with the specification — and `03-kernel-port-adapter-compliance.md` measures whether the kernel/port/adapter separation actually holds |
 | `my_prompt.md` | The original specification — requirements and constraints |
 
 Start with `docs/idea/04-storytelling.md` for the reasoning, or `docs/idea/03-cli.md` if you need to run something. The `docs/artifacts/` set is the specification the PoC is built against; where an artifact and an `idea/` document disagree, the artifact is the decision and the `idea/` document is the exploration that led to it. The **quickstarts** are the opposite direction: they record what a landed kernel *actually does*, verified by running it, so a page that strays from the specification says so and says why.
