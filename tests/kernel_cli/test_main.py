@@ -161,11 +161,13 @@ EXPECTED_KERNEL_ROWS: tuple[tuple[str, str, str], ...] = (
 )
 
 #: Kernels whose probe succeeds without an adapter — the two filesystem ones, plus
-#: ``pdf``, whose engine (PyMuPDF) and reader (``pdftotext``) both landed with
-#: `E04-02` (`S1-T12`). A kernel is added here only when its module exists *and*
+#: ``pdf`` and ``image``, whose engines landed with `E04-02` (`S1-T12`) and
+#: `E04-03` (`S1-T13`). A kernel is added here only when its module exists *and*
 #: its probe genuinely reports ``available``; the test below is what makes the
 #: addition deliberate rather than a way to silence a real failure.
-ALWAYS_AVAILABLE_KERNELS: frozenset[str] = frozenset({"pdf", "store", "registry"})
+ALWAYS_AVAILABLE_KERNELS: frozenset[str] = frozenset(
+    {"pdf", "image", "store", "registry"}
+)
 
 #: The forbidden flag vocabulary, restated from `kernel-cli.md` §10 and §14. Two
 #: groups: document concepts, and the six flags the artifacts forbid outright.

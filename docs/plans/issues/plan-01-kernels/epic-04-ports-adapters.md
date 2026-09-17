@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E04** |
 | Capability | The five port interfaces plus the thin acquisition (K2/K3) and generation (K4/K5/K6) adapters, and resolution by capability |
-| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 1 criterion unmet (§3) · `E04-03` (`S1-T13`) · `E04-04` (`S1-T14`) · `E04-05` (`S1-T15`) · `E04-06` (`S1-T16`) · `E04-07` (`S1-T17`) — `todo` |
+| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 1 criterion unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 1 criterion unmet (§3) · `E04-04` (`S1-T14`) · `E04-05` (`S1-T15`) · `E04-06` (`S1-T16`) · `E04-07` (`S1-T17`) — `todo` |
 | Issue count | **7** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/ports/`, `docflow/adapters/`, `docflow/kernels/` |
 | Wave span | **W2 → W4** (W2: 1 · W3: 5 · W4: 1) |
@@ -117,6 +117,8 @@ Recorded rather than implied, because a ticked box that is not true is the failu
 
 **Resolution of #8 — a scoping question, not a defect.** `E04-02`'s deliverable is `docflow/kernels/pdf.py` alone, while a thin adapter behind `PdfSource` is what the criterion asks for. That adapter sits naturally with `E04-03`…`E04-06`, whose deliverables *are* the `docflow/adapters/` modules. Either the criterion moves to the issue that owns the adapters, or `E04-02` grows a deliverable. **The decision is not taken here** — the criterion is recorded as unmet so that nobody ticks it by reading the kernel and assuming the adapter came with it.
 
+> **The same question recurs one issue later, and that makes it a pattern rather than an accident.** `E04-03` carries the identical split: its deliverable is `docflow/kernels/image.py`, and its criterion 8 is *"The adapter is reachable only through `RasterImage`"* — an adapter that no issue in this epic names as a deliverable. Two consecutive issues asking for an artefact neither owns is a gap in the epic's cut, not two oversights. It is recorded in both places so that resolving it happens once, deliberately, rather than twice by improvisation.
+
 **On #2, one thing the row does not ask for.** The page's shape is measured with invisible text **excluded**: a scan with a stale hidden layer reports `image`, not `mixed`. Counting those characters would name the page a text page, the document would never be converted, and the content a person can see would never be read — which is the silent failure the row exists to prevent. The check was built against a real `Tr 3` no-draw layer because the naive one is fooled: the engine's own text extraction returns invisible text as ordinary text.
 
 **Context**
@@ -177,6 +179,24 @@ Two silent failures start here. A scan with a stale invisible OCR layer behind i
 
 **Title**
 K3 `kernel.image` thin: `load` (EXIF applied), `legibility` (measurement + reason, never a boolean), `rescale`, `crop` (inverse map returned).
+
+**Status — `in progress`, 1 criterion unmet**
+
+Recorded rather than implied, for the same reason as `E04-02`: a ticked box that is not true is the failure mode this project exists to prevent.
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | `load` applies EXIF orientation before the bitmap leaves | ✅ met — asserted by decoding the returned bytes, so the stored shape coming back fails the test |
+| 2 | `load`/`info` reports the orientation found **and** applied | ✅ met — two fields, because a rotation nobody recorded is indistinguishable from a file that needed none |
+| 3 | `legibility` returns a measurement plus a `Reason`, never a boolean | ✅ met — the measurements are present **on the failure**, which is what distinguishes a reason from a boolean |
+| 4 | An illegible bitmap produces `illegible` with the measurements alongside | ✅ met |
+| 5 | `crop` returns the crop together with its inverse map | ✅ met — `InverseMap` travels with the bytes in one value |
+| 6 | A crop's local coordinates are never returned as a page region | ✅ met — this is `NFR-07`, and the assertion names the failure explicitly |
+| 7 | `rescale` reports the target honoured, never silently satisfying | ✅ met — an unreachable target is refused with the measured source resolution |
+| 8 | **The adapter is reachable only through `RasterImage`** | ❌ **NOT MET**, and the port it names does not exist — see the note under `E04-02` criterion 8: K3 has no port, and the `docflow/adapters/` module this would need is not any issue's deliverable |
+| 9 | No threshold constant inside the module | ✅ met — the threshold is a required parameter, and a test changes it on an **unchanged** image to prove it is the caller's |
+
+**One thing the criteria do not ask for, and it matters.** `rescale` takes `source_dpi` as a parameter because `Box` carries no DPI. A kernel that measured or assumed the source resolution would be reporting a number nobody supplied, so the caller states it — and the refusal is then a comparison of two values the caller can see, rather than a hidden judgement.
 
 **Context**
 A photo read sideways loses a whole page and reports no error; a blurred bitmap that reaches OCR produces invented text; and a crop whose local coordinates are reported as page coordinates makes the downstream trace point at the wrong pixels while remaining valid JSON — so nothing else notices. This issue fixes all three by making the kernel report what it *observed* and by making coordinates leave the kernel in the coordinate system the caller can use.
