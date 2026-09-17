@@ -13,9 +13,20 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+.eggs/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Coverage
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Packaging (a src layout produces these next to src/)
+src/*.egg-info/
+src/*.egg-link
 
 # Node, if the CLI is packaged that way
 node_modules/
@@ -28,5 +39,9 @@ build/
 .vscode/
 *.swp
 
-.coverage
+# The source corpus. `documentos/` is input data, never committed: 11k files would
+# make every clone unusable and the corpus is replaced between runs.
+# TODO: [MVP] If the corpus ever needs to be versioned, use a manifest of hashes
+# plus a fetch step, not the documents themselves.
+/documentos/
 

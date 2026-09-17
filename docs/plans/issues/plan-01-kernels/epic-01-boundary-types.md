@@ -43,9 +43,10 @@ Freeze kernel boundary types: `Token`, `KernelResult`, `Evidence`, `Reason`, `Ca
 
 | Item | Evidence |
 |---|---|
-| Deliverable | `docflow/kernels/types.py` — the seven frozen boundary types plus `Box` |
-| Test | `tests/kernels/test_types.py` — **76 passed** (`python -m pytest tests/ -q`), **100 % statement coverage** of `docflow/kernels/types.py` (62/62) |
-| Lint / format | `ruff check` clean · `ruff check --select I` clean · `ruff format --check` clean · **`pylint` 10.00/10** (`pylint --disable=W0511 docflow tests`) |
+| Deliverable | `docflow/kernels/types.py` — the seven frozen boundary types plus `Box` (physical path `src/docflow/kernels/types.py`; the `src/` prefix is the layout, not part of the module path) |
+| Test | `tests/kernels/test_types.py` — **76 passed** (`pytest`), **100 % statement coverage** of the module (62/62) |
+| Lint / format | `ruff check .` clean · `ruff format --check .` clean · `pylint src tests` clean (the four QA gates of `.github/copilot-instructions.md`) |
+| Layout | `src/` layout; `pip install -e ".[dev]"` installs the package and registers both entry points (`docflow`, `docflow-kernel`) |
 | Invariant falsified | Three separate mutations of `__post_init__` (value+reason allowed; `None`-without-reason allowed; evidence-optional) each made the enumeration test **fail**; the file was restored and the suite re-run green — re-run after the QA refactor, still failing in all three cases |
 | Static guards falsified | An injected domain noun (`invoice_total`) failed the vocabulary scan; an injected `import json` failed the import-isolation test |
 | Type hints / complexity | Zero missing annotations across both files; max McCabe complexity **6** (`__post_init__`), well inside the "low complexity" rule |

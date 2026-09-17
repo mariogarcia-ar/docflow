@@ -351,7 +351,9 @@ def make_kernel_result(value: object, evidence: object, reason: object) -> objec
         The constructed ``KernelResult``.
 
     """
-    return KernelResult(value=value, evidence=evidence, reason=reason)  # type: ignore[arg-type]
+    return KernelResult(  # type: ignore[arg-type]
+        value=value, evidence=evidence, reason=reason
+    )
 
 
 def iter_module_identifiers(tree: ast.Module) -> Iterator[tuple[str, int]]:
@@ -867,9 +869,7 @@ def test_the_domain_vocabulary_scan_is_not_vacuous() -> None:
         ), f"{allowed} must not match the forbidden vocabulary"
 
 
-def test_evidence_carries_versions_params_and_raw_measurements_without_an_aggregate_score() -> (
-    None
-):
+def test_evidence_records_measurements_without_an_aggregate_score() -> None:
     """``Evidence`` has observable layers and no aggregate grade."""
     hints = typing.get_type_hints(Evidence)
 
@@ -888,9 +888,7 @@ def test_evidence_carries_versions_params_and_raw_measurements_without_an_aggreg
     assert evidence.terms["adapter_revision"] == "test 0.0.1"
 
 
-def test_evidence_reason_call_record_bytes_artifact_and_box_are_frozen_and_slotted() -> (
-    None
-):
+def test_observation_records_are_frozen_and_slotted() -> None:
     """The observation records are immutable and use slots like the boundary types."""
     for member in (Evidence, Reason, CallRecord, Bytes, Artifact, Box):
         assert dataclass_is_frozen(member)
