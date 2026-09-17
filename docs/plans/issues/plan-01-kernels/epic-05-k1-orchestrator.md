@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E05** |
 | Capability | K1 Orchestrator: unit/stage/graph dispatch, the 7 durable states, determinism classes, typed slots and barriers, mandatory verification |
-| Issues | `E05-01` (`S1-T06`) · `E05-02` (`S1-T07`) · `E05-03` (`S1-T08`) · `E05-04` (`S1-T09`) · `E05-05` (`S1-T10`) — all `todo` |
+| Issues | `E05-01` (`S1-T06`) — **`done`** (§3) · `E05-02` (`S1-T07`) · `E05-03` (`S1-T08`) · `E05-04` (`S1-T09`) · `E05-05` (`S1-T10`) — `todo` |
 | Issue count | **5** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernels/` |
 | Wave span | **W4 → W6** (W4: 1 · W5: 2 · W6: 2) |
@@ -49,6 +49,43 @@ This is the only epic with an edge from **two** other epics (E02 and E03), becau
 
 **Title**
 K1 orchestrator core: unit / stage / graph / ledger / manifest, dependency dispatch.
+
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | `docflow/kernels/orchestrator.py` exists and models unit / stage / graph / ledger / manifest as distinct concepts | ✅ met — five declarations (`Stage`, `Graph`, `Unit`, `Descriptor` + the manifest functions); the ledger is K7's and is *used*, not re-modelled |
+| 2 | A 3-stage synthetic graph runs over N units with N > 1, dispatching a stage only once its declared needs are satisfied | ✅ met — `test_a_three_stage_graph_runs_over_n_units` runs the `acquire → transform → persist` graph over two units |
+| 3 | A stage whose needs are unmet is **not** dispatched | ✅ met — `test_a_stage_whose_need_produced_no_artifact_is_not_dispatched` asserts both the blocked report and that the operation was never called |
+| 4 | Dispatch decides using the cache key: a stage whose key is already terminal is not re-run | ✅ met — `is_terminal(state) and record.cache_key == key`; falsified twice (state-only, and key-compared-to-itself) |
+| 5 | `run.json` is derived and carries `state`, `totals`, `stages`, `outcomes`, `inflight`, consistent with the ledgers | ✅ met — `test_the_manifest_carries_the_five_reported_keys` |
+| 6 | `rebuild_index()` reproduces `run.json` from the ledgers alone — checked by deleting it and rebuilding | ✅ met, and **stronger than the criterion asks** — see the note below |
+| 7 | `rebuild_index()` is the only authority; K7's `rebuild_manifest()` delegates to it | ⚠️ **half met** — `rebuild_index()` is the only authority in the code that exists. K7's `rebuild_manifest()` still refuses (`engine_unavailable`), and its refusal message names `E05-01` as the missing dependency. Wiring the delegation is a **one-line change in `adapters/store.py` plus a test**, and it is deliberately left to `E07-02` (`S1-T21`), which owns the composition root: the adapter must not learn about K1 from a kernel-layer import. |
+| 8 | `run.json` is `jq`-readable | ✅ met — plain `json.dumps(..., indent=2)`; the round-trip tests parse it with `json.loads` |
+| 9 | The orchestrator executes a graph it did not interpret: no stage name, parameter or field contains a domain noun | ✅ met — `test_no_public_identifier_names_a_domain_concept`, plus the AST guard `test_the_orchestrator_imports_nothing_above_the_kernel_layer` |
+| 10 | The orchestrator reads a descriptor whose stages are kernel ops only; a descriptor naming a pipeline code is not a shape it accepts | ✅ met — **and by shape rather than by vocabulary**: the stage and descriptor key sets are closed, so `{"pipeline": …}` is refused as an unknown key (`test_a_descriptor_carrying_an_unknown_key_is_refused`) |
+
+**On #6 — the check is sharper than the criterion's wording.** Deleting the manifest and rebuilding it proves a rebuild *works without* one; it does not prove a rebuild *ignores* one. A rebuild that consulted an existing `run.json` would reproduce whatever that file said, so a hand-edited or stale manifest would become authoritative simply by existing — which is precisely the drift this issue exists to prevent. So the manifest is replaced with a **poison** value that only a lying rebuild could return, and `test_rebuild_index_ignores_an_existing_manifest_entirely` asserts the derived answer wins. The mutation `M2: let rebuild_index trust an existing run.json` is what found the gap: the deletion-based test did not falsify it.
+
+**A dependency this issue exposed, and the artifact change it required.** Criterion 4 asks dispatch to decide *using the cache key*, which means the key a stage ran under has to be **on disk** to compare against — and `StageRecord` (`E02-02`, closed) carried only `(state, artifact_sha256, reason_code)`. Three artifacts pointed the same way and none of them had been reconciled with E02's implementation: `prd.md` **FR-08** (*"every stage result is keyed by the full cache key"*), `sad.md` §5 (completion claims must go *visibly* stale when the registry changes) and `FR-03`'s `stale` state (*"kept deliberately over changed inputs"* — meaningless without the key it was kept over).
+
+`StageRecord` therefore gained **`cache_key: str | None`**, required for a terminal outcome (`done`, `failed`) and permitted-not-required otherwise, because a stage that has not been dispatched under a key has none to record. The change is recorded in `epic-02-k7-store-ledger.md` §3. It re-opens no frozen artifact: what `plans/README.md` §3 freezes is the **seven states**, not the record's field set. The port's `ArtifactStore` signature grew with it (it is an exact mirror of the kernel), so `ports/store.py`, `adapters/store.py` and the port contract test moved together — and `test_no_port_parameter_carries_a_default_value` correctly refused the `begin` default that a first cut introduced, which is why `begin` now takes the key with no default either.
+
+**What is deliberately not asserted here.** `begin` *is* called before the work starts, because that is the only honest place for it — but the *ordering* surviving a kill is `E05-02`'s, and no test in this issue claims it. Likewise the read path verifies nothing, so `E05-05` adds exactly one check rather than removing a seam.
+
+**Effort**
+**L** — five concepts, a derived-manifest invariant, a sealed descriptor shape, and an artifact change discovered by the work rather than named in the plan.
+
+**Test / evidence**
+- `tests/kernels/test_orchestrator.py` — **49 tests**, all green.
+- `tests/kernels/mutation_orchestrator.py` — **13 mutations, all falsified.** M2 was a **survivor on the first run** and is reported rather than rewritten: the mutation that landed was semantically equivalent to the original, which proves nothing, so it was replaced with a real one (rebuild trusting `run.json`) — which then failed a test that did not exist, and the test was added. M5, M7 and M8 also reported `SURVIVED` for a harness reason rather than a test gap: the cited names omitted pytest's parametrization suffix (`[extra0]`, `[done]`, `[cache_key]`). **A mutation citing a nonexistent test name still reports SURVIVED** — the same trap `E04-02` recorded.
+- `tests/adapters/mutation_store.py` — re-run after the signature change: **20 mutations, all falsified.**
+- `tests/kernels/test_store.py` — 109 tests; `tests/adapters/test_store.py` — 26; `tests/ports/` — green.
+- All four QA gates green over the whole tree: `pytest` (731 passed), `ruff check`, `ruff format --check`, `pylint src tests`.
+- `plan-01-kernels.md` §8 — `rebuild_index()` reproduces `run.json` from ledgers; row 16; `jq`-readable output. Requirements **FR-11**, **NFR-09**, plus **FR-08** through the record change.
+- `kernel-cli.md` §11 **row 16** — `orchestrator manifest-rebuild O` after `rm O/run.json`; the mechanism is asserted, the command wrapper is `E07-02`'s.
+
+**Open state carried forward.** `kernel_cli/main.py` now reports K1 as available (its module landed), so `ALWAYS_AVAILABLE_KERNELS` was widened **deliberately** with the reason recorded at the constant: K1 needs no engine, so the module existing is the whole precondition. This is the moment the guard exists to force someone to look at.
 
 **Context**
 Nothing above the store can run until something reads a graph, decides what is ready, dispatches it, and writes down what happened. This issue builds that — and, because a manifest that is authoritative drifts, it builds the manifest as a **derived** artifact: `rebuild_index()` reproduces `run.json` from the ledgers alone, and K7's `rebuild_manifest()` delegates to it rather than reimplementing it.

@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E02** |
 | Capability | K7 Store — durable, content-addressed artifacts & the ledger write path |
-| Issues | `E02-01` (`S1-T02`) — `todo` · `E02-02` (`S1-T03`) — `todo` |
+| Issues | `E02-01` (`S1-T02`) — **`done`** · `E02-02` (`S1-T03`) — **`done`**, and the record grew a field under `E05-01` (§3) |
 | Issue count | **2** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernels/` |
 | Wave span | **W2 → W3** |
@@ -124,6 +124,18 @@ A ledger that can record `done` before the bytes exist turns resume into a lie: 
 
 **Effort**
 **L** — a load-bearing invariant whose test must *fail* when the invariant is broken, which requires crash injection at a precise point in the write sequence rather than a functional test. `wbs.md` §7's `L` is explicitly "a load-bearing invariant or a heavyweight external dependency; needs an integration or crash-injection test".
+
+**Status — `done`**
+
+All criteria met, and re-verified after the record grew the field described below. Tests: `tests/kernels/test_store.py` (109) and `tests/adapters/test_store.py` (26), both green, with `tests/adapters/mutation_store.py` falsifying all 20 mutations.
+
+**A field added later, under `E05-01` — recorded here because this epic owns the format.**
+
+`StageRecord` gained **`cache_key: str | None`**, required for a terminal outcome (`done`, `failed`) and permitted-not-required for the five states on the way there. The change is `E05-01`'s (`S1-T06`) requirement, not a revision of this issue's intent: its criterion 4 asks dispatch to decide *"is this stage already terminal **for the key it would run under now**?"*, which is only answerable if the key that produced a claim is on disk. Three artifacts already said so and this issue's implementation had not yet caught up — `prd.md` **FR-08**, `sad.md` §5, and `FR-03`'s `stale` state.
+
+It re-opens no frozen artifact: `plans/README.md` §3 freezes the **seven states**, and the state set is unchanged. What changed is that the record now carries the minimum needed to tell *"this stage is done"* from *"this stage is done and no longer correct"*. The port's `ArtifactStore` is an exact mirror of this module, so its signature grew with it, and `test_no_port_parameter_carries_a_default_value` correctly refused the default a first cut put on `begin` — which is why `begin` takes the key with no default and a caller with no key yet passes `None` explicitly.
+
+Proven by three of `E05-01`'s mutations (`M6`–`M8`) plus `M9`/`M10` for the JSON round-trip, and by `test_a_terminal_outcome_requires_the_cache_key_it_ran_under` and the two new `corruption` cases in this suite's hand-edited-ledger test.
 
 **Owner**
 **Kernels** — `docflow/kernels/store.py` (`wbs.md` §8).

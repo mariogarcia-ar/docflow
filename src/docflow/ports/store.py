@@ -18,6 +18,19 @@ exists**, so the operation that writes the bytes and the operation that makes th
 statement must be reachable through the same contract (`plans/README.md` §2
 non-negotiable 1, `prd.md` FR-04).
 
+The record carries the cache key, and why that is not optional
+--------------------------------------------------------------
+
+``commit`` and ``fail`` take a ``cache_key``, and it has no default. A terminal
+outcome that does not name the key it ran under is a result nothing can compare
+against the settings now in force — so *"this stage is done"* and *"this stage is
+done and no longer correct"* would be the same record. `prd.md` FR-08 requires
+every stage result to be keyed by the full cache key, and `sad.md` §5 says why:
+the completion claims have to go **visibly** stale when the registry changes,
+which is only possible if the key that produced them is on disk. Which key a
+dispatch computes, and when it may skip a stage, is K1's (`E05-01`); this port
+records the term and acts on nothing.
+
 Two distinctions a caller must be able to rely on
 --------------------------------------------------
 
@@ -120,12 +133,19 @@ class ArtifactStore(Protocol):
 
     # --- The ledger ---------------------------------------------------------
 
-    def begin(self, unit_dir: Path, stage: str) -> KernelResult[Ledger]:
+    def begin(
+        self, unit_dir: Path, stage: str, cache_key: str | None
+    ) -> KernelResult[Ledger]:
         """Mark a stage ``running`` before its work starts.
 
         Args:
             unit_dir: The unit's directory.
             stage: The stage's name.
+            cache_key: The key the stage is about to run under, when the caller has
+                already composed it. Permitted rather than required: ``running`` is
+                not a terminal outcome, so a caller that begins a stage before
+                resolving its key passes ``None`` and states it, rather than
+                letting a default state it silently.
 
         Returns:
             The ledger with the stage ``running``, or no value and a typed
@@ -137,7 +157,7 @@ class ArtifactStore(Protocol):
         """
 
     def commit(
-        self, unit_dir: Path, stage: str, artifact: Artifact
+        self, unit_dir: Path, stage: str, artifact: Artifact, cache_key: str
     ) -> KernelResult[Ledger]:
         """Mark a stage ``done`` against the artifact that now exists.
 
@@ -147,6 +167,11 @@ class ArtifactStore(Protocol):
             artifact: The stored artifact, as returned by ``put``. The parameter
                 type is the ordering rule: only ``put`` produces one, and it
                 returns after the rename.
+            cache_key: The key the stage ran under. Required and with no default:
+                `prd.md` FR-08 keys every stage result by the full cache key, and
+                a result whose key was not recorded cannot be told from one
+                produced under other settings — which is what makes a stale
+                completion claim *visible* rather than quiet (`sad.md` §5).
 
         Returns:
             The ledger with the stage ``done``, or no value and a typed
@@ -156,7 +181,9 @@ class ArtifactStore(Protocol):
 
         """
 
-    def fail(self, unit_dir: Path, stage: str, reason: Reason) -> KernelResult[Ledger]:
+    def fail(
+        self, unit_dir: Path, stage: str, reason: Reason, cache_key: str
+    ) -> KernelResult[Ledger]:
         """Mark a stage ``failed`` with the reason it produced.
 
         Args:
@@ -165,6 +192,8 @@ class ArtifactStore(Protocol):
             reason: Why the stage produced no value. Failure is a result, not an
                 absence, which is why it carries a reason code rather than a
                 message alone.
+            cache_key: The key the stage was running under. Required, for the same
+                reason it is required on ``commit``.
 
         Returns:
             The ledger with the stage ``failed``, or no value and a typed

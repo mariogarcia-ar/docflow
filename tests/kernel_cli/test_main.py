@@ -175,8 +175,12 @@ EXPECTED_KERNEL_ROWS: tuple[tuple[str, str, str], ...] = (
 #: unavailable. Adding it here would assert that a provider call can be served,
 #: which is false. The module landing is what
 #: `test_an_engine_that_landed_is_no_longer_reported_as_not_landed` asserts instead.
+#:
+#: `orchestrator` was added when `docflow/kernels/orchestrator.py` landed
+#: (`E05-01` / `S1-T06`). K1 needs no engine: it drives a graph and composes keys, so
+#: the module existing is the whole precondition.
 ALWAYS_AVAILABLE_KERNELS: frozenset[str] = frozenset(
-    {"pdf", "image", "ocr", "store", "registry", "llm.local"}
+    {"pdf", "image", "ocr", "store", "registry", "llm.local", "orchestrator"}
 )
 
 #: The forbidden flag vocabulary, restated from `kernel-cli.md` §10 and §14. Two

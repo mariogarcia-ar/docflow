@@ -197,22 +197,30 @@ class FilesystemStore:
 
     # --- The ledger ---------------------------------------------------------
 
-    def begin(self, unit_dir: Path, stage: str) -> KernelResult[Any]:
+    def begin(
+        self, unit_dir: Path, stage: str, cache_key: str | None
+    ) -> KernelResult[Any]:
         """Mark a stage ``running`` before its work starts.
 
         Args:
             unit_dir: The unit's directory.
             stage: The stage's name.
+            cache_key: The key the stage is about to run under, when the caller
+                has already composed it. Permitted rather than required — ``running``
+                is not a terminal outcome. It has no default, so a caller that has
+                no key yet passes ``None`` instead of relying on one.
 
         Returns:
             The ledger with the stage ``running``, or no value and a typed ``Reason``
             for a stage outside the declared set.
 
         """
-        return self._ledger_call(kernel.begin, unit_dir, stage, "begin")
+        return self._ledger_call(
+            kernel.begin, unit_dir, stage, "begin", cache_key=cache_key
+        )
 
     def commit(
-        self, unit_dir: Path, stage: str, artifact: Artifact
+        self, unit_dir: Path, stage: str, artifact: Artifact, cache_key: str
     ) -> KernelResult[Any]:
         """Mark a stage ``done`` against the artifact that now exists.
 
@@ -220,6 +228,9 @@ class FilesystemStore:
             unit_dir: The unit's directory.
             stage: The stage's name.
             artifact: The stored artifact, as returned by ``put``.
+            cache_key: The key the stage ran under. Required: a terminal outcome
+                that does not name its key cannot be compared against the settings
+                now in force (`prd.md` FR-08, `sad.md` §5).
 
         Returns:
             The ledger with the stage ``done``, or no value and a typed ``Reason``.
@@ -228,7 +239,7 @@ class FilesystemStore:
 
         """
         try:
-            ledger = kernel.commit(unit_dir, stage, artifact)
+            ledger = kernel.commit(unit_dir, stage, artifact, cache_key)
         except TypeError as refused:
             # `commit` refuses anything that is not the `Artifact` `put` returned. The
             # type is the ordering rule, so this is a usage error rather than a missing
@@ -241,13 +252,17 @@ class FilesystemStore:
 
         return _ledger_result(ledger, artifact.sha256)
 
-    def fail(self, unit_dir: Path, stage: str, reason: Reason) -> KernelResult[Any]:
+    def fail(
+        self, unit_dir: Path, stage: str, reason: Reason, cache_key: str
+    ) -> KernelResult[Any]:
         """Mark a stage ``failed`` with the reason it produced.
 
         Args:
             unit_dir: The unit's directory.
             stage: The stage's name.
             reason: Why the stage produced no value.
+            cache_key: The key the stage was running under. Required, for the same
+                reason it is required on ``commit``.
 
         Returns:
             The ledger with the stage ``failed``, or no value and a typed ``Reason``.
@@ -257,7 +272,7 @@ class FilesystemStore:
 
         """
         try:
-            ledger = kernel.fail(unit_dir, stage, reason)
+            ledger = kernel.fail(unit_dir, stage, reason, cache_key)
         except (OSError, ValueError) as refused:
             return _refused(_CODE_UNSUPPORTED_FORMAT, refused)
 
@@ -364,7 +379,12 @@ class FilesystemStore:
     # --- Helpers ------------------------------------------------------------
 
     def _ledger_call(
-        self, operation: Any, unit_dir: Path, stage: str, name: str
+        self,
+        operation: Any,
+        unit_dir: Path,
+        stage: str,
+        name: str,
+        cache_key: str | None,
     ) -> KernelResult[Any]:
         """Run one stage-mutating kernel call and translate its refusals.
 
@@ -373,6 +393,8 @@ class FilesystemStore:
             unit_dir: The unit's directory.
             stage: The stage's name.
             name: The operation's name, for the refusal's message.
+            cache_key: The key the stage runs under, forwarded to the kernel, which
+                is where the requirement is enforced.
 
         Returns:
             The ledger, or no value and a typed ``Reason`` for a stage outside the
@@ -380,7 +402,7 @@ class FilesystemStore:
 
         """
         try:
-            ledger = operation(unit_dir, stage)
+            ledger = operation(unit_dir, stage, cache_key)
         except FileNotFoundError as refused:
             return _refused(_CODE_ARTIFACT_MISSING, refused)
         except (OSError, ValueError) as refused:

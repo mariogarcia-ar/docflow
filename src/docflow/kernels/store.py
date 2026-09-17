@@ -31,6 +31,33 @@ memory, and :class:`StageRecord` closes the same path a second time by refusing 
 this invariant is about can be injected at a precise point, instead of being
 simulated by hand (`plan-01-kernels.md` §7b row 2).
 
+What the ledger records besides the state, and why
+--------------------------------------------------
+
+:class:`StageRecord` carries two things that make the record usable rather than
+merely descriptive, and both are the *minimum* the record can hold rather than a
+convenience:
+
+- the **artifact hash** a terminal stage produced, so ``done`` is a claim about
+  named bytes rather than about work; and
+- the **cache key** the stage ran under, so a reader can tell *a stage that
+  completed* from *a stage that completed under the settings now in force*.
+
+Without the second one `sad.md` §5 is not implementable: the design says an
+improved prompt changes the registry hash and the ledger's completion claims
+become *visibly stale* instead of quietly wrong - and they can only be *visibly*
+anything if the key that produced them is on disk. `prd.md` FR-08 states it
+outright: *"every stage result is keyed by the full cache key"*. Recording the
+key is also what lets `E05-01`'s dispatch answer *"is this stage already
+terminal **for this key**?"* instead of *"has it ever run?"*.
+
+The key is therefore **required for a terminal outcome** (``done``, ``failed``)
+and permitted - not required - for the states on the way there, because a stage
+that has not been dispatched under a key yet has none to record. Which key a
+dispatch *computes*, and when it decides to skip, is K1's (`E05-01` / `S1-T06`).
+Forced invalidation and marking downstream stages ``pending`` are Plan 3's
+(`S3-T08`); this module records the term, it does not act on it.
+
 The seven durable states
 ------------------------
 
@@ -113,6 +140,11 @@ DURABLE_STATE_ORDER: Final[tuple[str, ...]] = (
 #: The same seven values as a membership set. Derived, so the two cannot drift.
 _DURABLE_STATES: Final[frozenset[str]] = frozenset(DURABLE_STATE_ORDER)
 
+#: The states that are a *result*, as opposed to a position on the way to one.
+#: A terminal outcome must carry the cache key it ran under (`prd.md` FR-08);
+#: the other five cannot, because the stage has not run under a key yet.
+_TERMINAL_OUTCOME_STATES: Final[frozenset[str]] = frozenset({"done", "failed"})
+
 #: The artifact directory under a store root. Content addressing means the file
 #: name is the hash, so no extension is appended: the name must stay the identity.
 _ARTIFACT_DIRECTORY: Final[str] = "artifacts"
@@ -131,7 +163,7 @@ class StageRecord:
     which artifact it produced, and why it produced none. The record is the
     manifest's input, so it states outcomes rather than summarizing them.
 
-    Two of the plan's rules are enforced by *construction* here, in the same
+    Three of the plan's rules are enforced by *construction* here, in the same
     style ``KernelResult`` uses, because a rule a caller can violate is a rule
     that will be violated under pressure:
 
@@ -141,6 +173,10 @@ class StageRecord:
     - ``failed`` requires a reason code. Failure is a result, not an absence
       (`sad.md` §7.1), and an unexplained failure is indistinguishable from a
       silent one.
+    - a **terminal outcome** (``done``, ``failed``) requires the cache key the
+      stage ran under. Without it the record says a stage finished but not
+      *what it was*, and `sad.md` §5's promise that completion claims go
+      *visibly stale* when the registry changes has nothing to compare against.
 
     The hash is a *claim*, not a proof: verifying it against the filesystem on
     every ledger read is `E05-05` (`S1-T10`) and is deliberately absent here.
@@ -154,18 +190,25 @@ class StageRecord:
             Required for ``failed``. The human-readable message is deliberately
             not recorded: the ledger is read by a machine and a message string is
             not an assertion target (`kernel-cli.md` §5).
+        cache_key: The key the stage ran under, as
+            :func:`docflow.kernels.cache_key.cache_key` composed it, or None
+            while the stage has not been dispatched. Required for ``done`` and
+            ``failed``; never the empty string, which would read as *keyed* to
+            an empty key (`prd.md` FR-08).
 
     Raises:
         ValueError: If ``state`` is outside the seven durable states; if
-            ``artifact_sha256`` or ``reason_code`` is the empty string; if
-            ``state`` is ``done`` and no artifact hash is given; or if ``state``
-            is ``failed`` and no reason code is given.
+            ``artifact_sha256``, ``reason_code`` or ``cache_key`` is the empty
+            string; if ``state`` is ``done`` and no artifact hash is given; if
+            ``state`` is ``failed`` and no reason code is given; or if ``state``
+            is a terminal outcome and no cache key is given.
 
     """
 
     state: str
     artifact_sha256: str | None
     reason_code: str | None
+    cache_key: str | None
 
     def __post_init__(self) -> None:
         """Reject every record outside the seven states and the stated pairings.
@@ -176,7 +219,8 @@ class StageRecord:
 
         Raises:
             ValueError: On an unknown state, an empty-string stand-in, a ``done``
-                without an artifact hash, or a ``failed`` without a reason code.
+                without an artifact hash, a ``failed`` without a reason code, or
+                a terminal outcome without the cache key it ran under.
 
         """
         if self.state not in _DURABLE_STATES:
@@ -196,6 +240,21 @@ class StageRecord:
             raise ValueError(
                 "reason_code must be a real code or None: the empty string is "
                 "the shape a silent failure takes, not a reason."
+            )
+
+        if self.cache_key == "":
+            raise ValueError(
+                "cache_key must be a real key or None: the empty string would "
+                "read as a stage keyed to nothing, and a result that records no "
+                "key cannot be told from one produced under other settings."
+            )
+
+        if self.state in _TERMINAL_OUTCOME_STATES and self.cache_key is None:
+            raise ValueError(
+                f"A {self.state} stage must name the cache key it ran under: a "
+                "result with no key cannot be compared against the settings now "
+                "in force, so a stage that is done and no longer correct is "
+                "indistinguishable from one that is (FR-08, sad.md §5)."
             )
 
         if self.state == "done" and self.artifact_sha256 is None:
@@ -251,7 +310,9 @@ def new_ledger(unit: str, stages: Iterable[str]) -> Ledger:
         A ledger with every given stage at ``pending`` and no artifact claimed.
 
     """
-    pending = StageRecord(state="pending", artifact_sha256=None, reason_code=None)
+    pending = StageRecord(
+        state="pending", artifact_sha256=None, reason_code=None, cache_key=None
+    )
     return Ledger(
         unit=unit,
         stages=MappingProxyType(dict.fromkeys(stages, pending)),
@@ -312,7 +373,7 @@ def read_ledger(unit_dir: Path) -> Ledger:
     return _ledger_from_json(path.read_text(encoding="utf-8"))
 
 
-def begin(unit_dir: Path, stage: str) -> Ledger:
+def begin(unit_dir: Path, stage: str, cache_key: str | None) -> Ledger:
     """Record that a stage has started, **before** its work begins.
 
     This is the operation the scheduler calls first. Its position - written when
@@ -328,6 +389,11 @@ def begin(unit_dir: Path, stage: str) -> Ledger:
     Args:
         unit_dir: The unit's directory, whose ledger must already exist.
         stage: The declared stage that is starting.
+        cache_key: The key the stage is about to run under, when the caller has
+            already composed it. ``running`` is not a terminal outcome, so it is
+            permitted rather than required: a caller that begins a stage before
+            resolving its key passes ``None`` and says so, rather than relying on
+            a default to say it for them.
 
     Returns:
         The updated ledger.
@@ -336,10 +402,10 @@ def begin(unit_dir: Path, stage: str) -> Ledger:
         ValueError: If the stage is not declared in the unit's ledger.
 
     """
-    return _with_state(unit_dir, stage, "running", None, None)
+    return _with_state(unit_dir, stage, "running", None, None, cache_key)
 
 
-def commit(unit_dir: Path, stage: str, artifact: Artifact) -> Ledger:
+def commit(unit_dir: Path, stage: str, artifact: Artifact, cache_key: str) -> Ledger:
     """Record a stage as ``done``, over an artifact that already exists.
 
     The ordering rule of `plans/README.md` §2 lives in this signature. The
@@ -358,6 +424,10 @@ def commit(unit_dir: Path, stage: str, artifact: Artifact) -> Ledger:
         stage: The declared stage that finished.
         artifact: The stored artifact this stage produced, as :func:`put`
             returned it. Its hash is what the ledger records.
+        cache_key: The key the stage ran under. It is required and has no
+            default: a terminal outcome that cannot be told from one produced
+            under other settings is exactly the record `sad.md` §5 says must go
+            *visibly* stale rather than quietly wrong.
 
     Returns:
         The updated ledger.
@@ -376,10 +446,10 @@ def commit(unit_dir: Path, stage: str, artifact: Artifact) -> Ledger:
             "a claim about bytes that exist, so it can only be written over a "
             "descriptor produced by a completed write."
         )
-    return _with_state(unit_dir, stage, "done", artifact.sha256, None)
+    return _with_state(unit_dir, stage, "done", artifact.sha256, None, cache_key)
 
 
-def fail(unit_dir: Path, stage: str, reason: Reason) -> Ledger:
+def fail(unit_dir: Path, stage: str, reason: Reason, cache_key: str) -> Ledger:
     """Record a stage as ``failed``, with the reason it produced.
 
     Only the reason's ``code`` is recorded. The ledger is read by scripts and
@@ -389,6 +459,10 @@ def fail(unit_dir: Path, stage: str, reason: Reason) -> Ledger:
         unit_dir: The unit's directory, whose ledger must already exist.
         stage: The declared stage that failed.
         reason: The typed reason the stage produced.
+        cache_key: The key the stage was running under. Required, for the same
+            reason it is required on ``commit``: a failure is a result, and a
+            result produced under an unrecorded key is one nothing can compare
+            against the settings now in force.
 
     Returns:
         The updated ledger.
@@ -397,7 +471,7 @@ def fail(unit_dir: Path, stage: str, reason: Reason) -> Ledger:
         ValueError: If the stage is not declared in the unit's ledger.
 
     """
-    return _with_state(unit_dir, stage, "failed", None, reason.code)
+    return _with_state(unit_dir, stage, "failed", None, reason.code, cache_key)
 
 
 def put(root: Path, data: bytes, media_type: str) -> Artifact:
@@ -498,12 +572,18 @@ def verify(root: Path, sha256: str) -> bool:
     return _is_intact(_artifact_path(root, sha256), sha256)
 
 
+# Six parameters, and the count is the record's: four of them are the fields
+# `StageRecord` carries, one is the stage to update and one is the directory. Packing
+# them into a value object would move the fields' names away from the call site that
+# has to get them right, which is the opposite of what this helper needs.
+# pylint: disable=too-many-arguments,too-many-positional-arguments
 def _with_state(
     unit_dir: Path,
     stage: str,
     state: str,
     artifact_sha256: str | None,
     reason_code: str | None,
+    cache_key: str | None,
 ) -> Ledger:
     """Read the unit's ledger, replace one stage's record, write it back.
 
@@ -513,6 +593,8 @@ def _with_state(
         state: The new durable state.
         artifact_sha256: The artifact to claim, or None.
         reason_code: The reason code to record, or None.
+        cache_key: The key the stage ran under, or None while it has not been
+            dispatched.
 
     Returns:
         The updated ledger.
@@ -530,7 +612,10 @@ def _with_state(
         )
 
     record = StageRecord(
-        state=state, artifact_sha256=artifact_sha256, reason_code=reason_code
+        state=state,
+        artifact_sha256=artifact_sha256,
+        reason_code=reason_code,
+        cache_key=cache_key,
     )
     updated = Ledger(
         unit=ledger.unit,
@@ -667,6 +752,7 @@ def _ledger_to_json(ledger: Ledger) -> str:
                 "state": record.state,
                 "artifact_sha256": record.artifact_sha256,
                 "reason_code": record.reason_code,
+                "cache_key": record.cache_key,
             }
             for name, record in ledger.stages.items()
         },
@@ -698,6 +784,7 @@ def _ledger_from_json(text: str) -> Ledger:
             state=entry["state"],
             artifact_sha256=entry["artifact_sha256"],
             reason_code=entry["reason_code"],
+            cache_key=entry["cache_key"],
         )
         for name, entry in payload["stages"].items()
     }

@@ -452,18 +452,28 @@ class FakeArtifactStore:
         """Raise: this fake exists to be checked against the protocol, not called."""
         raise NotImplementedError
 
-    def begin(self, unit_dir: pathlib.Path, stage: str) -> KernelResult[Ledger]:
+    def begin(
+        self, unit_dir: pathlib.Path, stage: str, cache_key: str | None
+    ) -> KernelResult[Ledger]:
         """Raise: this fake exists to be checked against the protocol, not called."""
         raise NotImplementedError
 
     def commit(
-        self, unit_dir: pathlib.Path, stage: str, artifact: Artifact
+        self,
+        unit_dir: pathlib.Path,
+        stage: str,
+        artifact: Artifact,
+        cache_key: str,
     ) -> KernelResult[Ledger]:
         """Raise: this fake exists to be checked against the protocol, not called."""
         raise NotImplementedError
 
     def fail(
-        self, unit_dir: pathlib.Path, stage: str, reason: Reason
+        self,
+        unit_dir: pathlib.Path,
+        stage: str,
+        reason: Reason,
+        cache_key: str,
     ) -> KernelResult[Ledger]:
         """Raise: this fake exists to be checked against the protocol, not called."""
         raise NotImplementedError

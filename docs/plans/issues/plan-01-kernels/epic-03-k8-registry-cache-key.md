@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E03** |
 | Capability | K8 Registry as versioned data + the 7-term cache key |
-| Issues | `E03-01` (`S1-T04`) — `todo` · `E03-02` (`S1-T05`) — `todo` |
+| Issues | `E03-01` (`S1-T04`) — **`done`** · `E03-02` (`S1-T05`) — **`done`** |
 | Issue count | **2** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernels/` |
 | Wave span | **W2 → W3** |

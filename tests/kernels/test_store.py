@@ -79,6 +79,12 @@ STORE_TREE: ast.Module = ast.parse(STORE_SOURCE, filename=str(STORE_PATH))
 #: A stand-in hash used where a record needs a value but the bytes are irrelevant.
 SOME_SHA256: str = "9f2a" * 16
 
+#: A stand-in cache key, used wherever a record needs a terminal outcome. It is a
+#: real-shaped key (64 hex characters) rather than a label, because a record that
+#: only *looks* keyed would not distinguish this suite from one that records
+#: nothing at all.
+SOME_CACHE_KEY: str = "c41b" * 16
+
 #: Body bytes for the store tests. Two distinct buffers and one repeat, so the
 #: dedup assertion has something to be about.
 FIRST_BYTES: bytes = b"\x89PNG\r\n\x1a\nfirst"
@@ -92,16 +98,20 @@ STAGE_NAMES: tuple[str, ...] = ("acquire", "transform", "persist")
 #: purpose: a contract test must hold its own copy rather than import the tuple it
 #: verifies. ``running`` may also carry a reason code at this layer; only the
 #: ``done``/``failed`` pairings are closed by ``StageRecord``.
-LEGAL_STATE_RECORDS: tuple[tuple[str, str | None, str | None], ...] = (
-    ("running", None, None),
-    ("done", SOME_SHA256, None),
-    ("failed", None, "artifact_missing"),
-    ("pending", None, None),
-    ("blocked", None, None),
-    ("stale", None, None),
-    ("skipped", None, None),
-    ("running", SOME_SHA256, None),
-    ("failed", SOME_SHA256, "evidence_missing"),
+#:
+#: The fourth element is the cache key. It is required for a **terminal outcome**
+#: (``done``, ``failed``) and optional for the states on the way there, because a
+#: stage that has not been dispatched under a key has none to record.
+LEGAL_STATE_RECORDS: tuple[tuple[str, str | None, str | None, str | None], ...] = (
+    ("running", None, None, None),
+    ("running", None, None, SOME_CACHE_KEY),
+    ("done", SOME_SHA256, None, SOME_CACHE_KEY),
+    ("failed", None, "artifact_missing", SOME_CACHE_KEY),
+    ("pending", None, None, None),
+    ("blocked", None, None, None),
+    ("stale", None, None, None),
+    ("skipped", None, None, None),
+    ("failed", SOME_SHA256, "evidence_missing", SOME_CACHE_KEY),
 )
 
 #: Values that look like a state and are not one. ``not_applicable`` is included
@@ -833,10 +843,13 @@ def test_verify_says_nothing_about_ledger_trust(root: pathlib.Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("state", "artifact_sha256", "reason_code"), LEGAL_STATE_RECORDS
+    ("state", "artifact_sha256", "reason_code", "cache_key"), LEGAL_STATE_RECORDS
 )
 def test_every_legal_state_record_is_constructible(
-    state: str, artifact_sha256: str | None, reason_code: str | None
+    state: str,
+    artifact_sha256: str | None,
+    reason_code: str | None,
+    cache_key: str | None,
 ) -> None:
     """Each durable state is writable with a legal field pairing.
 
@@ -844,15 +857,20 @@ def test_every_legal_state_record_is_constructible(
         state: The durable state under test.
         artifact_sha256: The artifact claim, or None.
         reason_code: The reason code, or None.
+        cache_key: The key the stage ran under, or None before dispatch.
 
     """
     record = StageRecord(
-        state=state, artifact_sha256=artifact_sha256, reason_code=reason_code
+        state=state,
+        artifact_sha256=artifact_sha256,
+        reason_code=reason_code,
+        cache_key=cache_key,
     )
 
     assert record.state in DURABLE_STATE_ORDER
     assert record.artifact_sha256 == artifact_sha256
     assert record.reason_code == reason_code
+    assert record.cache_key == cache_key
 
 
 @pytest.mark.parametrize("state", EIGHTH_STATE_CANDIDATES)
@@ -865,7 +883,7 @@ def test_no_eighth_state_is_writable(state: object) -> None:
     """
     with pytest.raises(ValueError) as excinfo:
         StageRecord(  # type: ignore[arg-type]
-            state=state, artifact_sha256=None, reason_code=None
+            state=state, artifact_sha256=None, reason_code=None, cache_key=None
         )
 
     assert "seven durable ledger states" in str(excinfo.value)
@@ -884,7 +902,12 @@ def test_not_applicable_is_a_stage_list_and_never_a_state() -> None:
     assert "skipped" in DURABLE_STATE_ORDER
 
     with pytest.raises(ValueError):
-        StageRecord(state=not_applicable, artifact_sha256=None, reason_code=None)
+        StageRecord(
+            state=not_applicable,
+            artifact_sha256=None,
+            reason_code=None,
+            cache_key=None,
+        )
 
 
 def test_a_done_record_requires_an_artifact_hash() -> None:
@@ -894,7 +917,12 @@ def test_a_done_record_requires_an_artifact_hash() -> None:
     written down without naming the bytes.
     """
     with pytest.raises(ValueError) as excinfo:
-        StageRecord(state="done", artifact_sha256=None, reason_code=None)
+        StageRecord(
+            state="done",
+            artifact_sha256=None,
+            reason_code=None,
+            cache_key=SOME_CACHE_KEY,
+        )
 
     assert "must name the artifact" in str(excinfo.value)
 
@@ -902,14 +930,67 @@ def test_a_done_record_requires_an_artifact_hash() -> None:
 def test_a_failed_record_requires_a_reason_code() -> None:
     """Failure is a result, not an absence (`sad.md` §7.1)."""
     with pytest.raises(ValueError) as excinfo:
-        StageRecord(state="failed", artifact_sha256=None, reason_code=None)
+        StageRecord(
+            state="failed",
+            artifact_sha256=None,
+            reason_code=None,
+            cache_key=SOME_CACHE_KEY,
+        )
 
     assert "must carry a reason code" in str(excinfo.value)
 
 
-@pytest.mark.parametrize("field_name", ["artifact_sha256", "reason_code"])
+@pytest.mark.parametrize("state", ["done", "failed"])
+def test_a_terminal_outcome_requires_the_cache_key_it_ran_under(
+    state: str,
+) -> None:
+    """A result that records no key cannot be compared against the settings now
+    in force, so *done* and *done and no longer correct* would be one record.
+
+    This is `prd.md` FR-08 (*"every stage result is keyed by the full cache
+    key"*) and the mechanism behind `sad.md` §5's promise that completion claims
+    go **visibly** stale rather than quietly wrong: visibility requires the key
+    on disk.
+
+    Args:
+        state: The terminal outcome under test.
+
+    """
+    arguments: dict[str, object] = {
+        "state": state,
+        "artifact_sha256": SOME_SHA256 if state == "done" else None,
+        "reason_code": None if state == "done" else "artifact_missing",
+        "cache_key": None,
+    }
+
+    with pytest.raises(ValueError) as excinfo:
+        StageRecord(**arguments)  # type: ignore[arg-type]
+
+    assert "must name the cache key" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("state", ["pending", "running", "blocked", "stale", "skipped"])
+def test_a_non_terminal_state_is_not_required_to_name_a_key(state: str) -> None:
+    """A stage that has not been dispatched under a key has none to record.
+
+    Requiring one here would force the scheduler to invent a placeholder before
+    it resolves the key - which is the stand-in shape, in the one field whose
+    whole purpose is to say *what this ran under*.
+
+    Args:
+        state: The non-terminal state under test.
+
+    """
+    record = StageRecord(
+        state=state, artifact_sha256=None, reason_code=None, cache_key=None
+    )
+
+    assert record.cache_key is None
+
+
+@pytest.mark.parametrize("field_name", ["artifact_sha256", "reason_code", "cache_key"])
 def test_an_empty_string_is_refused_where_none_is_the_absence(field_name: str) -> None:
-    """``""`` is not a hash and not a code: it is the stand-in shape.
+    """``""`` is not a hash, not a code and not a key: it is the stand-in shape.
 
     Args:
         field_name: The field given ``""``.
@@ -919,6 +1000,7 @@ def test_an_empty_string_is_refused_where_none_is_the_absence(field_name: str) -
         "state": "pending",
         "artifact_sha256": None,
         "reason_code": None,
+        "cache_key": None,
     }
     arguments[field_name] = ""
 
@@ -930,12 +1012,22 @@ def test_an_empty_string_is_refused_where_none_is_the_absence(field_name: str) -
 
 def test_stage_records_are_frozen_and_hashable() -> None:
     """A record is a by-value type: immutable, and usable as a key."""
-    record = StageRecord(state="done", artifact_sha256=SOME_SHA256, reason_code=None)
+    record = StageRecord(
+        state="done",
+        artifact_sha256=SOME_SHA256,
+        reason_code=None,
+        cache_key=SOME_CACHE_KEY,
+    )
 
     assert dataclasses.is_dataclass(record)
     assert isinstance(record, StageRecord)
     assert hash(record) == hash(
-        StageRecord(state="done", artifact_sha256=SOME_SHA256, reason_code=None)
+        StageRecord(
+            state="done",
+            artifact_sha256=SOME_SHA256,
+            reason_code=None,
+            cache_key=SOME_CACHE_KEY,
+        )
     )
     with pytest.raises(dataclasses.FrozenInstanceError):
         record.state = "pending"  # type: ignore[misc]
@@ -958,9 +1050,9 @@ def test_read_ledger_returns_the_recorded_state_for_every_stage(
     unit_dir: pathlib.Path,
 ) -> None:
     """Stages that never started are reported, alongside the ones that ran."""
-    store.begin(unit_dir, "acquire")
+    store.begin(unit_dir, "acquire", None)
     artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
-    store.commit(unit_dir, "transform", artifact)
+    store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
 
     ledger = store.read_ledger(unit_dir)
 
@@ -990,7 +1082,10 @@ def test_write_ledger_and_read_ledger_round_trip(unit_dir: pathlib.Path) -> None
         stages={
             **new_ledger(UNIT_NAME, STAGE_NAMES).stages,
             "acquire": StageRecord(
-                state="skipped", artifact_sha256=None, reason_code=None
+                state="skipped",
+                artifact_sha256=None,
+                reason_code=None,
+                cache_key=None,
             ),
         },
     )
@@ -1012,7 +1107,7 @@ def test_begin_records_running_before_the_work_starts(
     """
     assert read_stage(unit_dir, "acquire").state == "pending"
 
-    ledger = store.begin(unit_dir, "acquire")
+    ledger = store.begin(unit_dir, "acquire", None)
 
     assert ledger.stages["acquire"].state == "running"
     assert read_stage(unit_dir, "acquire").state == "running"
@@ -1021,47 +1116,80 @@ def test_begin_records_running_before_the_work_starts(
 def test_begin_withdraws_a_previous_artifact_claim(unit_dir: pathlib.Path) -> None:
     """Re-running a stage means it is no longer known to have produced anything."""
     artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
-    store.commit(unit_dir, "transform", artifact)
+    store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
     assert read_stage(unit_dir, "transform").artifact_sha256 == artifact.sha256
 
-    store.begin(unit_dir, "transform")
+    store.begin(unit_dir, "transform", None)
 
     record = read_stage(unit_dir, "transform")
     assert record.state == "running"
     assert record.artifact_sha256 is None
 
 
-def test_commit_records_the_artifact_hash_and_no_reason(
+def test_begin_withdraws_a_previous_cache_key_too(unit_dir: pathlib.Path) -> None:
+    """A re-begun stage is not known to have produced anything *under any key*.
+
+    Leaving the previous key in place would be worse than leaving the artifact
+    hash: a reader comparing keys would conclude the stage had already run under
+    the key about to be dispatched, when in fact it has been begun again.
+    """
+    artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
+    store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
+    assert read_stage(unit_dir, "transform").cache_key == SOME_CACHE_KEY
+
+    store.begin(unit_dir, "transform", None)
+
+    assert read_stage(unit_dir, "transform").cache_key is None
+
+
+def test_begin_may_record_the_key_the_stage_is_about_to_run_under(
     unit_dir: pathlib.Path,
 ) -> None:
-    """A committed stage names its bytes and gives no reason."""
+    """``running`` is permitted a key, because a caller may already hold one."""
+    ledger = store.begin(unit_dir, "acquire", SOME_CACHE_KEY)
+
+    assert ledger.stages["acquire"].state == "running"
+    assert ledger.stages["acquire"].cache_key == SOME_CACHE_KEY
+
+
+def test_commit_records_the_artifact_hash_and_the_key_it_ran_under(
+    unit_dir: pathlib.Path,
+) -> None:
+    """A committed stage names its bytes, its key, and gives no reason."""
     artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
-    ledger = store.commit(unit_dir, "persist", artifact)
+    ledger = store.commit(unit_dir, "persist", artifact, SOME_CACHE_KEY)
 
     record = ledger.stages["persist"]
     assert record.state == "done"
     assert record.artifact_sha256 == artifact.sha256
     assert record.reason_code is None
+    assert record.cache_key == SOME_CACHE_KEY
     assert artifact.sha256 == hashlib.sha256(FIRST_BYTES).hexdigest()
 
 
-def test_fail_records_the_reason_code_and_only_the_code(
+def test_fail_records_the_reason_code_and_the_key_it_ran_under(
     unit_dir: pathlib.Path,
 ) -> None:
-    """The ledger carries the machine-readable code, not the human message."""
+    """The ledger carries the machine-readable code, not the human message.
+
+    A failure is a result, so it carries the key beside it: a stage that failed
+    under other settings is a different fact from one that failed under these.
+    """
     reason = Reason(
         code="artifact_missing", message="The artifact a ledger claims is gone."
     )
 
-    ledger = store.fail(unit_dir, "transform", reason)
+    ledger = store.fail(unit_dir, "transform", reason, SOME_CACHE_KEY)
 
     record = ledger.stages["transform"]
     assert record.state == "failed"
     assert record.reason_code == "artifact_missing"
+    assert record.cache_key == SOME_CACHE_KEY
     assert record.artifact_sha256 is None
 
     raw = json.loads(ledger_path(unit_dir).read_text(encoding="utf-8"))
     assert raw["stages"]["transform"]["reason_code"] == "artifact_missing"
+    assert raw["stages"]["transform"]["cache_key"] == SOME_CACHE_KEY
     assert reason.message not in ledger_path(unit_dir).read_text(encoding="utf-8")
 
 
@@ -1079,9 +1207,9 @@ def test_no_operation_can_record_a_stage_outside_the_declared_set(
     artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
     reason = Reason(code="blank_page", message="The page carries no content.")
     calls: Mapping[str, object] = {
-        "begin": lambda: store.begin(unit_dir, "invented"),
-        "commit": lambda: store.commit(unit_dir, "invented", artifact),
-        "fail": lambda: store.fail(unit_dir, "invented", reason),
+        "begin": lambda: store.begin(unit_dir, "invented", None),
+        "commit": lambda: store.commit(unit_dir, "invented", artifact, SOME_CACHE_KEY),
+        "fail": lambda: store.fail(unit_dir, "invented", reason, SOME_CACHE_KEY),
     }
 
     with pytest.raises(ValueError) as excinfo:
@@ -1105,15 +1233,37 @@ def test_commit_accepts_only_an_artifact_and_never_a_hash_string(
     caller's memory.
     """
     # A string is the shape the temptation takes - a bare hash, with the bytes
-    # "somewhere" - and it is refused by the signature itself.
+    # "somewhere" - and it is refused by the signature itself. Omitting the key is
+    # refused by the signature too, which is the point: a terminal outcome that
+    # names no key is not a thing this module can write.
     with pytest.raises(TypeError):
-        store.commit(unit_dir, "transform", SOME_SHA256)  # type: ignore[arg-type]
+        store.commit(
+            unit_dir,
+            "transform",
+            SOME_SHA256,  # type: ignore[arg-type]
+            SOME_CACHE_KEY,
+        )
+    # `no-value-for-parameter` is the assertion, not a defect: the call deliberately
+    # omits the key, and proving that omitting it raises is the whole point of the
+    # test. Pylint reports the omission at the call site, so the suppression sits
+    # there rather than on the `with` line above it.
+    with pytest.raises(TypeError):
+        store.commit(  # pylint: disable=no-value-for-parameter
+            unit_dir,
+            "transform",
+            SOME_SHA256,  # type: ignore[call-arg]
+        )
 
     # Anything else that is not a descriptor fails before a record is built, so
     # no state is written at all.
     for stand_in in (None, {"sha256": SOME_SHA256}, FIRST_BYTES):
         with pytest.raises((AttributeError, TypeError)):
-            store.commit(unit_dir, "transform", stand_in)  # type: ignore[arg-type]
+            store.commit(
+                unit_dir,
+                "transform",
+                stand_in,
+                SOME_CACHE_KEY,  # type: ignore[arg-type]
+            )
 
     assert read_stage(unit_dir, "transform").state == "pending", (
         "a refused commit must leave the stage exactly as it was"
@@ -1123,7 +1273,9 @@ def test_commit_accepts_only_an_artifact_and_never_a_hash_string(
     artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
     assert isinstance(artifact, Artifact)
     assert (
-        store.commit(unit_dir, "transform", artifact).stages["transform"].state
+        store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
+        .stages["transform"]
+        .state
         == "done"
     )
 
@@ -1139,7 +1291,7 @@ def test_a_crash_between_write_and_rename_leaves_the_stage_running(
     `plan-01-kernels.md` §7b row 2 names, and it is the ordering that makes resume
     a lie.
     """
-    store.begin(unit_dir, "transform")
+    store.begin(unit_dir, "transform", None)
 
     original_replace = store._replace
 
@@ -1150,7 +1302,7 @@ def test_a_crash_between_write_and_rename_leaves_the_stage_running(
     try:
         with pytest.raises(KeyboardInterrupt):
             artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
-            store.commit(unit_dir, "transform", artifact)
+            store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
     finally:
         store._replace = original_replace  # type: ignore[assignment]
 
@@ -1161,6 +1313,7 @@ def test_a_crash_between_write_and_rename_leaves_the_stage_running(
     assert states["transform"] == "running", "the interrupted stage reads as running"
     assert "done" not in states.values(), "no stage may read done after the crash"
     assert ledger.stages["transform"].artifact_sha256 is None
+    assert ledger.stages["transform"].cache_key is None
     assert not (unit_dir.parent / "artifacts" / store._sha256(FIRST_BYTES)).exists()
 
 
@@ -1172,7 +1325,7 @@ def test_a_kill_leaves_the_stage_running_and_not_pending(
     ``pending`` would read as *never began*, and the next run would restart the
     unit from the beginning instead of resuming the interrupted stage.
     """
-    store.begin(unit_dir, "acquire")
+    store.begin(unit_dir, "acquire", None)
 
     read_from_outside = json.loads(ledger_path(unit_dir).read_text(encoding="utf-8"))
 
@@ -1184,7 +1337,7 @@ def test_a_killed_stage_is_resumable_through_the_same_path(
     unit_dir: pathlib.Path,
 ) -> None:
     """After the interruption, re-beginning and committing succeeds normally."""
-    store.begin(unit_dir, "transform")
+    store.begin(unit_dir, "transform", None)
 
     original_replace = store._replace
 
@@ -1195,12 +1348,12 @@ def test_a_killed_stage_is_resumable_through_the_same_path(
     try:
         with pytest.raises(KeyboardInterrupt):
             artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
-            store.commit(unit_dir, "transform", artifact)
+            store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
     finally:
         store._replace = original_replace  # type: ignore[assignment]
 
     artifact = store.put(unit_dir.parent, FIRST_BYTES, media_type="image/png")
-    store.commit(unit_dir, "transform", artifact)
+    store.commit(unit_dir, "transform", artifact, SOME_CACHE_KEY)
 
     record = read_stage(unit_dir, "transform")
     assert record.state == "done"
@@ -1368,13 +1521,14 @@ def test_the_ledger_tree_alone_is_enough_to_rebuild_a_manifest(
         unit_dir = out / unit
         unit_dir.mkdir(parents=True)
         store.write_ledger(unit_dir, new_ledger(unit, STAGE_NAMES))
-        store.begin(unit_dir, "acquire")
+        store.begin(unit_dir, "acquire", None)
         artifact = store.put(store_root, f"{unit}".encode(), media_type="image/png")
-        store.commit(unit_dir, "acquire", artifact)
+        store.commit(unit_dir, "acquire", artifact, SOME_CACHE_KEY)
         store.fail(
             unit_dir,
             "transform",
             Reason(code="blank_page", message="The page carries no content."),
+            SOME_CACHE_KEY,
         )
         expected[unit] = {
             "acquire": "done",
@@ -1413,13 +1567,14 @@ def test_a_done_stage_names_an_artifact_that_a_manifest_can_follow(
     unit_dir.mkdir(parents=True)
     store.write_ledger(unit_dir, new_ledger(UNIT_NAME, STAGE_NAMES))
     artifact = store.put(out, FIRST_BYTES, media_type="image/png")
-    store.commit(unit_dir, "persist", artifact)
+    store.commit(unit_dir, "persist", artifact, SOME_CACHE_KEY)
 
     for path in out.glob("**/*.ledger.json"):
         for name, record in store.read_ledger(path.parent).stages.items():
             if record.state == "done":
                 assert record.artifact_sha256 is not None, f"{name} claims an unnamed"
                 assert store.verify(out, record.artifact_sha256) is True
+                assert record.cache_key is not None, f"{name} claims an unkeyed run"
 
 
 def test_the_ledger_file_is_named_after_its_unit(tmp_path: pathlib.Path) -> None:
@@ -1444,16 +1599,51 @@ def test_the_ledger_records_the_unit_inside_the_file(unit_dir: pathlib.Path) -> 
         "state": "pending",
         "artifact_sha256": None,
         "reason_code": None,
+        "cache_key": None,
     }
 
 
 @pytest.mark.parametrize(
     "corruption",
     [
-        {"state": "complete", "artifact_sha256": None, "reason_code": None},
-        {"state": "done", "artifact_sha256": None, "reason_code": None},
-        {"state": "failed", "artifact_sha256": None, "reason_code": None},
-        {"state": "done", "artifact_sha256": "", "reason_code": None},
+        {
+            "state": "complete",
+            "artifact_sha256": None,
+            "reason_code": None,
+            "cache_key": None,
+        },
+        {
+            "state": "done",
+            "artifact_sha256": None,
+            "reason_code": None,
+            "cache_key": SOME_CACHE_KEY,
+        },
+        {
+            "state": "failed",
+            "artifact_sha256": None,
+            "reason_code": None,
+            "cache_key": SOME_CACHE_KEY,
+        },
+        {
+            "state": "done",
+            "artifact_sha256": "",
+            "reason_code": None,
+            "cache_key": SOME_CACHE_KEY,
+        },
+        # A terminal outcome with no key: legal in shape, illegal in meaning.
+        {
+            "state": "done",
+            "artifact_sha256": SOME_SHA256,
+            "reason_code": None,
+            "cache_key": None,
+        },
+        # ``""`` reads as *keyed to nothing*, which is the stand-in shape.
+        {
+            "state": "failed",
+            "artifact_sha256": None,
+            "reason_code": "blank_page",
+            "cache_key": "",
+        },
     ],
 )
 def test_a_hand_edited_ledger_is_rejected_on_read(

@@ -1139,6 +1139,12 @@ def test_boundary_package_contains_only_the_expected_modules() -> None:
         # has in the frozen module. It lives here because two seams need it and
         # duplicating the constructor made the two diverge in prose only.
         "vendor_refusal.py",
+        # `orchestrator.py` is K1's core, `E05-01`'s (`S1-T06`) deliverable. It
+        # arrives in the same package because K1 is a kernel like the others, and
+        # `E05-02`, `E05-04` and `E05-05` each continue *in this file* rather than
+        # adding siblings - which is why only one name is declared here for five
+        # issues. `determinism.py` (`E05-03`) is named when it lands.
+        "orchestrator.py",
     }
     actual = {path.name for path in PACKAGE_ROOT.glob("*.py")}
 

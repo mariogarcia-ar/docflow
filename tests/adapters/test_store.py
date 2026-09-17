@@ -37,6 +37,12 @@ from docflow.ports import ArtifactStore
 # --- Fixtures ----------------------------------------------------------------
 
 
+#: A stand-in cache key. A real-shaped key (64 hex characters) rather than a label,
+#: because a terminal outcome must name the key it ran under (`prd.md` FR-08) and a
+#: placeholder string would not distinguish a recorded key from a recorded absence.
+SOME_CACHE_KEY: str = "c41b" * 16
+
+
 @pytest.fixture
 def store() -> FilesystemStore:
     """Provide a filesystem store.
@@ -316,7 +322,7 @@ def test_begin_then_commit_reaches_done_through_the_port(
     store: FilesystemStore, root: pathlib.Path, unit: pathlib.Path
 ) -> None:
     """The normal path: ``running``, then ``done`` against a stored artifact."""
-    started = store.begin(unit, "read")
+    started = store.begin(unit, "read", SOME_CACHE_KEY)
     assert started.evidence.observed["stages"]["read"] == "running"
     assert started.evidence.observed["stage"] == "read", (
         "the evidence names which stage the call concerned, so a caller does not "
@@ -325,11 +331,50 @@ def test_begin_then_commit_reaches_done_through_the_port(
 
     stored = store.put(root, b"the bytes", "text/plain")
     assert stored.value is not None
-    done = store.commit(unit, "read", stored.value)
+    done = store.commit(unit, "read", stored.value, SOME_CACHE_KEY)
 
     assert done.reason is None
     assert done.evidence.observed["stages"]["read"] == "done"
     assert done.evidence.observed["artifact_sha256"] == stored.value.sha256
+
+
+def test_a_terminal_outcome_without_a_key_is_refused_by_the_kernel(
+    store: FilesystemStore, root: pathlib.Path, unit: pathlib.Path
+) -> None:
+    """Omitting the key is a usage error, not a silently unkeyed record.
+
+    The requirement lives in the kernel (``FR-08``); the adapter's job is not to
+    impose a second rule but to translate the kernel's refusal into a typed reason
+    instead of letting a ``ValueError`` escape.
+    """
+    stored = store.put(root, b"the bytes", "text/plain")
+    assert stored.value is not None
+
+    result = store.commit(unit, "read", stored.value, "")
+
+    assert result.value is None
+    assert result.reason is not None
+    assert result.reason.code == "unsupported_format"
+
+
+def test_begin_forwards_the_key_the_stage_will_run_under(
+    store: FilesystemStore, unit: pathlib.Path
+) -> None:
+    """``begin`` records the key it was given, so an interrupted stage is keyed.
+
+    The key ``begin`` writes is the one that survives a kill: a stage that was cut off
+    mid-work stays ``running`` with whatever was recorded when it started, and the
+    resume decision reads that record. An adapter that dropped the key here would leave
+    every interrupted stage unkeyed while every *completed* one kept its key - so the
+    ledger would be keyed exactly where it matters least.
+    """
+    started = store.begin(unit, "read", SOME_CACHE_KEY)
+
+    assert started.reason is None
+    assert started.evidence.observed["stages"]["read"] == "running"
+
+    on_disk = kernel.read_ledger(unit).stages["read"]
+    assert on_disk.cache_key == SOME_CACHE_KEY
 
 
 def test_commit_refuses_something_that_is_not_an_artifact(
@@ -341,7 +386,12 @@ def test_commit_refuses_something_that_is_not_an_artifact(
     and it returns after the rename. A caller able to commit a hash string could record
     ``done`` about bytes that were never written.
     """
-    result = store.commit(unit, "read", "a-hash-string")  # type: ignore[arg-type]
+    result = store.commit(
+        unit,
+        "read",
+        "a-hash-string",
+        SOME_CACHE_KEY,  # type: ignore[arg-type]
+    )
 
     assert result.value is None
     assert result.reason is not None
@@ -356,7 +406,7 @@ def test_a_stage_outside_the_declared_set_is_a_reason(
     The stage set is declared once by the caller, so a mutation naming an undeclared
     stage is a usage error rather than a new stage.
     """
-    result = store.begin(unit, "no-such-stage")
+    result = store.begin(unit, "no-such-stage", None)
 
     assert result.value is None
     assert result.reason is not None
@@ -389,7 +439,9 @@ def test_fail_records_the_stage_reason_without_failing_the_call(
     be an observation about the *store*. A caller that could not tell them apart would
     read a recorded failure as a broken ledger.
     """
-    result = store.fail(unit, "read", Reason(code="blank_page", message="nothing read"))
+    result = store.fail(
+        unit, "read", Reason(code="blank_page", message="nothing read"), SOME_CACHE_KEY
+    )
 
     assert result.reason is None, "recording a failure is a successful call"
     assert result.evidence.observed["stages"]["read"] == "failed"
@@ -455,9 +507,22 @@ def test_the_kernel_exceptions_never_escape_a_call(
         ("get", lambda: store.get(root, "3" * 64)),
         ("put", lambda: store.put(root / "\0bad", b"x", "text/plain")),
         ("read_ledger", lambda: store.read_ledger(root / "absent")),
-        ("begin", lambda: store.begin(unit, "nope")),
-        ("commit", lambda: store.commit(unit, "read", None)),  # type: ignore[arg-type]
-        ("fail", lambda: store.fail(unit, "nope", Reason(code="x", message="y"))),
+        ("begin", lambda: store.begin(unit, "nope", None)),
+        (
+            "commit",
+            lambda: store.commit(
+                unit,
+                "read",
+                None,
+                SOME_CACHE_KEY,  # type: ignore[arg-type]
+            ),
+        ),
+        (
+            "fail",
+            lambda: store.fail(
+                unit, "nope", Reason(code="x", message="y"), SOME_CACHE_KEY
+            ),
+        ),
         (
             "write_ledger",
             lambda: store.write_ledger(unit, "not-a-ledger"),  # type: ignore[arg-type]
