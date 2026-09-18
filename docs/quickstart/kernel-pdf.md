@@ -764,6 +764,32 @@ it routes *bytes* — so their stdout is redirected to the same place. Without
 `--save`, nothing is written and the two that return bytes report a descriptor whose
 `path` is null, because bytes stay out of band by default.
 
+The run's parameters come from the same environment variables the kernel's flags do,
+so the driver can be pointed at any document without editing it. `PAGES` takes the
+whole `--pages` grammar (`kernel-cli.md` §9):
+
+| `PAGES` | Selection |
+|---|---|
+| `1` | one page |
+| `2-5` | a contiguous range |
+| `1,3,5` | a selection, gaps included |
+| `10-12,20` | ranges and single pages together |
+| `all` | every page in the document |
+
+Order matters only where a command says it does: `pdf split` **honours** the order you
+give (`--pages 5,1` puts page 5 first), while `pdf layout` **refuses** a reordered
+selection rather than sorting it. `PAGE` is the singular, for `classify`'s `--page`.
+
+```console
+$ PAGES=2-5 DPI=150 scripts/kernel/kernel-pdf.sh --save var/pdf
+$ PAGE=7 PAGES=7 scripts/kernel/kernel-pdf.sh documentos/factura.pdf
+$ PAGES=all scripts/kernel/kernel-pdf.sh --save /tmp/full
+```
+
+`PAGES=all` on the 59-page fixture produces a **4 974 497-byte** `tokens-pall.json`,
+which is the size that makes the redirection worth having: an envelope that size on
+stdout is not something a caller can pipe anywhere useful.
+
 **Every driver prints the parameters it resolved, with where each one came from**, so
 a run is readable without knowing what the defaults are:
 

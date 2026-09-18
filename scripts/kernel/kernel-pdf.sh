@@ -38,19 +38,52 @@ Usage: scripts/kernel/kernel-pdf.sh [document] [--save <dir>]
 
   document      the PDF to exercise. Defaults to
                 tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
-  --save <dir>  where the commands that return bytes write them. Without it,
-                `render` and `split` report a descriptor whose `path` is null.
+  --save <dir>  where the command outputs go. `render` and `split` write through
+                K7's store; `tokens` and `layout` have their stdout redirected
+                there, because `--save` is scoped to commands returning bytes.
+                Without it nothing is written and the two that return bytes
+                report a descriptor whose `path` is null.
 
 Environment:
   DOCFLOW_KERNEL   the command to invoke. Defaults to `docflow-kernel`.
   KERNEL_PDF_SAVE  the save directory, if you prefer it to --save.
-  PAGES            the page selection for the range commands.
-  PAGE             the single page for the per-page commands.
-  DPI              the resolution for `render`. Default: 72.
+  PAGE             the single page for `classify`. Default: 1
+  PAGES            the page selection for the range commands. See below.
+  DPI              the resolution for `render`. Default: 72
 
-The page selection **adapts to the document**: it comes from the document's own
+PAGES accepts the same grammar as `--pages` (`kernel-cli.md` §9):
+
+  1          one page ....................... PAGES=1
+  2-5        a contiguous range .............. PAGES=2-5
+  1,3,5      a selection, gaps included ...... PAGES=1,3,5
+  10-12,20   ranges and single pages together  PAGES=10-12,20
+  all        every page in the document ...... PAGES=all
+
+Order matters only where the command says it does: `pdf split` **honours** the
+order you give (`--pages 5,1` puts page 5 first), while `pdf layout` **refuses**
+a reordered selection rather than sorting it, because its result is the reader's
+own concatenation.
+
+Left unset, PAGES adapts to the document — it comes from the document's own
 `probe`, so a two-page file is exercised as `1-2` rather than failing on a range
-that does not exist. Set PAGES or PAGE to override.
+that does not exist. The run prints the value and where it came from.
+
+Examples:
+
+  # every command against the committed fixture, writing nothing
+  kernel-pdf.sh
+
+  # a specific selection, rendering at 150 DPI, all output under var/pdf
+  PAGES=2-5 DPI=150 kernel-pdf.sh --save var/pdf
+
+  # one page of one document -- PAGE drives `classify`, PAGES the range commands
+  PAGE=7 PAGES=7 kernel-pdf.sh documentos/factura.pdf
+
+  # the whole document, output kept for inspection
+  PAGES=all kernel-pdf.sh --save /tmp/full
+
+Without PAGES the selection is `1-3` (or `1-2`, or `1`, when the document is
+shorter) — never a range the document does not have.
 EOF
 }
 
