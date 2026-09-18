@@ -300,9 +300,265 @@ which column a word sits in — and they do not carry the grid.
 That distinction is why both operations exist. Use `tokens` when you need
 provenance; use `layout_text` when you need the text as a person reads it.
 
-Failure paths: a page that yields no text reports `blank_page` (that is what a scan
-looks like — pixels, not a text layer), and a missing binary reports
-`engine_unavailable` rather than falling back to another reader.
+Failure paths: a page that is genuinely empty — neither text nor image — reports
+`blank_page`, and a missing binary reports `engine_unavailable` rather than falling
+back to another reader. A *scan* is not that case: it yields no text, but it has
+pixels, so it reports `shape: "image"`.
+
+---
+
+## The same operations from `docflow-kernel`
+
+The sections above drive the **library**. Five of the seven operations have a command
+on the lab surface; the other two do not, and which two is worth stating up front:
+
+| Operation | Command | State in §9 |
+|---|---|---|
+| `probe` | `pdf probe <file>` | `now` |
+| `classify` | `pdf classify <file> --page N` | `now` |
+| `tokens` | `pdf tokens <file> --pages 1-3` | `now` |
+| `render` | `pdf render <file> --page N --dpi D` | `now` |
+| `split` | `pdf split <file> --pages 1,2` | `now` |
+| `effective_dpi` | — | **library only**; folded into `classify`'s measurements |
+| `layout_text` | — | **library only**; §9 lists `pdf facts` as the `MVP` target |
+| — | `pdf facts <file>` | `MVP` — exits `4` |
+| — | `pdf images <file>` | `MVP` — exits `4` |
+
+`effective_dpi` is reachable from the CLI without a command of its own because
+`classify` already reports it as a measurement — the number is in the envelope, under
+a different name. `layout_text` genuinely has no CLI door yet.
+
+Every block below is a real invocation quoted verbatim, trimmed at `...` only where
+the envelope repeats `value` inside `evidence`.
+
+### `pdf probe <file>`
+
+```console
+$ docflow-kernel pdf probe tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf
+{
+  "value": {
+    "terms": {
+      "engine": "pymupdf", "engine_version": "1.28.2",
+      "reader": "pdftotext", "reader_revision": "pdftotext version 25.02.0"
+    },
+    "measurements": { "page_count": 1.0 },
+    "observed": {
+      "file": "242823d2-afd3-4107-a49c-ce382592c6a5.pdf",
+      "page_sizes": [[595.0, 842.0]],
+      "producer": "GPL Ghostscript 9.52",
+      "creator": "PDFCreator Free 4.4.2",
+      "format": "PDF 1.4",
+      "encrypted": false
+    }
+  },
+  "evidence": { ... the same three keys ... },
+  "reason": null,
+  "call_record": null
+}
+```
+
+Exit `0`. Two details a script will trip over if it guesses: the key is
+**`page_count`**, not `pages` — there is no `pages` key, because `pages` is a
+*request* grammar (`--pages`) and this is a measurement. And measurements are floats
+(`1.0`), so compare against `1.0` rather than `1`.
+
+The `terms` block names **two** pieces of software under two different keys, and that
+is the split showing through: `engine`/`engine_version` is the library that reads the
+bytes (`pymupdf`), `reader`/`reader_revision` is the process that supplies the text
+grid (`pdftotext version 25.02.0`). `classify`'s measurements come from them
+differently, and a provenance record that collapsed the two into one field could not
+say which.
+
+### `pdf classify <file> --page N`
+
+```console
+$ docflow-kernel pdf classify tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1
+# value.measurements:
+#   { "char_count": 1060.0, "image_count": 2.0,
+#     "largest_image_fraction": 0.034754, "effective_dpi": 95.96 }
+# value.observed:
+#   { "file": "...", "page": 1, "page_size": [595.0, 842.0],
+#     "shape": "mixed", "invisible_text": false,
+#     "min_chars_applied": 40 }
+# exit 0
+```
+
+The classification is `shape: "mixed"` — some text, some image — and the three
+numbers that decide it are all in the envelope next to it, which is the point: the
+verdict is auditable rather than asserted.
+
+`min_chars_applied: 40` is the policy value from
+`registry/policies/thresholds.json` (`reader.min_chars`), quoted into the evidence.
+The threshold is **not** a constant of the surface, so a reader of the envelope can
+see which value produced this `shape`.
+
+This is also where `effective_dpi` is reachable from the CLI (`95.96` above, on a page
+whose embedded image does not fill it), even though the operation that names it has
+no command.
+
+`--page` is optional and defaults to page 1; on the scan below it reports what a scan
+actually is:
+
+```console
+$ docflow-kernel pdf classify tests/fixtures/pdf_escaneados/3ac5a2ec-d129-47c0-947a-4680c7e25f06.pdf --page 1
+# value.observed.shape: "image"     value.observed.invisible_text: false
+# value.measurements.char_count: 0.0
+# exit 0
+```
+
+Zero characters and an image: `shape: "image"`, not `blank_page`. The two are not
+interchangeable — `blank_page` means a page that is *genuinely empty*, neither a
+usable text layer nor an image, so a scan is never blank (it has pixels). Both
+`classify` and `layout_text` can report it, for the same reason and from the same
+decision (`_shape_of`), which is why `classify`'s `shape` is read back rather than
+re-derived: two independent tests for one fact is how they come to disagree.
+
+### `pdf tokens <file> --pages 1-3`
+
+```console
+$ docflow-kernel pdf tokens tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf
+# value is a list; the first two entries:
+# {
+#   "text": "FACTURA", "page": 1,
+#   "bbox": { "x": 341.519863, "y": 23.964327,
+#             "width": 57.49883, "height": 11.243996 },
+#   "confidence": null, "role": "text"
+# }
+# { "text": "0138-00000236-A", "page": 1, "bbox": { ... }, ... }
+# exit 0
+```
+
+`value` is a **list**, unlike `probe`/`classify` where it is an observation record:
+this operation's answer is the tokens themselves. Each carries its own `page`, so a
+range read is still attributable to a page.
+
+`confidence: null` is not a missing value to be filled in — a PDF text layer has no
+per-word confidence, and writing `1.0` there would invent a number the document does
+not contain.
+
+Over a range, the pages are reported per token, not grouped:
+
+```console
+$ docflow-kernel pdf tokens tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 1-2
+# value is a list of 136 tokens
+# pages present: [1, 2]
+# exit 0
+```
+
+### `pdf render <file> --page N --dpi D [--save <dir>]`
+
+```console
+$ docflow-kernel pdf render tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1 --dpi 72 --save /tmp/out
+# value: { "sha256": "6e739084...", "size_bytes": 77070,
+#          "media_type": "image/png",
+#          "path": "artifacts/6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d" }
+# value.measurements: { "pages_rendered": 1.0, "dpi_applied": 72.0, "bytes": 77070.0 }
+# exit 0
+```
+
+The bytes are **out of band**: stdout carries the descriptor, and the image itself
+goes to the store. `path` is `null` without `--save`; with it, the artifact is written
+and the location reported — a path *relative to the save root*, not to your working
+directory.
+
+Now the matrix row. `kernel-cli.md` §12 row 4 is *"a 150 DPI scan rendered at 300 and
+reported as 300"*, and the answer is a refusal:
+
+```console
+$ docflow-kernel pdf render tests/fixtures/pdf_escaneados/3ac5a2ec-d129-47c0-947a-4680c7e25f06.pdf --page 1 --dpi 300
+# value: null
+# reason.code: "insufficient_effective_resolution"
+# reason.message: "page 1 holds 120.0 DPI of embedded pixels, so a 300 DPI render
+#   cannot be produced from it. The requested resolution is refused rather than
+#   met by enlarging ..."
+# exit 2
+```
+
+**The refusal names the number it measured.** `120.0 DPI` is read from the page's own
+embedded pixels, so the caller can see the comparison rather than being told *no*.
+Exit `2` is the document's answer, which is why it is not a usage error: the request
+was well formed and the answer is that this page cannot meet it.
+
+The same fixture at a **reachable** DPI succeeds, which is what proves the limit is
+the pixels rather than the flag. The boundary is exactly where the message says it is:
+
+```console
+$ docflow-kernel pdf render <the same scan> --page 1 --dpi 120
+# value.measurements.dpi_applied: 120.0        <- reachable: exit 0
+
+$ docflow-kernel pdf render <the same scan> --page 1 --dpi 121
+# reason.code: "insufficient_effective_resolution"
+# exit 2
+```
+
+`120.0` is a ceiling and not a rounding: asking for exactly what the page holds is
+granted, and one more DPI is refused.
+
+### `pdf split <file> --pages 1,2 [--save <dir>]`
+
+```console
+$ docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 1,2
+# value: { "sha256": "...", "size_bytes": 305700,
+#          "media_type": "application/pdf", "path": null }
+# evidence.measurements: { "pages_extracted": 2.0, "bytes": 305700.0 }
+# evidence.observed.pages_requested: [1, 2]
+# exit 0
+```
+
+A new PDF, not a crop: `media_type` is `application/pdf` and the pages are copied
+into a document of their own. `pages_requested` (what you asked for) and
+`pages_extracted` (what came out) are both reported — a split that silently dropped a
+page would show up as a disagreement between the two rather than as a short file.
+
+### The `MVP` two
+
+```console
+$ docflow-kernel pdf facts <file>
+pdf facts is not implemented in Stage 1 (kernel-cli.md §9 marks it `MVP`). It does
+not dispatch and does not run partially.
+# exit 4
+```
+
+`facts` and `images` both behave this way. §9 lists them, neither runs, and each
+exits `4` naming itself — which is exit `4` on *this* message, not on `unknown flag`.
+The distinction matters: an operation that has not landed stays distinguishable from
+one that does not exist.
+
+One thing worth knowing before you look for a listing: **`--list` reports kernels,
+not operations.** Its eight entries carry `kernel`, `code`, `determinism`, `adapter`
+and `available` — nothing per operation — and there is no `docflow-kernel pdf --list`
+form (`--list takes no other argument`, exit `4`). So there is no discovery command
+for an operation's status: §9's tables are the authority, `lab-cli.md` enumerates the
+nine `MVP` commands, and an `MVP` operation announces itself when you run it. Exit `4`
+with *"is not implemented in Stage 1"* means **not yet**; exit `4` with *"unknown
+kernel"* would mean **no such thing**.
+
+### The exit codes, and one that is wrong
+
+| Exit | Meaning | Where K2 produces it |
+|---|---|---|
+| `0` | A value was produced | all five commands above, including `classify` on a scan |
+| `2` | The document's answer | `insufficient_effective_resolution`; `blank_page`; `encrypted`; `unsupported_format`; `engine_unavailable` |
+| `4` | Usage: bad flag, `MVP`, missing argument | `pdf facts`; `pdf probe` with no file argument (`pdf probe needs the file argument`) |
+
+Note what is **not** in that table: a malformed page range should be here, and is not.
+§5 is explicit that exit `4` covers a *"malformed range"*, and `parse_pages` — whose own
+docstring says a page that does not exist *"is a usage error, not an empty read"* —
+raises `ValueError` for it. The dispatcher's single exception handler turns that into
+exit `1`:
+
+```console
+$ docflow-kernel pdf split <a 2-page pdf> --pages 9
+ValueError: page(s) [9] are outside the document, which has 2 page(s).
+# exit 1     <- should be 4: the range is malformed, the code is not broken
+```
+
+Exit `1` means *"unexpected internal error"*, and a page number the caller mistyped is
+not that. The same collapse affects K3 (`image crop --region 9999,9999,10,10` also
+exits `1`), so it is one defect in how a request-validation failure becomes an exit
+code, not a PDF problem. It is reported here rather than silently documented as
+normal; a caller matching on exit codes should currently treat `1` and `4` alike for
+a bad range.
 
 ---
 
@@ -357,7 +613,7 @@ The codes this kernel can raise, all from the closed set of `kernel-cli.md` §5:
 | Code | What it means |
 |---|---|
 | `insufficient_effective_resolution` | The requested DPI exceeds the embedded pixels; nothing was produced |
-| `blank_page` | The page carries neither text nor image; from `layout_text`, the requested pages yielded no text at all |
+| `blank_page` | The page carries neither usable text nor image — from `classify` and `layout_text`, both reading the one `_shape_of` decision |
 | `encrypted` | Refuses to open without a password |
 | `unsupported_format` | Not a PDF this engine accepts; also the "does not exist" case |
 | `engine_unavailable` | PyMuPDF or the `pdftotext` binary is missing |
@@ -369,6 +625,11 @@ observed, and for these three that report is the answer.
 Three things raise `ValueError` instead, because they are mistakes in the request
 rather than answers about the document: a page number outside the document, an
 empty page selection, and a non-positive DPI.
+
+**From a shell those three reach you as exit `1`**, not the exit `4` §5 assigns to a
+malformed range — see the exit-code table in the CLI section above, which is where
+that defect is written down. It is a property of the dispatcher rather than of this
+kernel: the same collapse affects `image crop`'s out-of-image region.
 
 ## Verifying it against the fixture set
 
@@ -385,7 +646,9 @@ search for real invisible text layers. Exits non-zero on a defect.
 
 | Not available | Where it lands |
 |---|---|
-| `docflow-kernel pdf probe  classify  tokens  render  split` | **Now available** — see `lab-cli.md`. The `MVP` operations of §9 still exit `4` |
+| `docflow-kernel pdf probe  classify  tokens  render  split` | **Now available** — see the CLI section above and `lab-cli.md`. The `MVP` operations of §9 still exit `4` |
+| `effective_dpi` as a command of its own | **No command** — but the number is reachable from `classify`'s measurements, so nothing is blocked on it |
+| `layout_text` from the CLI | **No command yet** — reachable from the library only; §9 names `pdf facts` as the `MVP` target |
 | Page facts beyond classification | `# TODO: [MVP]` — documented target, not Stage 1 scope |
 | Embedded-image extraction, `merge` | `# TODO: [MVP]`; merge is **Never**, no pipeline closes it |
 | A second reader, an engine setting | **Never** — `ADR-001`, `wbs.md` §9 |

@@ -249,9 +249,10 @@ Every block below is a real invocation with its output quoted verbatim. The JSON
 trimmed at the `...` marker only where the envelope repeats itself — `value` and
 `evidence` carry the same observations, and showing both twice adds nothing.
 
-Four commands are `now` in §9 and three are `MVP`; `docflow-kernel --list` reports
-which is which, and an `MVP` command exits `4` naming itself unimplemented rather
-than running partly.
+Four commands are `now` in §9 and three are `MVP`. `--list` does **not** report which
+is which — it lists the eight *kernels*, not the operations — so §9 is the authority
+and an `MVP` command announces itself by exiting `4` naming itself unimplemented
+rather than running partly.
 
 ### `image info <file>`
 
