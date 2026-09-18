@@ -727,3 +727,54 @@ def test_read_describes_its_result_rather_than_returning_it() -> None:
     # The positive control: the helper exists and is callable, so a rename that
     # broke the call above cannot pass by matching nothing.
     assert callable(module._described)  # pylint: disable=protected-access
+
+
+# --- A command's value must survive the encoder — exercised, not assumed ----
+
+
+def test_store_get_encodes_its_bytes_rather_than_handing_them_to_the_encoder(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``store get`` answers rather than crashing on its own buffer.
+
+    The falsifier for a **real defect**, and the third of its kind: the encoder
+    carries the seven boundary types, mappings and sequences, and `bytes` is none
+    of them. So a handler returning the port's bare ``bytes`` **crashed** with
+    exit ``1`` and *"no envelope encoding for bytes"* - `store get` could not
+    read back a single artifact it had just stored (`ocr read` and `image crop`
+    failed the same way with their own port-layer types).
+
+    This one is asserted **behaviourally** rather than by scanning source, and it
+    can be, because `store` needs no engine: a real ``put`` is performed and the
+    ``get`` is dispatched through the real encoder. That is strictly stronger
+    than the source check above - it fails for *any* reason the value cannot be
+    encoded, not only for the one shape a scan looks for.
+    """
+    source = tmp_path / "blob.bin"
+    source.write_bytes(bytes(range(256)) * 4)
+    root = tmp_path / "store"
+
+    stored = main.dispatch(
+        [
+            "store",
+            "put",
+            str(source),
+            "--media-type",
+            "application/octet-stream",
+            "--root",
+            str(root),
+        ]
+    )
+    assert stored.exit_code == main.EXIT_VALUE, stored.stderr
+    digest = json.loads(stored.stdout)["value"]["sha256"]
+
+    read = main.dispatch(["store", "get", digest, "--root", str(root)])
+
+    assert read.exit_code == main.EXIT_VALUE, (
+        "a buffer must leave as a descriptor; handing the encoder raw bytes is "
+        f"the exit-1 crash this test exists to catch: {read.stderr}"
+    )
+    described = json.loads(read.stdout)["value"]
+    assert described["sha256"] == digest, "the descriptor describes what was read"
+    assert described["size_bytes"] == source.stat().st_size
+    assert "data" not in described, "the bytes themselves stay out of stdout"

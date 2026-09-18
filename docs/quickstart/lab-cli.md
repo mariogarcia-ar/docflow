@@ -490,6 +490,151 @@ exceptions are **declared as data** (`FILE_FLAG_PARAMETERS`, `SURFACE_ONLY_FLAGS
 `PORT_COMMAND_NAMES`) rather than exempted silently — a genuinely orphaned flag has
 nowhere to hide.
 
+## A walkthrough: every `now` command, called once
+
+The sections above are organised by **concept** — the gate, determinism, exit codes —
+and the kernel pages cover K2-K6 in depth. This section is organised by **kernel**, and
+covers the two kernels no other page does: K7 `store` and K8 `registry`. Every block is
+a real invocation with its output quoted verbatim; K1's gate is above, and K2-K6 are
+their own quickstarts.
+
+### K7 `store` — four commands against one root
+
+`put` writes into a root and reports the artifact's **descriptor**, not its bytes:
+
+```console
+$ docflow-kernel store put /tmp/k7/blob.bin --media-type application/octet-stream --root /tmp/k7/store
+# value: { "sha256": "328e9e92651ae2b7d98680319b452d87b2dee11929ef100d4084cde8f267c3af",
+#          "size_bytes": 2000, "media_type": "application/octet-stream",
+#          "path": "artifacts/328e9e92...f267c3af" }
+# exit 0
+```
+
+`verify` asks whether the stored bytes still hash to their own name — and the answer is
+a **bool as the value**, so a store that failed verification is exit `0` with
+`value: false`, not exit `2`. The question was answered; the answer was *no*.
+
+```console
+$ docflow-kernel store verify 328e9e92...f267c3af --root /tmp/k7/store
+# value: true
+# exit 0
+```
+
+`get` reads them back, and by default **out of band** — stdout carries the descriptor
+and the bytes stay in memory unless you ask for them:
+
+```console
+$ docflow-kernel store get 328e9e92...f267c3af --root /tmp/k7/store
+# value: { "sha256": "328e9e92...f267c3af", "size_bytes": 2000,
+#          "media_type": "application/octet-stream", "path": null }
+# exit 0
+
+$ docflow-kernel store get 328e9e92...f267c3af --root /tmp/k7/store --save /tmp/k7/out
+# value: { ..., "path": "artifacts/328e9e92...f267c3af" }
+# exit 0
+```
+
+**This command was unrunnable until recently, and it is the third instance of the
+class this page describes in §"Reading a result".** The port's `get` answers with bare
+`bytes`, which is not one of the seven boundary types, so the encoder refused it — exit
+`1`, *"no envelope encoding for bytes"*, on every call. The earlier fix named `Registry`
+and `Ledger`; `bytes` was missed because a *buffer* looks like something the surface
+obviously handles, and the contract test compares **flags**, never the type a handler
+returns. Now it is wrapped as the boundary's `Bytes`, which is also what lets its own
+`--save` work at all — `_apply_save` can only write a value it recognises as a buffer.
+
+`ls` reads the **ledger tree**, not the artifact directories, and that is a real
+distinction:
+
+```console
+$ docflow-kernel store ls --root /tmp/k7/store
+# value: []
+# exit 0
+```
+
+The store above holds one artifact and `ls` reports none, because a direct `put` writes
+`artifacts/<sha>` and no ledger — the ledger is written when a *unit* is opened and
+staged (`store.begin`/`commit`, which is K1's path). So `ls` answers *"what has been
+claimed in a unit"* rather than *"what bytes are on disk"*, and the two differ whenever
+something was stored outside a run. Worth knowing before reaching for `ls` as an
+inventory.
+
+```console
+$ docflow-kernel store ledger-read missing-unit --root /tmp/k7/store
+# reason.code: "artifact_missing"
+# reason.message: "FileNotFoundError: No ledger at missing-unit/missing-unit.ledger.json..."
+# exit 2
+```
+
+### K8 `registry` — validating the corpus policy
+
+`validate` loads the whole declared asset set and reports what it found, with each
+asset's hash:
+
+```console
+$ docflow-kernel registry validate --root registry
+# value: { "root": "registry",
+#          "assets": { "policies/thresholds.json": {
+#              "sha256": "cd046da8714b4eee...b2cb9364", "format": "json", "bytes": 123 } },
+#          "asset_count": 1 }
+# exit 0
+```
+
+`hash` is the identity of that whole set — the value a cache key can carry:
+
+```console
+$ docflow-kernel registry hash --root registry
+# value: "7dcc19cbf02ccfffc7175a64ec689ea09c5bbb08c180246cedd1411849befd04"
+# exit 0
+```
+
+`ls` names an asset's **keys**, which is how you find out what policy a corpus actually
+declares before a command refuses for want of one:
+
+```console
+$ docflow-kernel registry ls --asset policies/thresholds.json --root registry
+# value: ["diagnosis.min_dpi", "image.legibility_threshold", "reader.correct",
+#         "reader.min_chars"]
+# exit 0
+```
+
+`show` reads one of them, and answers with the **key** as well as the value — a bare
+`100.0` would be a number with nothing to attribute it to:
+
+```console
+$ docflow-kernel registry show --asset policies/thresholds.json \
+    --key image.legibility_threshold --root registry
+# value: { "image.legibility_threshold": 100.0 }
+# exit 0
+```
+
+A key the asset does not declare is a precondition failure, not an empty answer:
+
+```console
+$ docflow-kernel registry show --asset policies/thresholds.json --key nope --root registry
+# reason.code: "asset_missing"
+# reason.message: "Asset 'policies/thresholds.json' declares no key 'nope'."
+# exit 3
+```
+
+Exit `3` rather than `2`: no question was asked of a document, so this is *the call
+could not be made* — and the message names both halves of the lookup instead of
+reporting a missing value.
+
+### The other six
+
+| Kernel | Commands | Measured in |
+|---|---|---|
+| K1 `orchestrator` | 9 | the closing flow above, plus *Interrupt it* and *Rebuild the manifest* |
+| K2 `pdf` | 5 | `kernel-pdf.md` |
+| K3 `image` | 4 | `kernel-image.md` |
+| K4 `ocr` | 3 | `kernel-ocr.md` |
+| K5 `llm.local` | 4 | `kernel-llm-local.md` |
+| K6 `llm.frontier` | 4 | `kernel-llm-frontier.md` |
+
+Four of those six have `MVP` operations that exit `4`; the full set of ten is listed
+under *The 10 that refuse* above.
+
 ## There is no engine setting here, and no default anywhere
 
 The forbidden vocabulary is enforced by the dispatcher itself, not only by the contract

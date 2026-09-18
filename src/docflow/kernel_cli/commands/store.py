@@ -25,7 +25,17 @@ from docflow.adapters.store import FilesystemStore
 from docflow.kernel_cli.commands.refusals import answered, missing
 from docflow.kernel_cli.main import Call, Handler
 from docflow.kernels import orchestrator
-from docflow.kernels.types import Evidence, KernelResult
+from docflow.kernels.types import Bytes, Evidence, KernelResult
+
+#: The media type a read-back buffer is reported with.
+#:
+#: A store is content-addressed: ``put`` records the media type beside the bytes
+#: rather than inside them, and ``get`` is given only a hash. So this command
+#: cannot recite the type the artifact was stored under without reading the
+#: ledger beside it, and inventing one would be a stand-in. The honest value is
+#: the one that claims nothing about the content - the caller asked for bytes by
+#: hash and that is what it gets.
+_READ_MEDIA_TYPE: Final[str] = "application/octet-stream"
 
 
 def _store() -> FilesystemStore:
@@ -67,11 +77,21 @@ def put(
 
 
 def get(*, sha256: str, root: str, **_: object) -> Call:
-    """Read an artifact's bytes back.
+    """Read an artifact's bytes back, wrapped so the boundary can carry them.
 
-    A miss is a typed reason, never empty bytes: the port says `get` raises rather
-    than returning nothing, because *"I have no content"* and *"the content is
-    empty"* are different answers and only one of them is an answer.
+    The port answers with bare ``bytes``, and this command cannot return those:
+    ``E01-01``'s encoder carries the seven boundary types, mappings and
+    sequences, and a ``bytes`` is none of them, so returning the adapter's value
+    verbatim made this command **crash** with exit ``1`` and *"no envelope
+    encoding for bytes"* instead of reading anything - the same defect
+    ``ocr read`` had with its port-layer result.
+
+    :class:`~docflow.kernels.types.Bytes` is the boundary's own type for a
+    buffer, and it is what makes ``--save`` mean something here: §9 gives this
+    command ``--save``, and the dispatcher can only write a value it recognises
+    as a buffer. So the media type travels with the bytes and the descriptor
+    carries its hash - which for a content-addressed store is the same hash the
+    caller just asked for, and therefore checkable by eye.
 
     Args:
         sha256: The artifact's hash.
@@ -79,10 +99,21 @@ def get(*, sha256: str, root: str, **_: object) -> Call:
         **_: See :func:`put`.
 
     Returns:
-        The call, carrying the bytes.
+        The call, carrying the bytes at :attr:`Bytes.media_type`'s default - the
+        store records identity and media type separately, and this call is given
+        only the identity.
 
     """
-    return Call(result=_store().get(Path(root), sha256))
+    stored = _store().get(Path(root), sha256)
+    if stored.reason is not None or stored.value is None:
+        return Call(result=stored)
+    return Call(
+        result=KernelResult(
+            value=Bytes(data=stored.value, media_type=_READ_MEDIA_TYPE),
+            evidence=stored.evidence,
+            reason=None,
+        )
+    )
 
 
 def verify(*, sha256: str, root: str, **_: object) -> Call:
