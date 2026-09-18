@@ -831,6 +831,27 @@ prints that instead of an empty value: `kernel-ocr.sh` with no `--pages`, `--dpi
 `--lang` shows a single `selection  engine default` line, because passing an empty
 `--pages` would be a usage error about a selection nobody wrote.
 
+**`--save <dir>` collects every output in one place, by whichever route the command
+supports.** That is two routes, and the driver hides the difference:
+
+| The command | How its answer is persisted |
+|---|---|
+| `render`, `split`, `image crop`, `image rescale`, `store get` | the kernel's own `--save`, which routes **bytes** through K7 |
+| `tokens`, `layout` | redirected stdout — the whole envelope, written to `<dir>/tokens-p1-3.json` |
+
+The second row is not a workaround for an oversight. `--save` is scoped by
+`kernel-cli.md` §10 to *"any command returning bytes"*, and `_apply_save` refuses
+anything else with *"this one returned str"*. `tokens` answers a list and `layout` a
+`str`, so neither can take the flag — and giving them one would mean inventing a
+serialisation and a media type, which is a contract change rather than a convenience.
+
+What the redirect writes is the **whole envelope**, not the extracted value: the
+`evidence` and the `reason` stay beside the answer, so a file records how the answer
+was measured and not only what it was. `jq -r '.value'` gets the value back. And a run
+whose selection does not exist writes **no file at all** rather than an empty one — an
+empty artifact at a path the summary named as an output would be a plausible-looking
+result holding nothing.
+
 **Exit codes are reported, not judged.** A driver's summary counts `2`, `3` and `4`
 because they are answers: a scan gives `classify` exit `2` because that is what a scan
 *is*, and an `MVP` command exits `4` on every input because it is declared and not

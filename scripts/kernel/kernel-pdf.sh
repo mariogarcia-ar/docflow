@@ -128,13 +128,25 @@ echo "K2 - 'now' commands"
 
 k_run "probe" pdf probe "$DOCUMENT"
 k_run "classify(p$PAGE)" pdf classify "$DOCUMENT" --page "$PAGE"
-k_run "tokens(p$PAGES)" pdf tokens "$DOCUMENT" --pages "$PAGES"
-k_run "layout(p$PAGES)" pdf layout "$DOCUMENT" --pages "$PAGES"
 
+# `tokens` and `layout` answer a list and a `str`, and **neither can take
+# `--save`**: that flag routes *bytes* through K7 and refuses anything else with
+# *"this one returned str"* (`kernel-cli.md` §10). So their stdout is redirected
+# into the same directory `--save` would have written to - one place for a run's
+# output, whichever mechanism the command supports.
+#
+# What lands there is the **whole envelope**, not the extracted value: the
+# evidence and the `reason` stay beside the answer, so the file records how the
+# answer was measured and not only what it was.
 if [ -n "$SAVE_DIR" ]; then
+  k_save "tokens(p$PAGES)" "$SAVE_DIR/tokens-p$PAGES.json" pdf tokens "$DOCUMENT" --pages "$PAGES"
+  k_save "layout(p$PAGES)" "$SAVE_DIR/layout-p$PAGES.json" pdf layout "$DOCUMENT" --pages "$PAGES"
+
   k_run "render(p$PAGES,dpi$DPI)" pdf render "$DOCUMENT" --pages "$PAGES" --dpi "$DPI" --save "$SAVE_DIR"
   k_run "split(p$PAGES)" pdf split "$DOCUMENT" --pages "$PAGES" --save "$SAVE_DIR"
 else
+  k_run "tokens(p$PAGES)" pdf tokens "$DOCUMENT" --pages "$PAGES"
+  k_run "layout(p$PAGES)" pdf layout "$DOCUMENT" --pages "$PAGES"
   k_run "render(p$PAGES,dpi$DPI)" pdf render "$DOCUMENT" --pages "$PAGES" --dpi "$DPI"
   k_run "split(p$PAGES)" pdf split "$DOCUMENT" --pages "$PAGES"
 fi

@@ -178,7 +178,7 @@ k_run() {
   local kernel="$2"
   shift 2
 
-  k_invoke "$soft" "$label" "$K_KERNEL" "$kernel" "$@"
+  k_invoke "$soft" "$label" "" "$K_KERNEL" "$kernel" "$@"
 }
 
 # `k_exec [--soft] <label> <command> [args...]`
@@ -197,15 +197,52 @@ k_exec() {
   local label="$1"
   shift
 
-  k_invoke "$soft" "$label" "$@"
+  k_invoke "$soft" "$label" "" "$@"
+}
+
+# `k_save [--soft] <label> <path> <command...>`
+#
+# Runs the command and **keeps its stdout** at `<path>`, so a command with no
+# `--save` of its own still lands in the run's output directory.
+#
+# Why this exists rather than `--save` everywhere: `--save` is not a general
+# "write the answer to a file" flag, it is *route bytes through K7*. `_apply_save`
+# accepts a `Bytes` value, or an `Evidence` carrying one, and refuses anything else
+# with *"--save applies to a command that returns bytes; this one returned str"*
+# (`kernel-cli.md` §10 scopes it to "any command returning bytes"). `pdf tokens`
+# answers a list and `pdf layout` a `str`, so neither can take it - and giving them
+# a serialisation would mean inventing a format and a media type, which is a
+# contract change, not a convenience.
+#
+# Redirection is the honest alternative and it is what a shell does: the file holds
+# **the whole envelope**, exactly as stdout carried it, so the evidence and the
+# `reason` survive next to the value. That is deliberately not the extracted value:
+# extracting would need `jq` here, and it would throw away the record of how the
+# answer was measured.
+k_save() {
+  local soft=0
+  if [ "${1:-}" = "--soft" ]; then
+    soft=1
+    shift
+  fi
+
+  local label="$1"
+  local destination="$2"
+  shift 2
+
+  k_invoke "$soft" "$label" "$destination" "$K_KERNEL" "$@"
 }
 
 # The shared body. It takes the command and its arguments whole, so the caller
 # decides the shape of the invocation and only the reporting is common.
+#
+# `save_to` is empty for `k_run`/`k_exec` and a path for `k_save`; when it is set,
+# the captured stdout is moved there instead of being discarded.
 k_invoke() {
   local soft="$1"
   local label="$2"
-  shift 2
+  local save_to="$3"
+  shift 3
 
   local out_file err_file reader
   out_file="$(mktemp)"
@@ -223,6 +260,20 @@ k_invoke() {
   # usage block that follows it.
   if [ "$summary" = "(no output)" ] && [ -s "$err_file" ]; then
     summary="$(head -n 1 "$err_file")"
+  fi
+
+  # The file is written only when there is something in it. A usage error produces
+  # no envelope, and an empty file at a path the summary named as an output would
+  # be a plausible-looking artifact that holds nothing - the stand-in this project
+  # refuses everywhere else.
+  if [ -n "$save_to" ]; then
+    if [ -s "$out_file" ]; then
+      mkdir -p "$(dirname "$save_to")"
+      mv "$out_file" "$save_to"
+      summary="$summary  ->  ${save_to##*/}"
+    else
+      summary="$summary  (nothing to save)"
+    fi
   fi
 
   K_TOTAL=$((K_TOTAL + 1))

@@ -555,6 +555,49 @@ $ docflow-kernel pdf layout tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a
 for byte, and `pages_requested` says which pages produced these characters. The string
 value is the text itself — no coordinates, unlike `tokens`.
 
+**The text goes to stdout and nowhere else, and there is no `--save` on this command.**
+That is deliberate rather than missing: `--save` exists to route *bytes* through K7's
+store, and this operation answers a `str`. Passing the flag is refused:
+
+```console
+$ docflow-kernel pdf layout <file> --pages 1 --save /tmp/out
+--save applies to a command that returns bytes; this one returned str
+# exit 4
+```
+
+To keep the text, redirect stdout and read `value` out of the envelope — the same
+shape every other command answers in (`kernel-cli.md` §6):
+
+```console
+$ docflow-kernel pdf layout doc.pdf --pages 1-3 | jq -r '.value' > doc.layout.txt
+```
+
+`scripts/kernel/kernel-pdf.sh` does exactly that when you give it `--save`, so a run's
+output lands in one directory whichever mechanism the command supports:
+
+```console
+$ scripts/kernel/kernel-pdf.sh --save /tmp/out
+  tokens(p1-3)             exit 0  108 token(s) on page(s) [1, 3]  ->  tokens-p1-3.json
+  layout(p1-3)             exit 0  1263 char(s)  ->  layout-p1-3.json
+  render(p1-3,dpi72)       exit 0  63306 bytes -> ...-p1-3-dpi72.png
+  split(p1-3)              exit 0  230451 bytes -> ...-p1-3.pdf
+```
+
+The two redirected files hold the **whole envelope**, not the extracted value — so the
+`evidence` and the `reason` survive beside the answer, and `jq -r '.value'` gets you the
+text back. A run whose selection does not exist writes **no file at all** rather than an
+empty one.
+
+Verified from a clean working directory: the only files present afterwards are the
+ones you wrote. Nothing is created under the save root, and **the response carries no
+`path`** — there is no stored copy to point at, unlike `render` and `split`, whose
+descriptors carry both `path` and `delivery_name`.
+
+That asymmetry is worth stating plainly: **`layout` is the one reading command with no
+on-disk artifact.** If you are assembling a pipeline that needs the layout persisted
+and content-addressed like everything else, use `tokens` (which returns a list) or wrap
+this call yourself — the surface will not invent a store entry for a string.
+
 A **reordered** selection is refused rather than sorted, and it is a usage error:
 
 ```console
@@ -686,20 +729,20 @@ the two `MVP` ones — against one document, which is faster than typing eight
 invocations and reports the exit code as data rather than as a failure:
 
 ```console
-$ scripts/kernel/kernel-pdf.sh
+$ scripts/kernel/kernel-pdf.sh --save var/pdf
 
 document: tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
 
   page             1  (default)
   pages            1-3  (from the document: 59 page(s))
   dpi              72  (default)
-  save             none  (bytes stay out of band)
+  save             var/pdf
 
 K2 - 'now' commands
   probe                    exit 0  59 page(s)
   classify(p1)             exit 0  shape=mixed chars=358 images=4
-  tokens(p1-3)             exit 0  108 token(s) on page(s) [1, 3]
-  layout(p1-3)             exit 0  1263 char(s)
+  tokens(p1-3)             exit 0  108 token(s) on page(s) [1, 3]  ->  tokens-p1-3.json
+  layout(p1-3)             exit 0  1263 char(s)  ->  layout-p1-3.json
   render(p1-3,dpi72)       exit 0  63306 bytes -> ...-p1-3-dpi72.png
   split(p1-3)              exit 0  230451 bytes -> ...-p1-3.pdf
 
@@ -713,6 +756,13 @@ summary: 8 command(s)
   exit 3  precondition missing 0
   exit 4  usage or MVP        2
 ```
+
+**`--save` puts every output in one directory, by whichever route the command
+supports.** `render` and `split` take the kernel's own `--save` and write through K7,
+while `tokens` and `layout` answer a list and a `str` — which `--save` refuses, because
+it routes *bytes* — so their stdout is redirected to the same place. Without
+`--save`, nothing is written and the two that return bytes report a descriptor whose
+`path` is null, because bytes stay out of band by default.
 
 **Every driver prints the parameters it resolved, with where each one came from**, so
 a run is readable without knowing what the defaults are:
