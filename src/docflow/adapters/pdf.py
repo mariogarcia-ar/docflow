@@ -982,10 +982,18 @@ def _encode_png(engine: Any, images: Sequence[Any]) -> bytes:
     canvas = engine.Pixmap(engine.csRGB, engine.IRect(0, 0, width, total_height))
     canvas.clear_with(255)
 
+    # Each pixmap is *moved* to its row before being copied; the copy target is then
+    # read back off the pixmap, so the two cannot disagree.
+    #
+    # `Pixmap.copy(source, target)` does not place the source at `target`: composing
+    # `IRect(0, offset, w, offset+h)` copied only the first page and left the rest
+    # white. Measured on a three-page selection, the inks per vertical third were
+    # `[433731, 0, 0]` against `[433731, 63783, 33474]` - a descriptor announcing
+    # `pages_rendered: [1, 2, 3]` over two blank rows.
     offset = 0
     for image in images:
-        target = engine.IRect(0, offset, image.width, offset + image.height)
-        canvas.copy(image, target)
+        image.set_origin(0, offset)
+        canvas.copy(image, image.irect)
         offset += image.height
 
     return bytes(canvas.tobytes("png"))

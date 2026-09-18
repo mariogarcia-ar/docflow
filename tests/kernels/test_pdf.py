@@ -30,6 +30,7 @@ it asks for — that shadowing *is* the wiring.
 from __future__ import annotations
 
 import hashlib
+import io
 import pathlib
 import re
 import shutil
@@ -38,6 +39,7 @@ import tempfile
 
 import pymupdf
 import pytest
+from PIL import Image
 
 from docflow.adapters.pdf import PyMuPdfVendor
 from docflow.kernels import pdf
@@ -644,6 +646,54 @@ def test_render_refuses_a_non_positive_dpi(text_pdf: pathlib.Path) -> None:
     """A zero or negative resolution is a usage error."""
     with pytest.raises(ValueError, match="dpi must be positive"):
         pdf.render(text_pdf, [1], dpi=0, vendor=VENDOR)
+
+
+def test_render_keeps_every_page_of_the_selection(
+    three_pages_pdf: pathlib.Path,
+) -> None:
+    """Every selected page reaches the bitmap, not only the first one.
+
+    The defect this closes was reported from the outside, opening the file: a
+    `--pages 1-3` render announced `pages_rendered: [1, 2, 3]` over an image holding
+    page 1 and two blank rows. **Measured** before the fix, the inks per vertical
+    third were `[433731, 0, 0]` against the expected `[433731, 63783, 33474]` - so
+    the descriptor was plausible and the bytes were wrong, which is the shape of
+    defect that survives a suite asserting only `media_type` and the PNG magic.
+
+    The stacking went unexercised because **every render test asked for one page**
+    (`pages=[1]`); the multi-page path had no test at all.
+
+    Each page is compared against *itself rendered on its own*, so the assertion is
+    about content rather than ink: a stack that dropped page 3 and duplicated page 2
+    would carry the right total ink and still fail here. The comparison is per page
+    and not per band because this fixture gives each page a **different width**
+    (201, 202, 203 points), and the canvas is as wide as the widest - so a band cut
+    to the canvas width would never equal a narrower page's own render.
+    """
+    result = pdf.render(three_pages_pdf, [1, 2, 3], dpi=72, vendor=VENDOR)
+
+    assert result.value is not None
+    assert result.evidence.observed["pages_rendered"] == [1, 2, 3]
+
+    stacked = Image.open(io.BytesIO(result.value.data)).convert("RGB")
+    offset = 0
+    for number in (1, 2, 3):
+        alone = pdf.render(three_pages_pdf, [number], dpi=72, vendor=VENDOR)
+        assert alone.value is not None
+        page = Image.open(io.BytesIO(alone.value.data)).convert("RGB")
+
+        band = stacked.crop((0, offset, page.size[0], offset + page.size[1])).tobytes()
+
+        assert band == page.tobytes(), (
+            f"the rows at offset {offset} must hold page {number}: the descriptor "
+            "says it was rendered, so the bytes have to carry it"
+        )
+        offset += page.size[1]
+
+    assert offset == stacked.size[1], (
+        "the stack is exactly as tall as the pages it claims to hold; a taller "
+        "canvas would be blank rows the descriptor does not mention"
+    )
 
 
 # --- Criterion: extract_tokens ----------------------------------------------

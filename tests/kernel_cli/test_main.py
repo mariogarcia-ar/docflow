@@ -256,6 +256,7 @@ RETURN_NONE_IS_AN_ANSWER: frozenset[str] = frozenset(
         "_not_landed",
         "_probe_filesystem",
         "_provider_key_absent",
+        "_resolve_synonym",
     }
 )
 
@@ -1088,6 +1089,7 @@ def test_render_names_its_delivery_after_the_document_pages_and_dpi(
         name="render",
         handler=handler,
         positional="file",
+        flags=("--pages", "--dpi", "--save"),
         delivery_name=real.delivery_name,
     )
 
@@ -2028,6 +2030,7 @@ def test_the_declared_name_is_identical_with_and_without_save(
         "split",
         handler,
         positional="file",
+        flags=("--pages", "--save"),
         delivery_name=lambda params: "documento-p1-3",
     )
     argv = ["pdf", "split", "documento.pdf", "--pages", "1-3"]
@@ -2101,3 +2104,93 @@ def test_a_mapping_holding_two_buffers_labels_each_by_its_own_digest() -> None:
     assert names[0] != names[1], (
         "two buffers with one name is exactly the ambiguity the digest key removes"
     )
+
+
+# --- One parameter, two spellings ---------------------------------------------
+
+
+def test_page_and_pages_resolve_to_the_spelling_the_operation_declares() -> None:
+    """``--page`` and ``--pages`` are one parameter, and the declaration decides.
+
+    `kernel-cli.md` §9 is inconsistent on purpose - ``pdf classify`` takes ``--page``
+    and ``pdf render`` takes ``--pages`` - while §6 and §12 row 4 write
+    ``render --page 1``. Both spellings therefore have to work on both commands, and
+    the dispatcher cannot carry a second list of which is which without that list
+    drifting from the tables.
+
+    **The bug this closes was reported from the outside:** ``render --page 1`` parsed,
+    was dropped, and rendered *every* page - the flag was in the global vocabulary
+    because ``classify`` declares it, and the handler's ``**_`` swallowed it. An
+    argument silently doing nothing is the shape this suite refuses everywhere else.
+
+    What is asserted is the **keyword the handler received**, not merely that the
+    command succeeded: a run that resolved ``--pages`` to a keyword no handler reads
+    would exit 0 with no page selection at all, which is the same defect wearing a
+    green result.
+    """
+    handler = RecordingHandler(value_call())
+    operation = Operation(
+        "pdf", "render", handler, positional="file", flags=("--pages", "--dpi")
+    )
+
+    run(["pdf", "render", "doc.pdf", "--page", "1"], operation)
+
+    assert handler.received[0]["pages"] == "1", (
+        "a `--page` on a command declaring `--pages` must arrive as the keyword the "
+        "handler reads, or the selection is dropped and every page is rendered"
+    )
+
+
+def test_the_other_spelling_resolves_the_other_way() -> None:
+    """``classify`` declares ``--page``, so ``--pages`` has to arrive as ``page``.
+
+    The reverse direction, and it is a separate test because resolving one way is
+    compatible with a hard-coded rewrite in one direction - which would break the
+    other half of the surface.
+    """
+    handler = RecordingHandler(value_call())
+    operation = Operation(
+        "pdf", "classify", handler, positional="file", flags=("--page",)
+    )
+
+    run(["pdf", "classify", "doc.pdf", "--pages", "1"], operation)
+
+    assert handler.received[0]["page"] == "1"
+
+
+def test_a_declared_spelling_is_used_verbatim() -> None:
+    """When the operation declares the flag, nothing is rewritten.
+
+    The control for the two above: without it, a resolver that rewrote *every* flag to
+    a synonym would satisfy them and quietly change the keyword for the commands that
+    already agreed.
+    """
+    handler = RecordingHandler(value_call())
+    operation = Operation(
+        "pdf", "render", handler, positional="file", flags=("--pages",)
+    )
+
+    run(["pdf", "render", "doc.pdf", "--pages", "1-3"], operation)
+
+    assert handler.received[0] == {"file": "doc.pdf", "pages": "1-3"}
+
+
+def test_a_synonym_neither_spelling_of_which_is_declared_stays_unknown() -> None:
+    """Resolving a synonym is not the same as widening the vocabulary.
+
+    `pdf probe` declares no page flag at all, so both spellings are unknown to it. If
+    this passed, the synonym table would be a door through which any flag could reach
+    any command - which is the class of defect that made `--page` a silent no-op in
+    the first place.
+    """
+    handler = RecordingHandler(value_call())
+    operation = Operation("pdf", "probe", handler, positional="file", flags=("--root",))
+
+    invocation = run(["pdf", "probe", "doc.pdf", "--page", "1"], operation)
+
+    assert invocation.exit_code == EXIT_USAGE
+    assert "--page" in invocation.stderr, (
+        "the refusal must name the flag, so the caller can tell a misspelling from a "
+        "flag this command does not take"
+    )
+    assert handler.received == [], "the handler must not run at all"

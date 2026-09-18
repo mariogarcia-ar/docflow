@@ -781,6 +781,13 @@ stdout is redirected to the same place instead. Without `--save`, nothing is wri
 and the two that return bytes report a descriptor whose `path` is null, because bytes
 stay out of band by default. Their `delivery_name` is reported either way.
 
+**`--page` and `--pages` are interchangeable here**, because they name the same thing:
+a list of pages, of which `1` is a list of one. `pdf classify` declares `--page` and
+`render`/`split`/`tokens`/`layout` declare `--pages`, but either spelling works on any
+of them — `render --page 1` renders page 1, and `classify --pages 1` classifies page 1.
+The surface resolves the spelling to whichever one the command declares, so a command
+that takes no page selection at all (`pdf probe`) refuses both.
+
 The run's parameters come from the same environment variables the kernel's flags do,
 so the driver can be pointed at any document without editing it. `PAGES` takes the
 whole `--pages` grammar (`kernel-cli.md` §9):

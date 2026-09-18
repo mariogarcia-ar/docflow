@@ -380,6 +380,16 @@ This is what makes `S1-T19` invocable from a shell before any domain component e
 
 `pages` accepts `1-3`, `1,4,7`, `all`. `render` **never upscales** — requesting 300 DPI on a 150 DPI scan returns exit `2` with `reason.code: insufficient_effective_resolution`, never a larger file reported as a satisfied gate.
 
+**`--page` and `--pages` are one parameter under two spellings, and either works on
+either command.** The table above declares the spelling each command's own port
+signature implies (`classify(page)` takes `--page`, `render(pages, dpi)` takes
+`--pages`), but §6 and §12 row 4 write `render scan.pdf --page 1` — and a selection of
+one page *is* a selection, so `--page 1` and `--pages 1` name the same parameter. Rather
+than pick a winner, the dispatcher resolves either spelling to whichever one the
+command declares: `render --page 1` renders page 1, and `classify --pages 1` classifies
+page 1. A command declaring **neither** spelling is refused — the synonym narrows to a
+declaration, it does not widen the vocabulary.
+
 **`pdf layout` is the one command here whose operation is not a port method.** `layout_text` returns the reader's own character grid (`pdftotext -layout`), byte-identical to the binary's output and *not* derivable from the token boxes — measured on `casos/9dfc597f`: 0 of 68 lines of a token-derived reconstruction match. `plans/README.md` §3 freezes `PdfSource`'s five operations, so putting it on the port would re-open `E04-01`'s gate (`E04-02`); the adapter exposes it, and the command reaches it there. A reordered page selection is refused as a **usage error** (exit `4`) rather than sorted, because the result is the reader's own concatenation and sorting would return a document the caller did not ask for.
 
 ### K3 — `image`

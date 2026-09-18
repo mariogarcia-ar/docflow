@@ -288,6 +288,27 @@ ALLOWED_FLAGS: Final[tuple[str, ...]] = tuple(
     sorted(set(VALUE_FLAGS) | set(BOOLEAN_FLAGS))
 )
 
+#: Spellings that name the same parameter, resolved to whichever one an operation
+#: declares. ``--page`` and ``--pages`` are the case: one page and a selection are the
+#: same *parameter* - a list of page numbers - and a selection of one page is already
+#: a selection.
+#:
+#: The reconciliation lives here rather than in the commands because the dispatcher is
+#: the layer that knows what the operation declared: `main.py` may not import a command
+#: module (`E07-01`'s import guard), so all it needs is the declared flag list, which
+#: :class:`Operation` already carries.
+#:
+#: **Resolved, never silently accepted.** A spelling is rewritten to the declared one,
+#: so the handler is called with the keyword it actually reads. A synonym the operation
+#: declares *neither* spelling of stays an unknown flag - the point is one name per
+#: parameter, not a wider vocabulary. `kernel-cli.md` §9 is inconsistent here on
+#: purpose (`pdf classify` takes `--page`, `pdf render` takes `--pages`) while §6 and
+#: §12 row 4 write `render --page 1`, so both spellings have to work on both commands.
+SYNONYM_FLAGS: Final[Mapping[str, tuple[str, ...]]] = {
+    "--page": ("--pages",),
+    "--pages": ("--page",),
+}
+
 #: Flags that must never exist on this surface, as a declared vocabulary rather
 #: than a rule someone remembers. Two groups, both fatal to a contract test:
 #:
@@ -1223,8 +1244,44 @@ def _parameter_name(flag: str) -> str:
     return flag[2:].replace("-", "_")
 
 
+def _resolve_synonym(flag: str, declared: Sequence[str]) -> str | None:
+    """Return the spelling of *flag* the operation declares, or None when neither.
+
+    ``--page`` and ``--pages`` are one parameter under two spellings, and which one a
+    command declares is a fact about the command (`pdf classify` declares ``--page``,
+    `pdf render` declares ``--pages``). Resolving against the declaration is what lets
+    a caller write either without the dispatcher maintaining a second, drifting list of
+    which command takes which.
+
+    A flag that is **not** a synonym is returned unchanged: whether it belongs on this
+    operation is the global vocabulary's business, and only a synonym has to be
+    resolved against a declaration. A synonym is *only* meaningful relative to one -
+    there is no answer to *"which spelling does this command take?"* for a command that
+    takes neither - so ``None`` is that answer rather than a silent pass-through.
+
+    Args:
+        flag: The flag as the caller wrote it.
+        declared: The flags the operation declares.
+
+    Returns:
+        The declared spelling, the flag itself when it is not a synonym, or None when
+        it is a synonym the operation declares no spelling of.
+
+    """
+    if flag in declared:
+        return flag
+    if flag not in SYNONYM_FLAGS:
+        return flag
+    for candidate in SYNONYM_FLAGS[flag]:
+        if candidate in declared:
+            return candidate
+    return None
+
+
 def _parse_flags(
-    tokens: Sequence[str], positional: str | None = None
+    tokens: Sequence[str],
+    positional: str | None = None,
+    declared: Sequence[str] = (),
 ) -> tuple[dict[str, object], Invocation | None]:
     """Parse the argument tokens into operation parameters.
 
@@ -1243,6 +1300,9 @@ def _parse_flags(
         tokens: The tokens after the operation name.
         positional: The parameter name a bare argument binds to, or None when the
             operation takes no argument.
+        declared: The flags the operation declares, used to resolve a synonym to the
+            spelling the handler reads. Empty means *resolve nothing*, which is what
+            an operation declaring no flags wants.
 
     Returns:
         The parsed parameters, and an exit-``4`` invocation when an argument is
@@ -1266,7 +1326,25 @@ def _parse_flags(
         # forbidden flag arriving as `--cuit=1` misses `FORBIDDEN_FLAGS` and is
         # refused as merely unknown - the right refusal and the wrong reason, which
         # `kernel-cli.md` section 14's vocabulary exists to distinguish.
-        flag = token.split("=", 1)[0]
+        written = token.split("=", 1)[0]
+        flag = _resolve_synonym(written, declared)
+
+        if flag is None:
+            # A synonym with no declaration *at all* means this command takes no page
+            # selection, so the message says that rather than blaming the spelling: the
+            # caller's flag is spelled correctly and the command is the fact. The other
+            # spelling would be refused identically, because the resolver answers
+            # *"which spelling does this take?"* and here the answer is *none*.
+            other = next(
+                candidate
+                for candidate in SYNONYM_FLAGS[written]
+                if candidate != written
+            )
+            return params, _usage_error(
+                f"{written} names a page selection, and this command takes none: it "
+                f"declares neither {written} nor {other}, so no spelling of the "
+                "parameter is accepted here."
+            )
 
         if flag in FORBIDDEN_FLAGS:
             return params, _usage_error(
@@ -1375,7 +1453,7 @@ def dispatch(
         return resolved
 
     operation = operations[(kernel, name)]
-    params, bad_flag = _parse_flags(flag_tokens, operation.positional)
+    params, bad_flag = _parse_flags(flag_tokens, operation.positional, operation.flags)
     if bad_flag is not None:
         return bad_flag
 
