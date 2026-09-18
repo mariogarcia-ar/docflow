@@ -34,15 +34,18 @@ LANG="${KERNEL_OCR_LANG:-}"
 usage() {
   cat <<'EOF'
 Usage: scripts/kernel/kernel-ocr.sh [image] [--pages <sel>] [--dpi N] [--lang <c>]
+                                    [-v|--verbose]
 
   image         the raster or PDF to read. Defaults to
                 tests/fixtures/matrix/page.png
   --pages <sel> the page selection for a multi-page input, e.g. 1-2
   --dpi N       the resolution the page is read at
   --lang <code> the language hint
+  -v, --verbose print the command each line came from, as it ran.
 
 Environment:
   DOCFLOW_KERNEL     the command to invoke. Defaults to `docflow-kernel`.
+  KERNEL_VERBOSE     1 for the same trace as `--verbose`.
   KERNEL_OCR_PAGES   the page selection, if you prefer it to --pages
   KERNEL_OCR_DPI     the resolution, if you prefer it to --dpi
   KERNEL_OCR_LANG    the language hint, if you prefer it to --lang

@@ -34,7 +34,7 @@ DPI="${DPI:-72}"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/kernel/kernel-pdf.sh [document] [--save <dir>]
+Usage: scripts/kernel/kernel-pdf.sh [document] [--save <dir>] [-v|--verbose]
 
   document      the PDF to exercise. Defaults to
                 tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
@@ -43,9 +43,12 @@ Usage: scripts/kernel/kernel-pdf.sh [document] [--save <dir>]
                 there, because `--save` is scoped to commands returning bytes.
                 Without it nothing is written and the two that return bytes
                 report a descriptor whose `path` is null.
+  -v, --verbose print the command each line came from, as it ran. Every driver
+                takes this flag; see `_lib.sh`.
 
 Environment:
   DOCFLOW_KERNEL   the command to invoke. Defaults to `docflow-kernel`.
+  KERNEL_VERBOSE   set to 1 for the same trace as `--verbose`.
   KERNEL_PDF_SAVE  the save directory, if you prefer it to --save.
   PAGE             the single page for `classify`. Default: 1
   PAGES            the page selection for the range commands. See below.

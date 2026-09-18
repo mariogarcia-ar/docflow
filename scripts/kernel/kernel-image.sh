@@ -37,15 +37,18 @@ TARGET_DPI="${KERNEL_IMAGE_TARGET_DPI:-72}"
 usage() {
   cat <<'EOF'
 Usage: scripts/kernel/kernel-image.sh [image] [--root <dir>] [--save <dir>]
+                                    [-v|--verbose]
 
   image         the raster to exercise. Defaults to
                 tests/fixtures/expected-extraction/dbc07b17-...jpg
   --root <dir>  the registry root `legibility` reads its threshold from.
                 Default: registry
   --save <dir>  where the commands that return bytes write them.
+  -v, --verbose print the command each line came from, as it ran.
 
 Environment:
   DOCFLOW_KERNEL          the command to invoke. Defaults to `docflow-kernel`.
+  KERNEL_VERBOSE          1 for the same trace as `--verbose`.
   KERNEL_IMAGE_ROOT       the registry root, if you prefer it to --root.
   KERNEL_IMAGE_REGION     the crop region, as x,y,w,h. Default: 10,10,50,50
   KERNEL_IMAGE_TARGET_DPI the rescale target. Default: 72

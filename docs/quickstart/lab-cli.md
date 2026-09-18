@@ -782,6 +782,7 @@ driver per kernel plus one for the product CLI:
 ```console
 $ scripts/kernel/all.sh --fast          # the six cheap drivers
 $ scripts/kernel/all.sh                 # all eight, including OCR and the models
+$ scripts/kernel/all.sh --fast -v       # ...and the command behind every line
 ```
 
 | Driver | Kernel | Commands |
@@ -813,6 +814,35 @@ document: tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
   dpi              72  (default)
   save             none  (bytes stay out of band)
 ```
+
+**`-v` / `--verbose` prints the command each line came from**, one line above that
+command's answer — so the summary stays scannable and the invocation is there when a
+line surprises you:
+
+```console
+$ PAGES=1-3 scripts/kernel/kernel-pdf.sh --save /tmp/out -v
+
+K2 - 'now' commands
+    docflow-kernel pdf probe <document>
+  probe                      exit 0  59 page(s)  ->  probe.json
+    docflow-kernel pdf classify <document> --page 1
+  classify(p1)               exit 0  shape=mixed chars=358 images=4  ->  classify-p1.json
+    docflow-kernel pdf tokens <document> --pages 1-3
+  tokens(p1-3)               exit 0  108 token(s) on page(s) [1, 3]  ->  tokens-p1-3.json
+    docflow-kernel pdf layout <document> --pages 1-3
+  layout(p1-3)               exit 0  1263 char(s)  ->  layout-p1-3.json
+    docflow-kernel pdf render <document> --pages 1-3 --dpi 72 --save /tmp/out
+  render(p1-3,dpi72)         exit 0  63306 bytes -> MetodoCITRA17-APL-p1-3-dpi72.png
+    docflow-kernel pdf split <document> --pages 1-3 --save /tmp/out
+  split(p1-3)                exit 0  230451 bytes -> MetodoCITRA17-APL-p1-3.pdf
+```
+
+The flag exists in `_lib.sh`, so all eight drivers take it and a driver cannot report
+an answer without being able to say how it got it. `all.sh` passes it down as
+`KERNEL_VERBOSE`, because it invokes each driver with no arguments — and the
+environment is how a setting crosses that boundary without `all.sh` needing to know
+eight scripts' argument grammar. An empty argument is printed as `''` rather than as a
+gap: a parameter that is present and empty and one that is absent are different calls.
 
 | Provenance | Meaning |
 |---|---|

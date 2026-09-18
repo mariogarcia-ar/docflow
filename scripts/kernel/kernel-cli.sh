@@ -34,15 +34,17 @@ OUT_DIR="${KERNEL_CLI_OUT:-var/kernel-cli}"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/kernel/kernel-cli.sh [descriptor] [--out <dir>]
+Usage: scripts/kernel/kernel-cli.sh [descriptor] [--out <dir>] [-v|--verbose]
 
   descriptor    the stage graph to run. Defaults to
                 descriptors/synthetic-3stage.yaml
   --out <dir>   where the run writes its artifacts and ledgers.
                 Default: var/kernel-cli
+  -v, --verbose print the command each line came from, as it ran.
 
 Environment:
   DOCFLOW_CLI       the product command to invoke. Defaults to `docflow`.
+  KERNEL_VERBOSE    1 for the same trace as `--verbose`.
   KERNEL_CLI_OUT    the output directory, if you prefer it to --out.
   KERNEL_CLI_JOB    a job id for `status`/`pause`/`stop`, when you have one.
 

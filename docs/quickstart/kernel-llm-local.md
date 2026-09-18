@@ -503,7 +503,8 @@ $ docflow-kernel llm.local capabilities
 `scripts/kernel/kernel-llm.sh` drives **both model kernels** — this one and K6 — since
 they share two of their four operations. It generates the prompt and the schema it
 needs into its output directory rather than committing them: they are the driver's
-inputs, not the project's assets.
+inputs, not the project's assets. `-v` (or `--verbose`) prints the command behind every
+line, as it does for all eight drivers (`lab-cli.md`):
 
 ```console
 $ scripts/kernel/kernel-llm.sh

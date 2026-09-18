@@ -58,13 +58,16 @@ WORK="${KERNEL_LLM_WORK:-var/kernel-llm}"
 usage() {
   cat <<'EOF'
 Usage: scripts/kernel/kernel-llm.sh [--model <tag>] [--frontier-model <p:m>]
+                                   [-v|--verbose]
 
   --model <tag>           the local model to call. Default: smollm2:latest
   --frontier-model <p:m>  the frontier model, as provider:model.
                           Default: anthropic:claude-sonnet-4-6
+  -v, --verbose           print the command each line came from, as it ran.
 
 Environment:
   DOCFLOW_KERNEL            the command to invoke. Defaults to `docflow-kernel`.
+  KERNEL_VERBOSE            1 for the same trace as `--verbose`.
   KERNEL_LLM_MODEL          the local model
   KERNEL_LLM_VISION_MODEL   the vision model. Default: qwen2.5vl:3b
   KERNEL_FRONTIER_MODEL     the frontier model

@@ -20,25 +20,40 @@
 #     not built. Those are results, not failures.
 #
 # Usage:
-#   scripts/kernel/all.sh [--fast]
+#   scripts/kernel/all.sh [--fast] [-v|--verbose]
 #
 # `--fast` skips the two drivers that need something outside the repository: the
 # OCR models (~10 s a call) and a running Ollama.
+#
+# `-v`/`--verbose` prints the command behind every reported line. It is exported as
+# `KERNEL_VERBOSE`, which is how it reaches the drivers: this script invokes each
+# one with no arguments, and an environment variable crosses that boundary without
+# teaching this script the argument grammar of eight others.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 FAST=0
-if [ "${1:-}" = "--fast" ]; then
-  FAST=1
-elif [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
-  sed -n '3,28p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
-  exit 0
-elif [ $# -gt 0 ]; then
-  echo "unknown option '$1'" >&2
-  exit 4
-fi
+for option in "$@"; do
+  case "$option" in
+    --fast)
+      FAST=1
+      ;;
+    -v|--verbose)
+      KERNEL_VERBOSE=1
+      export KERNEL_VERBOSE
+      ;;
+    -h|--help)
+      sed -n '3,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "unknown option '$option'" >&2
+      exit 4
+      ;;
+  esac
+done
 
 # Order matters: cheap and self-contained first, so a broken build fails before
 # ten seconds of ONNX loading.

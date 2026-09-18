@@ -740,7 +740,9 @@ catch-all so it reaches `4`.
 
 `scripts/kernel/kernel-pdf.sh` drives the whole surface — the six `now` commands and
 the two `MVP` ones — against one document, which is faster than typing eight
-invocations and reports the exit code as data rather than as a failure:
+invocations and reports the exit code as data rather than as a failure. Add `-v` (or
+`--verbose`) to print the command behind every line — see `lab-cli.md`'s
+"The same surface from a shell" for the flag all eight drivers share:
 
 ```console
 $ scripts/kernel/kernel-pdf.sh --save var/pdf

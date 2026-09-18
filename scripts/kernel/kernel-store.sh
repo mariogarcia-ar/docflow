@@ -30,15 +30,18 @@ DEFAULT_FILE="registry/policies/thresholds.json"
 usage() {
   cat <<'EOF'
 Usage: scripts/kernel/kernel-store.sh [file] [--root <dir>] [--save <dir>]
+                                     [-v|--verbose]
 
   file          the file to store and read back. Defaults to
                 registry/policies/thresholds.json
   --root <dir>  the store root. Default: var/kernel-store/store
   --save <dir>  where `get` writes the bytes it read. Default:
                 var/kernel-store/delivered
+  -v, --verbose print the command each line came from, as it ran.
 
 Environment:
   DOCFLOW_KERNEL     the command to invoke. Defaults to `docflow-kernel`.
+  KERNEL_VERBOSE     1 for the same trace as `--verbose`.
   KERNEL_STORE_ROOT  the store root, if you prefer it to --root.
 
 The root is **wiped** at the start, so a run is reproducible: a store that

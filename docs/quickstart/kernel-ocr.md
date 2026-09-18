@@ -347,7 +347,8 @@ of `kernel-cli.md` §12, and it is visible in every token above.
 ### Running all five at once
 
 `scripts/kernel/kernel-ocr.sh` drives the whole surface — the three commands plus the
-two shapes of the `--correct` gate — against one raster:
+two shapes of the `--correct` gate — against one raster. `-v` (or `--verbose`) prints
+the command behind every line; all eight drivers share the flag (`lab-cli.md`):
 
 ```console
 $ scripts/kernel/kernel-ocr.sh

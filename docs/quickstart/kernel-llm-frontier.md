@@ -475,7 +475,8 @@ broken build, which is the collapse the exit table exists to prevent.
 ### Running all six at once
 
 `scripts/kernel/kernel-llm.sh` drives **both model kernels** — this one and K5 — since
-they share two of their four operations:
+they share two of their four operations. `-v` (or `--verbose`) prints the command
+behind every line; all eight drivers share the flag (`lab-cli.md`):
 
 ```console
 $ scripts/kernel/kernel-llm.sh

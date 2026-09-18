@@ -484,7 +484,8 @@ sampled rather than being quietly re-rolled until it agrees.
 ### Running all seven at once
 
 `scripts/kernel/kernel-image.sh` drives the whole surface — the four `now` commands
-and the three `MVP` ones — against one image:
+and the three `MVP` ones — against one image. `-v` (or `--verbose`) prints the command
+behind every line; it is the flag all eight drivers share (`lab-cli.md`):
 
 ```console
 $ scripts/kernel/kernel-image.sh

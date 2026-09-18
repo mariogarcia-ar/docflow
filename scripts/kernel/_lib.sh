@@ -276,6 +276,23 @@ k_invoke() {
     fi
   fi
 
+  # The command that ran, for a reader who needs more than the one-line paraphrase
+  # of its answer. It is inserted rather than prefixed because the line above it
+  # names *which* command this was - `render(p1-3,dpi72)` - and repeating the label
+  # on the trace would separate the invocation from the answer it produced.
+  #
+  # A parameter the caller gave no value for is shown as an empty pair of quotes,
+  # not as a gap: an argument that is present and empty and an argument that is
+  # absent are different calls, and printing the first as nothing would hide the
+  # difference the trace exists to show.
+  if [ "$K_VERBOSE" -eq 1 ]; then
+    local phrase="" token
+    for token in "$@"; do
+      phrase="${phrase:+$phrase }${token:-''}"
+    done
+    printf '    %s\n' "$phrase"
+  fi
+
   K_TOTAL=$((K_TOTAL + 1))
   case "$code" in
     0) K_OK=$((K_OK + 1)) ;;
@@ -331,12 +348,25 @@ k_summary() {
 # `--help` sets `K_HELP=1` and returns 0, because only the driver knows what its
 # positional means and therefore how to describe itself.
 #
+# `-v`/`--verbose` sets `K_VERBOSE=1`, which makes every `k_run`/`k_exec`/`k_save`
+# print the command it invoked, one line above that command's answer. It lives here
+# rather than in each driver for the same reason the reporting does: one flag for
+# all eight, so a driver cannot report an answer without being able to say how it
+# got it. The drivers' own `*)` branch already forwards an unclaimed flag, so this
+# is the only place that has to know.
+#
+# `KERNEL_VERBOSE` in the environment does the same thing, because `all.sh` cannot
+# pass a flag down: it invokes each driver with no arguments, and an environment
+# variable is how a setting crosses that boundary without teaching `all.sh` the
+# argument grammar of eight scripts.
+#
 # The caller sets `K_INPUT`'s default **before** calling, so *defaulted* and
 # *given* stay distinguishable: a positional overwrites it, absence does not.
 
 K_INPUT=""
 K_SAVE=""
 K_HELP=0
+K_VERBOSE="${KERNEL_VERBOSE:-0}"
 
 k_parse_args() {
   K_HELP=0
@@ -347,9 +377,13 @@ k_parse_args() {
         K_HELP=1
         return 0
         ;;
-      --save)
+      -v|--verbose)
+        K_VERBOSE=1
+        shift
+        ;;
+      --save|--out)
         if [ $# -lt 2 ]; then
-          echo "--save needs a directory" >&2
+          echo "$1 needs a directory" >&2
           return 4
         fi
         K_SAVE="$2"

@@ -32,14 +32,17 @@ OUT_DIR="${KERNEL_ORCHESTRATOR_OUT:-var/kernel-orchestrator}"
 usage() {
   cat <<'EOF'
 Usage: scripts/kernel/kernel-orchestrator.sh [descriptor] [--out <dir>]
+                                            [-v|--verbose]
 
   descriptor    the stage graph to execute. Defaults to
                 descriptors/synthetic-3stage.yaml
   --out <dir>   where the run writes its artifacts and ledgers.
                 Default: var/kernel-orchestrator
+  -v, --verbose print the command each line came from, as it ran.
 
 Environment:
   DOCFLOW_KERNEL          the command to invoke. Defaults to `docflow-kernel`.
+  KERNEL_VERBOSE          1 for the same trace as `--verbose`.
   KERNEL_ORCHESTRATOR_OUT the output directory, if you prefer it to --out.
 
 Several of K1's commands need a job that exists. This driver runs `plan` and

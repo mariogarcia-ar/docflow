@@ -29,12 +29,14 @@ DEFAULT_ROOT="registry"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/kernel/kernel-registry.sh [root]
+Usage: scripts/kernel/kernel-registry.sh [root] [-v|--verbose]
 
   root          the registry root to inspect. Default: registry
+  -v, --verbose print the command each line came from, as it ran.
 
 Environment:
   DOCFLOW_KERNEL        the command to invoke. Defaults to `docflow-kernel`.
+  KERNEL_VERBOSE        1 for the same trace as `--verbose`.
   KERNEL_REGISTRY_ROOT  the registry root, if you prefer it to the positional.
   KERNEL_REGISTRY_KEY   an asset key to read with `show`, by default the first one
                         `validate` reports.
