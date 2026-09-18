@@ -285,6 +285,227 @@ made on both.
 
 ---
 
+## The same operations from `docflow-kernel`
+
+Four of K5's seven commands are `now`; the other three (`ps`, `pull`, `generate`) are
+`MVP` and exit `4`. Unlike K2 and K3 there is no operation here that the CLI cannot
+reach at all — every `now` operation has a command:
+
+| Operation | Command | Flags |
+|---|---|---|
+| `capabilities` | `llm.local capabilities` | `--model` |
+| `warm` | `llm.local warm` | `--model` |
+| `structured` | `llm.local structured` | `--model`, `--prompt-file`, `--schema-file` |
+| `vision` | `llm.local vision` | `--model`, `--prompt-file`, `--image`, `--schema-file` |
+| `ps`, `pull`, `generate` | — | `MVP` — exit `4` |
+
+**`--model` is required on every one of them and there is no default**, which is
+`kernel-cli.md` §8 taking effect rather than a gap. The three files the `now` commands
+take are ordinary files on disk: `--prompt-file` and `--schema-file` for the prompt and
+the JSON Schema, `--image` for the picture `vision` reads. All the examples below used
+`/tmp/p.txt`, `/tmp/s.json` and a fixture image.
+
+Every block is a real invocation quoted verbatim, trimmed at `...` only where the
+envelope repeats `value` inside `evidence`. These calls reach a **live Ollama** and are
+`sampled`, so the *text* a model returns will differ between runs; what is stable, and
+what these blocks are chosen to show, is the **shape** — the keys, the digest, and the
+exit code.
+
+### `llm.local capabilities --model <tag>`
+
+```console
+$ docflow-kernel llm.local capabilities --model granite3.1-moe:1b
+# value.terms:    { "model": "granite3.1-moe:1b",
+#                   "model_revision": "3269ce3e31ea68da5ddb7926628b5bb1d25146d4..." }
+# value.observed: { "model": "granite3.1-moe:1b",
+#                   "model_revision": "3269ce3e...",
+#                   "first_seen_revision": "3269ce3e...",
+#                   "revision_changed": false,
+#                   "num_ctx": null, "params": {},
+#                   "tag_is_moving": true,
+#                   "family": "granitemoe", "parameter_size": "1.3B",
+#                   "quantization": "Q8_0",
+#                   "capabilities": ["completion", "tools"],
+#                   "supports_vision": false }
+# exit 0
+```
+
+Three fields here are the kernel's whole reason for existing, and all three are
+visible above:
+
+- **`model_revision` is a digest, not the tag.** `granite3.1-moe:1b` is a moving
+  label; the digest is the identity, and it is what goes into the cache key.
+- **`first_seen_revision` and `revision_changed`** are the comparison. The second
+  reports `false` because this is the first time the workspace has seen this model. An
+  operator who runs `ollama pull granite3.1-moe:1b` and re-asks gets `true` — the tag
+  now points at different bytes, and a stage marked `done` against the old digest is
+  no longer the same work.
+- **`tag_is_moving: true`** says the tag is a tag (not a digest), so a caller can see
+  *why* the revision is worth recording.
+
+`num_ctx` is the **loaded** window rather than the declared one, and `null` means *not
+currently loaded*. It is read from Ollama's `/api/ps`, which reports only loaded
+models, and the declared window in the model's metadata is deliberately **not**
+substituted for it — a model whose card says 8192 can load under a 4096 window, and
+reporting the declared number would report a figure nothing used. So `capabilities`,
+which loads nothing, reads `null`; the window becomes visible on the commands that
+actually *use* the model, and the `structured` block below reports `num_ctx: 4096`.
+
+**`warm` does not fill this field in**, despite the name suggesting it loads the
+model: measured here, `capabilities` *after* a `warm` still reported `num_ctx: null`.
+It is a generation that fills it, and the helper is called after the generation on
+purpose — a pre-call read would report the *previous* call's window.
+
+### `llm.local warm --model <tag>`
+
+```console
+$ docflow-kernel llm.local warm --model granite3.1-moe:1b
+# value.observed.warm: true
+# value.terms.adapter_revision: "ollama 0.31.1"
+# value.measurements: { "warm_latency_ms": 1366.552 }
+# exit 0
+```
+
+`warm` asks the runtime to load the model **without asking it a question**, so the
+first real question later is not paying for the load. `measurements` carries one
+number, and it is labelled `warm_latency_ms` rather than being an unqualified
+`latency_ms` — conflating a load with a generation would make the two
+indistinguishable in a trace.
+
+### `llm.local structured`
+
+```console
+$ docflow-kernel llm.local structured --model smollm2:latest \
+    --prompt-file /tmp/p.txt --schema-file /tmp/s.json
+# value: { "total": "1500" }
+# evidence.measurements: { "prompt_tokens": 44.0, "prompt_characters": 34.0,
+#                          "completion_tokens": 10.0, "total_duration_ms": 1776.807 }
+# evidence.observed:     { "model_revision": "cef4a1e0...",
+#                          "adapter_revision": "ollama 0.31.1",
+#                          "num_ctx": 4096, "params": {},
+#                          "done_reason": "stop",
+#                          "raw_completion": "{\"total\": \"1500\"}",
+#                          "vision": false, "attempts": 1 }
+# exit 0
+```
+
+**`value` is the parsed object; `raw_completion` is the text it was parsed from.** Both
+are reported, and the second is not a debugging nicety: it is the difference between
+*the model said `"1500"`* and *something produced `1500`*. Without it, a parse that
+quietly coerced a type would look like a model that answered correctly.
+
+`done_reason: "stop"` is the field to look at when a value is missing. It says the
+model finished on its own rather than being cut, which is why this call has `value`
+and no `reason`.
+
+**The digest is in `terms`, and the token counts are in `measurements`** — the split
+is the boundary's: an identity is a term (it feeds the cache key), a count is a
+measurement (it describes the work). `call_record` is `null` on a local model, because
+there is no provider request to bill and no `request_id` to record — that field is K6's.
+
+#### Truncation is a refusal, and the message names the cause
+
+```console
+$ DOCFLOW_OLLAMA_NUM_PREDICT=8 docflow-kernel llm.local structured \
+    --model smollm2:latest --prompt-file /tmp/p.txt --schema-file /tmp/s.json
+# value: null
+# reason.code: "truncated_output"
+# reason.message: "the generation was cut by the context window or the token
+#   ceiling (done_reason='length'), so the answer is incomplete. It is reported as
+#   truncated rather than parsed: a cut that lands after the last complete field
+#   parses cleanly, which is how a partial answer is mistaken for a whole one."
+# evidence.observed.done_reason: "length"
+# exit 2
+```
+
+Exit **2** is the document's answer, not a usage error: the request was well formed,
+and what the model produced cannot be used. **The whole point is that a cut answer is
+never parsed as if it were complete**, and the message says why that is not
+pedantry: *"a cut that lands after the last complete field parses cleanly, which is
+how a partial answer is mistaken for a whole one."* `{ "total": "15` would fail to
+parse and be noticed; a cut two fields later would parse perfectly and be published
+as an answer the model never gave. The evidence still carries `done_reason: "length"`,
+so the cause stays visible on the refusal.
+
+`DOCFLOW_OLLAMA_NUM_PREDICT` is the environment knob used to *provoke* this for the
+docs; it is not a product setting.
+
+### `llm.local vision`
+
+```console
+$ docflow-kernel llm.local vision --model qwen2.5vl:3b \
+    --prompt-file /tmp/vp.txt --image tests/fixtures/expected-extraction/dbc07b17-....jpg \
+    --schema-file /tmp/vs.json
+# value: { "description": "Un recibo de un cliente que muestra detalles como el
+#                         número de cuenta, fecha y hora del pago." }
+# evidence.observed.vision: true
+# evidence.observed.model_revision: "fb90415c...e71a1"
+# exit 0
+```
+
+The same envelope as `structured`, with one flag changed (`--image` instead of none)
+and one field flipped: **`vision: true`**. That field is why the two commands are not
+the same command: a multimodal model and a text model take different paths through
+the adapter, and a caller reading a trace can see which one produced the answer.
+
+Note the answer itself is in Spanish, because the prompt was — the kernel passes the
+prompt through and does not translate it.
+
+### A model that is not there
+
+```console
+$ docflow-kernel llm.local capabilities --model no-such-model:latest
+# value: null
+# reason.code: "model_not_pulled"
+# reason.message: "the model 'no-such-model:latest' is not present in this Ollama
+#   runtime. Pull it first: `ollama pull no-such-model:latest`. The available
+#   models are ['granite3.1-moe:1b', ...]"
+# exit 3
+```
+
+Exit **3**, and the message carries its own remedy — including the exact `ollama pull`
+line to run. This is the difference between *the call could not be made* (`3`) and *the
+document answered no* (`2`): nothing was asked of the model, because there was nothing
+to ask.
+
+### The exit codes, in one table
+
+| Exit | Meaning | Where K5 produces it |
+|---|---|---|
+| `0` | A value was produced | all four `now` commands |
+| `2` | The document's answer | `truncated_output`; `unsupported_format` |
+| `3` | The call could not legitimately be made | `model_not_pulled`; `model_unknown`; `role_conflict`; `engine_unavailable` when Ollama is not running |
+| `4` | Usage: bad flag, `MVP` | `llm.local ps`, `pull`, `generate` |
+
+The schema on `--schema-file` is passed to the runtime's `format` field as a schema
+**object**, so it constrains generation — and there is deliberately **no check after
+the fact**. A model can satisfy a schema structurally and still be useless: asked for
+`{"total": string, "cuit": string, "fecha": string}` with
+`additionalProperties: false`, `smollm2:latest` answered
+`{"total": 1500, "cuit": "", "fecha": ""}` with **exit `0`** — a conforming
+shape and an empty answer. That is reported as-is. The adapter's job is not to make a
+small model correct; it is to report what the model said and which bytes said it.
+
+And one exit code that is **wrong**, in the same family as the defects the other two
+pages report. Because `--model` is genuinely required, omitting it does not reach a
+refusal — the handler raises, and the dispatcher's exception handler turns that into
+exit `1`:
+
+```console
+$ docflow-kernel llm.local capabilities
+ValueError: --model is required: a capability question is about a model, and this
+surface has no default one (kernel-cli.md §8 forbids a default model).
+# exit 1     <- should be 3: the call could not be made, the code is not broken
+```
+
+Exit `1` means *"unexpected internal error"* with a traceback, and a missing
+`--model` is a caller's omission that `--model is required` describes precisely. It is
+one defect in how a missing required parameter becomes an exit code — the `--pages 9`
+case on the `pdf` page is the same collapse — so a caller matching on exit codes
+should currently treat `3` and `4` and `1` alike for a missing parameter.
+
+---
+
 ## Reading a result
 
 ```python
@@ -360,15 +581,14 @@ sampling parameter is not a model, an engine or a threshold.
 
 | Kernel | Command | State |
 |---|---|---|
+| K1 `orchestrator` | `orchestrator …` | **Landed** — the closing flow |
 | K2 `pdf` | `pdf probe` / `classify` / `render` / `split` | landed |
 | K3 `image` | `image info` / `legibility` / `crop` / `rescale` | landed |
 | K4 `kernel.ocr` | `ocr read` | landed (Docling) |
-| K5 `kernel.llm.local` | this page | landed (Ollama) |
-| K6 `kernel.llm.frontier` | `llm.frontier …` | `E04-06` |
-| K7 `store` | — | landed |
-| K8 `registry` | — | landed |
-| K1 `orchestrator` | **Landed** — the closing flow |
+| K6 `kernel.llm.frontier` | `llm.frontier …` | **landed, but unreachable here** — its probe needs a provider key this workspace does not have |
+| K7 `store` | `store put` / `get` / `verify` / `ls` | landed |
+| K8 `registry` | `registry validate` / `show` / `ls` | landed |
 
-Seven of eight are available to `docflow-kernel --list` today: every kernel but
-K6, which needs a provider key. (There is no `inventory` subcommand — `--list` is
-the flag.)
+Seven of the eight can serve a call in this workspace — **K6 is the exception**, and
+`docflow-kernel --list` reports it `available: false` with the reason. (There is no
+`inventory` subcommand — `--list` is the flag.)
