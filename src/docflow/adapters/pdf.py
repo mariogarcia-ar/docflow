@@ -131,6 +131,34 @@ _INVISIBLE_RENDER_MODE: Final[str] = "3"
 _RENDER_MODE_PATTERN: Final[re.Pattern[bytes]] = re.compile(rb"(\d+(?:\.\d+)?)\s+Tr\b")
 
 
+def _consecutive_runs(pages: Sequence[int]) -> list[tuple[int, ...]]:
+    """Group a page selection into maximal runs of consecutive ascending pages.
+
+    ``[1, 2, 3]`` is one run; ``[1, 2, 5, 6, 7]`` is two; ``[3, 1]`` is two runs of
+    one page each, **in the order requested**. That last case is the reason this
+    groups rather than sorts: the order of the selection is part of the request, and
+    the engine's own range insertion would return the pages in document order.
+
+    The grouping exists because the reader copies a page's resources per insertion:
+    inserting a 59-page range as 59 single-page calls produced a file 5.2 times the
+    size of the same pages inserted as one run.
+
+    Args:
+        pages: The one-based page numbers, in the order requested.
+
+    Returns:
+        The runs, in the order they must be inserted.
+
+    """
+    runs: list[tuple[int, ...]] = []
+    for page in pages:
+        if runs and page == runs[-1][-1] + 1:
+            runs[-1] = (*runs[-1], page)
+        else:
+            runs.append((page,))
+    return runs
+
+
 class PyMuPdfVendor:
     """A :class:`~docflow.kernels.pdf_vendor.PdfVendor` over PyMuPDF and poppler.
 
@@ -485,6 +513,19 @@ class PyMuPdfVendor:
     def split_pdf(self, path: Path, pages: Sequence[int]) -> CutDocument:
         """Cut a page range out of the file as a new document.
 
+        **The selection is inserted in runs, not one page at a time.** A loop that
+        called ``insert_pdf`` once per page copied the page's *resources* on every
+        call, so a 59-page document came out at 3773437 bytes against 721297 for the
+        same pages inserted as runs - a factor of 5.2, with the font objects
+        duplicated page by page (1863 ``/Font`` references against 170). The pages
+        and their content were identical either way; only the packaging was wrong.
+
+        Grouping is safe because the runs preserve the requested order: the caller
+        may legitimately name pages out of order, and ``[3, 1]`` becomes the runs
+        ``(3,)`` and ``(1,)`` rather than one sorted span. Nothing is reordered,
+        merged or de-duplicated here - the kernel has already refused a selection
+        that repeats a page, and the runs are derived from the selection *as given*.
+
         Args:
             path: The PDF to split.
             pages: The one-based page numbers to keep, in order.
@@ -501,8 +542,10 @@ class PyMuPdfVendor:
 
         try:
             extracted = engine.open()
-            for page in pages:
-                extracted.insert_pdf(document, from_page=page - 1, to_page=page - 1)
+            for run in _consecutive_runs(pages):
+                extracted.insert_pdf(
+                    document, from_page=run[0] - 1, to_page=run[-1] - 1
+                )
 
             payload = stabilise_file_id(extracted.tobytes(deflate=True, garbage=3))
             sizes = tuple(

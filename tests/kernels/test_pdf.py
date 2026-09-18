@@ -899,6 +899,65 @@ def test_split_of_a_different_range_produces_different_bytes(
     )
 
 
+# --- Criterion: the selection is inserted in runs ----------------------------
+
+
+def test_a_contiguous_range_is_inserted_in_one_call(
+    three_pages_pdf: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A contiguous selection reaches the engine as **one** insertion, not three.
+
+    This is the fix for a measured defect: calling ``insert_pdf`` once per page
+    copies the page's resources every time, so a 59-page document came out at
+    3773437 bytes against 721297 for the same pages inserted as runs - 5.2 times the
+    size, with 1863 ``/Font`` references against 170. The pages and their content
+    were identical either way; only the packaging was wrong.
+
+    The assertion is on the **calls**, because the size is a consequence: a test that
+    measured bytes alone would pass for any implementation that happened to compress
+    well, and would not say which behaviour had been restored.
+    """
+    calls: list[tuple[int, int]] = []
+    real = pymupdf.Document.insert_pdf
+
+    def recording(self, source, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append((kwargs.get("from_page", 0), kwargs.get("to_page", 0)))
+        return real(self, source, **kwargs)
+
+    monkeypatch.setattr(pymupdf.Document, "insert_pdf", recording)
+
+    pdf.split(three_pages_pdf, [1, 2, 3], vendor=VENDOR)
+
+    assert calls == [(0, 2)], (
+        f"three consecutive pages must be one insertion covering 0..2, got {calls}"
+    )
+
+
+def test_a_non_contiguous_range_is_inserted_in_runs_in_order(
+    three_pages_pdf: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A gap produces two insertions, and a reversed pair keeps its order.
+
+    The complement of the test above, and the one that would catch a fix that
+    achieved the size win by ignoring the selection: one span from 0 to 2 would
+    include page 2, which was never asked for.
+    """
+    calls: list[tuple[int, int]] = []
+    real = pymupdf.Document.insert_pdf
+
+    def recording(self, source, **kwargs):  # type: ignore[no-untyped-def]
+        calls.append((kwargs.get("from_page", 0), kwargs.get("to_page", 0)))
+        return real(self, source, **kwargs)
+
+    monkeypatch.setattr(pymupdf.Document, "insert_pdf", recording)
+
+    pdf.split(three_pages_pdf, [3, 1], vendor=VENDOR)
+
+    assert calls == [(2, 2), (0, 0)], (
+        f"a reversed selection must stay in the order requested, got {calls}"
+    )
+
+
 # --- Criterion: no threshold constant lives in the module -------------------
 
 

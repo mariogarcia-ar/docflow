@@ -29,6 +29,7 @@ $ docflow-kernel pdf layout tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a
 
 
 $ docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 1,2
+$ docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 11-22
 
 $ docflow-kernel pdf facts <file>
 
