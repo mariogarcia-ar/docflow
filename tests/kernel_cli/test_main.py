@@ -94,6 +94,7 @@ from docflow.kernel_cli.main import (
 from docflow.kernels import store
 from docflow.kernels.image import InverseMap
 from docflow.kernels.types import (
+    Artifact,
     Box,
     Bytes,
     CallRecord,
@@ -2004,3 +2005,99 @@ def test_main_returns_the_usage_code_and_writes_usage_to_stderr(
     assert code == EXIT_USAGE
     assert captured.out == ""
     assert "usage:" in captured.err
+
+
+# --- The delivered name does not depend on --save ----------------------------
+
+
+def test_the_declared_name_is_identical_with_and_without_save(
+    tmp_path: pathlib.Path,
+) -> None:
+    """One input, one descriptor: ``--save`` decides *where*, never *what*.
+
+    The defect this closes was reported from the outside: ``pdf split --pages 1-3``
+    answered ``MetodoCITRA17-APL-p1-3.pdf`` with ``--save`` and a bare digest without
+    it, so one invocation produced two different descriptors depending on a flag that
+    is supposed to be about storage. A consumer reading ``delivery_name`` could not
+    tell which of the two to expect, and the name is precisely the fact that says
+    *these were pages 1-3*.
+    """
+    handler = RecordingHandler(bytes_call())
+    operation = Operation(
+        "pdf",
+        "split",
+        handler,
+        positional="file",
+        delivery_name=lambda params: "documento-p1-3",
+    )
+    argv = ["pdf", "split", "documento.pdf", "--pages", "1-3"]
+
+    unsaved = envelope_of(run(argv, operation))["value"]
+    saved = envelope_of(run([*argv, "--save", str(tmp_path)], operation))["value"]
+
+    assert unsaved["delivery_name"] == saved["delivery_name"] != "", (
+        "the declared name is a property of what the command produced, not of "
+        "whether the caller asked for the bytes: reporting the digest on one path "
+        "and the name on the other makes one command answer two descriptors"
+    )
+    assert unsaved["sha256"] == saved["sha256"], "the bytes are the same bytes"
+    assert unsaved["delivery_name"] == "documento-p1-3.png", (
+        "the suffix still comes from the media type, on both paths"
+    )
+    assert unsaved["path"] is None, "nothing was written, so nothing has a location"
+    assert saved["path"] is not None, "the saved path is the one thing that differs"
+
+
+def test_a_mapping_holding_two_buffers_labels_each_by_its_own_digest() -> None:
+    """One name for the whole answer would mislabel the second buffer.
+
+    This is why the delivery name travels as a digest-keyed map rather than as a
+    single string. ``image tile`` reports several tiles in one answer, and the encoder
+    walks into nested mappings - so a lone name threaded down would be handed to
+    *every* buffer it reached, and the second tile would be announced under the first
+    tile's name. The descriptor would look plausible and be wrong, which is the worst
+    shape a defect can take here.
+
+    The two buffers are given different bytes so their digests differ, and different
+    declared names, which is the only way the mix-up is observable at all.
+    """
+    first = b"\x89PNG\r\n\x1a\n" * 2
+    second = b"\x89PNG\r\n\x1a\n" * 7
+    digests = [hashlib.sha256(first).hexdigest(), hashlib.sha256(second).hexdigest()]
+    call = Call(
+        result=KernelResult(
+            value=make_evidence(
+                tiles=[
+                    Artifact(
+                        sha256=digests[0],
+                        size_bytes=len(first),
+                        media_type="image/png",
+                        path=None,
+                    ),
+                    Artifact(
+                        sha256=digests[1],
+                        size_bytes=len(second),
+                        media_type="image/png",
+                        path=None,
+                    ),
+                ]
+            ),
+            evidence=make_evidence(),
+            reason=None,
+        ),
+        delivered={
+            digests[0]: "documento-tile-1.png",
+            digests[1]: "documento-tile-2.png",
+        },
+    )
+
+    tiles = cli._envelope(call)["value"]["observed"]["tiles"]  # pylint: disable=W0212
+    names = [tile["delivery_name"] for tile in tiles]
+
+    assert names == ["documento-tile-1.png", "documento-tile-2.png"], (
+        "each buffer is labelled with the name declared for its own digest; a single "
+        f"threaded name would report {names[0]!r} for both"
+    )
+    assert names[0] != names[1], (
+        "two buffers with one name is exactly the ambiguity the digest key removes"
+    )

@@ -383,8 +383,11 @@ $ docflow-kernel image crop <file> --region 10,10,50,50 --save /tmp/crops
 # exit 0
 ```
 
-Only `observed.image` changes: it gains the hash of what was written, the path relative
-to the save root, and the `delivery_name` a consumer selects a reader by. As with every
+Only `observed.image` changes: it gains the path relative to the save root, and with it
+the fact that the bytes are on disk. The `sha256` and the `delivery_name` a consumer
+selects a reader by are present **with or without `--save`** — the name describes
+`<doc>-crop-10-10-50-50.png`, which is a fact about the region, not about the save
+root; without `--save` the same descriptor arrives with `"path": null`. As with every
 `--save`, **two files with the same bytes land in the tree**: `artifacts/<sha256>` is the
 store's copy (its name *is* its identity, so it carries no suffix) and
 `<sha256>.png` sits at the save root under the suffixed name — see `kernel-pdf.md`'s

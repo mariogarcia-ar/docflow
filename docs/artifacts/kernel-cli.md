@@ -199,6 +199,8 @@ A 40 MB rendered page inlined as base64 is not testable and not diffable. So std
 |---|---|
 | `{ "sha256": "9f2a…", "bytes": 41889024, "media_type": "image/png", "page": 1, "dpi": 300 }` | The same descriptor **plus** the bytes written twice: `<dir>/artifacts/<sha256>` (the store's copy) and `<dir>/<name>.png` (the delivered copy) |
 
+The two rows differ in **one** field, and it is `path`: `null` when nothing was written, the store-relative location when something was. The `sha256` and the `delivery_name` are identical either way, because both describe the bytes the command produced rather than where the caller asked them to land. A descriptor that changed its name with `--save` would make one invocation answer two different things, which no consumer can anticipate.
+
 `--save` routes through K7, so the recorded hash is the real content hash of what was written, not a hash of something that was only in memory. That is what makes a downstream `store verify` meaningful.
 
 **Two copies are written, and the second one exists because the first cannot carry a suffix.** A store is content-addressed: the file's name *is* its identity, and `get`/`verify` have nothing but the hash to reach it by (`kernels/store.py`, FR-11). Appending an extension there would give one artifact two names to look under, and would make the same bytes stored under two media types two different files.
@@ -212,6 +214,8 @@ So the store keeps `<dir>/artifacts/<sha256>`, and `--save` writes a **delivery 
 ```
 
 `path` is the artifact of record, relative to the save root; `delivery_name` is the copy's name, *directly* under the save root — not under `artifacts/`. Both files hold the same bytes; the store's is the one `verify` checks.
+
+**`delivery_name` is reported whether or not `--save` was given.** The name describes what the command produced — this document, these pages, this resolution — and that is a fact about the call, not about where the caller asked the bytes to land. Without `--save` the descriptor carries the same `sha256` and the same `delivery_name`, and `path` is `null`, which is the field saying *these bytes are in memory and nowhere else*. Reporting the digest on one path and the readable name on the other made one command answer two different descriptors for one input, which a consumer cannot see coming.
 
 **The name is declared by the command, and it carries every parameter that changes the bytes.** A digest identifies a file but tells a person nothing, so each command names its output after what it actually produced:
 

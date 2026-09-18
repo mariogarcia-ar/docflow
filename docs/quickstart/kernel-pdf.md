@@ -495,10 +495,14 @@ $ ls /tmp/out/*.png
 # ...242823d2...-pall-dpi72.png     <- a wider selection is a third artifact
 ```
 
-`delivery_name` in the descriptor is that name, so the envelope tells you the file exists
-and what it is called, without reading the directory. A media type this surface does not
-know — the `application/octet-stream` that `store get` reads bytes back as — yields the
-bare digest and **no delivery copy**, because a name nobody measured is the kind of
+`delivery_name` in the descriptor is that name, so the envelope tells you the file
+exists and what it is called, without reading the directory — and it is reported
+**with or without `--save`**. The name describes what the command produced, not where
+the bytes were asked to land, so `render` and `split` answer the same `sha256` and the
+same `delivery_name` either way; only `path` differs, and it is `null` when nothing
+was written. A media type this surface does not know — the
+`application/octet-stream` that `store get` reads bytes back as — yields the bare
+digest and **no delivery copy**, because a name nobody measured is the kind of
 stand-in this code refuses everywhere else.
 
 Now the matrix row. `kernel-cli.md` §12 row 4 is *"a 150 DPI scan rendered at 300 and
@@ -576,14 +580,23 @@ $ docflow-kernel pdf layout doc.pdf --pages 1-3 | jq -r '.value' > doc.layout.tx
 output lands in one directory whichever mechanism the command supports:
 
 ```console
-$ scripts/kernel/kernel-pdf.sh --save /tmp/out
-  tokens(p1-3)             exit 0  108 token(s) on page(s) [1, 3]  ->  tokens-p1-3.json
-  layout(p1-3)             exit 0  1263 char(s)  ->  layout-p1-3.json
-  render(p1-3,dpi72)       exit 0  63306 bytes -> ...-p1-3-dpi72.png
-  split(p1-3)              exit 0  230451 bytes -> ...-p1-3.pdf
+$ PAGES=1-3 scripts/kernel/kernel-pdf.sh --save /tmp/out
+K2 - 'now' commands
+  probe                      exit 0  59 page(s)  ->  probe.json
+  classify(p1)               exit 0  shape=mixed chars=358 images=4  ->  classify-p1.json
+  tokens(p1-3)               exit 0  108 token(s) on page(s) [1, 3]  ->  tokens-p1-3.json
+  layout(p1-3)               exit 0  1263 char(s)  ->  layout-p1-3.json
+  render(p1-3,dpi72)         exit 0  63306 bytes -> MetodoCITRA17-APL-p1-3-dpi72.png
+  split(p1-3)                exit 0  230451 bytes -> MetodoCITRA17-APL-p1-3.pdf
 ```
 
-The two redirected files hold the **whole envelope**, not the extracted value — so the
+**Six `now` commands run and six persist something.** Two of them return a buffer —
+`render` and `split` — and `--save` is what writes those bytes; the other four
+(`probe`, `classify`, `tokens`, `layout`) answer with JSON only, so the driver
+redirects their stdout. Either way a run leaves a file per command in the directory,
+rather than only the ones the surface can deliver itself.
+
+The redirected files hold the **whole envelope**, not the extracted value — so the
 `evidence` and the `reason` survive beside the answer, and `jq -r '.value'` gets you the
 text back. A run whose selection does not exist writes **no file at all** rather than an
 empty one.
@@ -591,7 +604,8 @@ empty one.
 Verified from a clean working directory: the only files present afterwards are the
 ones you wrote. Nothing is created under the save root, and **the response carries no
 `path`** — there is no stored copy to point at, unlike `render` and `split`, whose
-descriptors carry both `path` and `delivery_name`.
+descriptors carry a non-null `path` under `--save`. (Their `delivery_name` is not the
+difference: that is reported either way.)
 
 That asymmetry is worth stating plainly: **`layout` is the one reading command with no
 on-disk artifact.** If you are assembling a pipeline that needs the layout persisted
@@ -739,12 +753,12 @@ document: tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
   save             var/pdf
 
 K2 - 'now' commands
-  probe                    exit 0  59 page(s)
-  classify(p1)             exit 0  shape=mixed chars=358 images=4
+  probe                    exit 0  59 page(s)  ->  probe.json
+  classify(p1)             exit 0  shape=mixed chars=358 images=4  ->  classify-p1.json
   tokens(p1-3)             exit 0  108 token(s) on page(s) [1, 3]  ->  tokens-p1-3.json
   layout(p1-3)             exit 0  1263 char(s)  ->  layout-p1-3.json
-  render(p1-3,dpi72)       exit 0  63306 bytes -> ...-p1-3-dpi72.png
-  split(p1-3)              exit 0  230451 bytes -> ...-p1-3.pdf
+  render(p1-3,dpi72)       exit 0  63306 bytes -> MetodoCITRA17-APL-p1-3-dpi72.png
+  split(p1-3)              exit 0  230451 bytes -> MetodoCITRA17-APL-p1-3.pdf
 
 K2 - 'MVP' commands (must exit 4)
   facts(p1)                exit 4  pdf facts is not implemented in Stage 1 ...
@@ -758,11 +772,12 @@ summary: 8 command(s)
 ```
 
 **`--save` puts every output in one directory, by whichever route the command
-supports.** `render` and `split` take the kernel's own `--save` and write through K7,
-while `tokens` and `layout` answer a list and a `str` — which `--save` refuses, because
-it routes *bytes* — so their stdout is redirected to the same place. Without
-`--save`, nothing is written and the two that return bytes report a descriptor whose
-`path` is null, because bytes stay out of band by default.
+supports.** `render` and `split` take the kernel's own `--save` and write through K7;
+the other four answer JSON with no buffer — `tokens` a list, `layout` a `str`,
+`probe` and `classify` an observation record — and `--save` routes *bytes*, so their
+stdout is redirected to the same place instead. Without `--save`, nothing is written
+and the two that return bytes report a descriptor whose `path` is null, because bytes
+stay out of band by default. Their `delivery_name` is reported either way.
 
 The run's parameters come from the same environment variables the kernel's flags do,
 so the driver can be pointed at any document without editing it. `PAGES` takes the

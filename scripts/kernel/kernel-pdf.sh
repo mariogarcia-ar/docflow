@@ -159,25 +159,30 @@ echo
 
 echo "K2 - 'now' commands"
 
-k_run "probe" pdf probe "$DOCUMENT"
-k_run "classify(p$PAGE)" pdf classify "$DOCUMENT" --page "$PAGE"
-
-# `tokens` and `layout` answer a list and a `str`, and **neither can take
-# `--save`**: that flag routes *bytes* through K7 and refuses anything else with
-# *"this one returned str"* (`kernel-cli.md` §10). So their stdout is redirected
-# into the same directory `--save` would have written to - one place for a run's
-# output, whichever mechanism the command supports.
+# Every reading command's output lands in the save directory, by whichever route the
+# command supports. Two commands need a route each, and the driver hides the
+# difference:
 #
-# What lands there is the **whole envelope**, not the extracted value: the
-# evidence and the `reason` stay beside the answer, so the file records how the
-# answer was measured and not only what it was.
+#   - `render` and `split` return `Bytes`, so they take the kernel's own `--save`,
+#     which routes the buffer through K7;
+#   - `probe`, `classify`, `tokens` and `layout` answer an observation record, a
+#     list or a `str` - none of which `--save` accepts, because it is scoped to
+#     commands *returning bytes* (`kernel-cli.md` §10). Their stdout is redirected
+#     to the same directory instead.
+#
+# What the redirect writes is the **whole envelope**, not the extracted value, so
+# the `evidence` and the `reason` stay beside the answer.
 if [ -n "$SAVE_DIR" ]; then
+  k_save "probe" "$SAVE_DIR/probe.json" pdf probe "$DOCUMENT"
+  k_save "classify(p$PAGE)" "$SAVE_DIR/classify-p$PAGE.json" pdf classify "$DOCUMENT" --page "$PAGE"
   k_save "tokens(p$PAGES)" "$SAVE_DIR/tokens-p$PAGES.json" pdf tokens "$DOCUMENT" --pages "$PAGES"
   k_save "layout(p$PAGES)" "$SAVE_DIR/layout-p$PAGES.json" pdf layout "$DOCUMENT" --pages "$PAGES"
 
   k_run "render(p$PAGES,dpi$DPI)" pdf render "$DOCUMENT" --pages "$PAGES" --dpi "$DPI" --save "$SAVE_DIR"
   k_run "split(p$PAGES)" pdf split "$DOCUMENT" --pages "$PAGES" --save "$SAVE_DIR"
 else
+  k_run "probe" pdf probe "$DOCUMENT"
+  k_run "classify(p$PAGE)" pdf classify "$DOCUMENT" --page "$PAGE"
   k_run "tokens(p$PAGES)" pdf tokens "$DOCUMENT" --pages "$PAGES"
   k_run "layout(p$PAGES)" pdf layout "$DOCUMENT" --pages "$PAGES"
   k_run "render(p$PAGES,dpi$DPI)" pdf render "$DOCUMENT" --pages "$PAGES" --dpi "$DPI"

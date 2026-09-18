@@ -837,13 +837,16 @@ supports.** That is two routes, and the driver hides the difference:
 | The command | How its answer is persisted |
 |---|---|
 | `render`, `split`, `image crop`, `image rescale`, `store get` | the kernel's own `--save`, which routes **bytes** through K7 |
-| `tokens`, `layout` | redirected stdout — the whole envelope, written to `<dir>/tokens-p1-3.json` |
+| `probe`, `classify`, `tokens`, `layout` | redirected stdout — the whole envelope, written to `<dir>/<command>-<selection>.json` |
 
 The second row is not a workaround for an oversight. `--save` is scoped by
 `kernel-cli.md` §10 to *"any command returning bytes"*, and `_apply_save` refuses
 anything else with *"this one returned str"*. `tokens` answers a list and `layout` a
-`str`, so neither can take the flag — and giving them one would mean inventing a
+`str`; `probe` and `classify` answer an observation record. None of the four carries
+bytes, so none can take the flag — and giving them one would mean inventing a
 serialisation and a media type, which is a contract change rather than a convenience.
+The redirect is what makes *every* reading command leave a file, which is the property
+that matters when a run is what you are comparing against the next one.
 
 What the redirect writes is the **whole envelope**, not the extracted value: the
 `evidence` and the `reason` stay beside the answer, so a file records how the answer

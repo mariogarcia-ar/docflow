@@ -593,8 +593,14 @@ class Call:
         result: The kernel's outcome, in the two-state shape the boundary fixes.
         call_record: What the provider call cost and which revision answered, or
             None for a kernel that made no provider call.
-        delivered_as: The name the bytes were delivered under at the ``--save``
-            root, or None when nothing was saved. It is a field here rather than on
+        delivered: Digest to the name that buffer is delivered under, or empty when
+            nothing was saved. A **map keyed by digest** rather than a single name,
+            because a command's evidence can carry more than one buffer
+            (``image tile`` will, when it lands) and the encoder walks into nested
+            mappings: one name for the whole answer would label every buffer in it
+            with the same name - which is exactly the silent mix-up that
+            ``BUFFER_KEYS``' declared key exists to prevent.
+            It is a field here rather than on
             :class:`~docflow.kernels.types.Artifact` because that type is frozen with
             four fields (`sad.md` §6) and because the name is a fact about *this
             surface's* handover rather than about the stored bytes: the artifact's
@@ -605,7 +611,7 @@ class Call:
 
     result: KernelResult[object]
     call_record: CallRecord | None = None
-    delivered_as: str | None = None
+    delivered: Mapping[str, str] = dataclasses.field(default_factory=dict)
 
 
 #: What a registered operation does. It receives the parsed operation parameters
@@ -710,7 +716,7 @@ def registered_operations() -> Mapping[tuple[str, str], Operation]:
 # --- The envelope ------------------------------------------------------------
 
 
-def _encode(value: object, *, delivered: str | None = None) -> object:
+def _encode(value: object, *, delivered: Mapping[str, str] | None = None) -> object:
     """Encode one value for the envelope.
 
     The seven boundary types are encoded **explicitly**, member by member, rather
@@ -721,11 +727,12 @@ def _encode(value: object, *, delivered: str | None = None) -> object:
 
     Args:
         value: The value to encode.
-        delivered: The name a saved buffer was delivered under, when this encoding
-            is the one that carries it. ``Artifact`` is frozen with four fields
-            (`sad.md` §6), so the name cannot live on the type - it is passed in for
-            the one descriptor that has one and left ``None`` everywhere else, which
-            keeps the fallback (the digest) in exactly one place.
+        delivered: Digest to delivered name, for the buffers this call would have
+            written. Keyed by digest rather than a single name because the encoder
+            walks into nested mappings and a command can carry more than one buffer:
+            a bare name would label every buffer in the record with it. ``Artifact``
+            is frozen with four fields (`sad.md` §6), so the name cannot live on the
+            type.
 
     Returns:
         A JSON-encodable structure.
@@ -748,14 +755,14 @@ def _encode(value: object, *, delivered: str | None = None) -> object:
             "size_bytes": value.size_bytes,
             "media_type": value.media_type,
             "path": value.path,
-            "delivery_name": delivered
+            "delivery_name": (delivered or {}).get(value.sha256)
             or _delivery_name(value.sha256, value.media_type),
         }
     if isinstance(value, Evidence):
         return {
-            "terms": _mapping(value.terms),
-            "measurements": _mapping(value.measurements),
-            "observed": _mapping(value.observed),
+            "terms": _mapping(value.terms, delivered=delivered),
+            "measurements": _mapping(value.measurements, delivered=delivered),
+            "observed": _mapping(value.observed, delivered=delivered),
         }
     if isinstance(value, Reason):
         return {"code": value.code, "message": value.message}
@@ -793,9 +800,9 @@ def _encode(value: object, *, delivered: str | None = None) -> object:
             "scale": value.scale,
         }
     if isinstance(value, Mapping):
-        return {str(key): _encode(item) for key, item in value.items()}
+        return _mapping(value, delivered=delivered)
     if isinstance(value, (list, tuple)):
-        return [_encode(item) for item in value]
+        return [_encode(item, delivered=delivered) for item in value]
 
     raise TypeError(
         f"no envelope encoding for {type(value).__name__}: the envelope carries "
@@ -805,7 +812,9 @@ def _encode(value: object, *, delivered: str | None = None) -> object:
     )
 
 
-def _mapping(values: Mapping[str, object]) -> dict[str, object]:
+def _mapping(
+    values: Mapping[str, object], *, delivered: Mapping[str, str] | None = None
+) -> dict[str, object]:
     """Encode a mapping, converting the immutable mapping proxies the boundary uses.
 
     `E01-01` recorded the obligation this satisfies: ``MappingProxyType`` has no
@@ -815,12 +824,19 @@ def _mapping(values: Mapping[str, object]) -> dict[str, object]:
 
     Args:
         values: The mapping to encode.
+        delivered: Digest to delivered name, threaded through so a buffer nested in
+            an ``Evidence`` - which is where ``image crop``'s is, because the bytes
+            travel with the inverse map - is labelled with the name its command
+            declared rather than with its digest.
 
     Returns:
         A plain mapping with encoded values.
 
     """
-    return {str(key): _encode(item) for key, item in values.items()}
+    encoded: dict[str, object] = {}
+    for key, item in values.items():
+        encoded[str(key)] = _encode(item, delivered=delivered)
+    return encoded
 
 
 #: Media type to the suffix a delivered name carries (`kernel-cli.md` §6).
@@ -879,6 +895,47 @@ def _delivery_name(sha256: str, media_type: str) -> str:
     return f"{sha256}{_DELIVERY_SUFFIXES.get(media_type, '')}"
 
 
+def _declared_name(
+    sha256: str,
+    media_type: str,
+    params: Mapping[str, object],
+    naming: DeliveryName | None,
+) -> str:
+    """Compose a buffer's delivery name from its content and its command's declaration.
+
+    The one place the name is decided, so that the two callers that need it cannot
+    disagree: :func:`_deliver`, which writes the copy, and :func:`_apply_save`, which
+    reports the name **whether or not** ``--save`` was given.
+
+    That second caller is why this is a function rather than three lines inside
+    ``_deliver``. The name is a property of what the command produces - *this
+    document, these pages, this resolution* - and not of whether the caller asked for
+    the bytes to be written. Computing it only on the writing path made one command
+    answer two different descriptors for the same input: the digest without
+    ``--save``, the readable name with it.
+
+    Args:
+        sha256: The buffer's digest, which is the fallback name's stem.
+        media_type: The buffer's media type, which decides the suffix.
+        params: The parameters the command was called with, for its naming callable.
+        naming: The command's naming callable, or None to use the digest.
+
+    Returns:
+        ``<stem><suffix>`` when the command declares a name and the media type
+        implies a suffix, and the digest-based name otherwise.
+
+    """
+    suffix = _DELIVERY_SUFFIXES.get(media_type, "")
+    if suffix == "" or naming is None:
+        return _delivery_name(sha256, media_type)
+
+    stem = naming(params)
+    if stem == "":
+        return _delivery_name(sha256, media_type)
+
+    return f"{stem}{suffix}"
+
+
 def _deliver(
     root: pathlib.Path,
     artifact: Artifact,
@@ -915,18 +972,13 @@ def _deliver(
         naming: The command's naming callable, or None to use the digest.
 
     Returns:
-        The name the copy was written under, or the digest when nothing was written -
-        which is what the descriptor reports either way, so a caller never has to
-        guess whether a second file exists.
+        The name the copy was written under, or the name it *would* have taken when
+        the media type implies no suffix and nothing is written - which is what the
+        descriptor reports either way, so a caller never has to guess whether a second
+        file exists.
 
     """
-    suffix = _DELIVERY_SUFFIXES.get(artifact.media_type, "")
-    name = _delivery_name(artifact.sha256, artifact.media_type)
-    if suffix != "" and naming is not None:
-        stem = naming(params)
-        if stem != "":
-            name = f"{stem}{suffix}"
-
+    name = _declared_name(artifact.sha256, artifact.media_type, params, naming)
     if name == artifact.sha256:
         return name
 
@@ -1039,8 +1091,8 @@ def _envelope(call: Call) -> Mapping[str, object]:
 
     """
     return {
-        "value": _encode(call.result.value),
-        "evidence": _encode(call.result.evidence),
+        "value": _encode(call.result.value, delivered=call.delivered),
+        "evidence": _encode(call.result.evidence, delivered=call.delivered),
         "reason": _encode(call.result.reason),
         "call_record": _encode(call.call_record),
     }
@@ -1085,24 +1137,6 @@ def _envelope_with_repetitions(
         for repetition in calls
     ]
     return envelope
-
-
-def _envelope(call: Call) -> Mapping[str, object]:
-    """Build the four-key envelope from one answer.
-
-    Args:
-        call: The answer to encode.
-
-    Returns:
-        The envelope, with ``value``, ``evidence``, ``reason`` and ``call_record``.
-
-    """
-    return {
-        "value": _encode(call.result.value, delivered=call.delivered_as),
-        "evidence": _encode(call.result.evidence, delivered=call.delivered_as),
-        "reason": _encode(call.result.reason),
-        "call_record": _encode(call.call_record),
-    }
 
 
 # --- Exit codes --------------------------------------------------------------
@@ -1511,7 +1545,20 @@ def _apply_save(
 
     """
     if save_dir is None:
-        return call
+        # **No save, but the name is still the command's.** A buffer's delivery name
+        # describes what the command produced - which document, which pages, which
+        # resolution - and that is a fact about the call, not about whether the caller
+        # asked for the bytes to be written. Reporting the digest here made one
+        # command answer two different descriptors for one input, which is a
+        # difference a consumer cannot see coming: `render --pages 1-3` said
+        # `MetodoCITRA17-APL-p1-3.pdf` with `--save` and a bare digest without it.
+        #
+        # The name is computed through the same helper the writing path uses, so the
+        # two cannot drift. Nothing is written, and `path` stays `None`, which is
+        # what tells a caller the bytes are not on disk.
+        return _named_without_saving(
+            call, params=params or {}, naming=naming, buffer_key=buffer_key
+        )
 
     value = call.result.value
     # A call that produced **no** value is passed through untouched, whatever its
@@ -1542,8 +1589,133 @@ def _apply_save(
             value=artifact, evidence=call.result.evidence, reason=call.result.reason
         ),
         call_record=call.call_record,
-        delivered_as=delivered,
+        delivered={artifact.sha256: delivered} if delivered else {},
     )
+
+
+def _named_without_saving(
+    call: Call,
+    *,
+    params: Mapping[str, object],
+    naming: DeliveryName | None,
+    buffer_key: str | None,
+) -> Call:
+    """Describe a buffer with the name its command declares, writing nothing.
+
+    Without ``--save`` the answer carries a ``Bytes``, and `_describe_bytes` reports
+    its digest with ``path: None``. That descriptor is right about the hash and about
+    the absence of a file, and it was wrong about the *name*: a command that declares
+    one - ``render``, ``split``, ``crop`` - should say ``<doc>-p1-3.pdf`` in both
+    cases, because the name is a property of what it produced.
+
+    Two shapes reach here, and they are the same two `_apply_save` handles with a
+    save directory:
+
+    - the buffer **is** the value (``render``, ``split``, ``store get``);
+    - the buffer sits inside an ``Evidence`` under a declared key (``image crop``),
+      because the bytes must travel with the inverse map.
+
+    Turning it into an :class:`Artifact`-shaped descriptor is not a lie about the
+    bytes: ``path`` stays ``None``, which is the field saying *these bytes are in
+    memory and nowhere else*, and ``sha256`` is the real digest of what is in hand.
+
+    A command with no buffer - ``probe``, ``classify``, whose value is an observation
+    record - is returned untouched.
+
+    Args:
+        call: The answer, which may or may not carry a buffer.
+        params: The parameters the command was called with.
+        naming: The command's naming callable, or None.
+        buffer_key: Where the buffer sits inside an ``Evidence``, or None when the
+            value carries it directly.
+
+    Returns:
+        The answer, with an ``Artifact`` descriptor in place of the buffer.
+
+    """
+    value = call.result.value
+    if value is None:
+        return call
+
+    if buffer_key is not None:
+        if not isinstance(value, Evidence):
+            return call
+        embedded = value.observed.get(buffer_key)
+        if not isinstance(embedded, Bytes):
+            return call
+        replaced = _described_buffer(embedded, params, naming)
+        rebuilt = Evidence(
+            terms=value.terms,
+            measurements=value.measurements,
+            observed=MappingProxyType(
+                {**value.observed, buffer_key: replaced.artifact}
+            ),
+        )
+        return Call(
+            result=KernelResult(
+                value=rebuilt, evidence=rebuilt, reason=call.result.reason
+            ),
+            call_record=call.call_record,
+            delivered={replaced.artifact.sha256: replaced.name},
+        )
+
+    if not isinstance(value, Bytes):
+        return call
+
+    replaced = _described_buffer(value, params, naming)
+    return Call(
+        result=KernelResult(
+            value=replaced.artifact,
+            evidence=call.result.evidence,
+            reason=call.result.reason,
+        ),
+        call_record=call.call_record,
+        delivered={replaced.artifact.sha256: replaced.name},
+    )
+
+
+def _described_buffer(
+    value: Bytes, params: Mapping[str, object], naming: DeliveryName | None
+) -> "_NamedBuffer":
+    """Build the artifact descriptor and the delivery name for one buffer.
+
+    Args:
+        value: The buffer to describe.
+        params: The parameters the command was called with.
+        naming: The command's naming callable, or None.
+
+    Returns:
+        The descriptor and the name, which are always computed together so they
+        cannot disagree.
+
+    """
+    sha256 = hashlib.sha256(value.data).hexdigest()
+    return _NamedBuffer(
+        artifact=Artifact(
+            sha256=sha256,
+            size_bytes=len(value.data),
+            media_type=value.media_type,
+            path=None,
+        ),
+        name=_declared_name(sha256, value.media_type, params, naming),
+    )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _NamedBuffer:
+    """One buffer's descriptor and its delivery name, produced together.
+
+    A pair rather than two calls to two functions: the name is derived from the digest
+    in the descriptor, so computing them apart is how they come to disagree.
+
+    Attributes:
+        artifact: The descriptor, with ``path`` None because nothing was written.
+        name: The delivery name, which is what a caller would get with ``--save``.
+
+    """
+
+    artifact: Artifact
+    name: str
 
 
 def _saved_embedded(
@@ -1602,7 +1774,7 @@ def _saved_embedded(
     return Call(
         result=KernelResult(value=rebuilt, evidence=rebuilt, reason=call.result.reason),
         call_record=call.call_record,
-        delivered_as=delivered,
+        delivered={artifact.sha256: delivered} if delivered else {},
     )
     # TODO: [MVP] The arrow here points at `docflow.kernels.store` because `E07-01`
     # is the dispatcher *at the kernel layer*, and its own guard asserts exactly

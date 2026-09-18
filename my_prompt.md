@@ -6,6 +6,9 @@ revisar sobreingenieria, usar tavily para identificar si una funcionalidad ya ex
 hay muchas cosas que lo resuelven utilitarios de linux , python, u otras librerias
 
 
+un cliente echo con python o similar 
+un cli deberia tener 
+entrada > proceso > salida 
 
 ---
 
