@@ -369,14 +369,22 @@ trusted to remember.
 `path` is `null` because nothing wrote the bytes — the default is out-of-band: stdout
 carries the descriptor (here `observed.image`), never the image itself.
 
-`--save` is **declared** on this command in §9 and the dispatcher refuses it, which is
-worth knowing before you try:
+`--save` declares where those bytes go, and it works: the crop's buffer lives one level
+in, under `observed.image`, because it must travel with the inverse map, so the command
+declares that key and the dispatcher reaches the buffer through it.
 
 ```console
 $ docflow-kernel image crop <file> --region 10,10,50,50 --save /tmp/crops
---save applies to a command that returns bytes; this one returned Evidence
-# exit 4
+# value.observed.image:
+#   { "sha256": "6f35…", "size_bytes": 125310, "media_type": "image/png",
+#     "path": "artifacts/6f35…" }
+# value.observed.inverse_map:  { "offset_x": 10.0, "offset_y": 10.0, "scale": 1.0 }
+# exit 0
 ```
+
+Only `observed.image` changes: it gains the hash of what was written and the path
+relative to the save root. The inverse map, the source box and `coordinate_space` are
+untouched — the record is rebuilt with one entry replaced, not replaced wholesale.
 
 The check is honest — `crop` returns `Evidence` with the buffer inside
 `observed.image`, and `--save` writes a `Bytes` *value* — but the pairing means the

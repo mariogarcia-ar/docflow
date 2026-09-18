@@ -216,9 +216,16 @@ FALSY_STAND_IN_LITERALS: tuple[str, ...] = ("None", '""', 'b""', "0")
 
 #: Modules the dispatcher may import. It is a surface: it consumes the boundary
 #: types and K7, and reaches no adapter.
+#:
+#: ``types`` was added when `--save` learned to persist a buffer sitting inside an
+#: ``Evidence`` value (``image crop``): the rebuilt record has to carry the same kind
+#: of immutable mapping the boundary produces, so ``MappingProxyType`` is named
+#: directly rather than the proxy type being reached for dynamically. It is stdlib and
+#: not a vendor, which is the distinction this whitelist exists to draw - the check
+#: that matters is the one below, on the ``docflow`` prefixes.
 ALLOWED_IMPORT_ROOTS: frozenset[str] = frozenset(
     {"__future__", "collections", "dataclasses", "docflow", "hashlib", "importlib"}
-    | {"json", "os", "pathlib", "shutil", "sys", "traceback", "typing"}
+    | {"json", "os", "pathlib", "shutil", "sys", "traceback", "types", "typing"}
 )
 
 #: Prefixes of ``docflow`` the dispatcher may import from.
@@ -1600,6 +1607,147 @@ def test_without_save_the_bytes_stay_out_of_band() -> None:
 
     assert invocation.exit_code == EXIT_VALUE
     assert envelope_of(invocation)["value"]["path"] is None
+
+
+# --- A buffer that lives inside the evidence --------------------------------
+
+
+def test_save_reaches_a_buffer_inside_the_evidence_and_keeps_the_rest(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``crop --save`` persists the bytes without losing the inverse map beside them.
+
+    The second shape `--save` has to handle, and the reason it is a declared key rather
+    than a search. K3's ``crop`` answers its **observation record** as the value,
+    because the bytes and the inverse map must travel together (`NFR-07`, matrix row 8)
+    - so the buffer is one level in, under ``observed["image"]``, and the ordinary path
+    (*"this one returned Evidence"*, exit ``4``) refused a command that plainly had
+    bytes to write.
+
+    Three things are asserted together, because a fix that got any one of them wrong
+    would still look like a success:
+
+    - the buffer is **on disk** and its hash is the hash of what was written;
+    - the **inverse map survives** the rebuild, which is the whole point of that
+      record: a save that replaced the observation instead of updating one entry would
+      destroy `NFR-07`'s assertion while returning exit ``0``;
+    - the value and the evidence stay the **same record**, which is what `crop`
+      guarantees and what a naive rebuild would quietly split in two.
+    """
+    handler = RecordingHandler(
+        value_call(
+            make_evidence(
+                inverse_map=InverseMap(offset_x=100.0, offset_y=120.0, scale=1.0),
+                coordinate_space="source_page",
+                image=Bytes(data=b"\x89PNG\r\n\x1a\n" * 4, media_type="image/png"),
+            )
+        )
+    )
+
+    invocation = run(
+        ["image", "crop", "--save", str(tmp_path)],
+        Operation("image", "crop", handler, buffer_key="image"),
+    )
+
+    assert invocation.exit_code == EXIT_VALUE, invocation.stderr
+    envelope = envelope_of(invocation)
+    observed = envelope["value"]["observed"]
+
+    assert observed["inverse_map"] == {
+        "offset_x": 100.0,
+        "offset_y": 120.0,
+        "scale": 1.0,
+    }, "the map must survive a save: it is what makes the crop's coordinates checkable"
+    assert observed["coordinate_space"] == "source_page"
+
+    descriptor = observed["image"]
+    assert descriptor["path"] == f"artifacts/{descriptor['sha256']}"
+    assert store.verify(tmp_path, descriptor["sha256"]) is True
+    assert store.get(tmp_path, descriptor["sha256"]) == b"\x89PNG\r\n\x1a\n" * 4
+    assert envelope["value"] == envelope["evidence"], (
+        "crop answers its evidence as its value; a rebuilt record must not split them "
+        "into two different objects"
+    )
+
+
+def test_save_refuses_when_the_declared_key_holds_no_buffer(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A declared key that is absent is a refusal, never a skipped save.
+
+    Silently doing nothing would report success for a request that was dropped, and the
+    caller would have a descriptor-shaped hole where the bytes should be.
+    """
+    handler = RecordingHandler(value_call(make_evidence(inverse_map="not bytes")))
+
+    invocation = run(
+        ["image", "crop", "--save", str(tmp_path)],
+        Operation("image", "crop", handler, buffer_key="image"),
+    )
+
+    assert invocation.exit_code == EXIT_USAGE
+    assert "image" in invocation.stderr, (
+        "the refusal must name the key it looked in, or the reader cannot tell which "
+        "observation was expected to be the buffer"
+    )
+
+
+def test_save_refuses_when_a_declared_key_meets_a_value_that_is_not_evidence(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The declaration is checked against the answer, not assumed from it."""
+    handler = RecordingHandler(value_call("not an observation record"))
+
+    invocation = run(
+        ["image", "crop", "--save", str(tmp_path)],
+        Operation("image", "crop", handler, buffer_key="image"),
+    )
+
+    assert invocation.exit_code == EXIT_USAGE
+    assert "str" in invocation.stderr, (
+        "the refusal should name what it found, so a wrong declaration is diagnosable"
+    )
+
+
+def test_a_declared_buffer_key_does_not_disturb_an_unsaved_call() -> None:
+    """Without ``--save`` the key is inert: the answer is passed through untouched.
+
+    The control for the two refusals above. Without it, a `_apply_save` that rejected
+    every ``Evidence`` value would satisfy them both and break `crop` itself.
+    """
+    handler = RecordingHandler(value_call(make_evidence(image="untouched")))
+
+    invocation = run(
+        ["image", "crop"],
+        Operation("image", "crop", handler, buffer_key="image"),
+    )
+
+    assert invocation.exit_code == EXIT_VALUE
+    assert envelope_of(invocation)["value"]["observed"]["image"] == "untouched"
+
+
+def test_a_failed_call_passes_through_save_untouched_even_with_a_buffer_key(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A typed refusal survives ``--save`` and is never reported as a usage error.
+
+    Row 4's shape, and the reason the ``value is None`` check comes **before** the
+    buffer lookup: reporting *"you used --save wrongly"* (exit ``4``) about a call whose
+    document answered ``insufficient_effective_resolution`` (exit ``2``) is exactly the
+    conflation the exit table exists to prevent.
+    """
+    handler = RecordingHandler(reason_call("insufficient_effective_resolution"))
+
+    invocation = run(
+        ["pdf", "render", "--save", str(tmp_path)],
+        Operation("pdf", "render", handler, buffer_key="image"),
+    )
+
+    assert invocation.exit_code == EXIT_REASON
+    assert envelope_of(invocation)["reason"]["code"] == (
+        "insufficient_effective_resolution"
+    )
+    assert list(tmp_path.rglob("*")) == [], "a refusal writes nothing"
 
 
 def test_every_operation_returns_a_call_and_never_an_exit_code() -> None:

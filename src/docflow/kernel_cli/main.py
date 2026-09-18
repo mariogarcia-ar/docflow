@@ -96,6 +96,7 @@ import shutil
 import sys
 import traceback
 from collections.abc import Callable, Mapping, Sequence
+from types import MappingProxyType
 from typing import Final, Protocol
 
 from docflow.kernels import store
@@ -627,6 +628,10 @@ class Operation:
         flags: The flags this command reads, which are the parameters of the port
             method it mirrors. Declared so the `E07-02` contract test can compare
             them against that signature rather than re-deriving them.
+        buffer_key: Where this command's buffer sits inside an ``Evidence`` value,
+            for a command whose value is not the buffer itself. ``None`` means the
+            value carries no embedded buffer. See :func:`_apply_save` for why the
+            two ``--save`` shapes are declared rather than discovered.
 
     """
 
@@ -635,6 +640,7 @@ class Operation:
     handler: Handler | None = None
     positional: str | None = None
     flags: tuple[str, ...] = ()
+    buffer_key: str | None = None
 
     @property
     def is_mvp(self) -> bool:
@@ -1211,6 +1217,7 @@ def dispatch(
         params=params,
         save_dir=save_dir,
         verbose=verbose,
+        buffer_key=operation.buffer_key,
     )
 
 
@@ -1222,6 +1229,7 @@ def _invoke(  # pylint: disable=too-many-arguments
     params: Mapping[str, object],
     save_dir: object,
     verbose: bool,
+    buffer_key: str | None = None,
 ) -> Invocation:
     """Call one handler and turn its answer into an invocation.
 
@@ -1247,6 +1255,8 @@ def _invoke(  # pylint: disable=too-many-arguments
         params: The parsed parameters, with the dispatcher's own flags removed.
         save_dir: The ``--save`` directory, or None.
         verbose: Whether ``--verbose`` was given.
+        buffer_key: Where the operation's buffer sits inside an ``Evidence`` value,
+            or None when its value carries no embedded buffer.
 
     Returns:
         The invocation.
@@ -1255,7 +1265,7 @@ def _invoke(  # pylint: disable=too-many-arguments
     try:
         repetitions = _repetitions(params.pop("repeat", None))
         calls = [_call_once(handler, params) for _ in range(repetitions)]
-        written = _apply_save(calls[-1], save_dir)
+        written = _apply_save(calls[-1], save_dir, buffer_key=buffer_key)
         if isinstance(written, Invocation):
             return written
         envelope = _envelope_with_repetitions(written, calls)
@@ -1276,7 +1286,9 @@ def _invoke(  # pylint: disable=too-many-arguments
     return Invocation(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
 
-def _apply_save(call: Call, save_dir: object) -> Call | Invocation:
+def _apply_save(
+    call: Call, save_dir: object, *, buffer_key: str | None = None
+) -> Call | Invocation:
     """Route a buffer through K7 when ``--save`` was given.
 
     The bytes are written by K7 and not by this module, so the hash in the
@@ -1285,9 +1297,24 @@ def _apply_save(call: Call, save_dir: object) -> Call | Invocation:
     buffer while ``--save`` is set is a usage error rather than a silent no-op: the
     caller asked for bytes to be persisted and none exist.
 
+    There are **two** shapes a saved command can answer with, and the difference is
+    declared rather than discovered. Most return the buffer itself as their value
+    (`pdf render` answers a ``Bytes``). Some return their whole observation record,
+    with the buffer *inside* it: K3's `crop` answers the `Evidence` because the bytes
+    and the inverse map must travel together (`NFR-07`, matrix row 8). For those the
+    operation declares ``buffer_key`` and this function reaches the buffer through it.
+
+    Why the key is declared and not found: a scan for something that looks like bytes
+    would take an arbitrary entry from a mapping guaranteed to be free-form. On a
+    command carrying two buffers (`image tile`) it would save the wrong one and report
+    success - the descriptor would be plausible and the check would pass. A declared
+    key makes that either right or a refusal.
+
     Args:
         call: The handler's answer.
         save_dir: The ``--save`` directory, or None.
+        buffer_key: Where the buffer sits inside an ``Evidence`` value, or None when
+            the value carries no embedded buffer.
 
     Returns:
         The answer with its buffer replaced by the stored descriptor, or the
@@ -1307,6 +1334,9 @@ def _apply_save(call: Call, save_dir: object) -> Call | Invocation:
     if value is None:
         return call
 
+    if buffer_key is not None:
+        return _saved_embedded(call, save_dir, buffer_key)
+
     if not isinstance(value, Bytes):
         return _usage_error(
             "--save applies to a command that returns bytes; this one returned "
@@ -1318,6 +1348,58 @@ def _apply_save(call: Call, save_dir: object) -> Call | Invocation:
         result=KernelResult(
             value=artifact, evidence=call.result.evidence, reason=call.result.reason
         ),
+        call_record=call.call_record,
+    )
+
+
+def _saved_embedded(call: Call, save_dir: object, buffer_key: str) -> Call | Invocation:
+    """Persist a buffer that sits inside an ``Evidence`` value.
+
+    The declared key is reached for, not searched for, and every way it can fail to
+    be a buffer is a refusal naming what was found. Silently skipping the save would
+    report success for a dropped request; silently saving *something else* would be
+    worse, because the descriptor would be plausible.
+
+    The rebuilt record keeps the property the command guarantees - the value **is**
+    the evidence, the same object rather than a copy - with the artifact in the
+    buffer's place. So ``observed[buffer_key]`` gains the hash and the stored path
+    exactly as `kernel-cli.md` §6 says a saved buffer does, and every other
+    observation (``inverse_map`` above all) survives untouched.
+
+    Args:
+        call: The handler's answer, whose value must be an ``Evidence``.
+        save_dir: The ``--save`` directory.
+        buffer_key: The key the operation declares for its buffer.
+
+    Returns:
+        The answer with the buffer replaced by the descriptor, or the exit-``4``
+        invocation naming why it could not be.
+
+    """
+    value = call.result.value
+    if not isinstance(value, Evidence):
+        return _usage_error(
+            f"{buffer_key} is declared as this command's buffer, but its value is "
+            f"{type(value).__name__} and not an observation record"
+        )
+
+    embedded = value.observed.get(buffer_key)
+    if not isinstance(embedded, Bytes):
+        return _usage_error(
+            f"{buffer_key} is declared as this command's buffer, but "
+            f"observed[{buffer_key!r}] holds {type(embedded).__name__}"
+        )
+
+    artifact = store.put(
+        pathlib.Path(str(save_dir)), embedded.data, embedded.media_type
+    )
+    rebuilt = Evidence(
+        terms=value.terms,
+        measurements=value.measurements,
+        observed=MappingProxyType({**value.observed, buffer_key: artifact}),
+    )
+    return Call(
+        result=KernelResult(value=rebuilt, evidence=rebuilt, reason=call.result.reason),
         call_record=call.call_record,
     )
     # TODO: [MVP] The arrow here points at `docflow.kernels.store` because `E07-01`

@@ -219,6 +219,11 @@ def crop(*, file: str, region: str, **_: object) -> Call:
 #: command, ``positional`` is the argument a bare token binds to, and ``flags`` are
 #: the port parameters the command reads. The contract test compares ``flags``
 #: against the signature of the port method named in `_PORT_METHOD`.
+#:
+#: The fifth fact a command carries - where its buffer sits when that buffer is not
+#: its value - is declared in `surface.py`'s ``BUFFER_KEYS`` rather than here,
+#: because it is a fact about how `--save` reads the answer and that is the
+#: composition root's business.
 COMMANDS: Final[tuple[tuple[str, Handler | None, str | None, tuple[str, ...]], ...]] = (
     ("info", info, "file", ()),
     ("legibility", legibility, "file", ("--root",)),

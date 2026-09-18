@@ -146,6 +146,7 @@ def test_every_fixture_the_matrix_needs_is_present(matrix: pathlib.Path) -> None
         "scan-hidden-layer.pdf",
         "scan150.pdf",
         "three-invoices.pdf",
+        "page.png",
     ):
         assert (matrix / name).is_file(), f"missing matrix fixture: {name}"
 
@@ -439,6 +440,138 @@ def test_row_5_a_page_outside_the_document_is_a_usage_error() -> None:
 
     with pytest.raises(ValueError):
         parse_pages("1-9", 3)
+
+
+# --- Row 8: a crop's local coordinates reported as a page region ------------
+
+
+def test_row_8_a_crop_reports_an_inverse_map_that_lands_in_source_coordinates(
+    matrix: pathlib.Path,
+) -> None:
+    """The row's assertion, on the fixture §12 names.
+
+    The failure it prevents is silent by construction: a crop's ``(0, 0)`` is its own
+    top-left corner, while every trace downstream is in page coordinates - and **both
+    boxes are valid JSON**, so a local box reported as a page region points at the
+    wrong pixels and nothing else notices (`NFR-07`).
+
+    Asserted by mapping the crop's own corners and requiring the region back, not by
+    reading ``offset_x``/``offset_y`` and agreeing with them. The distinction matters:
+    a test that asserted the offsets equal the region's origin would pass for any
+    region, whereas mapping a corner is the operation a consumer actually performs.
+    The page is not square on purpose, so a swapped pair of axes cannot pass.
+    """
+    region = (100, 200, 300, 80)
+    code, envelope, stderr = _run(
+        [
+            "image",
+            "crop",
+            str(matrix / "page.png"),
+            "--region",
+            ",".join(str(part) for part in region),
+        ]
+    )
+
+    assert code == main.EXIT_VALUE, stderr
+    observed = _value(envelope)["observed"]  # type: ignore[index]
+
+    x, y, width, height = region
+    assert observed["source_box"] == [
+        float(x),
+        float(y),
+        float(x + width),
+        float(y + height),
+    ]
+    assert observed["source_size"] == [840.0, 1036.0], (
+        "the page is 840x1036 so a transposed pair of coordinates cannot pass"
+    )
+    assert observed["local_size"] == [float(width), float(height)]
+    assert observed["coordinate_space"] == "source_page"
+
+    inverse = observed["inverse_map"]
+    assert inverse["scale"] == 1.0, "a crop taken at source resolution does not rescale"
+    assert (inverse["offset_x"], inverse["offset_y"]) == (float(x), float(y))
+
+    # The consumer's operation, recomputed here rather than trusting the members: the
+    # crop's near corner is the region's origin in the page, and its far corner is the
+    # region's far corner.
+    def to_source(local_x: float, local_y: float) -> tuple[float, float]:
+        """Map a local point the way `InverseMap.to_source` must."""
+        return (
+            inverse["offset_x"] + local_x * inverse["scale"],
+            inverse["offset_y"] + local_y * inverse["scale"],
+        )
+
+    assert to_source(0.0, 0.0) == (float(x), float(y))
+    assert to_source(float(width), float(height)) == (
+        float(x + width),
+        float(y + height),
+    )
+
+
+def test_row_8_saving_the_crop_keeps_the_inverse_map_beside_the_bytes(
+    matrix: pathlib.Path, tmp_path: pathlib.Path
+) -> None:
+    """`--save` persists the crop and the map survives in the same record.
+
+    Row 8's assertion and `--save` meet here, and this is the case that did not work:
+    the command declared `--save`, the dispatcher accepted the flag, and the answer was
+    *"this one returned Evidence"* - exit ``4`` - because the crop's buffer is inside
+    its observation record rather than being its value.
+
+    Both halves are asserted at once, because either alone is satisfiable by a wrong
+    fix: bytes on disk with the map dropped would return exit ``0`` and break `NFR-07`
+    silently, and a map with no bytes is the refusal that shipped.
+    """
+    out = tmp_path / "crops"
+    region = (100, 200, 300, 80)
+
+    code, envelope, stderr = _run(
+        [
+            "image",
+            "crop",
+            str(matrix / "page.png"),
+            "--region",
+            ",".join(str(part) for part in region),
+            "--save",
+            str(out),
+        ]
+    )
+
+    assert code == main.EXIT_VALUE, (
+        "--save on a crop must persist its bytes; refusing a command that has them is "
+        f"the defect this row now pins: {stderr}"
+    )
+    observed = _value(envelope)["observed"]  # type: ignore[index]
+    descriptor = observed["image"]
+
+    stored = out / descriptor["path"]
+    assert stored.is_file(), "the descriptor must name a file that exists"
+    assert stored.stat().st_size == descriptor["size_bytes"]
+
+    assert observed["inverse_map"]["offset_x"] == float(region[0])
+    assert observed["coordinate_space"] == "source_page"
+
+
+def test_row_8_a_region_outside_the_page_is_a_usage_error_not_a_clamped_crop(
+    matrix: pathlib.Path,
+) -> None:
+    """A region the page cannot answer is refused rather than clamped.
+
+    Clamping would return *a crop of a different size than the one asked for*, with an
+    inverse map that still looked right - which is worse than an error, because every
+    number would be internally consistent and wrong.
+
+    The exit code is asserted as ``4`` and not merely as *not 0*: a malformed request is
+    the caller's to fix, and reporting it as ``1`` would say the build is broken about a
+    number they can change.
+    """
+    code, envelope, _ = _run(
+        ["image", "crop", str(matrix / "page.png"), "--region", "5000,5000,10,10"]
+    )
+
+    assert code == main.EXIT_USAGE
+    assert envelope is None, "a usage error emits no envelope"
 
 
 # --- Row 16: a manifest reporting a finished run that is not finished -------

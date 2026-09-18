@@ -29,6 +29,9 @@ this surface from becoming a second product API (`plan-01-kernels.md` §9, risk 
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Final
+
 from docflow.kernel_cli.commands import (
     image as image_commands,
 )
@@ -71,6 +74,37 @@ REGISTERED: dict[str, tuple[Command, ...]] = {
     "llm.frontier": llm_commands.COMMANDS["llm.frontier"],
 }
 
+#: ``(kernel, operation)`` to the key where that command's buffer sits **inside** its
+#: ``Evidence`` value, for the commands whose buffer is not their value.
+#:
+#: `image crop` is the whole reason this table exists, and it is not a workaround for
+#: one awkward command. Its value *is* its observation record, because the bytes and
+#: the inverse map must travel together (`NFR-07`, `kernel-cli.md` §11 row 8) - so the
+#: crop's bytes are one level in, under ``observed["image"]``, and `--save` would
+#: otherwise refuse a command that plainly has bytes to write.
+#:
+#: Declared here, in the composition root, because it is a fact about how `--save`
+#: reads an answer, and `--save` is the dispatcher's own flag. Each command module
+#: keeps owning *what it returns*: `commands/image.py`'s table still says `crop`
+#: returns what it returns, and this table says only where to look inside it. That
+#: split is why the dispatcher needs no import of a command module - `E07-01`'s guard
+#: asserts it has none - and why a second such command does not widen `main`'s
+#: surface.
+#:
+#: The key is **declared** rather than found by searching for something
+#: bytes-shaped. A scan would take an arbitrary entry from a mapping whose shape is
+#: free-form by contract; on a command carrying two buffers (`image tile`) it would
+#: save the wrong one and report success, with a plausible descriptor and a check
+#: that passes.
+#:
+#: An operation absent from this table is a command whose buffer, if it has one, *is*
+#: its value (``pdf render``, ``pdf split``, ``store get``, ``image rescale``) or a
+#: command with no buffer at all (``image info``, ``ocr read``). The two absences mean
+#: different things and are both correct as an absence.
+BUFFER_KEYS: Final[Mapping[tuple[str, str], str]] = {
+    ("image", "crop"): "image",
+}
+
 
 def build() -> dict[tuple[str, str], Operation]:
     """Build the surface's operation table, without declaring anything.
@@ -94,6 +128,7 @@ def build() -> dict[tuple[str, str], Operation]:
                 handler=handler,
                 positional=positional or None,
                 flags=flags,
+                buffer_key=BUFFER_KEYS.get((kernel, name)),
             )
             table[(kernel, name)] = operation
     return table

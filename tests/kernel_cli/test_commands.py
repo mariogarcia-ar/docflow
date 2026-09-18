@@ -217,6 +217,26 @@ SURFACE_ONLY_FLAGS: Final[Mapping[str, str]] = {
     ),
 }
 
+#: Commands whose ``--save`` is satisfied by a buffer, in a kernel that has **no port**
+#: to read a return annotation from.
+#:
+#: One entry, and it is a finding rather than a convenience. `image rescale` returns
+#: ``KernelResult[Bytes]`` - `main._apply_save`'s ordinary path, and the same shape
+#: `pdf render` takes - so it is savable. But K3 has **no port** at all (`E04-03`'s
+#: decision: Pillow sits behind an inner seam in `adapters/image.py`, not behind a
+#: sixth protocol), so :func:`_port_method` answers ``None`` and a check that read only
+#: annotations would call a working command broken.
+#:
+#: Declared rather than special-cased, so the entry has to be read by a person the day
+#: K3 gains a port - and removing it is then a deliberate act rather than a silent
+#: widening.
+SAVE_WITHOUT_A_PORT: Final[Mapping[str, str]] = {
+    "image rescale": (
+        "K3 has no port (E04-03), so there is no return annotation to read; the "
+        "adapter returns KernelResult[Bytes] and --save takes the ordinary path"
+    ),
+}
+
 
 @pytest.fixture(scope="module", autouse=True)
 def _registered() -> None:
@@ -809,3 +829,107 @@ def test_store_get_encodes_its_bytes_rather_than_handing_them_to_the_encoder(
     assert described["sha256"] == digest, "the descriptor describes what was read"
     assert described["size_bytes"] == source.stat().st_size
     assert "data" not in described, "the bytes themselves stay out of stdout"
+
+
+# --- A declared ``--save`` must be able to save something -------------------
+
+
+def _buffer_is_reachable(kernel: str, operation: str) -> bool:
+    """Report whether ``--save`` could persist something for this command.
+
+    Three ways a command can satisfy ``--save``, and they are the complete set
+    `main._apply_save` implements:
+
+    1. its value **is** a buffer - read either from the port's own return annotation,
+       or from :data:`SAVE_WITHOUT_A_PORT` for a kernel that has no port to read;
+    2. its value is an ``Evidence`` whose ``observed`` carries a buffer under the key
+       the composition root declares in ``surface.BUFFER_KEYS`` (``image crop``);
+    3. it declares no ``--save`` at all, in which case the question does not arise.
+
+    The annotation is matched **case-insensitively on the word** rather than on the
+    exact type name: K7's ``get`` returns ``KernelResult[bytes]`` while K2's ``render``
+    returns ``KernelResult[Bytes]``, and both are a buffer. Requiring one spelling
+    would make this check report a working command as broken.
+
+    Args:
+        kernel: The kernel's name.
+        operation: The operation's name.
+
+    Returns:
+        Whether a buffer is reachable.
+
+    """
+    if (kernel, operation) in surface.BUFFER_KEYS:
+        return True
+    if f"{kernel} {operation}" in SAVE_WITHOUT_A_PORT:
+        return True
+
+    method = _port_method(kernel, operation)
+    if method is None:
+        return False
+
+    annotation = inspect.signature(method).return_annotation
+    return "bytes" in str(annotation).lower()
+
+
+def test_every_command_that_declares_save_can_actually_save() -> None:
+    """The direction that was missing, and the defect it would have caught.
+
+    The suite already asserts *every flag a command declares is in the allowed
+    vocabulary*, and that check is real - it caught nine commands whose own required
+    flag the dispatcher refused. But it only asks whether a flag is **dispatchable**,
+    never whether it can **do anything**: a flag can be accepted, bound, and then
+    refused by the code that consumes it.
+
+    ``image crop --save`` was exactly that. §9 declares ``--save`` on the command, the
+    parser accepted it, and `_apply_save` answered *"this one returned Evidence"* -
+    exit ``4`` - because the crop's buffer sits inside its observation record rather
+    than being its value (`NFR-07`: the bytes and the inverse map travel together).
+    Nothing in this suite could see it, because every existing check passes for a
+    command whose flag is unreachable.
+
+    Measured against the **declarations**, so a command added later with a save it
+    cannot honour is red here rather than discovered from a shell. `llm.frontier
+    structured` is the known instance still open: §9's K6 prose promises the raw
+    completion is persisted, and no K6 command declares ``--save`` for it to be
+    promised by.
+    """
+    offenders: list[str] = []
+    for kernel, operation, flags in NOW_COMMANDS:
+        if "--save" not in flags:
+            continue
+        if not _buffer_is_reachable(kernel, operation):
+            offenders.append(f"{kernel} {operation}")
+
+    assert offenders == [], (
+        f"commands that declare --save and cannot produce a buffer for it: {offenders}"
+    )
+
+
+def test_the_buffer_key_table_names_a_real_command_and_a_real_key() -> None:
+    """A declared buffer key must point at a registered command and a real key.
+
+    Three ways a key goes stale, and each is silent on its own: the command is
+    renamed, the key is misspelled, or the key is declared for a command that does not
+    have it. The first two make `--save` refuse at run time - answerable, but only by a
+    caller who happens to try it - and the third is worse, because a declared key that
+    is absent from the answer is a command that looks savable and is not.
+
+    The key is checked against the **live** handler's own observations where the
+    command is reachable, so the assertion is on what the command reports rather than
+    on a table agreeing with itself.
+    """
+    registered = main.registered_operations()
+
+    for (kernel, operation), key in surface.BUFFER_KEYS.items():
+        assert (kernel, operation) in registered, (
+            f"BUFFER_KEYS names {kernel} {operation}, which is not registered"
+        )
+        assert key, f"{kernel} {operation} declares an empty buffer key"
+
+    # The positive control, and the reason this test is not vacuous: `crop` is the one
+    # entry, and it must still be reachable through it.
+    assert ("image", "crop") in surface.BUFFER_KEYS, (
+        "image crop's buffer is the case this table was introduced for"
+    )
+    assert _buffer_is_reachable("image", "crop")

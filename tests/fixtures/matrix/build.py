@@ -43,6 +43,11 @@ _DESCRIPTOR = "synthetic-3stage.yaml"
 #: (`kernels/pdf.py`, `INVISIBLE_RENDER_MODE`), which is what row 3 turns on.
 _INVISIBLE_RENDER_MODE = 3
 
+#: Row 8's page size, in pixels. Deliberately not square: a square page would let a
+#: transposed `(x, y)` produce the same ``source_box`` as the correct mapping, so the
+#: row would still pass with the two axes swapped.
+_PAGE_SIZE = (840, 1036)
+
 
 def _jpeg(width: int, height: int) -> bytes:
     """Build a small greyscale JPEG.
@@ -229,6 +234,28 @@ def _three_pages(path: pathlib.Path) -> None:
     document.close()
 
 
+def _page_image(path: pathlib.Path) -> None:
+    """Write row 8's fixture: a page image whose crop must map back to it.
+
+    The properties row 8 turns on are **geometric**, so they are chosen rather than
+    incidental: the image is larger than any region the row crops, so a region inside
+    it is answerable, and its dimensions are not square, so a transposed or swapped
+    width/height cannot pass by coincidence - a square page would let an
+    ``(x, y)``/``(y, x)`` mix-up produce the same numbers.
+
+    No DPI is written into the file, deliberately. `crop` maps coordinates and never
+    rescales, so a declared resolution would be an unrelated fact sitting in the
+    fixture, and a reader could mistake it for the thing the row measures.
+
+    Args:
+        path: Where to write it.
+
+    """
+    from PIL import Image  # pylint: disable=import-outside-toplevel
+
+    Image.new("L", _PAGE_SIZE, color=230).save(path, format="PNG")
+
+
 def build() -> list[str]:
     """Generate every fixture, and return what was written.
 
@@ -246,6 +273,7 @@ def build() -> list[str]:
     _scan_with_hidden_layer(HERE / "scan-hidden-layer.pdf")
     _plain_scan(HERE / "scan150.pdf")
     _three_pages(HERE / "three-invoices.pdf")
+    _page_image(HERE / "page.png")
 
     return sorted(path.name for path in HERE.glob("*") if path.name != "build.py")
 
