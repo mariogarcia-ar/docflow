@@ -99,6 +99,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Final, Protocol
 
 from docflow.kernels import store
+from docflow.kernels.image import InverseMap
 from docflow.kernels.types import (
     Artifact,
     Box,
@@ -201,25 +202,41 @@ GLOBAL_FLAGS: Final[tuple[str, ...]] = ("--format", "--list", "--verbose")
 #: Flags that take a value. Operation parameters, plus the two path flags, which
 #: are **not** synonyms: ``--out`` is where a run's artifacts go and belongs to K1;
 #: ``--root`` is which store or registry a kernel reads and belongs to K7/K8.
+#:
+#: §10's prose list is **not** the authority for this tuple — the per-command
+#: tables in §9 are, and the prose list omits eight flags those tables declare
+#: (``--asset``, ``--image``, ``--key``, ``--max-pixels``, ``--prefix``,
+#: ``--samples-file``, ``--target-dpi``, ``--text-file``). Copying the prose list
+#: left nine registered commands **uncallable**: the dispatcher refused each
+#: operation's own required flag as unknown. A test now asserts the two sets agree
+#: so the omission cannot come back.
 VALUE_FLAGS: Final[tuple[str, ...]] = (
+    "--asset",
     "--correct",
     "--dpi",
     "--format",
+    "--image",
     "--jobs",
+    "--key",
     "--lang",
+    "--max-pixels",
     "--media-type",
     "--model",
     "--out",
     "--page",
     "--pages",
+    "--prefix",
     "--prompt-file",
     "--region",
     "--repeat",
     "--root",
     "--rubric-file",
+    "--samples-file",
     "--save",
     "--schema-file",
     "--slots",
+    "--target-dpi",
+    "--text-file",
     "--timeout",
 )
 
@@ -697,6 +714,12 @@ def _encode(value: object) -> object:
             "width": value.width,
             "height": value.height,
         }
+    if isinstance(value, InverseMap):
+        return {
+            "offset_x": value.offset_x,
+            "offset_y": value.offset_y,
+            "scale": value.scale,
+        }
     if isinstance(value, Mapping):
         return {str(key): _encode(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
@@ -947,6 +970,28 @@ def _usage_error(message: str) -> Invocation:
     return Invocation(exit_code=EXIT_USAGE, stdout="", stderr=f"{message}\n{_USAGE}")
 
 
+def _parameter_name(flag: str) -> str:
+    """Return the keyword-argument name a flag binds to.
+
+    A flag is spelled with hyphens (``--target-dpi``) and a Python keyword is not,
+    so the dispatcher has to translate. It used to strip the dashes only, which
+    meant every hyphenated flag was stored under a name no handler reads and was
+    **dropped in silence**: ``rescale --target-dpi 200`` arrived with the target
+    absent and -- because a missing target must never become a default -- the
+    command refused with exit ``2`` as though the caller had not asked. That is a
+    parameter being swallowed, which is the same defect class as a flag being
+    swallowed, so the translation lives here where the two names are one name.
+
+    Args:
+        flag: The flag as written, dashes included.
+
+    Returns:
+        The name the handler is called with.
+
+    """
+    return flag[2:].replace("-", "_")
+
+
 def _parse_flags(
     tokens: Sequence[str], positional: str | None = None
 ) -> tuple[dict[str, object], Invocation | None]:
@@ -1003,7 +1048,7 @@ def _parse_flags(
             return params, _usage_error(f"unknown flag {flag!r}")
 
         if flag in BOOLEAN_FLAGS:
-            params[flag[2:]] = True
+            params[_parameter_name(flag)] = True
             index += 1
             continue
 
@@ -1018,7 +1063,7 @@ def _parse_flags(
 
         if index + 1 >= len(tokens):
             return params, _usage_error(f"{flag} requires a value")
-        params[flag[2:]] = tokens[index + 1]
+        params[_parameter_name(flag)] = tokens[index + 1]
         index += 2
 
     return params, None
@@ -1102,6 +1147,18 @@ def dispatch(
     params, bad_flag = _parse_flags(flag_tokens, operation.positional)
     if bad_flag is not None:
         return bad_flag
+
+    # The positional is the call's *identity* - which call is being made - so the
+    # dispatcher is the layer that can tell it is missing. It has to be checked
+    # here: `_parse_flags` only binds a positional it *sees*, and the handler then
+    # raises `TypeError` for an absent required keyword, which surfaced as exit
+    # ``1`` with a traceback. Every command with a positional - `image info`,
+    # `pdf probe`, `store get` - was affected, and a missing argument is a usage
+    # error (exit ``4``), never an internal one.
+    if operation.positional is not None and operation.positional not in params:
+        return _usage_error(
+            f"{kernel} {name} needs the {operation.positional} argument"
+        )
 
     verbose = bool(params.pop("verbose", False))
     save_dir = params.pop("save", None)

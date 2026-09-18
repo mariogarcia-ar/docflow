@@ -22,7 +22,7 @@ from types import MappingProxyType
 from typing import Final
 
 from docflow.adapters.store import FilesystemStore
-from docflow.kernel_cli.commands.refusals import answered
+from docflow.kernel_cli.commands.refusals import answered, missing
 from docflow.kernel_cli.main import Call, Handler
 from docflow.kernels import orchestrator
 from docflow.kernels.types import Evidence, KernelResult
@@ -106,7 +106,7 @@ def verify(*, sha256: str, root: str, **_: object) -> Call:
     return Call(result=_store().verify(Path(root), sha256))
 
 
-def ls(*, root: str, prefix: object = None, **_: object) -> Call:
+def ls(*, root: str | None = None, prefix: object = None, **_: object) -> Call:
     """List the artifacts a store root holds.
 
     `kernel-cli.md` §9 marks this as an *index* rather than a port method, because the
@@ -114,6 +114,12 @@ def ls(*, root: str, prefix: object = None, **_: object) -> Call:
     it is whatever the ledger tree says has been written. That is what this reads - the
     artifact directory under each unit - rather than walking the tree for files that
     look like hashes, which would list bytes nobody claimed.
+
+    ``root`` is annotated optional so the **guard below can run**: a required
+    keyword-only parameter raises ``TypeError`` before the body executes, which turned
+    a caller's omission into exit ``1`` with a traceback instead of the typed refusal
+    every other command in this package gives. The annotation says what the guard
+    needs, and the guard is what makes the omission a *reason* rather than a crash.
 
     Args:
         root: The store root.
@@ -124,6 +130,13 @@ def ls(*, root: str, prefix: object = None, **_: object) -> Call:
         The call, whose value is the artifact hashes found, sorted.
 
     """
+    if root is None:
+        return Call(
+            result=missing(
+                "store ls needs --root: a store with no root names no tree to index, "
+                "and defaulting to one would list bytes the caller did not ask about."
+            )
+        )
     found: list[str] = []
     for ledger_path in sorted(Path(root).glob("**/*.ledger.json")):
         artifacts = ledger_path.parent / "artifacts"

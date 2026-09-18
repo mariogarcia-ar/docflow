@@ -238,6 +238,233 @@ inverse map that still looked right.
 
 ---
 
+## The same operations from `docflow-kernel`
+
+Everything above drives the **library**, which is where the detail lives. The lab
+surface is a thin caller of the same four operations, and it is worth seeing what
+each one looks like from a shell: the envelope is what a script parses, and the exit
+code is where a refusal becomes *checkable* rather than merely printed.
+
+Every block below is a real invocation with its output quoted verbatim. The JSON is
+trimmed at the `...` marker only where the envelope repeats itself — `value` and
+`evidence` carry the same observations, and showing both twice adds nothing.
+
+Four commands are `now` in §9 and three are `MVP`; `docflow-kernel --list` reports
+which is which, and an `MVP` command exits `4` naming itself unimplemented rather
+than running partly.
+
+### `image info <file>`
+
+```console
+$ docflow-kernel image info tests/fixtures/expected-extraction/dbc07b17-2538-4611-9e51-7e161aaf7ba5.jpg
+{
+  "value": {
+    "terms": { "engine": "PIL", "engine_version": "12.3.0" },
+    "measurements": { "width": 840.0, "height": 1036.0 },
+    "observed": {
+      "file": "dbc07b17-2538-4611-9e51-7e161aaf7ba5.jpg",
+      "width": 840, "height": 1036,
+      "mode": "RGB", "format": "JPEG",
+      "exif_orientation": null,
+      "exif_orientation_applied": false,
+      "exif_orientation_tag": 274
+    }
+  },
+  "evidence": { ... same three keys ... },
+  "reason": null,
+  "call_record": null
+}
+```
+
+Exit `0`. The three orientation keys are easy to misread, so they are worth naming:
+`exif_orientation` is the **value** found (`null` here — this particular file has no
+orientation recorded), `exif_orientation_applied` says whether the pixels had to
+move, and `exif_orientation_tag` is the EXIF **field number** (`274` is the field
+that carries orientation, not a value of it). The tag that was *found* and the
+rotation that was *applied* are two facts, and the envelope carries both — reporting
+only the second would make a rotation indistinguishable from a file that needed
+none. A file that does have one shows all three together:
+
+```console
+$ docflow-kernel image info tests/fixtures/otros/4c261bc8-3b30-4493-b5d4-6f499cde014e.jpeg
+#   "exif_orientation": 8,
+#   "exif_orientation_applied": true,      <- it was rotated
+#   "exif_orientation_tag": 274
+# exit 0
+```
+
+A file that is not an image is a typed refusal, not a crash:
+
+```console
+$ docflow-kernel image info docs/quickstart/kernel-image.md
+# reason.code:  "unsupported_format"
+# reason.message: "'kernel-image.md' could not be decoded as an image: ..."
+# exit 2
+```
+
+Exit `2` is the *document's answer* — "this is not an image I can read" — and not a
+usage error: the caller named a real path, and the answer about it is no.
+
+### `image legibility <file>`
+
+```console
+$ docflow-kernel image legibility tests/fixtures/expected-extraction/dbc07b17-2538-4611-9e51-7e161aaf7ba5.jpg
+# value.measurements:
+#   { "laplacian_variance": 676.4729, "contrast": 0.225599,
+#     "skew_estimate": -5.0, "threshold_applied": 100.0 }
+# exit 0
+```
+
+The threshold is not a constant of this surface — it is read from
+`registry/policies/thresholds.json` under `image.legibility_threshold`, and a
+registry that does not declare that key is refused rather than quietly defaulted.
+
+When the measurement is *below* the threshold the command still answers, and the
+answer is a refusal that **keeps the numbers**:
+
+```console
+$ docflow-kernel image legibility tests/fixtures/casos/2991f57d-c143-4b23-9f87-4dfb1214ef53.jpg
+# value:  null
+# reason.code: "illegible"
+# reason.message: "... measures 53.45 of sharpness, below the 100.0 the caller
+#   requires, so no value is returned. The measurement is on the evidence, not
+#   replaced by it: whether this makes the image unusable is the caller's
+#   decision, taken against its own policy."
+# evidence.measurements:
+#   { "laplacian_variance": 53.4495, "contrast": 0.629139,
+#     "skew_estimate": 5.0, "threshold_applied": 100.0 }
+# exit 2
+```
+
+That shape is the point of the operation: the measurement **is** the answer, and a
+bare boolean would throw it away. Note too that `contrast` here (`0.63`) is *higher*
+than in the passing image (`0.23`) — sharpness and contrast are different axes, and
+this file is soft but contrasty.
+
+### `image crop <file> --region x,y,w,h`
+
+This is `kernel-cli.md` silent-failure matrix **row 8**, and the one command whose
+output you can check by hand:
+
+```console
+$ docflow-kernel image crop tests/fixtures/expected-extraction/dbc07b17-2538-4611-9e51-7e161aaf7ba5.jpg --region 100,120,400,300
+# value.observed.source_box:    [100.0, 120.0, 500.0, 420.0]
+# value.observed.source_size:   [840, 1036]
+# value.observed.local_size:    [400, 300]        <- the crop's own frame
+# value.observed.inverse_map:   { "offset_x": 100.0, "offset_y": 120.0, "scale": 1.0 }
+# value.observed.coordinate_space: "source_page"
+# value.observed.image:         { "sha256": "d1ff19f1...", "size_bytes": 125310,
+#                                 "media_type": "image/png", "path": null }
+# exit 0
+```
+
+`inverse_map` is what row 8 asserts on, and it is reported in source-page
+coordinates: the crop's local `(0, 0)` maps back to `(100.0, 120.0)` in the page, and
+its far corner to `(500.0, 420.0)`. Without it, a trace pointing at pixels inside the
+crop would be read as page coordinates — and **both boxes are valid JSON**, which is
+exactly why the map travels with the bytes instead of being a step the caller is
+trusted to remember.
+
+`path` is `null` because nothing wrote the bytes — the default is out-of-band: stdout
+carries the descriptor (here `observed.image`), never the image itself.
+
+`--save` is **declared** on this command in §9 and the dispatcher refuses it, which is
+worth knowing before you try:
+
+```console
+$ docflow-kernel image crop <file> --region 10,10,50,50 --save /tmp/crops
+--save applies to a command that returns bytes; this one returned Evidence
+# exit 4
+```
+
+The check is honest — `crop` returns `Evidence` with the buffer inside
+`observed.image`, and `--save` writes a `Bytes` *value* — but the pairing means the
+flag cannot be used where §9 lists it. `--save` does work on a command that returns
+`Bytes`: `pdf render scan.pdf --page 1 --dpi 72 --save /tmp/out` exits `0` and reports
+the artifact's path in the envelope.
+
+### `image rescale <file> --target-dpi N` — and its open gap
+
+```console
+$ docflow-kernel image rescale tests/fixtures/otros/4c261bc8-3b30-4493-b5d4-6f499cde014e.jpeg --target-dpi 72
+# value:  null
+# reason.code: "unsupported_format"
+# reason.message: "The engine reported no source resolution for this image, so a
+#   rescale cannot decide whether the target is reachable. Refusing rather than
+#   assuming a resolution the pixels do not hold."
+# exit 2
+```
+
+**That refusal is correct and it is also the current limit of this kernel: no image
+in this workspace can satisfy it.** The command chain is honest end to end — the
+dispatcher passes `--target-dpi` through, the operation refuses to invent a default,
+and the adapter will not upscale — but `source_dpi` is only ever read from `image
+info`, and `info` reports **no DPI at all** (`ImageMeta` carries `format` and
+`exif_orientation`, and the measurements are `width`/`height`). So `_measured_dpi`
+looks in three keys, finds none, and the operation refuses every file rather than
+assume a resolution the pixels do not hold.
+
+Omit the flag and the refusal names *that* omission instead — exit `2`, not `4`:
+
+```console
+$ docflow-kernel image rescale <file>
+# reason.message: "--target-dpi is required: a rescale with no target is not a
+#   smaller default, it is a request that names no destination."
+```
+
+From the library the operation works, because **you** supply `source_dpi` — that is
+the `engine.rescale(..., target_dpi=100, source_dpi=200)` call in §4 above. Closing
+the gap means measuring DPI in `info` and carrying it on `ImageMeta`; it is recorded
+in `## What K3 does *not* do yet` rather than papered over here.
+
+### The `MVP` three
+
+```console
+$ docflow-kernel image deskew <file>
+image deskew is not implemented in Stage 1 (kernel-cli.md §9 marks it `MVP`). It
+does not dispatch and does not run partially.
+# exit 4
+```
+
+`deskew`, `phash` and `tile` each behave this way: listed, known, and exit `4`
+naming themselves unimplemented. An operation that has not landed stays
+distinguishable from one that does not exist — which is exit `4` on a message like
+`unknown flag` rather than on this one.
+
+### The exit codes, in one table
+
+| Exit | Meaning | Where K3 produces it |
+|---|---|---|
+| `0` | A value was produced | `info`; `legibility` above threshold; `crop` |
+| `2` | The document's answer | `unsupported_format` on a non-image; `illegible`; the rescale refusals |
+| `3` | A precondition failed | a policy key the registry does not declare — `image legibility` without `image.legibility_threshold` |
+
+Exit `3` is the one worth seeing, because it is the failure a *healthy-looking*
+registry can still produce. Point `--root` at a registry whose
+`policies/thresholds.json` omits the key and the command refuses rather than picking
+a threshold for you:
+
+```console
+$ docflow-kernel image legibility <file> --root /tmp/registry-without-the-key
+# reason.code: "asset_missing"
+# reason.message: "policies/thresholds.json declares no policy value
+#   'image.legibility_threshold'. Refusing rather than defaulting ..."
+# exit 3
+```
+
+That refusal is also why the key is pinned by a test: `image legibility` asking for a
+key the registry did not declare is a defect this project has already shipped once,
+and because the symptom was a *typed reason* rather than an error, it answered
+`asset_missing` for every image with nothing looking broken.
+| `4` | Usage: bad flag, unknown command, `MVP` | `image deskew`; an unknown flag; a missing positional |
+
+One detail worth knowing before scripting against this: **`--repeat N`** re-runs the
+call N times and reports a per-run digest under a `repetitions` key that appears only
+when the flag is given. It **reports**, it does not retry — a `sampled` result stays
+sampled rather than being quietly re-rolled until it agrees.
+
+---
+
 ## The split, and what it buys
 
 `kernels/image.py` held `from PIL import …` in **four** places. The library moved to
@@ -304,7 +531,9 @@ the image, and a non-positive resolution.
 
 | Not available | Where it lands |
 |---|---|
-| `docflow-kernel image info  legibility  rescale  crop` | **Now available** — see `lab-cli.md`. The `MVP` operations of §9 still exit `4` |
+| `docflow-kernel image info  legibility  rescale  crop` | **Now available** — see the section above and `lab-cli.md`. The `MVP` operations of §9 still exit `4` |
+| A **successful** `image rescale` from the CLI | **Open gap** — the operation is `now` and its refusals are correct, but `info` reports no DPI, so `source_dpi` is always unreadable and every run refuses. The library path works because the caller supplies `source_dpi` |
+| `--save` on `image crop` | **Declared but refused** — §9 lists it, and the dispatcher rejects it with exit `4` because `crop` returns `Evidence` while `--save` writes a `Bytes` value. `--save` works on `pdf render`, which does return bytes |
 | Deskew, denoise, binarize, auto-contrast | `# TODO: [MVP]` — `image deskew` stays `MVP` and exits `4` |
 | `phash`, `tile` | `# TODO: [MVP]` — both stay `MVP` and exit `4` |
 | Any threshold of its own | **Never** — every threshold is the caller's (`prd.md` FR-15) |

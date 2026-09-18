@@ -91,6 +91,7 @@ from docflow.kernel_cli.main import (
     inventory,
 )
 from docflow.kernels import store
+from docflow.kernels.image import InverseMap
 from docflow.kernels.types import (
     Box,
     Bytes,
@@ -847,6 +848,51 @@ def test_the_envelope_encodes_every_boundary_type_the_cli_can_print() -> None:
         "a missing confidence stays null and is never coerced to 1.0"
     )
     assert set(envelope["evidence"]) == {"terms", "measurements", "observed"}
+
+
+def test_a_crops_inverse_map_is_encoded_in_the_evidence_where_the_matrix_puts_it() -> (
+    None
+):
+    """A crop's inverse map must survive encoding, and under ``observed``.
+
+    This is `kernel-cli.md` silent-failure matrix row 8: *"a crop's local coordinates
+    reported as a page region - ``evidence.inverse_map`` is present and maps back to
+    source coordinates."* The map has to reach stdout for that to be checkable by
+    hand, and it did not: `image crop` **crashed** with exit ``1`` and *"no envelope
+    encoding for InverseMap"*, because the encoder refuses every type that is not one
+    of the seven boundary types and this one is not among them.
+
+    The type is not a boundary type and must not become one - `kernels/image.py` owns
+    it, and the seven are frozen in `sad.md` §6. So the encoder carries it, and this
+    test asserts the *members*, not merely that encoding succeeded: an encoded map
+    that lost ``scale`` would still be a dict.
+    """
+    inverse = InverseMap(offset_x=100.0, offset_y=120.0, scale=1.0)
+    handler = RecordingHandler(
+        Call(
+            result=KernelResult(
+                value=Bytes(data=b"\x89PNG\r\n\x1a\n", media_type="image/png"),
+                evidence=Evidence(
+                    terms=MappingProxyType({}),
+                    measurements=MappingProxyType({}),
+                    observed=MappingProxyType({"inverse_map": inverse}),
+                ),
+                reason=None,
+            )
+        )
+    )
+
+    invocation = run(["image", "crop"], Operation("image", "crop", handler))
+
+    assert invocation.exit_code == EXIT_VALUE, (
+        "an unencodable inverse map is an exit-1 defect, which is how `image crop` "
+        "failed: " + invocation.stderr
+    )
+    assert envelope_of(invocation)["evidence"]["observed"]["inverse_map"] == {
+        "offset_x": 100.0,
+        "offset_y": 120.0,
+        "scale": 1.0,
+    }
 
 
 def test_a_bytes_value_leaves_as_a_descriptor_and_not_as_base64() -> None:

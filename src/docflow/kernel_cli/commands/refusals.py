@@ -26,11 +26,37 @@ from typing import Any
 
 from docflow.kernels.types import Evidence, KernelResult, Reason
 
-__all__: list[str] = ["answered", "refusal"]
+__all__: list[str] = ["answered", "missing", "refusal"]
 
 #: The observed key saying what a refusal was blocked by. Declared so the four
 #: callers cannot each invent a different spelling of the same fact.
 BLOCKED_BY: str = "blocked_by"
+
+#: What stopped a call whose caller did not name something the call requires. The
+#: same word whichever name is missing - an asset, a key, a root - because "the caller
+#: did not say which" is one condition, and a per-command synonym would make it look
+#: like three.
+BLOCKED_MISSING: str = "missing_parameter"
+
+
+def missing(message: str) -> KernelResult[Any]:
+    """Build the refusal for a call that named no value for a required parameter.
+
+    The *message* is an argument because what the omission costs differs per command
+    and the caller is the only one who knows: no root lists the wrong tree, no asset
+    names no keys. Everything else about the refusal is the same, which is why this
+    exists rather than each command writing the same four-line value out.
+
+    Args:
+        message: Why the call cannot proceed without the parameter.
+
+    Returns:
+        The result, carrying no value and the ``missing_parameter`` block reason.
+
+    """
+    return refusal(
+        Reason(code="asset_missing", message=message), blocked_by=BLOCKED_MISSING
+    )
 
 
 def refusal(

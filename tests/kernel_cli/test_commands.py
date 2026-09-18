@@ -580,3 +580,105 @@ def test_out_and_root_are_not_conflated() -> None:
                 both.append(f"{kernel} {name}")
 
     assert both == [], f"commands conflating --out with --root: {both}"
+
+
+# --- A declared flag must be dispatchable ----------------------------------
+
+
+def _declared_flags() -> dict[str, set[str]]:
+    """Return each registered command and the flags it declares.
+
+    Read from the live table rather than restated, so a command added later is
+    covered without editing this file.
+    """
+    by_operation: dict[str, set[str]] = {}
+    for kernel, commands in surface.REGISTERED.items():
+        for name, _handler, _positional, flags in commands:
+            by_operation[f"{kernel} {name}"] = set(flags)
+    return by_operation
+
+
+def test_every_flag_a_command_declares_is_in_the_allowed_vocabulary() -> None:
+    """The falsifier for a **real defect** that shipped once: nine dead commands.
+
+    `kernel-cli.md` §9's per-command tables and §10's **prose** flag list disagree.
+    The tables declare ``--target-dpi``, ``--prefix``, ``--asset``, ``--key``,
+    ``--image``, ``--max-pixels``, ``--samples-file`` and ``--text-file``; the prose
+    list omits all eight, and ``ALLOWED_FLAGS`` was built from the prose list. The
+    dispatcher therefore refused each of those commands' **own required flag** as
+    unknown, so `image rescale`, `image tile`, `store ls`, `registry show`,
+    `registry ls` and all four `llm.*` commands were registered, listed and
+    uncallable - the flag-parsing equivalent of the `image legibility` defect this
+    suite already pins.
+
+    §9 is the authority: a command that names a flag in its own table is a command
+    that must be able to receive it. Asserted as a set difference so the message
+    names every offending flag at once.
+    """
+    allowed = set(main.ALLOWED_FLAGS)
+    offenders = sorted(
+        f"{operation}: {flag}"
+        for operation, flags in _declared_flags().items()
+        for flag in flags
+        if flag not in allowed
+    )
+
+    assert offenders == [], f"flags declared but not dispatchable: {offenders}"
+
+
+def test_the_dispatcher_binds_a_hyphenated_flag_to_a_keyword_name() -> None:
+    """A flag name is hyphenated; a Python keyword is not, so the two must be one name.
+
+    The same defect as above, one layer down, and it was **silent after the
+    vocabulary was fixed**: the parser stored ``flag[2:]``, so ``--target-dpi``
+    became the key ``"target-dpi"`` while the handler reads ``target_dpi``. The value
+    was dropped with no error, and because a rescale with no target must never become
+    a default, the caller saw a refusal that blamed *them* for not asking.
+
+    A parameter that is swallowed is indistinguishable from one that was never given,
+    which is why this is asserted on the call the handler actually receives rather
+    than on the parsed dictionary.
+    """
+    seen: dict[str, object] = {}
+
+    def handler(**params: object) -> main.Call:
+        """Record what the dispatcher bound, and answer with a value."""
+        seen.update(params)
+        return main.Call(
+            result=main.KernelResult(
+                value="ok",
+                evidence=main.Evidence(
+                    terms={"surface": "test"},
+                    measurements={"n": 1.0},
+                    observed={"note": "test"},
+                ),
+                reason=None,
+            )
+        )
+
+    operation = main.Operation(
+        "image",
+        "rescale",
+        handler,
+        "file",
+        ("--target-dpi", "--max-pixels", "--resolve-only"),
+    )
+    invocation = main.dispatch(
+        [
+            "image",
+            "rescale",
+            "page.png",
+            "--target-dpi",
+            "200",
+            "--max-pixels",
+            "4",
+            "--resolve-only",
+        ],
+        table={("image", "rescale"): operation},
+    )
+
+    assert invocation.exit_code == main.EXIT_VALUE, invocation.stderr
+    assert seen["target_dpi"] == "200", "the hyphenated flag binds to a keyword name"
+    assert seen["max_pixels"] == "4"
+    assert seen["resolve_only"] is True
+    assert "target-dpi" not in seen, "the keyword cannot carry a hyphen"
