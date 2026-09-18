@@ -67,6 +67,7 @@ from types import MappingProxyType
 from typing import Any, Final
 from xml.etree import ElementTree
 
+from docflow.adapters.pdf_stable import stabilise_file_id
 from docflow.kernels import pdf as analysis
 from docflow.kernels.pdf_vendor import (
     CutDocument,
@@ -503,7 +504,7 @@ class PyMuPdfVendor:
             for page in pages:
                 extracted.insert_pdf(document, from_page=page - 1, to_page=page - 1)
 
-            payload = extracted.tobytes(deflate=True, garbage=3)
+            payload = stabilise_file_id(extracted.tobytes(deflate=True, garbage=3))
             sizes = tuple(
                 (float(page.rect.width), float(page.rect.height)) for page in extracted
             )

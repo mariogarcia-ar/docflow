@@ -377,7 +377,8 @@ declares that key and the dispatcher reaches the buffer through it.
 $ docflow-kernel image crop <file> --region 10,10,50,50 --save /tmp/crops
 # value.observed.image:
 #   { "sha256": "6f35…", "size_bytes": 125310, "media_type": "image/png",
-#     "path": "artifacts/6f35…", "delivery_name": "6f35….png" }
+#     "path": "artifacts/6f35…",
+#     "delivery_name": "dbc07b17-2538-4611-9e51-7e161aaf7ba5-crop-10-10-50-50.png" }
 # value.observed.inverse_map:  { "offset_x": 10.0, "offset_y": 10.0, "scale": 1.0 }
 # exit 0
 ```

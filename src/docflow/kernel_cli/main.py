@@ -593,16 +593,39 @@ class Call:
         result: The kernel's outcome, in the two-state shape the boundary fixes.
         call_record: What the provider call cost and which revision answered, or
             None for a kernel that made no provider call.
+        delivered_as: The name the bytes were delivered under at the ``--save``
+            root, or None when nothing was saved. It is a field here rather than on
+            :class:`~docflow.kernels.types.Artifact` because that type is frozen with
+            four fields (`sad.md` §6) and because the name is a fact about *this
+            surface's* handover rather than about the stored bytes: the artifact's
+            identity is its hash, and the delivery name is what a caller is told to
+            open.
 
     """
 
     result: KernelResult[object]
     call_record: CallRecord | None = None
+    delivered_as: str | None = None
 
 
 #: What a registered operation does. It receives the parsed operation parameters
 #: and answers with a :class:`Call`; it never sees or returns an exit code.
 Handler = Callable[..., Call]
+
+#: How a command names the bytes it saved.
+#:
+#: It receives the parameters the command was called with and returns the **stem**
+#: of the delivery name - no suffix, because the suffix belongs to the media type.
+#: A callable rather than a template string because the discriminating parameters
+#: differ per command and some are optional: `pdf render` names a page and a DPI,
+#: `pdf split` names a page *range*, `image crop` names a region. A template would
+#: have to spell all four and be wrong for three.
+#:
+#: It is declared per command rather than derived by this module from the parsed
+#: flags, and that is the same rule the rest of this surface follows: the command
+#: owns what it produces, and a dispatcher that guessed a name from a flag list
+#: would silently rename existing outputs the day a flag was added.
+DeliveryName = Callable[[Mapping[str, object]], str]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -632,6 +655,9 @@ class Operation:
             for a command whose value is not the buffer itself. ``None`` means the
             value carries no embedded buffer. See :func:`_apply_save` for why the
             two ``--save`` shapes are declared rather than discovered.
+        delivery_name: How this command names the bytes it saved, or ``None`` for a
+            command whose delivery name this surface cannot derive. Receives the
+            parsed parameters and returns the name's stem. See :data:`DeliveryName`.
 
     """
 
@@ -641,6 +667,7 @@ class Operation:
     positional: str | None = None
     flags: tuple[str, ...] = ()
     buffer_key: str | None = None
+    delivery_name: DeliveryName | None = None
 
     @property
     def is_mvp(self) -> bool:
@@ -683,7 +710,7 @@ def registered_operations() -> Mapping[tuple[str, str], Operation]:
 # --- The envelope ------------------------------------------------------------
 
 
-def _encode(value: object) -> object:
+def _encode(value: object, *, delivered: str | None = None) -> object:
     """Encode one value for the envelope.
 
     The seven boundary types are encoded **explicitly**, member by member, rather
@@ -694,6 +721,11 @@ def _encode(value: object) -> object:
 
     Args:
         value: The value to encode.
+        delivered: The name a saved buffer was delivered under, when this encoding
+            is the one that carries it. ``Artifact`` is frozen with four fields
+            (`sad.md` §6), so the name cannot live on the type - it is passed in for
+            the one descriptor that has one and left ``None`` everywhere else, which
+            keeps the fallback (the digest) in exactly one place.
 
     Returns:
         A JSON-encodable structure.
@@ -716,7 +748,8 @@ def _encode(value: object) -> object:
             "size_bytes": value.size_bytes,
             "media_type": value.media_type,
             "path": value.path,
-            "delivery_name": _delivery_name(value.sha256, value.media_type),
+            "delivery_name": delivered
+            or _delivery_name(value.sha256, value.media_type),
         }
     if isinstance(value, Evidence):
         return {
@@ -811,7 +844,7 @@ _DELIVERY_SUFFIXES: Final[Mapping[str, str]] = {
 
 
 def _delivery_name(sha256: str, media_type: str) -> str:
-    """Name a buffer's bytes for a consumer that picks a reader by extension.
+    """Name a buffer's bytes when the command declares no name of its own.
 
     A saved buffer is written **twice**, and the two names answer different
     questions:
@@ -821,17 +854,20 @@ def _delivery_name(sha256: str, media_type: str) -> str:
       ``verify`` have nothing but the hash to reach it by (`kernels/store.py`,
       `FR-11`). Appending a suffix there would give one artifact two names to look
       under and make the same bytes under two media types two different files.
-    - ``delivery_name`` is ``<sha256><suffix>``, and ``--save`` writes a second copy
-      under it **at the save root**, which is what a consumer that selects an engine
-      by extension needs. `kernel-cli.md` §6 promised ``<dir>/<sha256>.png`` and this
-      is the file that makes the promise true.
+    - ``delivery_name`` is the name a consumer is handed, and ``--save`` writes a
+      second copy under it **at the save root**.
 
-    The second copy is not redundancy for its own sake: the store cannot carry the
-    suffix without losing its identity, so the suffix has to be delivered somewhere,
-    and the save root is where a caller already looks.
+    This is the **fallback**, and it is deliberately a poor name: the digest plus the
+    suffix its media type implies. A digest is not something a person can work with,
+    but it is always correct - it cannot collide, because it *is* the content. Every
+    command that knows what it produced overrides it with a readable name (see
+    :data:`DeliveryName` and `commands/surface.py`'s ``DELIVERY_NAMES``); the commands
+    that cannot are the ones whose input was not a named document. ``store get`` is
+    the case: it reads bytes back *by hash* and knows neither a source file nor what
+    the bytes were, which is why its media type is ``application/octet-stream``.
 
     Args:
-        sha256: The buffer's digest, which is the name's stem.
+        sha256: The buffer's digest.
         media_type: The buffer's media type, which decides the suffix.
 
     Returns:
@@ -843,14 +879,27 @@ def _delivery_name(sha256: str, media_type: str) -> str:
     return f"{sha256}{_DELIVERY_SUFFIXES.get(media_type, '')}"
 
 
-def _deliver(root: pathlib.Path, artifact: Artifact, data: bytes) -> None:
-    """Write a second copy of the bytes under the suffixed delivery name.
+def _deliver(
+    root: pathlib.Path,
+    artifact: Artifact,
+    data: bytes,
+    *,
+    params: Mapping[str, object],
+    naming: DeliveryName | None,
+) -> str:
+    """Write a second copy of the bytes under a delivery name, and report it.
 
     Deliberately **not** a hard link. ``os.link`` fails across filesystems, and the
     save root is a directory the caller names - usually a temporary one on another
     mount - so a link would work in testing and fail in use. Falling back to a copy
     silently would be worse: the caller would have two behaviours and no way to tell
     which one ran. A copy always works.
+
+    The name comes from the command's own declaration when it has one, so the file a
+    caller opens says *which document, which page, which resolution* rather than
+    *which digest*. A command that declares none - ``store get``, which reads by hash
+    and knows no source document - gets the digest, which is unreadable but cannot
+    collide.
 
     A media type with no known suffix delivers nothing, so ``store get --save`` does
     not leave a second copy of the same bytes named after its hash alone.
@@ -862,11 +911,24 @@ def _deliver(root: pathlib.Path, artifact: Artifact, data: bytes) -> None:
         root: The ``--save`` root the delivery file goes directly under.
         artifact: The stored artifact, whose digest and media type name the copy.
         data: The bytes to write, already in hand from the buffer that was stored.
+        params: The parsed parameters, handed to the command's naming callable.
+        naming: The command's naming callable, or None to use the digest.
+
+    Returns:
+        The name the copy was written under, or the digest when nothing was written -
+        which is what the descriptor reports either way, so a caller never has to
+        guess whether a second file exists.
 
     """
+    suffix = _DELIVERY_SUFFIXES.get(artifact.media_type, "")
     name = _delivery_name(artifact.sha256, artifact.media_type)
+    if suffix != "" and naming is not None:
+        stem = naming(params)
+        if stem != "":
+            name = f"{stem}{suffix}"
+
     if name == artifact.sha256:
-        return
+        return name
 
     target = root / name
     staging = target.with_name(f".{target.name}.delivery")
@@ -875,6 +937,7 @@ def _deliver(root: pathlib.Path, artifact: Artifact, data: bytes) -> None:
     # artifact of record is already durable and verifiable, so a delivery copy lost
     # to a power cut is recoverable by re-running rather than a lost result.
     os.replace(staging, target)
+    return name
 
 
 def _describe_bytes(value: Bytes) -> Mapping[str, object]:
@@ -1035,8 +1098,8 @@ def _envelope(call: Call) -> Mapping[str, object]:
 
     """
     return {
-        "value": _encode(call.result.value),
-        "evidence": _encode(call.result.evidence),
+        "value": _encode(call.result.value, delivered=call.delivered_as),
+        "evidence": _encode(call.result.evidence, delivered=call.delivered_as),
         "reason": _encode(call.result.reason),
         "call_record": _encode(call.call_record),
     }
@@ -1312,6 +1375,7 @@ def dispatch(
         save_dir=save_dir,
         verbose=verbose,
         buffer_key=operation.buffer_key,
+        naming=operation.delivery_name,
     )
 
 
@@ -1324,6 +1388,7 @@ def _invoke(  # pylint: disable=too-many-arguments
     save_dir: object,
     verbose: bool,
     buffer_key: str | None = None,
+    naming: DeliveryName | None = None,
 ) -> Invocation:
     """Call one handler and turn its answer into an invocation.
 
@@ -1351,6 +1416,9 @@ def _invoke(  # pylint: disable=too-many-arguments
         verbose: Whether ``--verbose`` was given.
         buffer_key: Where the operation's buffer sits inside an ``Evidence`` value,
             or None when its value carries no embedded buffer.
+        naming: How the operation names its delivered buffer, or None to fall back
+            to the digest. It receives ``params``, which are still in hand here -
+            they are popped for the handler, not for this.
 
     Returns:
         The invocation.
@@ -1359,12 +1427,12 @@ def _invoke(  # pylint: disable=too-many-arguments
     try:
         repetitions = _repetitions(params.pop("repeat", None))
         calls = [_call_once(handler, params) for _ in range(repetitions)]
-        written = _apply_save(calls[-1], save_dir, buffer_key=buffer_key)
+        written = _apply_save(
+            calls[-1], save_dir, params=params, naming=naming, buffer_key=buffer_key
+        )
         if isinstance(written, Invocation):
             return written
-        envelope = _envelope_with_repetitions(written, calls)
-        exit_code = exit_code_for(written.result)
-        stdout = json.dumps(envelope, indent=2, sort_keys=False) + "\n"
+        exit_code, stdout = _render(written, calls)
     except UsageError as exc:
         return _usage_error(str(exc))
     except Exception:  # pylint: disable=broad-except
@@ -1380,8 +1448,35 @@ def _invoke(  # pylint: disable=too-many-arguments
     return Invocation(exit_code=exit_code, stdout=stdout, stderr=stderr)
 
 
+def _render(call: Call, calls: Sequence[Call]) -> tuple[int, str]:
+    """Turn a saved answer into the exit code and the JSON document.
+
+    Extracted from :func:`_invoke` so that function stays inside the branch budget a
+    reader can hold: it already opens the operation, dispatches it, applies ``--save``
+    and handles three failure shapes, and the encoding is a separate step with no
+    decisions of its own.
+
+    Args:
+        call: The answer to encode, which is the last repetition's.
+        calls: Every repetition's answer, so ``--repeat`` can report each hash.
+
+    Returns:
+        The process exit code and the stdout document, newline-terminated.
+
+    """
+    envelope = _envelope_with_repetitions(call, calls)
+    return exit_code_for(call.result), json.dumps(
+        envelope, indent=2, sort_keys=False
+    ) + "\n"
+
+
 def _apply_save(
-    call: Call, save_dir: object, *, buffer_key: str | None = None
+    call: Call,
+    save_dir: object,
+    *,
+    params: Mapping[str, object] | None = None,
+    naming: DeliveryName | None = None,
+    buffer_key: str | None = None,
 ) -> Call | Invocation:
     """Route a buffer through K7 when ``--save`` was given.
 
@@ -1429,7 +1524,9 @@ def _apply_save(
         return call
 
     if buffer_key is not None:
-        return _saved_embedded(call, save_dir, buffer_key)
+        return _saved_embedded(
+            call, save_dir, buffer_key, params=params or {}, naming=naming
+        )
 
     if not isinstance(value, Bytes):
         return _usage_error(
@@ -1439,16 +1536,24 @@ def _apply_save(
 
     root = pathlib.Path(str(save_dir))
     artifact = store.put(root, value.data, value.media_type)
-    _deliver(root, artifact, value.data)
+    delivered = _deliver(root, artifact, value.data, params=params or {}, naming=naming)
     return Call(
         result=KernelResult(
             value=artifact, evidence=call.result.evidence, reason=call.result.reason
         ),
         call_record=call.call_record,
+        delivered_as=delivered,
     )
 
 
-def _saved_embedded(call: Call, save_dir: object, buffer_key: str) -> Call | Invocation:
+def _saved_embedded(
+    call: Call,
+    save_dir: object,
+    buffer_key: str,
+    *,
+    params: Mapping[str, object],
+    naming: DeliveryName | None,
+) -> Call | Invocation:
     """Persist a buffer that sits inside an ``Evidence`` value.
 
     The declared key is reached for, not searched for, and every way it can fail to
@@ -1488,7 +1593,7 @@ def _saved_embedded(call: Call, save_dir: object, buffer_key: str) -> Call | Inv
 
     root = pathlib.Path(str(save_dir))
     artifact = store.put(root, embedded.data, embedded.media_type)
-    _deliver(root, artifact, embedded.data)
+    delivered = _deliver(root, artifact, embedded.data, params=params, naming=naming)
     rebuilt = Evidence(
         terms=value.terms,
         measurements=value.measurements,
@@ -1497,6 +1602,7 @@ def _saved_embedded(call: Call, save_dir: object, buffer_key: str) -> Call | Inv
     return Call(
         result=KernelResult(value=rebuilt, evidence=rebuilt, reason=call.result.reason),
         call_record=call.call_record,
+        delivered_as=delivered,
     )
     # TODO: [MVP] The arrow here points at `docflow.kernels.store` because `E07-01`
     # is the dispatcher *at the kernel layer*, and its own guard asserts exactly

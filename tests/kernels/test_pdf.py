@@ -29,6 +29,7 @@ it asks for — that shadowing *is* the wiring.
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import re
 import shutil
@@ -850,6 +851,52 @@ def test_split_output_is_a_pdf(
         assert reopened.page_count == 2
     finally:
         reopened.close()
+
+
+def test_split_is_deterministic_across_runs(three_pages_pdf: pathlib.Path) -> None:
+    """The same input produces the same bytes, which is what K2's class claims.
+
+    `sad.md` §4 classifies K2 `deterministic`, and the classification is what makes
+    the artifact a *cache* that may be recomputed, the ledger's ``artifact_sha256``
+    a claim, and the store's content addressing a deduplication rather than a
+    growing pile. **This test did not exist, and the property did not hold**: the
+    engine writes a fresh random ``/ID`` into the trailer at every save, so ten runs
+    produced ten different artifacts. Nothing asserted otherwise, because the
+    existing split tests check the page count and the boxes — properties that were
+    stable — and the hash was never compared against itself.
+
+    The check is on the *hash of the bytes*, not on a field: any future source of
+    run-to-run variation has to fail here, whether or not it is the identifier.
+    """
+    first = pdf.split(three_pages_pdf, [1, 2], vendor=VENDOR)
+    second = pdf.split(three_pages_pdf, [1, 2], vendor=VENDOR)
+
+    assert first.value is not None and second.value is not None
+    assert (
+        hashlib.sha256(first.value.data).hexdigest()
+        == hashlib.sha256(second.value.data).hexdigest()
+    ), (
+        "two splits of one document must produce identical bytes: K2 is "
+        "deterministic, and a hash that changes per run cannot key a cache"
+    )
+    assert first.value.data == second.value.data, "and the bytes agree exactly"
+
+
+def test_split_of_a_different_range_produces_different_bytes(
+    three_pages_pdf: pathlib.Path,
+) -> None:
+    """The positive control: determinism must not be achieved by ignoring the request.
+
+    Without this, a ``split`` that returned one hard-coded document - or that
+    dropped its page argument - would satisfy the test above perfectly.
+    """
+    one = pdf.split(three_pages_pdf, [1], vendor=VENDOR)
+    both = pdf.split(three_pages_pdf, [1, 2], vendor=VENDOR)
+
+    assert one.value is not None and both.value is not None
+    assert one.value.data != both.value.data, (
+        "a split of one page and a split of two must not produce the same bytes"
+    )
 
 
 # --- Criterion: no threshold constant lives in the module -------------------

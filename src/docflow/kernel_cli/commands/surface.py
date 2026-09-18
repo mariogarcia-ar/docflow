@@ -105,6 +105,22 @@ BUFFER_KEYS: Final[Mapping[tuple[str, str], str]] = {
     ("image", "crop"): "image",
 }
 
+#: Kernel name to the callables the commands of that kernel declare for naming their
+#: delivered buffer, keyed by operation.
+#:
+#: Read from each command module's own ``DELIVERY_NAMES`` rather than restated here,
+#: because the fact belongs to the command: *what did this command produce* is
+#: answered by the module that called the kernel, and duplicating it would give the
+#: same name two sources to drift between.
+#:
+#: A command absent from this table falls back to the digest, which is always correct
+#: and unreadable. ``store get`` is the one that must: it reads by hash and knows
+#: neither a source document nor what the bytes were.
+DELIVERY_NAMES: Final[Mapping[str, Mapping[str, object]]] = {
+    "pdf": pdf_commands.DELIVERY_NAMES,
+    "image": image_commands.DELIVERY_NAMES,
+}
+
 
 def build() -> dict[tuple[str, str], Operation]:
     """Build the surface's operation table, without declaring anything.
@@ -129,6 +145,7 @@ def build() -> dict[tuple[str, str], Operation]:
                 positional=positional or None,
                 flags=flags,
                 buffer_key=BUFFER_KEYS.get((kernel, name)),
+                delivery_name=DELIVERY_NAMES.get(kernel, {}).get(name),
             )
             table[(kernel, name)] = operation
     return table

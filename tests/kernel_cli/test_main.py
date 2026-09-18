@@ -1003,31 +1003,35 @@ def test_a_bytes_value_leaves_as_a_descriptor_and_not_as_base64() -> None:
 # --- The suffix a consumer reads off the descriptor -------------------------
 
 
-def test_the_descriptor_names_the_bytes_with_the_suffix_their_media_type_implies(
+def test_the_fallback_delivery_name_is_the_digest_when_no_document_was_named(
     tmp_path: pathlib.Path,
 ) -> None:
-    """``--save`` writes the bytes **under the suffixed name**, at the save root.
+    """A command with no source document gets the digest, and the file exists.
 
     The defect this closes was reported twice. The first fix added ``delivery_name``
-    to the descriptor and stopped there, so the envelope announced
-    ``<sha256>.png`` while the directory held only ``artifacts/<sha256>`` - a
-    descriptor naming a file that did not exist. **This suite passed the whole time**,
-    because every assertion read the JSON and none read the disk. That is the gap the
-    assertions below close: the name is checked *and* the file it names.
+    to the descriptor and stopped there, so the envelope announced a name while the
+    directory held only ``artifacts/<sha256>`` - a descriptor naming a file that did
+    not exist. **This suite passed the whole time**, because every assertion read the
+    JSON and none read the disk. The assertions below close that gap: the name is
+    checked *and* the file it names.
+
+    ``store get`` is the command under test because it is the one that *must* fall
+    back: it reads bytes back by hash and knows neither a document nor what the bytes
+    were, which is why its media type is ``application/octet-stream`` and why the
+    digest is the only name it can honestly offer.
 
     The two names coexist on purpose, and neither replaces the other:
 
     - ``artifacts/<sha256>`` is the store's - no suffix, because a store is
       content-addressed and the file's name *is* its identity (`FR-11`);
-    - ``<sha256>.png`` at the save root is what `kernel-cli.md` §6 promised and what a
-      consumer that selects a reader by extension needs.
+    - the delivery copy at the save root is what `kernel-cli.md` §6 promised.
     """
     data = b"\x89PNG\r\n\x1a\n" * 3
-    handler = RecordingHandler(bytes_call(data))
+    handler = RecordingHandler(value_call(Bytes(data=data, media_type="image/png")))
 
     invocation = run(
-        ["pdf", "render", "--save", str(tmp_path)],
-        Operation("pdf", "render", handler),
+        ["store", "get", "a" * 64, "--save", str(tmp_path)],
+        Operation("store", "get", handler, positional="sha256"),
     )
 
     assert invocation.exit_code == EXIT_VALUE
@@ -1035,7 +1039,7 @@ def test_the_descriptor_names_the_bytes_with_the_suffix_their_media_type_implies
     digest = hashlib.sha256(data).hexdigest()
 
     assert value["delivery_name"] == f"{digest}.png", (
-        "a PNG must be named with the suffix its media type implies"
+        "with no declared name the digest is used, plus the media type's suffix"
     )
     assert value["path"] == f"artifacts/{digest}", (
         "the store's name is the hash and gains no suffix: its identity is the digest"
@@ -1054,6 +1058,72 @@ def test_the_descriptor_names_the_bytes_with_the_suffix_their_media_type_implies
     )
     assert value["delivery_name"] != value["path"].rsplit("/", 1)[-1], (
         "the two names differ, which is the whole reason the field exists"
+    )
+
+
+# --- The readable name a command declares ------------------------------------
+
+
+def test_render_names_its_delivery_after_the_document_pages_and_dpi(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The delivered file a caller opens says what it holds, not which digest it is.
+
+    All three components earn their place, and the DPI is the one that is easy to
+    leave out and expensive to omit. **Measured**: the same page of the same document
+    at 72 DPI and at 71 DPI produces different bytes - 77070 and 75652 - so a name
+    carrying the page but not the resolution would overwrite one with the other and
+    report success. The pages are in for the same reason: ``--pages 1`` and
+    ``--pages 1,2`` are different artifacts.
+
+    The store's own name is asserted unchanged beside it, because the two coexist:
+    the readable name is a *second* copy, and the identity of the artifact is still
+    the hash.
+    """
+    handler = RecordingHandler(bytes_call())
+    real = composition_root.build()[("pdf", "render")]
+    operation = Operation(
+        kernel="pdf",
+        name="render",
+        handler=handler,
+        positional="file",
+        delivery_name=real.delivery_name,
+    )
+
+    invocation = run(
+        [
+            "pdf",
+            "render",
+            "documento.pdf",
+            "--pages",
+            "1",
+            "--dpi",
+            "72",
+            "--save",
+            str(tmp_path),
+        ],
+        operation,
+    )
+
+    assert invocation.exit_code == EXIT_VALUE, invocation.stderr
+    value = envelope_of(invocation)["value"]
+    name = str(value["delivery_name"])
+
+    assert name.endswith(".png"), "the suffix still comes from the media type"
+    assert "documento" in name, (
+        "the delivered name must identify the document it came from, or a directory "
+        "of outputs is a list of digests"
+    )
+    assert "p1" in name, "and the pages it holds, which distinguish two selections"
+    assert "72" in name, (
+        "and the resolution: the same page at 71 DPI is different bytes, so a name "
+        "without it overwrites one with the other"
+    )
+    assert name != value["path"].rsplit("/", 1)[-1], (
+        "a readable name replaced the digest, which is the point of declaring one"
+    )
+    assert (tmp_path / name).is_file(), (
+        f"the announced name {name!r} must name a file that was written"
     )
 
 

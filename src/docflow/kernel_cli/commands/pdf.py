@@ -16,11 +16,12 @@ reports the precondition rather than inventing a number.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Final
 
 from docflow.adapters.pdf import PdfEngine
-from docflow.kernel_cli.commands.pages import parse_pages
+from docflow.kernel_cli.commands.pages import page_token, parse_pages
 from docflow.kernel_cli.commands.policy import DEFAULT_ROOT, policy_number
 from docflow.kernel_cli.main import Call, Handler, UsageError
 from docflow.kernels.types import Evidence, KernelResult, Reason
@@ -29,6 +30,48 @@ __all__: list[str] = []
 
 #: The policy key the engine's threshold comes from.
 _MIN_CHARS_KEY: Final[str] = "reader.min_chars"
+
+
+def _render_name(params: Mapping[str, object]) -> str:
+    """Name a render after the document, the pages and the resolution asked for.
+
+    All three discriminate, and leaving any out loses a file. Measured: the same page
+    of the same document at 72 DPI and at 71 DPI produces different bytes (77070 and
+    75652), so a name carrying the page but not the DPI would overwrite one with the
+    other. The pages are in the name for the same reason: `--pages 1` and `--pages
+    1,2` are different artifacts.
+
+    Args:
+        params: The parsed parameters the command was called with.
+
+    Returns:
+        The name's stem.
+
+    """
+    return (
+        f"{Path(str(params.get('file', 'document'))).stem}"
+        f"-{page_token(params.get('pages'))}"
+        f"-dpi{params.get('dpi', 'native')}"
+    )
+
+
+def _split_name(params: Mapping[str, object]) -> str:
+    """Name a split after the document and the page range it was cut from.
+
+    The range *is* what distinguishes two splits of one file, so a name carrying only
+    the document would let `--pages 1` and `--pages 1,2` collide.
+
+    Args:
+        params: The parsed parameters the command was called with.
+
+    Returns:
+        The name's stem.
+
+    """
+    return (
+        f"{Path(str(params.get('file', 'document'))).stem}"
+        f"-{page_token(params.get('pages'))}"
+    )
 
 
 def _engine(root: str) -> PdfEngine | Reason:
@@ -361,3 +404,14 @@ COMMANDS: Final[tuple[tuple[str, Handler | None, str | None, tuple[str, ...]], .
     ("facts", None, "file", ("--page",)),
     ("images", None, "file", ("--page", "--save")),
 )
+
+#: ``(kernel, operation)`` to the callable naming that command's delivered buffer.
+#:
+#: Declared here beside the commands rather than in `surface.py`'s composition root,
+#: because unlike ``BUFFER_KEYS`` this is not a fact about how ``--save`` reads an
+#: answer - it is a fact about *what the command produced*, which is this module's
+#: business. The composition root only relays it onto the operation.
+DELIVERY_NAMES: Final[Mapping[str, object]] = {
+    "render": _render_name,
+    "split": _split_name,
+}

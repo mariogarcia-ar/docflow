@@ -15,15 +15,42 @@ does not invent one.
 
 from __future__ import annotations
 
+import re
 from typing import Final
 
 from docflow.kernel_cli.main import UsageError
 
-__all__: list[str] = ["SELECT_ALL", "parse_pages"]
+__all__: list[str] = ["SELECT_ALL", "page_token", "parse_pages"]
 
 #: The word that means *every page*. A recorded constant so the two surfaces cannot
 #: disagree about it.
 SELECT_ALL: Final[str] = "all"
+
+
+def page_token(raw: object) -> str:
+    """Render a page selection as a filename-safe token.
+
+    Used to name a delivered file after the pages it holds, so that
+    ``render --pages 1,2`` and ``render --pages 1`` do not land on one name. The
+    token keeps the shape of the request rather than the expanded page list: ``1,2``
+    becomes ``p1-2`` and ``all`` becomes ``pall``, so a name stays short and a caller
+    can read the selection back off it.
+
+    Args:
+        raw: The selection as the caller wrote it, or None for the default.
+
+    Returns:
+        ``p`` followed by the selection with every separator collapsed to ``-``.
+
+    """
+    if raw is None:
+        return f"p{SELECT_ALL}"
+
+    text = str(raw).strip().lower()
+    if text in ("", SELECT_ALL):
+        return f"p{SELECT_ALL}"
+
+    return "p" + re.sub(r"[,\s]+", "-", text)
 
 
 def parse_pages(text: object, total: int | None = None) -> list[int]:

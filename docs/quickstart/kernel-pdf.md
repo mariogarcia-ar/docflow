@@ -459,7 +459,7 @@ $ docflow-kernel pdf render tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a
 # value: { "sha256": "6e739084...", "size_bytes": 77070,
 #          "media_type": "image/png",
 #          "path": "artifacts/6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d",
-#          "delivery_name": "6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d.png" }
+#          "delivery_name": "242823d2-afd3-4107-a49c-ce382592c6a5-p1-dpi72.png" }
 # value.measurements: { "pages_rendered": 1.0, "dpi_applied": 72.0, "bytes": 77070.0 }
 # exit 0
 ```
@@ -469,27 +469,37 @@ goes to the store. `path` is `null` without `--save`; with it, the artifact is w
 and the location reported — a path *relative to the save root*, not to your working
 directory.
 
-**`path` keeps no suffix, and the delivered copy is what carries it.** That is not an
-oversight: a store is content-addressed, so the file's name *is* its identity and
-`get`/`verify` have only the hash to reach it by (`FR-11`). Appending `.png` there would
-give one artifact two names to look under. So `--save` writes **two files with the same
-bytes**: the artifact of record, and a delivery copy whose name carries the extension a
-consumer selects a reader by.
+**`path` keeps no suffix, and the delivered copy carries a readable name instead.** That
+is not an oversight: a store is content-addressed, so the file's name *is* its identity
+and `get`/`verify` have only the hash to reach it by (`FR-11`). Appending `.png` there
+would give one artifact two names to look under. So `--save` writes **two files with the
+same bytes**: the artifact of record, and a delivery copy named after what it holds.
 
 ```console
 $ ls /tmp/out
-# 6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d.png   <- delivered
-# artifacts                                                              <- the store
+# 242823d2-afd3-4107-a49c-ce382592c6a5-p1-dpi72.png   <- delivered, readable
+# artifacts                                           <- the store, by hash
 $ file /tmp/out/*.png
 # PNG image data, 595 x 842, 8-bit/color RGB, non-interlaced
 ```
 
-The suffixed copy sits **directly under the save root**, and `delivery_name` in the
-descriptor is its name — so the envelope tells you the file exists and what it is called,
-without reading the directory. A media type this surface does not know — the
-`application/octet-stream` that `store get` reads bytes back as — yields the bare digest
-and **no delivery copy**, because a name nobody measured is the kind of stand-in this
-code refuses everywhere else.
+**The name carries every parameter that changes the bytes.** The DPI is the one that is
+easy to leave out and expensive to omit — the same page at 72 DPI and at 71 DPI is
+different bytes (77070 and 75652) — so both files survive rather than one overwriting
+the other:
+
+```console
+$ ls /tmp/out/*.png
+# ...242823d2...-p1-dpi71.png
+# ...242823d2...-p1-dpi72.png
+# ...242823d2...-pall-dpi72.png     <- a wider selection is a third artifact
+```
+
+`delivery_name` in the descriptor is that name, so the envelope tells you the file exists
+and what it is called, without reading the directory. A media type this surface does not
+know — the `application/octet-stream` that `store get` reads bytes back as — yields the
+bare digest and **no delivery copy**, because a name nobody measured is the kind of
+stand-in this code refuses everywhere else.
 
 Now the matrix row. `kernel-cli.md` §12 row 4 is *"a 150 DPI scan rendered at 300 and
 reported as 300"*, and the answer is a refusal:
@@ -575,7 +585,7 @@ $ docflow-kernel pdf layout tests/fixtures/pdf_escaneados/3ac5a2ec-d129-47c0-947
 $ docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 1,2
 # value: { "sha256": "...", "size_bytes": 305700,
 #          "media_type": "application/pdf", "path": null,
-#          "delivery_name": "<sha256>.pdf" }
+#          "delivery_name": "9073693b-f8bf-4f9b-88e0-1008de266c0e-p1-2.pdf" }
 # evidence.measurements: { "pages_extracted": 2.0, "bytes": 305700.0 }
 # evidence.observed.pages_requested: [1, 2]
 # exit 0
@@ -585,6 +595,41 @@ A new PDF, not a crop: `media_type` is `application/pdf` and the pages are copie
 into a document of their own. `pages_requested` (what you asked for) and
 `pages_extracted` (what came out) are both reported — a split that silently dropped a
 page would show up as a disagreement between the two rather than as a short file.
+
+**`split` is deterministic, and it was not.** A PDF's trailer carries a random `/ID`
+that the engine writes afresh on every save, so ten runs of one split produced ten
+different artifacts — while `sad.md` §4 classifies K2 `deterministic`, and the existing
+tests checked the page count and the boxes, properties that *were* stable. The
+guarantee is load-bearing: a deterministic artifact is a **cache** that may be
+recomputed, the ledger records its hash as the claim behind a `done` stage, and the
+store deduplicates by hash. The identifier is now derived from the content, so
+`--repeat` demonstrates what §7 says it should:
+
+```console
+$ docflow-kernel pdf split <the same file> --pages 1,2 --repeat 3
+# repetitions: [ "0526...", "0526...", "0526..." ]   <- one hash, not three
+# exit 0
+```
+
+The repair edits the identifier in place and preserves its length, so no byte offset
+moves and the PDF stays valid — it is `adapters/pdf_stable.py`, and it is a module of
+its own because rewriting a field of a document the engine wrote is a decision worth
+finding rather than one folded into the adapter. The alternative was to reclassify K2
+as non-deterministic, which would have dropped a guarantee `render`, `tokens`,
+`classify` and `probe` already honour.
+
+**`split` is deterministic, and it was not.** A PDF's trailer carries a random `/ID`
+that the engine writes afresh on every save, so ten runs of one split produced ten
+different artifacts while `sad.md` §4 classifies K2 `deterministic`. That
+guarantee is load-bearing — a deterministic artifact is a *cache* that may be
+recomputed, and its hash is what the ledger claims and the store deduplicates by — so
+the identifier is now derived from the content. `--repeat` demonstrates it:
+
+```console
+$ docflow-kernel pdf split <the same file> --pages 1,2 --repeat 3
+# repetitions: [ "0526...", "0526...", "0526..." ]    <- one hash, not three
+# exit 0
+```
 
 ### The `MVP` two
 

@@ -12,6 +12,8 @@ is the whole of matrix row 7.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Final
 
@@ -214,6 +216,59 @@ def crop(*, file: str, region: str, **_: object) -> Call:
         raise UsageError(str(exc)) from exc
 
 
+def _region_token(region: object) -> str:
+    """Render an ``x,y,w,h`` region as a filename-safe token.
+
+    Args:
+        region: The region as the caller wrote it.
+
+    Returns:
+        The region with its separators collapsed to ``-``, e.g. ``10-20-30-40``.
+
+    """
+    return re.sub(r"[,\s]+", "-", str(region).strip()) if region else "whole"
+
+
+def _crop_name(params: Mapping[str, object]) -> str:
+    """Name a crop after the source, the region, and the size the source declares.
+
+    The region is what distinguishes two crops of one image; ``info``'s reported size
+    is in the name because the same region over the same filename means different
+    pixels when the file is replaced, and a name is the only place a reader can see
+    that a re-run read a different source.
+
+    Args:
+        params: The parsed parameters the command was called with.
+
+    Returns:
+        The name's stem.
+
+    """
+    return (
+        f"{Path(str(params.get('file', 'image'))).stem}"
+        f"-crop-{_region_token(params.get('region'))}"
+    )
+
+
+def _rescale_name(params: Mapping[str, object]) -> str:
+    """Name a rescale after the source and the resolution it was taken to.
+
+    The target DPI is the whole content of the operation: two rescales of one image
+    are the same bytes only when the target is the same.
+
+    Args:
+        params: The parsed parameters the command was called with.
+
+    Returns:
+        The name's stem.
+
+    """
+    return (
+        f"{Path(str(params.get('file', 'image'))).stem}"
+        f"-dpi{params.get('target_dpi', 'unspecified')}"
+    )
+
+
 #: What this module declares, as data. Each entry is
 #: ``(operation, handler, positional, flags)``: ``handler=None`` is an ``MVP``
 #: command, ``positional`` is the argument a bare token binds to, and ``flags`` are
@@ -233,3 +288,15 @@ COMMANDS: Final[tuple[tuple[str, Handler | None, str | None, tuple[str, ...]], .
     ("phash", None, "file", ()),
     ("tile", None, "file", ("--max-pixels", "--save")),
 )
+
+
+#: ``(kernel, operation)`` to the callable naming that command's delivered buffer.
+#:
+#: Both crop and rescale need one, for the same reason: neither is distinguished by
+#: the source file alone. Measured - two regions of one image produce two different
+#: artifacts (`10,10,50,50` and `20,20,50,50`), and so do two target resolutions. A
+#: name carrying only the document would overwrite the first with the second.
+DELIVERY_NAMES: Final[Mapping[str, object]] = {
+    "crop": _crop_name,
+    "rescale": _rescale_name,
+}

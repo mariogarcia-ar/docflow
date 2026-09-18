@@ -197,20 +197,33 @@ A 40 MB rendered page inlined as base64 is not testable and not diffable. So std
 
 | Default — a descriptor | With `--save <dir>` |
 |---|---|
-| `{ "sha256": "9f2a…", "bytes": 41889024, "media_type": "image/png", "page": 1, "dpi": 300 }` | The same descriptor **plus** the bytes written twice: `<dir>/artifacts/<sha256>` (the store's copy) and `<dir>/<sha256>.png` (the delivered copy) |
+| `{ "sha256": "9f2a…", "bytes": 41889024, "media_type": "image/png", "page": 1, "dpi": 300 }` | The same descriptor **plus** the bytes written twice: `<dir>/artifacts/<sha256>` (the store's copy) and `<dir>/<name>.png` (the delivered copy) |
 
 `--save` routes through K7, so the recorded hash is the real content hash of what was written, not a hash of something that was only in memory. That is what makes a downstream `store verify` meaningful.
 
 **Two copies are written, and the second one exists because the first cannot carry a suffix.** A store is content-addressed: the file's name *is* its identity, and `get`/`verify` have nothing but the hash to reach it by (`kernels/store.py`, FR-11). Appending an extension there would give one artifact two names to look under, and would make the same bytes stored under two media types two different files.
 
-So the store keeps `<dir>/artifacts/<sha256>`, and `--save` writes a **delivery copy** at the save root under the name the media type implies — `<sha256>.png`, `<sha256>.pdf` — which is the file a consumer that selects a reader by extension needs, and the name §6 always promised. Every buffer descriptor reports it as `delivery_name`:
+So the store keeps `<dir>/artifacts/<sha256>`, and `--save` writes a **delivery copy** at the save root under a readable name. Every buffer descriptor reports it as `delivery_name`:
 
 ```json
 { "sha256": "6e739084…", "size_bytes": 77070, "media_type": "image/png",
-  "path": "artifacts/6e739084…", "delivery_name": "6e739084….png" }
+  "path": "artifacts/6e739084…",
+  "delivery_name": "242823d2-afd3-4107-a49c-ce382592c6a5-p1-dpi72.png" }
 ```
 
 `path` is the artifact of record, relative to the save root; `delivery_name` is the copy's name, *directly* under the save root — not under `artifacts/`. Both files hold the same bytes; the store's is the one `verify` checks.
+
+**The name is declared by the command, and it carries every parameter that changes the bytes.** A digest identifies a file but tells a person nothing, so each command names its output after what it actually produced:
+
+| Command | Delivered name | Why those fields |
+|---|---|---|
+| `pdf render` | `<doc>-p<pages>-dpi<dpi>.png` | The same page at 72 and 71 DPI is different bytes (77070 vs 75652); `--pages 1` and `--pages 1,2` are different artifacts |
+| `pdf split` | `<doc>-p<pages>.pdf` | The range *is* what distinguishes two splits of one file |
+| `image crop` | `<img>-crop-<x-y-w-h>.png` | Two regions of one image are different artifacts |
+| `image rescale` | `<img>-dpi<target>.png` | The target resolution is the whole content of the operation |
+| `store get` | `<sha256>.png` | **The fallback.** It reads by hash and knows neither a document nor what the bytes were |
+
+The stem comes from the command — the layer that knows which document was read and what was asked for — and the suffix from the media type, because a command that spelled `.png` itself would be re-deriving a fact the bytes already carry. The declaration is per command and lives beside its handler in `kernel_cli/commands/`, not derived by the dispatcher from a flag list: a dispatcher that guessed would silently rename existing outputs the day a flag was added.
 
 A media type with no known suffix — the `application/octet-stream` that `store get` reads back — gets **no suffix and no delivery copy**, rather than a guessed `.bin`. Inventing one would publish a name this surface made up, and writing a second copy under the bare digest would put two files with the same name in one tree.
 
