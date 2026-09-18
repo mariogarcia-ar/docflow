@@ -304,6 +304,166 @@ is **declared and gated**, not dropped. The code path exists so the row has a
 
 ---
 
+## The same operations from `docflow-kernel`
+
+**Read this section differently from the other kernels' quickstarts.** K5, K3 and K2
+could be measured end to end in this workspace; K6 cannot, because it has **no
+provider key** — you can reach every *precondition* refusal here, and none of the
+successes. So the blocks below are real invocations and real output, and what they
+show is the **gate chain** rather than an answer.
+
+The registered surface and §9 do not fully agree, and that is the headline:
+
+| Operation | Command | §9 | Registered |
+|---|---|---|---|
+| `capabilities` | `llm.frontier capabilities` | `now` | dispatches |
+| `structured` | `llm.frontier structured` | `now` | dispatches |
+| `vision` | `llm.frontier vision` | `now` | dispatches |
+| `count-tokens` | `llm.frontier count-tokens` | `MVP` | exits `4` |
+| `judge` | `llm.frontier judge` | `MVP` | exits `4` |
+| `warm` | `llm.frontier warm` | **not listed** | **dispatches** |
+
+**`llm.frontier warm` is a command the spec never sanctions.** Throughout
+`kernel-cli.md`, `warm` appears exactly once, in §9's **K5** table; it is absent from
+K6's. The implementation registers it as `now` anyway, so it dispatches like any other
+K6 command and answers `provider_unavailable` when called. The contract test cannot
+catch this: it asserts every §9 `now` command **dispatches**, and a command §9 does not
+mention is outside that check. The reverse direction — *every registered command
+appears in §9* — is not asserted at all. `FrontierEngine` has a `warm` method, which is
+presumably where the registration came from; the conclusion is the same either way.
+Recorded rather than silently documented as intended.
+
+### Provider and model naming is `<provider>:<model>`
+
+```console
+$ docflow-kernel llm.frontier capabilities --model anthropic/claude-sonnet-4-6
+# value: null
+# reason.code: "model_unknown"
+# reason.message: "the model name 'anthropic/claude-sonnet-4-6' carries no provider
+#   prefix. A frontier model is named `<provider>:<model>`, e.g.
+#   anthropic:claude-sonnet-4-6; no default provider is substituted."
+# exit 3
+```
+
+The separator is a **colon**, and a slash is refused rather than guessed at. An
+unknown prefix is refused with the configured set quoted back:
+
+```console
+$ docflow-kernel llm.frontier capabilities --model nope:gpt
+# reason.code: "provider_unknown"
+# reason.message: "the provider prefix 'nope' names no configured provider. This
+#   build speaks to 'anthropic'; no fallback ..."
+# exit 3
+```
+
+That second message is worth reading as a design statement: the build speaks to
+**one** provider, and the refusal says so instead of silently trying another.
+
+### `llm.frontier capabilities` — a success that needs no credential
+
+```console
+$ docflow-kernel llm.frontier capabilities --model anthropic:claude-sonnet-4-6
+# value.terms: { "provider": "anthropic", "model": "claude-sonnet-4-6",
+#                "adapter_revision": "anthropic 2023-06-01",
+#                "model_revision": "claude-sonnet-4-6" }
+# value.observed: { "model": "anthropic:claude-sonnet-4-6", "provider": "anthropic",
+#                   "adapter_revision": "anthropic 2023-06-01",
+#                   "revision_is_resolved_on_call": true,
+#                   "supports_vision": true,
+#                   "capabilities": ["completion", "vision"] }
+# exit 0
+```
+
+Exit `0` **with no provider key set** — an answer this command can give because it
+describes the *adapter's* configuration rather than the provider's state. `terms`
+carries a `model_revision`, and it is the model **name**, not a digest: see
+`revision_is_resolved_on_call` in §1 above, which is exactly why this field cannot be
+a revealed revision yet.
+
+**This is why `docflow-kernel --list` reporting K6 `available: false` needs reading
+carefully.** `available` answers *"could a paid call be made"*, and the honest answer
+is no. It does not mean *"every K6 command fails"* — `capabilities` succeeds, and it
+is the probe in §"There is no key in this workspace" that is unavailable, not the
+whole kernel.
+
+### `llm.frontier structured` — the gate chain, in order
+
+With no environment prepared, the first refusal is not about credentials at all:
+
+```console
+$ docflow-kernel llm.frontier structured --model anthropic:claude-sonnet-4-6 \
+    --prompt-file /tmp/p.txt --schema-file /tmp/s.json
+# value: null
+# reason.code: "provider_unavailable"
+# reason.message: "DOCFLOW_FRONTIER_MAX_TOKENS is not set. The response ceiling is a
+#   policy decision, and this kernel does not supply one: a default here would ..."
+# exit 3
+```
+
+The response ceiling is **policy**, so it is an environment value rather than a flag
+or a constant. Set it, and the next gate appears:
+
+```console
+$ DOCFLOW_FRONTIER_MAX_TOKENS=1024 docflow-kernel llm.frontier structured ...
+# reason.code: "provider_unavailable"
+# reason.message: "no provider key is configured. Set DOCFLOW_FRONTIER_KEY in the
+#   environment; it is deliberately not a parameter, so it cannot arrive on a
+#   command line or in a ..."
+# exit 3
+```
+
+Both refusals are exit **3** — the call could not legitimately be made — and each
+names its own remedy, so the chain is walkable without reading the source. The
+environment variables this build reads are `DOCFLOW_FRONTIER_KEY`,
+`DOCFLOW_FRONTIER_HOST` (the address is defaulted to `https://api.anthropic.com`; the
+*model* never is) and `DOCFLOW_FRONTIER_MAX_TOKENS`.
+
+One consequence worth stating: **`call_record` is `null` on these refusals.** The
+documentation promises it is *"always populated"* for K6, and that is true of a **call
+that happened** — a refusal reached before the request leaves reports no provider
+response, because there was none to report. `null` here is the honest value, not a
+missing field.
+
+### What `--save` does here, and why it does not today
+
+§9's K6 prose says *"the raw completion is persisted before anything coerces it"*, and
+that is the promise `last_raw_completion` exists to keep. It is not reachable from this
+surface today:
+
+```console
+$ docflow-kernel llm.frontier capabilities --model anthropic:claude-sonnet-4-6 --save /tmp/fs
+--save applies to a command that returns bytes; this one returned Evidence
+# exit 4
+```
+
+`--save` is **not a declared flag on any K6 command** — not on `structured`, not on
+`vision` — so the dispatcher answers its generic refusal before the provider is ever
+reached. Given no credential, a call would refuse at the gate chain above anyway, so
+this is invisible in this workspace rather than a second failure layered on the first.
+It is recorded here because a reader of §9 would otherwise expect a persisted raw
+completion that no command can currently produce.
+
+### The exit codes, in one table
+
+| Exit | Meaning | Where K6 produces it |
+|---|---|---|
+| `0` | A value was produced | `capabilities` — and nothing else, without a key |
+| `2` | The document's answer | the provider answered: a rate limit, an outage, a 200 whose body is not JSON (§3) |
+| `3` | The call could not legitimately be made | `model_unknown`, `provider_unknown`, `provider_unavailable` (ceiling, key), `role_conflict` |
+| `4` | Usage: bad flag, `MVP` | `count-tokens`, `judge`; `--save` on any K6 command |
+
+And the same missing-parameter collapse the other pages report — `--model` is required
+on every K6 command, so omitting it raises rather than refusing:
+
+```console
+$ docflow-kernel llm.frontier capabilities
+ValueError: --model is required: a capability question is about a model, and this
+surface has no default one (kernel-cli.md §8 forbids a default model).
+# exit 1     <- should be 3: the call could not be made, the code is not broken
+```
+
+---
+
 ## Secrets
 
 No operation takes a credential:
@@ -369,9 +529,14 @@ the surface.
 | K4 `kernel.ocr` | `ocr read` | landed (Docling) |
 | K5 `kernel.llm.local` | `llm.local …` | landed (Ollama) |
 | K6 `kernel.llm.frontier` | this page | landed (one provider) |
-| K7 `store` | — | landed |
-| K8 `registry` | — | landed |
+| K7 `store` | `store put` / `get` / `verify` / `ls` | landed |
+| K8 `registry` | `registry validate` / `show` / `ls` | landed |
 | K1 `orchestrator` | **Landed** — the closing flow |
 
-Six of eight kernels can serve a call in this workspace; K6 is the seventh, and needs a
-credential to be callable rather than an adapter to be written.
+Seven of the eight are `available` to `docflow-kernel --list`; **this kernel is the
+exception**, and the `detail` field says why (`no provider key in the environment`).
+That distinction is one `inventory()`'s docstring states outright — *"this is the
+kernel level, and deliberately not the command level"* — and it applies here:
+`available: false` is a statement about the **adapter**, not about every command.
+`llm.frontier capabilities` answers without a credential; only the operations that
+would actually *call* the provider are blocked.
