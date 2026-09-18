@@ -67,7 +67,9 @@ mkdir -p "$OUT"
 
 k_reset
 k_banner "descriptor: $DESCRIPTOR"
-echo "output:     $OUT"
+
+k_params "out" "$OUT" "jobs" "1"
+echo
 
 k_section "K1 - planning and running"
 

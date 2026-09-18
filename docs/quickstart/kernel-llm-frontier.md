@@ -480,6 +480,11 @@ they share two of their four operations:
 ```console
 $ scripts/kernel/kernel-llm.sh
 
+  local model      smollm2:latest  (default)
+  vision model     qwen2.5vl:3b  (default)
+  frontier model   anthropic:claude-sonnet-4-6  (default)
+  image            tests/fixtures/matrix/page.png
+
 K6 llm.frontier - 'now' commands (needs a provider key; external)
   capabilities               exit 0  observed: adapter_revision, provider, ...
   warm                       exit 3  reason provider_unavailable

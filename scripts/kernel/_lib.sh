@@ -356,3 +356,35 @@ k_section() {
   echo
   echo "$1"
 }
+
+# --- The resolved parameters -------------------------------------------------
+#
+# `k_params <name> <value> [<name> <value> ...]`
+#
+# Prints the values a driver actually used, aligned, one per line:
+#
+#   document          tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
+#   pages             1-3  (from the document: 59 page(s))
+#   dpi               72
+#
+# It exists because a driver's output otherwise leaves the most important fact
+# implicit. A reader sees `render(p1-3,dpi72)` in a label and cannot tell which of
+# those values they typed and which the driver chose - and for a value that
+# **adapts to its input**, like the page selection, that difference is the whole
+# reason the driver has the logic it has.
+#
+# Pair the name and the value; a value may carry its own parenthetical note, which
+# is how provenance travels without a second column to keep aligned.
+
+k_params() {
+  while [ $# -gt 1 ]; do
+    printf '  %-16s %s\n' "$1" "$2"
+    shift 2
+  done
+}
+
+# `k_note <value> <provenance>` renders a value with where it came from, so a
+# reader can tell a typed parameter from a derived one at a glance.
+k_note() {
+  printf '%s  (%s)' "$1" "$2"
+}

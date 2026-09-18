@@ -508,9 +508,10 @@ inputs, not the project's assets.
 ```console
 $ scripts/kernel/kernel-llm.sh
 
-local model:     smollm2:latest
-vision model:    qwen2.5vl:3b
-frontier model:  anthropic:claude-sonnet-4-6
+  local model      smollm2:latest  (default)
+  vision model     qwen2.5vl:3b  (default)
+  frontier model   anthropic:claude-sonnet-4-6  (default)
+  image            tests/fixtures/matrix/page.png
 
 K5 llm.local - 'now' commands (needs Ollama; sampled)
   capabilities               exit 0  observed: family, model, model_revision, ...
@@ -523,10 +524,16 @@ K5 llm.local - the refusals worth seeing
   capabilities(bad tag)      exit 3  reason model_not_pulled
 ```
 
-The model is a parameter (`--model`) and defaults to the smallest one installed, so
-the driver stays quick. **K5 is `sampled`** (`kernel-cli.md` §7), so what it reports is
-what each call *measured* — the digest, the token counts, the `done_reason` — and never
-the value, which is not comparable between runs by definition.
+**The three models are named with where each came from**, because a model is this
+driver's one parameter that changes what every line below it measures — and because
+`(default)` and `(--model)` are different claims about the run. All three are
+overridable: `--model`, `--frontier-model`, or `KERNEL_LLM_MODEL` /
+`KERNEL_LLM_VISION_MODEL` / `KERNEL_FRONTIER_MODEL`. The default local pair is the
+smallest installed, so the driver stays quick.
+
+**K5 is `sampled`** (`kernel-cli.md` §7), so what it reports is what each call
+*measured* — the digest, the token counts, the `done_reason` — and never the value,
+which is not comparable between runs by definition.
 
 **This was a real defect until recently.** The handler raised a `ValueError`, so the
 dispatcher's catch-all reported exit `1` with a traceback — telling a caller *"this

@@ -98,6 +98,17 @@ fi
 k_reset
 k_banner "image: $IMAGE"
 
+k_params \
+  "region" "$REGION" \
+  "target-dpi" "$TARGET_DPI" \
+  "root" "$REGISTRY_ROOT"
+if [ -n "$SAVE_DIR" ]; then
+  k_params "save" "$SAVE_DIR"
+else
+  k_params "save" "$(k_note "none" "bytes stay out of band")"
+fi
+echo
+
 echo "K3 - 'now' commands"
 
 k_run "info" image info "$IMAGE"

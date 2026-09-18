@@ -89,7 +89,11 @@ mkdir -p "$STORE_ROOT" "$SAVE_DIR"
 
 k_reset
 k_banner "file: $FILE"
-echo "root: $STORE_ROOT"
+
+k_params \
+  "media-type" "application/json" \
+  "root" "$STORE_ROOT" \
+  "save" "$SAVE_DIR"
 echo
 
 echo "K7 - put, then read back what was stored"

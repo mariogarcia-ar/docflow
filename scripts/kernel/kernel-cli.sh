@@ -138,9 +138,11 @@ fi
 
 k_reset
 k_banner "descriptor: $DESCRIPTOR"
-echo "as JSON:    $JSON_DESCRIPTOR"
-echo "out:        $OUT"
-echo "cli:        $K_CLI"
+
+k_params \
+  "as JSON" "$JSON_DESCRIPTOR" \
+  "out" "$OUT" \
+  "cli" "$K_CLI"
 echo
 
 echo "the product surface (docflow)"

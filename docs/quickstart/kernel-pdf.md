@@ -690,6 +690,11 @@ $ scripts/kernel/kernel-pdf.sh
 
 document: tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
 
+  page             1  (default)
+  pages            1-3  (from the document: 59 page(s))
+  dpi              72  (default)
+  save             none  (bytes stay out of band)
+
 K2 - 'now' commands
   probe                    exit 0  59 page(s)
   classify(p1)             exit 0  shape=mixed chars=358 images=4
@@ -708,6 +713,15 @@ summary: 8 command(s)
   exit 3  precondition missing 0
   exit 4  usage or MVP        2
 ```
+
+**Every driver prints the parameters it resolved, with where each one came from**, so
+a run is readable without knowing what the defaults are:
+
+| Value | Meaning |
+|---|---|
+| `(given)` | you set it — as an environment variable, or a flag where the driver takes one |
+| `(default)` | the driver chose it |
+| `(from the document: 59 page(s))` | it **adapted to the input**, which is the case worth seeing: a two-page file would read `pages 1-2 (from the document: 2 page(s))`, and that line is the explanation for why the run did not ask for three |
 
 The document is a parameter and defaults to the large fixture the repo carries:
 

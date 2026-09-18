@@ -354,6 +354,8 @@ $ scripts/kernel/kernel-ocr.sh
 
 image: tests/fixtures/matrix/page.png
 
+  selection        engine default  (no --pages, --dpi or --lang given)
+
 K4 - the engine
   capabilities               exit 0  observed: accepts_image_suffixes, engine, ...
   engine-info                exit 0  observed: engine, engine_version
@@ -366,6 +368,12 @@ K4 - the correction gate
   read --correct (bare)      exit 4  --correct requires a value
   read --correct true        exit 3  reason engine_unavailable
 ```
+
+**The parameters are listed only when they were given.** `--pages`, `--dpi` and
+`--lang` reach the `read` call when you pass them and are **absent** from the
+invocation when you do not, so an unset one prints nothing rather than printing an
+empty value — and the single `selection` line above is what a run with none of the
+three looks like:
 
 The image is a parameter and defaults to a committed fixture; `--pages`, `--dpi` and
 `--lang` reach the `read` call when you give them, and are **absent** rather than

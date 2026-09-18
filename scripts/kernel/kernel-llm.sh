@@ -35,13 +35,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K_KERNEL="${DOCFLOW_KERNEL:-docflow-kernel}"
 
 #: The smallest installed model, so the driver is quick. Override with `--model`.
-MODEL="${KERNEL_LLM_MODEL:-smollm2:latest}"
+DEFAULT_MODEL="smollm2:latest"
 
 #: A vision-capable model, which is a different requirement from a text model.
-VISION_MODEL="${KERNEL_LLM_VISION_MODEL:-qwen2.5vl:3b}"
+DEFAULT_VISION_MODEL="qwen2.5vl:3b"
 
 #: K6 names its model as `<provider>:<model>`, with a colon.
-FRONTIER_MODEL="${KERNEL_FRONTIER_MODEL:-anthropic:claude-sonnet-4-6}"
+DEFAULT_FRONTIER_MODEL="anthropic:claude-sonnet-4-6"
+
+# The provenance is captured **before** any default is applied, so `given` and
+# `default` stay distinguishable. `--model` overwrites these further down.
+MODEL_SOURCE="$([ -n "${KERNEL_LLM_MODEL:-}" ] && echo "KERNEL_LLM_MODEL" || echo default)"
+VISION_SOURCE="$([ -n "${KERNEL_LLM_VISION_MODEL:-}" ] && echo "KERNEL_LLM_VISION_MODEL" || echo default)"
+FRONTIER_SOURCE="$([ -n "${KERNEL_FRONTIER_MODEL:-}" ] && echo "KERNEL_FRONTIER_MODEL" || echo default)"
+
+MODEL="${KERNEL_LLM_MODEL:-$DEFAULT_MODEL}"
+VISION_MODEL="${KERNEL_LLM_VISION_MODEL:-$DEFAULT_VISION_MODEL}"
+FRONTIER_MODEL="${KERNEL_FRONTIER_MODEL:-$DEFAULT_FRONTIER_MODEL}"
 
 WORK="${KERNEL_LLM_WORK:-var/kernel-llm}"
 
@@ -74,11 +84,13 @@ while [ $# -gt 0 ]; do
     --model)
       [ $# -ge 2 ] || { echo "--model needs a tag" >&2; exit 4; }
       MODEL="$2"
+      MODEL_SOURCE="--model"
       shift 2
       ;;
     --frontier-model)
       [ $# -ge 2 ] || { echo "--frontier-model needs provider:model" >&2; exit 4; }
       FRONTIER_MODEL="$2"
+      FRONTIER_SOURCE="--frontier-model"
       shift 2
       ;;
     *)
@@ -127,11 +139,16 @@ cat >"$VISION_SCHEMA" <<'EOF'
 EOF
 
 k_reset
-echo "local model:     $MODEL"
-echo "vision model:    $VISION_MODEL"
-echo "frontier model:  $FRONTIER_MODEL"
+
+# The three models, as the parameter block every driver prints. A model is this
+# driver's one parameter that changes what every line below it measures, so each is
+# shown with where it came from - the flag, the environment, or the default.
+k_params \
+  "local model" "$(k_note "$MODEL" "$MODEL_SOURCE")" \
+  "vision model" "$(k_note "$VISION_MODEL" "$VISION_SOURCE")" \
+  "frontier model" "$(k_note "$FRONTIER_MODEL" "$FRONTIER_SOURCE")"
 if [ -f "$IMAGE" ]; then
-  echo "image:           $IMAGE"
+  k_params "image" "$IMAGE"
 fi
 
 k_section "K5 llm.local - 'now' commands (needs Ollama; sampled)"

@@ -102,6 +102,20 @@ READ_FLAGS=()
 k_reset
 k_banner "image: $IMAGE"
 
+# Only the values that were given are listed: an unset `--pages`/`--dpi`/`--lang`
+# is **absent** from the invocation rather than empty, so printing it would name a
+# parameter the call does not carry.
+k_params_args=()
+[ -n "$PAGES" ] && k_params_args+=(pages "$PAGES")
+[ -n "$DPI" ] && k_params_args+=(dpi "$DPI")
+[ -n "$LANG" ] && k_params_args+=(lang "$LANG")
+if [ ${#k_params_args[@]} -gt 0 ]; then
+  k_params "${k_params_args[@]}"
+else
+  k_params "selection" "$(k_note "engine default" "no --pages, --dpi or --lang given")"
+fi
+echo
+
 echo "K4 - the engine"
 k_run "capabilities" ocr capabilities
 k_run "engine-info" ocr engine-info

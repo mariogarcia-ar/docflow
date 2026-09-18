@@ -488,6 +488,11 @@ $ scripts/kernel/kernel-image.sh
 
 image: tests/fixtures/expected-extraction/dbc07b17-....jpg
 
+  region           10,10,50,50
+  target-dpi       72
+  root             registry
+  save             none  (bytes stay out of band)
+
 K3 - 'now' commands
   info                       exit 0  observed: exif_orientation, file, format, ...
   legibility                 exit 0  observed: file, height, threshold_applied, width
@@ -499,6 +504,11 @@ K3 - 'MVP' commands (must exit 4)
   phash                      exit 4  ...
   tile                       exit 4  ...
 ```
+
+**Every driver prints the parameters it resolved** — here the region, the rescale
+target and the registry root — so a run is readable without knowing the defaults.
+`--root` is a flag of this driver; the region and the target come from
+`KERNEL_IMAGE_REGION` and `KERNEL_IMAGE_TARGET_DPI`.
 
 The image is a parameter and defaults to a committed fixture, and `--save` is passed
 to the two commands that return bytes. **`rescale` is expected to refuse** — exit `2`

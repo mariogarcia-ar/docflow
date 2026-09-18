@@ -800,6 +800,37 @@ before ten seconds of ONNX loading. Each driver takes its input as a parameter w
 committed fixture as the default, and each prints one line per command plus a tally by
 exit code.
 
+**Every driver prints the parameters it resolved, with where each one came from.** A
+run is then readable without knowing what the defaults are:
+
+```console
+$ scripts/kernel/kernel-pdf.sh
+
+document: tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
+
+  page             1  (default)
+  pages            1-3  (from the document: 59 page(s))
+  dpi              72  (default)
+  save             none  (bytes stay out of band)
+```
+
+| Provenance | Meaning |
+|---|---|
+| `(given)` | you set it — a flag where the driver takes one, or the environment variable otherwise |
+| `(default)` | the driver chose it |
+| `(from the document: 59 page(s))` | it **adapted to the input** |
+
+That third case is the one worth having on screen. `kernel-pdf.sh` caps its page
+selection at what the document holds, so a two-page file prints `pages 1-2 (from the
+document: 2 page(s))` — and that line is the whole explanation for why the run did not
+ask for three. Without it the same output would look like the driver had ignored its
+default.
+
+Where a parameter was **not** given and the call does not carry it at all, the driver
+prints that instead of an empty value: `kernel-ocr.sh` with no `--pages`, `--dpi` or
+`--lang` shows a single `selection  engine default` line, because passing an empty
+`--pages` would be a usage error about a selection nobody wrote.
+
 **Exit codes are reported, not judged.** A driver's summary counts `2`, `3` and `4`
 because they are answers: a scan gives `classify` exit `2` because that is what a scan
 *is*, and an `MVP` command exits `4` on every input because it is declared and not

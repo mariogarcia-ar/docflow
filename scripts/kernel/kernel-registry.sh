@@ -59,6 +59,13 @@ k_require_dir "$ROOT" || exit $?
 k_reset
 k_banner "root: $ROOT"
 
+if [ -n "${KERNEL_REGISTRY_KEY:-}" ]; then
+  k_params "asset" "$(k_note "$KERNEL_REGISTRY_KEY" "given")"
+else
+  k_params "asset" "$(k_note "first one validate reports" "derived")"
+fi
+echo
+
 echo "K8 - the registry itself"
 
 k_run "validate" registry validate --root "$ROOT"
