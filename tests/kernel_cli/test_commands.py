@@ -46,6 +46,9 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import json
+import pathlib
+import re
 from collections.abc import Mapping
 from typing import Final
 
@@ -443,6 +446,48 @@ def test_no_flag_on_the_surface_names_a_document_concept() -> None:
 
     offenders = sorted(declared & set(FORBIDDEN))
     assert offenders == [], f"forbidden flags declared on the surface: {offenders}"
+
+
+def test_every_policy_key_a_command_reads_is_declared_by_the_registry() -> None:
+    """A command that reads a policy key the registry does not declare cannot run.
+
+    This is the falsifier for a **real defect** that shipped once: `image legibility`
+    asked for `image.legibility_threshold` while the registry declared only
+    `reader.correct`, `reader.min_chars` and `diagnosis.min_dpi`, so the command
+    answered `asset_missing` for **every** image and the omission was invisible - the
+    refusal is a typed reason, not an error, so nothing looked broken.
+
+    Both sides are read from the repository rather than restated: the keys the command
+    modules ask for, and the keys `registry/policies/thresholds.json` declares. A key
+    added to a command without being added to the registry is a red test here instead
+    of a refusal at run time.
+    """
+    commands_dir = pathlib.Path("src/docflow/kernel_cli/commands")
+    asked: set[str] = set()
+    for module in sorted(commands_dir.glob("*.py")):
+        source = module.read_text(encoding="utf-8")
+        asked.update(re.findall(r'policy_number\([^,]+,\s*"([^"]+)"', source))
+        # A key read through the module-level constant is captured by its value.
+        asked.update(
+            match
+            for match in re.findall(r'^_\w*KEY: Final\[str\] = "([^"]+)"', source, re.M)
+        )
+
+    declared = set(
+        json.loads(
+            pathlib.Path("registry/policies/thresholds.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+
+    assert asked, "the scan found no policy key, so it is asserting nothing"
+    missing = sorted(asked - declared)
+    assert missing == [], (
+        f"policy keys a command reads but the registry does not declare: {missing}. "
+        "Each one makes its command answer a precondition for every input, which is "
+        "invisible because the refusal is a typed reason rather than an error."
+    )
 
 
 def test_no_forbidden_flag_is_accepted_by_the_dispatcher() -> None:

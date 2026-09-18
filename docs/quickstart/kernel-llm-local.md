@@ -4,8 +4,9 @@
 covers the local-generation one. Everything below has been run against a live Ollama
 runtime and its output is quoted from a real invocation.
 
-There is **no command line for kernels yet** (`S1-T20`/`S1-T21` build
-`docflow-kernel`). Everything here is the **library**, called from Python. That is
+`docflow-kernel` now dispatches this kernel's operations — see `lab-cli.md` for the
+bench. This page drives the **library**, called from Python, which is where the
+detail lives. That is
 the intended shape: `sad.md` ADR-008 makes the library first and the CLI one caller
 of it.
 
@@ -366,6 +367,8 @@ sampling parameter is not a model, an engine or a threshold.
 | K6 `kernel.llm.frontier` | `llm.frontier …` | `E04-06` |
 | K7 `store` | — | landed |
 | K8 `registry` | — | landed |
-| K1 `orchestrator` | — | `E05-01` |
+| K1 `orchestrator` | **Landed** — the closing flow |
 
-Five of eight are available to `docflow-kernel inventory` today.
+Seven of eight are available to `docflow-kernel --list` today: every kernel but
+K6, which needs a provider key. (There is no `inventory` subcommand — `--list` is
+the flag.)

@@ -1,11 +1,12 @@
 # Quickstart — what K6 (`kernel.llm.frontier`) can do today
 
-**Status: honest, and partial.** Six of the eight kernels have landed; this page
+**Status: honest, and partial.** Every kernel has landed, and this page
 covers the hosted-generation one. Everything below has been run, and where a number
 is quoted it came from a real invocation.
 
-There is **no command line for kernels yet** (`S1-T20`/`S1-T21` build
-`docflow-kernel`). Everything here is the **library**, called from Python. That is
+`docflow-kernel` now dispatches this kernel's operations — see `lab-cli.md` for the
+bench. This page drives the **library**, called from Python, which is where the
+detail lives. That is
 the intended shape: `sad.md` ADR-008 makes the library first and the CLI one caller
 of it.
 
@@ -316,7 +317,9 @@ token, secret, credential or password, and `test_no_operation_takes_a_credential
 asserts that at the adapter level. The key is read from the environment at the moment
 of the call, so **no call path can take one from a command line or a descriptor** —
 which is what makes *"no `--api-key` flag"* a property of the design rather than a
-promise about a flag parser that does not exist yet.
+promise about a flag parser. The parser exists now (`docflow-kernel`, `E07-01`), and
+it refuses `--api-key` as a **forbidden** flag rather than merely an unknown one — so
+the refusal is asserted against a surface that runs, not against one that does not.
 
 ---
 
@@ -368,7 +371,7 @@ the surface.
 | K6 `kernel.llm.frontier` | this page | landed (one provider) |
 | K7 `store` | — | landed |
 | K8 `registry` | — | landed |
-| K1 `orchestrator` | — | `E05-01` |
+| K1 `orchestrator` | **Landed** — the closing flow |
 
 Six of eight kernels can serve a call in this workspace; K6 is the seventh, and needs a
 credential to be callable rather than an adapter to be written.

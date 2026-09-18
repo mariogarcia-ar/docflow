@@ -4,8 +4,9 @@
 covers the OCR one. Everything below has been run and its output is quoted from a
 real invocation.
 
-There is **no command line for kernels yet** (`S1-T20`/`S1-T21` build
-`docflow-kernel`). Everything here is the **library**, called from Python. That is
+`docflow-kernel` now dispatches this kernel's operations — see `lab-cli.md` for the
+bench. This page drives the **library**, called from Python, which is where the
+detail lives. That is
 the intended shape: `sad.md` ADR-008 makes the library first and the CLI one caller
 of it.
 
@@ -240,7 +241,7 @@ different engine, it supplies a different instance of the same one.
 
 | Not available | Where it lands |
 |---|---|
-| `docflow-kernel ocr ...` as a command | `S1-T20`/`S1-T21` — no kernel has a CLI yet |
+| `docflow-kernel ocr capabilities  engine-info  read` | **Now available** — see `lab-cli.md`. The `MVP` operations of §9 still exit `4` |
 | Word-level granularity | Not available from this engine; see §4 |
 | An OCR correction pass | `# TODO: [MVP]` — `--correct` gates the corrected artifact only, and the raw tokens are always retained |
 | A second engine, an engine setting | **Never** (`ADR-001`, `prd.md` FR-16) |
@@ -257,4 +258,4 @@ different engine, it supplies a different instance of the same one.
 | K7 `store` | **Landed** — content-addressed put/get/verify + the ledger write path |
 | K8 `registry` | **Landed** — load, schema-validate, fail fast, `registry_hash` |
 | K5 `llm.local`, K6 `llm.frontier` | Not yet (`E04-05`, `E04-06`) |
-| K1 `orchestrator` | Not yet (`E05`) |
+| K1 `orchestrator` | **Landed** — the closing flow |

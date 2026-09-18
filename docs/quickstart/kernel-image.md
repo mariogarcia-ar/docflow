@@ -1,12 +1,14 @@
 # Quickstart — what K3 (`kernel.image`) can do today
 
-**Status: honest, and complete for Stage 1.** Six of the eight kernels can serve a call;
+**Status: honest, and complete for Stage 1.** Every kernel has landed, and seven
+of the eight are reachable in this workspace — K6 needs a provider key;
 this page covers the image one, whose kernel **and** adapter have landed and whose split
 between them is part of the design now. Everything below has been run and its output is
 quoted from a real invocation.
 
-There is **no command line for kernels yet** (`S1-T20`/`S1-T21` build
-`docflow-kernel`). Everything here is the **library**, called from Python. That is
+`docflow-kernel` now dispatches this kernel's operations — see `lab-cli.md` for the
+bench. This page drives the **library**, called from Python, which is where the
+detail lives. That is
 the intended shape: `sad.md` ADR-008 makes the library first and the CLI one caller
 of it.
 
@@ -302,7 +304,7 @@ the image, and a non-positive resolution.
 
 | Not available | Where it lands |
 |---|---|
-| `docflow-kernel image ...` as a command | `S1-T20`/`S1-T21` — no kernel has a CLI yet |
+| `docflow-kernel image info  legibility  rescale  crop` | **Now available** — see `lab-cli.md`. The `MVP` operations of §9 still exit `4` |
 | Deskew, denoise, binarize, auto-contrast | `# TODO: [MVP]` — `image deskew` stays `MVP` and exits `4` |
 | `phash`, `tile` | `# TODO: [MVP]` — both stay `MVP` and exit `4` |
 | Any threshold of its own | **Never** — every threshold is the caller's (`prd.md` FR-15) |
@@ -342,9 +344,9 @@ than by the fixture set.
 | K6 `kernel.llm.frontier` | **Landed** — one provider behind `LlmEngine` (`E04-06`) |
 | K7 `store` | **Landed** — content-addressed put/get/verify + the ledger write path |
 | K8 `registry` | **Landed** — load, schema-validate, fail fast, `registry_hash` |
-| K1 `orchestrator` | Not yet (`E05-01`) |
+| K1 `orchestrator` | **Landed** — the closing flow |
 
-Six of the eight can serve a call in this workspace. **K6 is the exception among the
+Seven of the eight can serve a call in this workspace. **K6 is the exception among the
 landed ones**: its adapter exists, but its probe also requires a provider key and this
 workspace has none, so `docflow-kernel --list` correctly reports it unavailable —
 *available* would be a claim that a paid call could be made.

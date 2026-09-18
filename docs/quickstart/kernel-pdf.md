@@ -1,12 +1,14 @@
 # Quickstart — what K2 (`kernel.pdf`) can do today
 
-**Status: honest, and complete for Stage 1.** Six of the eight kernels can serve a call;
+**Status: honest, and complete for Stage 1.** Every kernel has landed, and seven
+of the eight are reachable in this workspace — K6 needs a provider key;
 this page covers the PDF one, whose kernel **and** adapter have landed and whose split
 between them is now part of the design. Everything below has been run and its output is
 quoted from a real invocation.
 
-There is **no command line for kernels yet** (`S1-T20`/`S1-T21` build
-`docflow-kernel`). Everything here is the **library**, called from Python. That is
+`docflow-kernel` now dispatches this kernel's operations — see `lab-cli.md` for the
+bench. This page drives the **library**, called from Python, which is where the
+detail lives. That is
 the intended shape: `sad.md` ADR-008 makes the library first and the CLI one caller
 of it.
 
@@ -383,7 +385,7 @@ search for real invisible text layers. Exits non-zero on a defect.
 
 | Not available | Where it lands |
 |---|---|
-| `docflow-kernel pdf ...` as a command | `S1-T20`/`S1-T21` — no kernel has a CLI yet |
+| `docflow-kernel pdf probe  classify  tokens  render  split` | **Now available** — see `lab-cli.md`. The `MVP` operations of §9 still exit `4` |
 | Page facts beyond classification | `# TODO: [MVP]` — documented target, not Stage 1 scope |
 | Embedded-image extraction, `merge` | `# TODO: [MVP]`; merge is **Never**, no pipeline closes it |
 | A second reader, an engine setting | **Never** — `ADR-001`, `wbs.md` §9 |
@@ -399,9 +401,9 @@ search for real invisible text layers. Exits non-zero on a defect.
 | K6 `kernel.llm.frontier` | **Landed** — one provider behind `LlmEngine` (`E04-06`) |
 | K7 `store` | **Landed** — content-addressed put/get/verify + the ledger write path |
 | K8 `registry` | **Landed** — load, schema-validate, fail fast, `registry_hash` |
-| K1 `orchestrator` | Not yet (`E05-01`) |
+| K1 `orchestrator` | **Landed** — the closing flow |
 
-Six of the eight can serve a call in this workspace. **K6 is the exception among the
+Seven of the eight can serve a call in this workspace. **K6 is the exception among the
 landed ones**: its adapter exists, but its probe also requires a provider key and this
 workspace has none, so `docflow-kernel --list` correctly reports it unavailable —
 *available* would be a claim that a paid call could be made.
