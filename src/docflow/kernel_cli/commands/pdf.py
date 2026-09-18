@@ -67,7 +67,7 @@ def _total_pages(engine: PdfEngine, path: Path) -> int:
     probed = engine.probe(path)
     if probed.reason is not None:
         raise ValueError(probed.reason.message)
-    pages = probed.evidence.measurements.get("pages")
+    pages = probed.evidence.measurements.get("page_count")
     if pages is None:
         raise ValueError(
             "The probe reported no page count, so a page selection cannot be checked "

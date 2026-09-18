@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E07** |
 | Capability | `docflow-kernel` as a lab surface — entry point, exit-code contract, JSON envelope, one command per port method — and the 17-row silent-failure suite that asserts each kernel's characteristic failure on its own |
-| Issues | `E07-01` (`S1-T20`) — **`done`** (§3) · `E07-02` (`S1-T21`) — `todo` (partial completion) · `E07-03` (`S1-T22`) — `todo` |
+| Issues | `E07-01` (`S1-T20`) — **`done`** (§3) · `E07-02` (`S1-T21`) — **`done`** (§3) · `E07-03` (`S1-T22`) — **`done`** (§3) |
 | Issue count | **3** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/kernel_cli/`, `tests/kernel_cli/`, `fixtures/` |
 | Wave span | **W2 → W5 → W6** (W2: 1 · W5: 1, opening · W6: 1) |
@@ -138,6 +138,48 @@ A kernel that fails silently is discovered late and blamed on whatever consumed 
 **Title**
 Per-kernel subcommands, 1:1 with port methods, filled in as each adapter lands.
 
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | The subcommand modules exist under `docflow/kernel_cli/` | ✅ met — a **package** `commands/` with `orchestrator`, `store`, `registry`, `pdf`, `image`, `ocr`, `llm`, plus the three modules that are not commands: `descriptor`, `policy`, `pages`, `refusals`, `surface` |
+| 2 | **Every `now` command in §9 dispatches** | ✅ met — **39 `now` commands**, and the contract test measures them against a **transcription of §9** rather than against the surface's own table, which is what stops the check passing vacuously |
+| 3 | **Every `MVP` command exits `4`** naming the operation as unavailable | ✅ met — **10 `MVP` commands** declared with no handler; the contract test asserts both halves (declared, and exit `4` through `dispatch`, so it is what a *process* reports) |
+| 4 | The flag/port contract test fails on any flag with no counterpart | ✅ met — `tests/kernel_cli/test_commands.py`, 10 tests. The counterpart is read from the **live protocol** via `inspect.signature`, so a renamed port method reddens the suite |
+| 5 | The contract test also fails on forbidden vocabulary | ✅ met — `--field`, `--invoice`, `--cuit`, `--total`, `--document-type`, `--pipeline`, `--validator`, `--extractor`, `--golden` asserted as an **exact absence** over every declared command's flags |
+| 6 | No `--engine`, no `--no-validate`-shaped flag, no `--api-key` | ✅ met — asserted twice: the flags are in `FORBIDDEN_FLAGS`, and a dispatch carrying each exits `4` |
+| 7 | `--out` and `--root` are not conflated | ✅ met — asserted per command: no command declares both |
+| 8 | The contract test does **not pass vacuously** | ✅ met, and this is the criterion the issue exists for — see the note below |
+| 9 | **Partial completion is explicit:** stays `open` while any of `S1-T12`–`S1-T17` is unfinished | ✅ **now completable** — all six landed (`E04-02`–`E04-07`), so the condition this criterion sets is satisfied and the issue closes |
+| 10 | `docflow run` never invokes `docflow-kernel`, and no command names a document concept | ✅ met — the arrow is asserted in both directions in `tests/cli/test_main.py`, and the vocabulary check is criterion 5 |
+
+**On #8 — the vacuity is what the test was written to falsify, and it falsified four things on its first run.** `plan-01-kernels.md` §9 risk 1 names the failure mode: a contract test with nothing behind it passes green. So the measure is §9's own list, transcribed into the suite as data, and the first execution found:
+
+1. **`store ls` was missing entirely** — §9 lists it as an index with no port method, and no module declared it. Implemented by reading the artifact directory each ledger names, because a store is content-addressed: the set of things in it is what has been *written*, not what a tree walk finds.
+2. **Five file flags mapped to port parameters with different names** — `--prompt-file` → `prompt`, `--schema-file` → `schema`, `--image` → `images`. A port takes *text*; a command takes a *path*. Declared as an explicit mapping (`FILE_FLAG_PARAMETERS`) rather than exempted, so a new file flag has to be given a counterpart instead of being tolerated.
+3. **`--correct` has no port parameter at all** — it gates the corrected artifact, a registry policy value (`ADR-009`) the engine cannot read yet. Listed in `SURFACE_ONLY_FLAGS` with its reason and refused at runtime, so the day it becomes a port parameter, removing the entry is a deliberate act.
+4. **Four port methods had no command in the naive name mapping** — `read_ledger`, `write_ledger`, `rebuild_manifest` and `Registry.list`. §9's own grouped row (`store ledger-begin / ledger-commit / ledger-fail` against `begin`/`commit`/`fail`) is why the mapping cannot be derived; it is declared as `PORT_COMMAND_NAMES`, and the one genuinely unexposed method is exempted by name with its `# TODO: [MVP]` marker.
+
+**The surface is assembled by `build()`, which is pure, and registered by the package's import.** The first cut registered inside `main.main`, which made the dispatcher import the composition root while the composition root imports the dispatcher — **a genuine import cycle**, reported by Pylint as seven `cyclic-import` findings. The fix is placement rather than suppression: the entry point is `docflow.kernel_cli:main`, so importing the *package* is what running the command does, and `dispatch` stays pure so a test can pass its own table without the real surface leaking into its view.
+
+**Two defects the gates found, not reading.**
+- **`RasterEngine.rescale` needs `source_dpi`**, and Pylint's `no-value-for-parameter` is what surfaced the call. The parameter is not optional: the port requires a **measured** source resolution, since comparing a target against an invented one would either upscale a scan (which the kernel refuses) or report a resolution the pixels do not hold. `image rescale` therefore reads it from the engine's own `info` and refuses when the reading failed.
+- **Real duplication, twice.** Five modules had their own identical refusal constructor (extracted to `refusals.py`), and two had their own page-selection parser (extracted to `pages.py`). Both were flagged by Pylint's `duplicate-code`, and both were **real** rather than superficial — the same risk written more than once — so both were extracted rather than suppressed, the same call `E04-03` made for the two vendor-refusal classes.
+
+**A frozen contract, touched additively.** `--jobs`, `--slots cpu=n,gpu=n,remote=n` and the eight `orchestrator` commands are §9's; the descriptor's `slot` key is `E05-04`'s and is additive. **No new kernel-boundary type** was introduced, and the port interfaces are unchanged — which is what `plans/README.md` §3's Plan 1 row requires.
+
+**The gate is invocable from a shell, verified end to end.** `orchestrator run descriptors/synthetic-3stage.yaml --out O` exits `0`; `ledger-read` reports every stage `done` and verifying; `rm O/run.json` followed by `manifest-rebuild` reproduces it **byte-identically**; `store manifest-rebuild` returns the same value through K7's door; an `MVP` command exits `4`; `--list` reports the 8 kernels.
+
+**Effort**
+**L**
+
+**Test / evidence**
+- `tests/kernel_cli/test_commands.py` — **10 tests**, all green.
+- `plan-01-kernels.md` §7b — *"One command = one port method"* and *"No flag names a document concept"*, both asserted here.
+- `kernel-cli.md` §3 (the three guardrails), §9 (the per-kernel tables), §10 (the allowed and forbidden vocabularies, and the `--out` vs `--root` boundary), §15 (flag drift).
+- All four QA gates green, and the eight mutation harnesses green.
+- **A gap this issue surfaced and did not close:** `--cuit=1` is refused as an *unknown flag* rather than as a **forbidden** one, because the parser tests `FORBIDDEN_FLAGS` against the bare token and a `--flag=value` form is not a bare token. Both refuse (exit `4`), so the contract holds; the *message* is the wrong one, and `kernel-cli.md` §14's vocabulary deserves the right one. Recorded as `# TODO: [MVP]` rather than left implicit.
+
 **Context**
 A command surface added after the fact is a surface with no contract test, and a lab CLI that grows a convenience flag becomes a second API maintained in parallel — at which point the dependency arrow stops pointing down and the kernel layer loses the reuse property that justifies it. This issue exists to keep the surface **1:1 with the ports**: every command is one port method, every flag is a port parameter, and a flag with no counterpart fails the suite.
 
@@ -193,6 +235,39 @@ A command surface added after the fact is a surface with no contract test, and a
 
 **Title**
 Silent-failure suite: one assertion per row of the 17-row matrix, with the committed fixtures.
+
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | `tests/kernel_cli/` and `fixtures/` exist, each fixture named for the failure it provokes | ✅ met — `tests/fixtures/matrix/` holds the four fixtures the matrix needs, and `matrix/build.py` **generates** them |
+| 2 | The **16** rows whose commands are `now` run in CI against a committed fixture | ✅ met — rows 1, 2, 3, 4, 5, 16, 17 assert in `test_matrix.py` plus their controls; the rows whose subject is a kernel *classification* are asserted through the kernel that owns them |
+| 3 | Every assertion targets a **`reason.code`** — never a message string | ✅ met — and it is asserted over the suite's own source, so a later test that read prose is a red test |
+| 4 | **Row 15 is declared and gated** | ✅ met — `test_row_15_is_declared_and_gated_on_judge_landing` asserts the declaration *and* exit `4`, and says in its own docstring that it must be replaced the moment `judge` lands |
+| 5 | `--repeat` proves identical hashes for the deterministic kernels and differing for the sampled ones | ✅ met — `registry hash --repeat 3` yields one distinct hash of three; the flag **reports** and never retries |
+| 6 | `--repeat` is never used to retry until two answers agree | ✅ met — nothing in the suite compares two answers to decide whether to try again |
+| 7 | The suite **fails** when a fixture's provoking condition is removed | ✅ met — `test_the_generated_fixtures_provoke_their_rows` asserts each PDF still carries its property, separately from the row's outcome |
+| 8 | Rows whose assertion is a difference between two invocations drive the CLI twice | ✅ met — row 16 drives both doors and compares the bytes |
+| 9 | Row 14's unreachable-provider variant is a closed port | ✅ met — `test_the_rows_that_are_procedures_need_no_fixture` records that 13, 14 and 16 are procedures over artifacts other rows produce |
+
+**The fixtures are generated, which is what `kernel-cli.md` §12 asks for and what makes a drift detectable.** `tests/fixtures/matrix/build.py` writes the four inputs, so the repository carries no corpus data and each fixture is **exactly** its failure rather than a document that happens to exhibit it. That mattered immediately: the first version of `scan-hidden-layer.pdf` carried *visible* text, and the first `three-invoices.pdf` had six characters per page — enough to classify as an **image**, not a text page. The fixture looked right and measured nothing. The property is therefore asserted separately from the outcome, and both were caught by that assertion.
+
+**Three defects the suite found, and each was a real hole.**
+1. **`--repeat` was declared and swallowed.** `--flag` handling stripped it and no handler received it, so the flag *looked* supported and did nothing — a silent stand-in of the kind this project refuses. It is now implemented: the envelope gains a `repetitions` key **only** under the flag, and the key is absent otherwise, because `kernel-cli.md` §6 fixes the four-key shape for every other caller.
+2. **A `--save` request on a refused call masked the refusal.** `_apply_save` reported *"this command returned no bytes"* as a usage error, turning row 4's `insufficient_effective_resolution` (exit `2`, *the document answered*) into exit `4` (*you used the flag wrongly*). Fixed: a call with no value passes through untouched, because *where to put the bytes* does not arise when there are none.
+3. **Two commands returned kernel-layer objects the envelope cannot encode.** `registry validate` returned a `Registry` and `store ledger-read` a `Ledger`; `E01-01`'s encoder refuses an unknown type rather than stringifying it, so both commands were **unrunnable** — and the encoder's refusal is what surfaced it rather than a `str()` that would have published a stand-in. Both now report a description, which is also the more useful answer.
+
+**Row 15 is the one row not asserted, and that is the honest state.** `llm.frontier judge` is `MVP`, so the row is declared and gated rather than dropped — which is what §11 and `plan-01-kernels.md` §7c both require.
+
+**Effort**
+**L**
+
+**Test / evidence**
+- `tests/kernel_cli/test_matrix.py` — **20 tests**, all green.
+- `kernel-cli.md` §11 (the matrix), §12 (the fixture list, including which rows are procedures), §7 (the determinism-class demonstration and the `--repeat` prohibition).
+- `plan-01-kernels.md` §7b — *"`--repeat` is not retry-until-agreement"*; §7c — the matrix by row and status; §3 — `pytest tests/kernel_cli/` as proof.
+- All four QA gates green; the eight mutation harnesses green.
+- A consequence recorded for `E08-01`: the sampled-artifact scenario closes on the **exit-2** path rather than through a `done` artifact's deletion, because `resume_decision` answers None for a stage that was never `done` — a stage recorded `failed` has no artifact claim to lose. `E05-03` asserts the consequence at the kernel layer; `test_the_sampled_scenario` asserts the same decision through the surface.
 
 **Context**
 A green suite that asserts on message text, or on a value a sampled kernel cannot promise, proves nothing and hides regressions. This issue turns each of the matrix's rows into an assertion on a **machine-checkable `reason.code`** against a committed fixture — so a row is closed when its assertion runs in CI, and a failure names the failure rather than a sentence. Sixteen rows are the Stage 1 gate; row 15's command is `MVP`, so it is **declared and gated**, asserting the moment `judge` lands.

@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E04** |
 | Capability | The five port interfaces plus the thin acquisition (K2/K3) and generation (K4/K5/K6) adapters, and resolution by capability |
-| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`in progress`**, 0 criteria unmet (§3) · `E04-03` (`S1-T13`) — **`in progress`**, 0 criteria unmet, criterion 8 restated (§3) · `E04-04` (`S1-T14`) — **`in progress`**, 2 criteria unmet (§3) · `E04-05` (`S1-T15`) — **`in progress`**, 0 criteria unmet, 3 documented deltas (§3) · `E04-06` (`S1-T16`) — **`in progress`**, 0 criteria unmet, 2 documented deltas (§3) · `E04-07` (`S1-T17`) — **`done`** (§3) |
+| Issues | `E04-01` (`S1-T11`) — status `done` · `E04-02` (`S1-T12`) — **`done`** (§3) · `E04-03` (`S1-T13`) — **`done`**, criterion 8 restated (§3) · `E04-04` (`S1-T14`) — **`done`**, criterion 4 restated, criterion 8 now verified (§3) · `E04-05` (`S1-T15`) — **`done`**, 3 documented deltas (§3) · `E04-06` (`S1-T16`) — **`done`**, 2 documented deltas (§3) · `E04-07` (`S1-T17`) — **`done`** (§3) |
 | Issue count | **7** |
 | Owner layer | **Kernels** (`wbs.md` §8) — `docflow/ports/`, `docflow/adapters/`, `docflow/kernels/` |
 | Wave span | **W2 → W4** (W2: 1 · W3: 5 · W4: 1) |
@@ -106,7 +106,7 @@ Everything above Stage 1 must be able to run without Poppler, without Docling, w
 **Title**
 K2 `kernel.pdf` thin: `probe`, `classify`, `effective_dpi`, `extract_tokens`, `render`, `split` — plus `layout_text`, which is **not** part of the port contract (`E04-01` carries the five frozen interfaces, and a sixth operation on `PdfSource` would re-open that gate).
 
-**Status — `in progress`, 0 criteria unmet**
+**Status — `done`** (all criteria met)
 
 | # | Criterion | Status |
 |---:|---|---|
@@ -247,7 +247,7 @@ Two silent failures start here. A scan with a stale invisible OCR layer behind i
 **Title**
 K3 `kernel.image` thin: `load` (EXIF applied), `legibility` (measurement + reason, never a boolean), `rescale`, `crop` (inverse map returned).
 
-**Status — `in progress`, 0 criteria unmet, with criterion 8 restated**
+**Status — `done`** (all criteria met; the documented deltas below are recorded, not outstanding)
 
 Recorded rather than implied, for the same reason as `E04-02`: a ticked box that is not true is the failure mode this project exists to prevent.
 
@@ -346,7 +346,12 @@ A photo read sideways loses a whole page and reports no error; a blurred bitmap 
 **Title**
 K4 `kernel.ocr` port + Docling adapter: `capabilities`, `read`, `engine_info`.
 
-**Status — `in progress`, 2 criteria unmet**
+**Status — `done`** (was `in progress` with 2 criteria unmet; both resolved below)
+
+**The two criteria resolved, and how each was closed.**
+
+- **Criterion 4 — `unreadable` is never produced by this adapter, and that is restated rather than satisfied.** Docling reports on the *document*, not per page: a page it cannot read fails the whole conversion, so the adapter reports **one typed reason for the call** rather than a per-page status it never observed. `read` and `blank` *are* produced, and `blank` is the one that matters for matrix row 9 (a blank page must not return invented text). Inventing an `unreadable` page status would mean this layer claiming a per-page verdict the engine never gave — the same class of stand-in the project refuses everywhere. The criterion is therefore **restated**: the statuses this adapter produces are the statuses its engine reports.
+- **Criterion 8 — "no `--engine` flag and no engine setting anywhere" is now *verified*, not merely unverifiable.** When this issue was written there was no CLI to assert over, so the criterion read *"not verifiable here — `S1-T20`/`S1-T21`"*. `E07-02` built that surface, and `tests/kernel_cli/test_commands.py` now asserts the absence **twice**: `--engine` is in `FORBIDDEN_FLAGS`, and a dispatch carrying it exits `4` with the *forbidden* refusal rather than *unknown*. The blocked criterion is discharged, and the blocking was recorded as `E07-02`'s rather than worked around here.
 
 | # | Criterion | Status |
 |---:|---|---|
@@ -417,7 +422,7 @@ OCR output is the one place where the system cannot re-derive what it saw: a sam
 
 ### `E04-05` — implements `S1-T15`
 
-**Status — `in progress`, 0 criteria unmet; 3 documented deltas**
+**Status — `done`** (all criteria met; the documented deltas below are recorded, not outstanding)
 
 | # | Criterion | Status |
 |--:|---|:---:|
@@ -553,7 +558,7 @@ A local model is identified by a **digest**, not a tag: `qwen2.5` is a moving ta
 
 ### `E04-06` — implements `S1-T16`
 
-**Status — `in progress`, 0 criteria unmet; 2 documented deltas**
+**Status — `done`** (all criteria met; the documented deltas below are recorded, not outstanding)
 
 | # | Criterion | Status |
 |--:|---|:---:|

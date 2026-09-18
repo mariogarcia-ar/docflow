@@ -411,12 +411,21 @@ def test_a_hidden_entry_is_recognised_below_the_root() -> None:
 def test_the_recorded_reasons_are_a_closed_set() -> None:
     """A recorded reason is drawn from the declared values, never invented.
 
-    The two declarations are stated rather than derived, so a value quietly
-    added to one of the mappings fails here instead of becoming a third kind of
-    exclusion nobody agreed to.
+    The two declarations are stated rather than derived, so a value quietly added to one
+    of the mappings fails here instead of becoming a third kind of exclusion nobody
+    agreed to.
+
+    ``silent_failure_fixtures`` is `E07-03`'s, and it is a **different kind** of
+    exclusion from ``cache``: a cache is skipped without a record because it is debris,
+    while ``matrix/`` is skipped because its contents are a different *set* of
+    documents - the silent-failure harness's inputs, not corpus fixtures. Both are
+    directory-level, which is why they share the mapping.
     """
     assert {"python_source"} == _DECLARED_REASONS
-    assert set(EXCLUDED_DIRECTORIES.values()) == {"cache"}
+    assert set(EXCLUDED_DIRECTORIES.values()) == {
+        "cache",
+        "silent_failure_fixtures",
+    }
 
 
 # --- The command line --------------------------------------------------------

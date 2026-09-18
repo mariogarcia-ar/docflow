@@ -753,6 +753,120 @@ def _describe_bytes(value: Bytes) -> Mapping[str, object]:
     }
 
 
+def _repetitions(raw: object) -> int:
+    """Read the ``--repeat`` count.
+
+    ``--repeat`` is the surface's *demonstration* of a determinism class
+    (`kernel-cli.md` section 7): run the same command N times and look at the hashes.
+    It is deliberately **not** a retry-until-agreement loop, and nothing here compares
+    two answers to decide whether to try again - it reports what happened, and the
+    caller reads it.
+
+    Args:
+        raw: The flag's value, or None when it was not given.
+
+    Returns:
+        How many times to call the operation. One when the flag is absent.
+
+    Raises:
+        ValueError: If the count is not a positive integer. A count of zero would run
+            nothing and report success, which is the one outcome a determinism
+            demonstration must not produce.
+
+    """
+    if raw is None:
+        return 1
+    try:
+        count = int(str(raw))
+    except ValueError as exc:
+        raise ValueError(f"--repeat must be a positive integer; got {raw!r}") from exc
+    if count < 1:
+        raise ValueError(
+            f"--repeat must be at least 1; got {count}. Running the operation zero "
+            "times and reporting success would demonstrate nothing."
+        )
+    return count
+
+
+def _call_once(handler: Handler, params: Mapping[str, object]) -> Call:
+    """Call an operation once.
+
+    Args:
+        handler: The resolved implementation.
+        params: The operation's parameters, shared across repetitions so every call is
+            the same call by construction rather than by care.
+
+    Returns:
+        The answer.
+
+    """
+    return handler(**params)
+
+
+def _envelope(call: Call) -> Mapping[str, object]:
+    """Build the four-key envelope from one answer.
+
+    The shape is fixed by `kernel-cli.md` section 6 and is the **surface's** contract,
+    not the kernel's: it carries the four keys on every path that emits a
+    ``KernelResult``, and the encoder below is what decides how each boundary type is
+    rendered.
+
+    Args:
+        call: The answer to encode.
+
+    Returns:
+        The envelope, with ``value``, ``evidence``, ``reason`` and ``call_record``.
+
+    """
+    return {
+        "value": _encode(call.result.value),
+        "evidence": _encode(call.result.evidence),
+        "reason": _encode(call.result.reason),
+        "call_record": _encode(call.call_record),
+    }
+
+
+def _envelope_with_repetitions(
+    call: Call, calls: Sequence[Call]
+) -> Mapping[str, object]:
+    """Build the envelope, adding the per-repetition hashes when there are several.
+
+    The extra key appears **only** under ``--repeat``, so the envelope every other
+    command emits is untouched - which is what `kernel-cli.md` section 6 fixes, and
+    adding a key unconditionally would change it for every caller.
+
+    The reported figure is the hash of the *encoded value*, and where there is none it
+    is the hash of the encoded reason: a repetition of a failing call still has an
+    answer to compare, and reporting nothing for it would make an all-failing run look
+    like a run with no repetitions.
+
+    Args:
+        call: The answer to encode, which is the **last** repetition's.
+        calls: Every repetition's answer, in order.
+
+    Returns:
+        The four-key envelope, plus ``repetitions`` under ``--repeat``.
+
+    """
+    envelope = dict(_envelope(call))
+    if len(calls) < 2:
+        return envelope
+
+    envelope["repetitions"] = [
+        hashlib.sha256(
+            json.dumps(
+                {
+                    "value": _encode(repetition.result.value),
+                    "reason": _encode(repetition.result.reason),
+                },
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        for repetition in calls
+    ]
+    return envelope
+
+
 def _envelope(call: Call) -> Mapping[str, object]:
     """Build the four-key envelope from one answer.
 
@@ -871,24 +985,40 @@ def _parse_flags(
             index += 1
             continue
 
-        if token in FORBIDDEN_FLAGS:
+        # The name alone, without any `=value`, so the two vocabularies are matched
+        # against the *flag* rather than against how it was written. Without this a
+        # forbidden flag arriving as `--cuit=1` misses `FORBIDDEN_FLAGS` and is
+        # refused as merely unknown - the right refusal and the wrong reason, which
+        # `kernel-cli.md` section 14's vocabulary exists to distinguish.
+        flag = token.split("=", 1)[0]
+
+        if flag in FORBIDDEN_FLAGS:
             return params, _usage_error(
-                f"{token} does not exist on this surface, and never will: a flag "
+                f"{flag} does not exist on this surface, and never will: a flag "
                 "naming a document concept, an engine, a skippable validation or a "
                 "default model is the drift this surface refuses."
             )
 
-        if token not in ALLOWED_FLAGS:
-            return params, _usage_error(f"unknown flag {token!r}")
+        if flag not in ALLOWED_FLAGS:
+            return params, _usage_error(f"unknown flag {flag!r}")
 
-        if token in BOOLEAN_FLAGS:
-            params[token[2:]] = True
+        if flag in BOOLEAN_FLAGS:
+            params[flag[2:]] = True
             index += 1
             continue
 
+        if "=" in token:
+            # `--flag=value` is a form the surface does not accept, and accepting it
+            # silently would make two spellings of every parameter. Refusing keeps one
+            # grammar, and the message says which one.
+            return params, _usage_error(
+                f"{flag} takes its value as a separate argument: write "
+                f"{flag} <value>, not {token!r}"
+            )
+
         if index + 1 >= len(tokens):
-            return params, _usage_error(f"{token} requires a value")
-        params[token[2:]] = tokens[index + 1]
+            return params, _usage_error(f"{flag} requires a value")
+        params[flag[2:]] = tokens[index + 1]
         index += 2
 
     return params, None
@@ -1026,11 +1156,12 @@ def _invoke(  # pylint: disable=too-many-arguments
 
     """
     try:
-        call = handler(**params)
-        written = _apply_save(call, save_dir)
+        repetitions = _repetitions(params.pop("repeat", None))
+        calls = [_call_once(handler, params) for _ in range(repetitions)]
+        written = _apply_save(calls[-1], save_dir)
         if isinstance(written, Invocation):
             return written
-        envelope = _envelope(written)
+        envelope = _envelope_with_repetitions(written, calls)
         exit_code = exit_code_for(written.result)
         stdout = json.dumps(envelope, indent=2, sort_keys=False) + "\n"
     except Exception:  # pylint: disable=broad-except
@@ -1068,6 +1199,15 @@ def _apply_save(call: Call, save_dir: object) -> Call | Invocation:
         return call
 
     value = call.result.value
+    # A call that produced **no** value is passed through untouched, whatever its
+    # reason. `--save` asks where to put the bytes; when there are none the question
+    # does not arise, and reporting a usage error here would mask the kernel's typed
+    # reason - turning *the document answered `insufficient_effective_resolution`*
+    # (exit 2) into *you used `--save` wrongly* (exit 4), which is exactly the
+    # conflation the exit table exists to prevent.
+    if value is None:
+        return call
+
     if not isinstance(value, Bytes):
         return _usage_error(
             "--save applies to a command that returns bytes; this one returned "

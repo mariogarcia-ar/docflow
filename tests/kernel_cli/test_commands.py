@@ -457,6 +457,49 @@ def test_no_forbidden_flag_is_accepted_by_the_dispatcher() -> None:
     assert accepted == [], f"forbidden flags the dispatcher accepted: {accepted}"
 
 
+def test_a_forbidden_flag_is_refused_by_its_own_message_in_either_spelling() -> None:
+    """*Forbidden* and *unknown* are different refusals; both spellings get the first.
+
+    The two vocabularies in §10 and §14 exist to make the reason attributable: a flag
+    that names a document concept has **drifted** into the domain layer, while an
+    unknown flag is a typo. A parser that matched the whole token would report
+    `--cuit=1` as merely unknown, which is the right exit and the wrong reason.
+
+    Asserted through `dispatch`, so it is the message a *process* prints.
+    """
+    for flag in FORBIDDEN:
+        separate = main.dispatch(["store", "put", "x", flag, "v"])
+        attached = main.dispatch(["store", "put", "x", f"{flag}=v"])
+
+        for invocation in (separate, attached):
+            assert invocation.exit_code == main.EXIT_USAGE
+            assert "never will" in invocation.stderr, (
+                f"{flag} must be refused as forbidden, not as unknown"
+            )
+            assert "unknown flag" not in invocation.stderr
+
+        assert "unknown flag" in main.dispatch(["store", "put", "x", "--nope"]).stderr
+
+
+def test_an_attached_value_is_refused_with_the_grammar_it_should_have_used() -> None:
+    """`--flag=value` is not accepted, and the refusal names the form that is.
+
+    Accepting it silently would give every parameter two spellings, and the surface
+    would then have to keep them in step. Refusing keeps one grammar - and the message
+    has to say which one, or the caller is left guessing at a syntax error.
+    """
+    allowed = main.dispatch(["store", "put", "x", "--root=somewhere"])
+
+    assert allowed.exit_code == main.EXIT_USAGE
+    assert "--root <value>" in allowed.stderr
+    assert "--root=somewhere" in allowed.stderr
+    assert "unknown flag" not in allowed.stderr
+
+    # And the separate form is the one that works.
+    separate = main.dispatch(["store", "put", "x", "--root", "somewhere"])
+    assert separate.exit_code != main.EXIT_USAGE
+
+
 def test_the_six_artifacts_forbidden_flags_are_absent_by_name() -> None:
     """The six the artifacts forbid outright, named individually so each is a red test.
 

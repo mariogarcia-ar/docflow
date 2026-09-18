@@ -85,17 +85,30 @@ def _schema(path: object) -> dict[str, object]:
 
 
 def _with_record(engine: Any, result: KernelResult[Any]) -> Call:
-    """Attach the provider call's record to the result.
+    """Attach the provider call's record to the result, when the adapter has one.
+
+    **`call_record` is K6's, not the port's.** `E04-06` recorded the delta: `E01` froze
+    `KernelResult` at three fields, so the adapter exposes the record and the raw
+    completion as *properties* rather than growing the frozen type or adding a method to
+    the port. `K6` is the adapter that has them; `K5` is the port's *other*
+    implementation and exposes neither, because an Ollama call has no provider-side
+    revision, no token accounting and no cost to report.
+
+    Reading it with `getattr` rather than assuming it is therefore the honest
+    construction, and `None` is the accurate answer for K5 rather than a stand-in: the
+    envelope's `call_record` key is fixed by `kernel-cli.md` section 6 and is null for
+    every kernel that made no provider call - which is exactly what K5 is.
 
     Args:
-        engine: The adapter, which exposes the last call's record.
+        engine: The adapter, which may or may not carry a record.
         result: The kernel's result.
 
     Returns:
-        The call, whose `call_record` is populated for K5 and K6 only.
+        The call, whose `call_record` is populated for an adapter that has one.
 
     """
-    return Call(result=result, call_record=engine.last_call_record)
+    record = getattr(engine, "last_call_record", None)
+    return Call(result=result, call_record=record)
 
 
 def _capabilities(engine: Any, model: object) -> Call:

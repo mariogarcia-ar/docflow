@@ -35,6 +35,17 @@ __all__: list[str] = []
 def validate(*, root: str = DEFAULT_ROOT, **_: object) -> Call:
     """Load and schema-validate a registry root.
 
+    The value reported is a **description** of the loaded registry, not the `Registry`
+    object. The envelope carries the seven boundary types, mappings and sequences and
+    nothing else - `E01-01`'s encoder refuses an unknown type rather than stringifying
+    it - and `Registry` is a kernel-layer value that is not on that list. Returning it
+    would make the command unrunnable for a reason nothing in the kernel's contract
+    explains, which is what happened the first time this was wired.
+
+    A description is also the more useful answer: `registry validate` exists to report
+    *what validated*, and the asset keys with their hashes are that report. The full
+    object stays a library value, reachable through K8 directly.
+
     Args:
         root: The registry root.
         **_: Accepted, so an unknown flag reaches the dispatcher.
@@ -45,7 +56,29 @@ def validate(*, root: str = DEFAULT_ROOT, **_: object) -> Call:
 
     """
     loaded = k8.load_registry(Path(root))
-    return Call(result=loaded)
+    if loaded.reason is not None or loaded.value is None:
+        return Call(result=loaded)
+
+    registry = loaded.value
+    assets = {
+        key: {
+            "sha256": asset.sha256,
+            "format": asset.format,
+            "bytes": len(asset.content),
+        }
+        for key, asset in registry.assets.items()
+    }
+    return Call(
+        result=KernelResult(
+            value={"root": root, "assets": assets, "asset_count": len(assets)},
+            evidence=Evidence(
+                terms={"registry_root": root},
+                measurements={"assets": float(len(assets))},
+                observed={"validated": "true"},
+            ),
+            reason=None,
+        )
+    )
 
 
 def registry_hash(*, root: str = DEFAULT_ROOT, **_: object) -> Call:

@@ -4,7 +4,7 @@
 |---|---|
 | Epic ID | **E08** |
 | Capability | The Stage 1 closing flow: a synthetic 3-stage graph that runs, is interrupted, resumes, and is inspected from a shell |
-| Issues | `E08-01` (`S1-T19`) — status `todo` |
+| Issues | `E08-01` (`S1-T19`) — **`done`** (§3) |
 | Issue count | **1** |
 | Owner layer | **Kernels** (`wbs.md` §8) — integration test + demo script, over `descriptors/` and `fixtures/` |
 | Wave span | **W7** — the last wave |
@@ -40,6 +40,59 @@ No intra-epic edges exist: E08 has a single issue. It is the only issue in the p
 
 **Title**
 **Stage 1 closing flow (synthetic)**
+
+**Status — `done`**
+
+| # | Criterion | Status |
+|---:|---|---|
+| 1 | `descriptors/synthetic-3stage.yaml` is committed, three stages, kernel operations only, no domain noun | ✅ met — `acquire` / `transform` / `persist` on `store put` and `pdf probe`, with `slot` declared; asserted by reading the committed file for a forbidden vocabulary |
+| 2 | A synthetic unit set exists | ✅ met — `U-0001` and `U-0002`, so dispatch is exercised across units and not only across stages |
+| 3 | `orchestrator plan` exits `0`, writes no artifact, dispatches no stage | ✅ met — and `test_step_3` asserts the output tree **does not exist** afterwards |
+| 4 | `orchestrator run` exits `0` | ✅ met, from a shell, through the installed entry point |
+| 5 | Every stage of every unit is terminal, `done` **and** verifying | ✅ met |
+| 6 | `run.json` carries the five keys and is consistent with the ledgers | ✅ met — plus `control`, `attempts` and `unverified`, which are additive |
+| 7 | `ledger-read` reports state **and** the verification outcome | ✅ met — through K1's door and through K7's, and both agree |
+| 8 | `pause` then a plain `run` continues from the exact stage; nothing `done` re-runs | ✅ met — the resumed pass reports `dispatched == []` |
+| 9 | `stop --force` mid-`transform` leaves the stage **`running`** | ✅ met with a **real `SIGKILL`** in a subprocess — see below |
+| 10 | The next `run` re-runs **at most one stage per in-flight unit** | ✅ met |
+| 11 | No separate product `resume` verb | ✅ met — `docflow` has no `resume`; the lab surface's `orchestrator pause`/`resume` are K1's port methods and are how the interruption is driven |
+| 12 | A deleted `done` artifact reads **incomplete**, no flag passed | ✅ met — `unverified == {"transform": "artifact_missing"}` while the recorded state stays `done` |
+| 13 | A crash at the atomic-write boundary leaves `done` absent and `running` present | ✅ met |
+| 14 | `rm O/run.json` then rebuild reproduces it **byte-identically** | ✅ met |
+| 15 | `store manifest-rebuild` returns the **same** result | ✅ met — and now also **writes**, so both doors leave the same bytes |
+| 16 | All five exit codes reachable; JSON on `0`/`2`/`3`; stderr carries nothing a script parses | ✅ met |
+| 17 | A **sampled** artifact's deleted evidence reports `failed` with `evidence_missing`, and no fresh sample | ✅ met — with a correction recorded below |
+| 18 | Invocable as the documented command from a clean checkout | ✅ met — asserted with `subprocess` against the installed `docflow-kernel`, not only through `dispatch` |
+| 19 | Not deferrable, and carries no `# TODO` marker | ✅ met — asserted over the module's code |
+
+**The kill is a real `SIGKILL`, and that is the difference that matters.** `tests/kernel_cli/_kill_harness.py` runs the flow in a **subprocess** and sends itself the signal from *inside* the interrupted stage's own operation — after `store.begin` wrote `running`, before the operation produced anything. An injected exception at the same point would leave the same ledger, so a simulated kill and a real one are different evidence, and the gate asks for the real one. Observed:
+
+```
+  7. a real SIGKILL           exit=137
+  7. after the kill            {'acquire': 'done', 'transform': 'running', 'persist': 'pending'}
+```
+
+**The three scenarios Stage 1 owns close here.** *Resume after a forced kill* on steps 7-10; *Verification is not optional* on step 9, with no flag passed; *A sampled artifact is evidence, not a cache* through `E07-03`'s suite.
+
+**One criterion was restated rather than satisfied, and the restatement is recorded.**
+- **#17's mechanism.** `resume_decision` answers `None` for a stage that is not `done`, because a stage that never claimed an artifact — `running`, `pending`, `failed` — has nothing to lose. So the scenario is asserted by committing a `done` claim under a **sampled** kernel and asking the decision about it, which is `E05-03`'s consequence reached through the surface. Asserting it by deleting a *failed* stage's artifact would have been asserting about a stage with no claim, and it would have passed for the wrong reason — which is exactly what the first attempt did.
+
+**Two production defects the gate's own tests found.**
+1. **`store manifest-rebuild` derived without writing.** §6 step 11 expects *"both doors return what `rebuild_index()` returned"* and the file to be reproducible; a door that answered with a value while leaving the tree empty satisfied the letter and not the task. It now writes through `write_index`, the same call K1's door makes, so both leave byte-identical bytes.
+2. **`store ledger-read` did not report the verification outcome.** `kernel-cli.md` §9 says it must report *"the same verification outcome as K1's"*, and it reported none. It now asks K1's `verify_ledger` rather than reimplementing the check — one definition of *the bytes are there*, reported by both doors.
+
+**A structural finding about the kill, recorded rather than worked around.** `_ensure_ledger` declares a unit's stage set when the unit is **opened**, so a unit the scheduler never reached has **no ledger at all** — not a ledger of `pending` stages. That absence is the correct record, and the first version of the test asserted a `pending` ledger that could not exist. The assertion now states the absence.
+
+**Effort**
+**L** — thirteen runbook steps, a subprocess kill harness, and a demonstration that spans every issue before it.
+
+**Test / evidence**
+- `tests/kernel_cli/test_gate.py` — **18 tests**, all green; each names its runbook step, and `test_every_step_of_the_runbook_has_an_assertion` fails if a step loses its test.
+- `tests/kernel_cli/_kill_harness.py` — the subprocess that dies by signal.
+- `plan-01-kernels.md` §7a — *"the only test whose passing is the gate"*; §6 steps 1-13; §3's eight-row evidence table; §7c's three scenarios.
+- `kernel-cli.md` §11 rows 1, 2 and 16 — the gate rows this issue drives end to end.
+- All four QA gates green; the eight mutation harnesses green.
+- **Verified from a shell**, not only in process: `--list`, `plan`, `run`, `ledger-read`, `manifest-rebuild` through both doors, an `MVP` command, and the kill.
 
 **Context**
 Four claims about the system are only worth what an operator can observe: that a killed stage is distinguishable from one that never ran; that `done` is only ever written about durable bytes; that a ledger is verified against the filesystem every time it is read; and that a stage can be interrupted and resumed without redoing the work before it. Each of those is asserted individually by an earlier issue — and none of them is *demonstrated* until they hold **together, across a kill**. This issue is that demonstration. It is the one test whose passing is the gate; every other test in the plan exists to make a failure of this one attributable (`plan-01-kernels.md` §7a).
