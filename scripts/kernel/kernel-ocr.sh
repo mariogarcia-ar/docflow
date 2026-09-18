@@ -9,9 +9,13 @@
 # and `confidence` is `float | null`, where `null` is never coerced to `1.0`.
 #
 # Three commands, all `now` and all reachable: `capabilities`, `engine-info` and
-# `read`. The first call to `read` loads ONNX models and takes **~10 s**; the ones
-# after it are fast. Engine logs go to stderr, so stdout stays one parseable JSON
-# document.
+# `read`. Engine logs go to stderr, so stdout stays one parseable JSON document.
+#
+# **On the ~10 s**, which is a per-invocation fact rather than a first-call one: each
+# `k_run` is a **new process**, so every `ocr read` reloads the ONNX models. Measured
+# in this workspace, three consecutive calls took 9.04 s, 8.95 s and 11.25 s - there is
+# no warm call to be fast. The driver prints the marker on every run for that reason,
+# not only the first.
 #
 # Usage:
 #   scripts/kernel/kernel-ocr.sh [image] [--pages <sel>] [--dpi N] [--lang <code>]
@@ -25,7 +29,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/_lib.sh"
 
 K_KERNEL="${DOCFLOW_KERNEL:-docflow-kernel}"
-DEFAULT_IMAGE="tests/fixtures/matrix/page.png"
+DEFAULT_IMAGE="tests/fixtures/casos/66e6e0ea-e910-41f4-9037-13f0309812c1.jpg"
 
 PAGES="${KERNEL_OCR_PAGES:-}"
 DPI="${KERNEL_OCR_DPI:-}"
@@ -37,7 +41,7 @@ Usage: scripts/kernel/kernel-ocr.sh [image] [--pages <sel>] [--dpi N] [--lang <c
                                     [-v|--verbose]
 
   image         the raster or PDF to read. Defaults to
-                tests/fixtures/matrix/page.png
+                tests/fixtures/casos/66e6e0ea-e910-41f4-9037-13f0309812c1.jpg
   --pages <sel> the page selection for a multi-page input, e.g. 1-2
   --dpi N       the resolution the page is read at
   --lang <code> the language hint
@@ -50,8 +54,10 @@ Environment:
   KERNEL_OCR_DPI     the resolution, if you prefer it to --dpi
   KERNEL_OCR_LANG    the language hint, if you prefer it to --lang
 
-The first `read` loads ONNX models and takes about ten seconds; later calls are
-fast. Engine logs go to stderr, so stdout is always one parseable JSON document.
+The `read` marker says every call is slow because every call is: each `run` is a new
+process, so the ONNX models are loaded again. Measured: 9.04 s, 8.95 s, 11.25 s for
+three consecutive calls - there is no warm call. Engine logs go to stderr, so stdout is
+always one parseable JSON document.
 EOF
 }
 
@@ -124,7 +130,10 @@ k_run "capabilities" ocr capabilities
 k_run "engine-info" ocr engine-info
 
 k_section "K4 - reading"
-echo "  (the first read loads ONNX models: ~10s)"
+# Every invocation is a new process, so this is not a first-call cost: the models are
+# reloaded on each `k_run`. Measured: 9.04 s, 8.95 s, 11.25 s for three consecutive
+# calls.
+echo "  (each read loads ONNX models: ~10s)"
 # Measured: running several of these drivers at once makes this call abort with
 # SIGABRT (exit 134) - ONNX model loading and the OCR pass together are memory
 # hungry, and the abort is resource contention rather than a defect in the

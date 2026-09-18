@@ -221,9 +221,10 @@ Every block below is a real invocation with its output quoted verbatim, trimmed 
 
 Two things about running these that a caller will meet immediately:
 `ocr engine-info`/`capabilities` are instant, while `ocr read` **loads ONNX models and
-takes ~11 s on the first call** in this workspace. And the engine logs to **stderr**,
-so stdout stays a single parseable JSON document — `docflow-kernel ocr read f.png | jq`
-works, and the *"[INFO] RapidOCR ..."* lines do not corrupt it.
+takes ~9-11 s on every call** in this workspace — the models load per process, not per
+session. And the engine logs to **stderr**, so stdout stays a single parseable JSON
+document — `docflow-kernel ocr read f.png | jq` works, and the *"[INFO] RapidOCR ..."*
+lines do not corrupt it.
 
 ### `ocr capabilities`
 
@@ -353,7 +354,7 @@ the command behind every line; all eight drivers share the flag (`lab-cli.md`):
 ```console
 $ scripts/kernel/kernel-ocr.sh
 
-image: tests/fixtures/matrix/page.png
+image: tests/fixtures/casos/66e6e0ea-e910-41f4-9037-13f0309812c1.jpg
 
   selection        engine default  (no --pages, --dpi or --lang given)
 
@@ -362,7 +363,7 @@ K4 - the engine
   engine-info                exit 0  observed: engine, engine_version
 
 K4 - reading
-  (the first read loads ONNX models: ~10s)
+  (each read loads ONNX models: ~10s)
   read                       exit 0  observed: dpi_applied, file, granularity, ...
 
 K4 - the correction gate
@@ -380,12 +381,14 @@ The image is a parameter and defaults to a committed fixture; `--pages`, `--dpi`
 `--lang` reach the `read` call when you give them, and are **absent** rather than
 empty when you do not.
 
-**The first `read` takes about ten seconds** while ONNX loads the models, and nothing
-after it does. One caution measured in practice: running several of these drivers
-*at once* makes that call abort with `SIGABRT` (exit `134`) — memory contention while
-the models load, not a defect in the surface. Eight consecutive runs with nothing else
-in flight all exit `0`, so if you see `134` here, run it alone before suspecting the
-build.
+**Every `read` takes about ten seconds**, not only the first one: each invocation is a
+new process, so the ONNX models are reloaded every time. Measured here, three
+consecutive calls took 9.04 s, 8.95 s and 11.25 s — there is no warm call to be fast,
+which is worth knowing before scripting a loop over a corpus. One caution measured in
+practice: running several of these drivers *at once* makes that call abort with
+`SIGABRT` (exit `134`) — memory contention while the models load, not a defect in the
+surface. Eight consecutive runs with nothing else in flight all exit `0`, so if you see
+`134` here, run it alone before suspecting the build.
 
 ---
 
