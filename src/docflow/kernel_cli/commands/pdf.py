@@ -1,7 +1,8 @@
 """K2's commands - `pdf` (`E07-02` / `S1-T21`).
 
-Five `now` commands and two `MVP` ones (`kernel-cli.md` §9). Each `now` command is one
-call to `PdfSource`.
+Six `now` commands and two `MVP` ones (`kernel-cli.md` §9). Each `now` command is one
+call to `PdfSource` - except `layout`, which is the one command on this surface whose
+operation is **not** on the port.
 
 `render` is the command matrix row 4 exercises, and it is worth a command of its own
 because the adapter refuses to upscale: a 300 DPI request on a 150 DPI scan returns
@@ -21,7 +22,7 @@ from typing import Any, Final
 from docflow.adapters.pdf import PdfEngine
 from docflow.kernel_cli.commands.pages import parse_pages
 from docflow.kernel_cli.commands.policy import DEFAULT_ROOT, policy_number
-from docflow.kernel_cli.main import Call, Handler
+from docflow.kernel_cli.main import Call, Handler, UsageError
 from docflow.kernels.types import Evidence, KernelResult, Reason
 
 __all__: list[str] = []
@@ -250,6 +251,64 @@ def render(
     return Call(result=_with_engine(root, Path(file), work))
 
 
+def layout(
+    *, file: str, pages: object = None, root: str = DEFAULT_ROOT, **_: object
+) -> Call:
+    """Read the text layer with its physical layout preserved.
+
+    The reader's ``-layout`` mode, which is what `pdftotext -layout` gives a person:
+    a fixed character grid that keeps the **columns** the type was set in. That is a
+    different reading from `pdf tokens`, and the two are not interchangeable - the
+    tokens carry boxes a trace can point at, and the layout carries the grid the
+    reader produced, byte-identical to the binary's own output.
+
+    `layout_text` is deliberately **not** on `PdfSource`: `plans/README.md` §3
+    freezes the port's five operations, so a sixth would re-open `E04-01`'s gate
+    (`E04-02`). The adapter exposes it, which is why this command can exist without
+    the port growing a method, and why :data:`COMMANDS` below declares no port
+    method for it.
+
+    Args:
+        file: The PDF to read.
+        pages: The page selection, defaulting to every page.
+        root: The registry root the policy comes from.
+        **_: Accepted, so an unknown flag reaches the dispatcher.
+
+    Returns:
+        The call.
+
+    """
+
+    def work(engine: PdfEngine, path: Path) -> KernelResult[Any]:
+        """Read the layout of the selected pages.
+
+        Args:
+            engine: The adapter.
+            path: The PDF.
+
+        Returns:
+            The layout text, or the probe's reason when the count is unreadable.
+
+        """
+        total = _total_pages(engine, path)
+        if isinstance(total, Reason):
+            return _refusal_from(total, blocked_by="document")
+        chosen = parse_pages(pages, total)
+        try:
+            return engine.layout_text(path, chosen)
+        except ValueError as exc:
+            # ``layout_text`` refuses a reordered selection rather than sorting it,
+            # because the result is the reader's own concatenation and sorting would
+            # return a document the caller did not ask for. That refusal is about how
+            # the **call was written**, which is exit 4 - and letting the ``ValueError``
+            # reach `_invoke`'s catch-all would report it as exit 1, a defect in this
+            # build. The same translation `image crop` makes for its region, and for
+            # the same reason.
+            raise UsageError(str(exc)) from exc
+
+    return Call(result=_with_engine(root, Path(file), work))
+
+
 def split(
     *, file: str, pages: object = None, root: str = DEFAULT_ROOT, **_: object
 ) -> Call:
@@ -296,6 +355,7 @@ COMMANDS: Final[tuple[tuple[str, Handler | None, str | None, tuple[str, ...]], .
     ("probe", probe, "file", ("--root",)),
     ("classify", classify, "file", ("--page", "--root")),
     ("tokens", tokens, "file", ("--pages", "--dpi", "--root")),
+    ("layout", layout, "file", ("--pages", "--root")),
     ("render", render, "file", ("--pages", "--dpi", "--save", "--root")),
     ("split", split, "file", ("--pages", "--save", "--root")),
     ("facts", None, "file", ("--page",)),

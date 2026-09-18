@@ -309,24 +309,31 @@ pixels, so it reports `shape: "image"`.
 
 ## The same operations from `docflow-kernel`
 
-The sections above drive the **library**. Five of the seven operations have a command
-on the lab surface; the other two do not, and which two is worth stating up front:
+The sections above drive the **library**. Six of the seven operations have a command
+on the lab surface; `effective_dpi` is the one that does not, and it is reachable
+anyway:
 
 | Operation | Command | State in §9 |
 |---|---|---|
 | `probe` | `pdf probe <file>` | `now` |
 | `classify` | `pdf classify <file> --page N` | `now` |
 | `tokens` | `pdf tokens <file> --pages 1-3` | `now` |
+| `layout_text` | `pdf layout <file> --pages 1-3` | `now` |
 | `render` | `pdf render <file> --page N --dpi D` | `now` |
 | `split` | `pdf split <file> --pages 1,2` | `now` |
 | `effective_dpi` | — | **library only**; folded into `classify`'s measurements |
-| `layout_text` | — | **library only**; §9 lists `pdf facts` as the `MVP` target |
 | — | `pdf facts <file>` | `MVP` — exits `4` |
 | — | `pdf images <file>` | `MVP` — exits `4` |
 
 `effective_dpi` is reachable from the CLI without a command of its own because
 `classify` already reports it as a measurement — the number is in the envelope, under
-a different name. `layout_text` genuinely has no CLI door yet.
+a different name.
+
+**`pdf layout` is the one command whose operation is not on the port.** `layout_text` is
+kernel-only by `E04-02`: `plans/README.md` §3 freezes `PdfSource`'s five operations, so
+a sixth would re-open `E04-01`'s gate. The adapter exposes it, and the command reaches it
+there — which is how the library-only gap in this page was closed without touching the
+frozen contract.
 
 Every block below is a real invocation quoted verbatim, trimmed at `...` only where
 the envelope repeats `value` inside `evidence`.
@@ -451,7 +458,8 @@ $ docflow-kernel pdf tokens tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-8
 $ docflow-kernel pdf render tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1 --dpi 72 --save /tmp/out
 # value: { "sha256": "6e739084...", "size_bytes": 77070,
 #          "media_type": "image/png",
-#          "path": "artifacts/6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d" }
+#          "path": "artifacts/6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d",
+#          "delivery_name": "6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d.png" }
 # value.measurements: { "pages_rendered": 1.0, "dpi_applied": 72.0, "bytes": 77070.0 }
 # exit 0
 ```
@@ -460,6 +468,24 @@ The bytes are **out of band**: stdout carries the descriptor, and the image itse
 goes to the store. `path` is `null` without `--save`; with it, the artifact is written
 and the location reported — a path *relative to the save root*, not to your working
 directory.
+
+**`path` keeps no suffix, and `delivery_name` is where the suffix lives.** That is not
+an oversight: a store is content-addressed, so the file's name *is* its identity and
+`get`/`verify` have only the hash to reach it by (`FR-11`). Appending `.png` there would
+give one artifact two names to look under. The extension a consumer selects a reader by
+is a property of how bytes are **handed over**, so it travels on the descriptor — for an
+`image/png` artifact, the digest with `.png` appended:
+
+```console
+$ ls /tmp/out/artifacts
+# 6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d
+```
+
+`delivery_name` is a **name, not a path**: nothing exists at `/tmp/out/<delivery_name>`.
+A caller that needs the file under that name copies or links it there. A media type this
+surface does not know — the `application/octet-stream` that `store get` reads bytes back
+as — yields the bare digest rather than a guessed extension, because a name nobody
+measured is the kind of stand-in this code refuses everywhere else.
 
 Now the matrix row. `kernel-cli.md` §12 row 4 is *"a 150 DPI scan rendered at 300 and
 reported as 300"*, and the answer is a refusal:
@@ -494,12 +520,58 @@ $ docflow-kernel pdf render <the same scan> --page 1 --dpi 121
 `120.0` is a ceiling and not a rounding: asking for exactly what the page holds is
 granted, and one more DPI is refused.
 
+### `pdf layout <file> --pages 1-3`
+
+The command the library-only gap used to be about. It prints the reader's own character
+grid, which is a different reading from `pdf tokens` and not derivable from it: measured
+on `casos/9dfc597f`, **0 of 68 lines** of a token-derived reconstruction match the
+reader's output.
+
+```console
+$ docflow-kernel pdf layout tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --pages 1
+# value: "                                                              A         FACTURA 0138-00000236-A\n
+#                         CODIGO        Fecha: 07/07/2026\n …"
+# evidence.measurements: { "pages_read": 1.0, "characters": 3442.0, "lines": 42.0 }
+# evidence.observed: { "file": "...", "pages_requested": [1],
+#                      "page_separator": "\\f", "reader_flag": "-layout" }
+# exit 0
+```
+
+`reader_flag: "-layout"` is the provenance: this is `pdftotext -layout`'s output, byte
+for byte, and `pages_requested` says which pages produced these characters. The string
+value is the text itself — no coordinates, unlike `tokens`.
+
+A **reordered** selection is refused rather than sorted, and it is a usage error:
+
+```console
+$ docflow-kernel pdf layout <the same file> --pages 2,1
+pages must be strictly ascending, got [2, 1]. The result is the reader's own
+concatenation, so a reordered selection would return a document the caller did not
+ask for rather than the order it asked for.
+# exit 4
+```
+
+Sorting would hide the mistake, and returning the reader's page order would be a silent
+substitution — so the command refuses and names the reason. Exit `4` rather than `1`
+because this is the caller's text, not a defect in the build.
+
+A page with pixels and no text layer reports `blank_page` with the measurements attached,
+the same statement `classify` makes and from the same decision:
+
+```console
+$ docflow-kernel pdf layout tests/fixtures/pdf_escaneados/3ac5a2ec-d129-47c0-947a-4680c7e25f06.pdf --pages 1
+# value: null
+# reason.code: "blank_page"
+# exit 2
+```
+
 ### `pdf split <file> --pages 1,2 [--save <dir>]`
 
 ```console
 $ docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 1,2
 # value: { "sha256": "...", "size_bytes": 305700,
-#          "media_type": "application/pdf", "path": null }
+#          "media_type": "application/pdf", "path": null,
+#          "delivery_name": "<sha256>.pdf" }
 # evidence.measurements: { "pages_extracted": 2.0, "bytes": 305700.0 }
 # evidence.observed.pages_requested: [1, 2]
 # exit 0
@@ -647,7 +719,7 @@ search for real invisible text layers. Exits non-zero on a defect.
 |---|---|
 | `docflow-kernel pdf probe  classify  tokens  render  split` | **Now available** — see the CLI section above and `lab-cli.md`. The `MVP` operations of §9 still exit `4` |
 | `effective_dpi` as a command of its own | **No command** — but the number is reachable from `classify`'s measurements, so nothing is blocked on it |
-| `layout_text` from the CLI | **No command yet** — reachable from the library only; §9 names `pdf facts` as the `MVP` target |
+| `layout_text` from the CLI | **Now available** as `pdf layout <file> --pages …`; kernel-only, so it is not on `PdfSource` |
 | Page facts beyond classification | `# TODO: [MVP]` — documented target, not Stage 1 scope |
 | Embedded-image extraction, `merge` | `# TODO: [MVP]`; merge is **Never**, no pipeline closes it |
 | A second reader, an engine setting | **Never** — `ADR-001`, `wbs.md` §9 |

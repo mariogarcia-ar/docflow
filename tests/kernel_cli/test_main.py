@@ -1000,6 +1000,90 @@ def test_a_bytes_value_leaves_as_a_descriptor_and_not_as_base64() -> None:
     assert "data" not in envelope["value"]
 
 
+# --- The suffix a consumer reads off the descriptor -------------------------
+
+
+def test_the_descriptor_names_the_bytes_with_the_suffix_their_media_type_implies(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``delivery_name`` is the digest plus the suffix a media type implies.
+
+    The store's own name has none, and both facts are deliberate. This closes a real
+    defect: `--save` reported the artifact exactly as K7 stored it, and a store is
+    content-addressed - the file's name **is** its identity, so no suffix is
+    appended and `get`/`verify` have only the hash to reach it by (`FR-11`,
+    `kernels/store.py`). So a saved PNG arrived as `artifacts/<sha256>`, and
+    `kernel-cli.md` §6's promise of `<dir>/<sha256>.png` described something the store
+    could not produce without giving one artifact two names.
+
+    Both facts are asserted together, because either alone is satisfied by a wrong fix:
+    the **store's path keeps no suffix** (the invariant `test_store.py` holds), and the
+    **descriptor carries the suffixed name** a consumer picks a reader by.
+    """
+    data = b"\x89PNG\r\n\x1a\n" * 3
+    handler = RecordingHandler(bytes_call(data))
+
+    invocation = run(
+        ["pdf", "render", "--save", str(tmp_path)],
+        Operation("pdf", "render", handler),
+    )
+
+    assert invocation.exit_code == EXIT_VALUE
+    value = envelope_of(invocation)["value"]
+    digest = hashlib.sha256(data).hexdigest()
+
+    assert value["delivery_name"] == f"{digest}.png", (
+        "a PNG must be named with the suffix its media type implies"
+    )
+    assert value["path"] == f"artifacts/{digest}", (
+        "the store's name is the hash and gains no suffix: its identity is the digest"
+    )
+    stored = tmp_path / "artifacts" / digest
+    assert stored.is_file(), (
+        "the bytes are where `path` says, under the unsuffixed name"
+    )
+    assert value["delivery_name"] != value["path"].rsplit("/", 1)[-1], (
+        "the two names differ, which is the whole reason the field exists"
+    )
+
+
+def test_a_media_type_with_no_known_suffix_is_not_given_a_guessed_one() -> None:
+    """``store get`` reads bytes back as ``application/octet-stream``: no suffix.
+
+    The store keeps the hash and not what the bytes were, so the read-back media type
+    describes nothing about the format. Inventing `.bin` would publish a name this
+    surface made up, and a consumer that trusted the extension would hold a file whose
+    name claims something about bytes nobody measured - the silent stand-in this code
+    refuses everywhere else.
+    """
+    data = bytes(range(256)) * 2
+    handler = RecordingHandler(
+        value_call(Bytes(data=data, media_type="application/octet-stream"))
+    )
+
+    value = envelope_of(run(["store", "get"], Operation("store", "get", handler)))[
+        "value"
+    ]
+
+    digest = hashlib.sha256(data).hexdigest()
+    assert value["delivery_name"] == digest, (
+        "an unknown media type yields the bare digest, never a guessed extension"
+    )
+
+
+def test_a_pdf_is_named_with_the_pdf_suffix() -> None:
+    """The other table entry, so the rule is a mapping and not a PNG special case."""
+    handler = RecordingHandler(
+        value_call(Bytes(data=b"%PDF-1.7\n", media_type="application/pdf"))
+    )
+
+    value = envelope_of(run(["pdf", "split"], Operation("pdf", "split", handler)))[
+        "value"
+    ]
+
+    assert value["delivery_name"].endswith(".pdf")
+
+
 def test_the_mapping_proxies_the_boundary_uses_survive_encoding() -> None:
     """``MappingProxyType`` has no default JSON encoder, so the encoder converts.
 

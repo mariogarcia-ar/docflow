@@ -716,6 +716,7 @@ def _encode(value: object) -> object:
             "size_bytes": value.size_bytes,
             "media_type": value.media_type,
             "path": value.path,
+            "delivery_name": _delivery_name(value.sha256, value.media_type),
         }
     if isinstance(value, Evidence):
         return {
@@ -789,6 +790,58 @@ def _mapping(values: Mapping[str, object]) -> dict[str, object]:
     return {str(key): _encode(item) for key, item in values.items()}
 
 
+#: Media type to the suffix a delivered name carries (`kernel-cli.md` §6).
+#:
+#: Exactly the media types this surface can hand back, and no others: ``pdf render``,
+#: ``image crop`` and ``image rescale`` produce ``image/png``, and ``pdf split``
+#: produces ``application/pdf``. The table is spelled out rather than derived from
+#: the media type's subtype, because a subtype is not an extension - ``image/png``
+#: and a hypothetical ``image/x-png`` are one format under two spellings, and a
+#: subtype rule would deliver ``.x-png`` for the second.
+#:
+#: A media type with no entry gets **no suffix** rather than a guessed one. ``store
+#: get`` reads its bytes back as ``application/octet-stream`` - the store keeps the
+#: hash and not what the bytes were - and inventing a ``.bin`` for it would publish a
+#: name this surface made up, so a consumer that trusted the extension would have a
+#: file whose name claims something about bytes nobody measured.
+_DELIVERY_SUFFIXES: Final[Mapping[str, str]] = {
+    "application/pdf": ".pdf",
+    "image/png": ".png",
+}
+
+
+def _delivery_name(sha256: str, media_type: str) -> str:
+    """Name a buffer's bytes for a consumer that picks a reader by extension.
+
+    `kernel-cli.md` §6 prints a saved buffer as ``<dir>/<sha256>.png``, and the store
+    writes ``<dir>/artifacts/<sha256>`` with **no** suffix - because there the name
+    *is* the artifact's identity, and ``get``/``verify`` have nothing but the hash to
+    reach it by (`kernels/store.py`). Both are right about different things, and the
+    split is reconciled here rather than in the store: a suffix is a property of how
+    bytes are **handed over**, not of where they live.
+
+    So the descriptor carries both, and they answer different questions:
+
+    - ``path`` is where the bytes are, relative to the ``--save`` root;
+    - ``delivery_name`` is the name to give them on the way out, for the consumers
+      that select an engine by extension rather than by media type.
+
+    It is a name and **not a path**: nothing exists at ``<save-root>/delivery_name``,
+    so joining the two produces a location that was never written. A caller that
+    needs the file under this name copies or links it there.
+
+    Args:
+        sha256: The buffer's digest, which is the name's stem.
+        media_type: The buffer's media type, which decides the suffix.
+
+    Returns:
+        ``<sha256><suffix>``, or the bare digest when the media type declares no
+        suffix this surface knows.
+
+    """
+    return f"{sha256}{_DELIVERY_SUFFIXES.get(media_type, '')}"
+
+
 def _describe_bytes(value: Bytes) -> Mapping[str, object]:
     """Describe a buffer without putting it on stdout.
 
@@ -803,14 +856,20 @@ def _describe_bytes(value: Bytes) -> Mapping[str, object]:
             the bytes are in memory and nowhere else.
 
     Returns:
-        The descriptor, in the shape `kernel-cli.md` §6 prints.
+        The descriptor, in the shape `kernel-cli.md` §6 prints. It carries
+        ``delivery_name`` for the same reason a saved buffer does: the question
+        *what name does this media type imply* is about the media type, not about
+        whether a store was involved, and a consumer should not see two descriptor
+        vocabularies for one buffer depending on which it got.
 
     """
+    sha256 = hashlib.sha256(value.data).hexdigest()
     return {
-        "sha256": hashlib.sha256(value.data).hexdigest(),
+        "sha256": sha256,
         "size_bytes": len(value.data),
         "media_type": value.media_type,
         "path": None,
+        "delivery_name": _delivery_name(sha256, value.media_type),
     }
 
 

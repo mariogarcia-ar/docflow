@@ -377,20 +377,24 @@ declares that key and the dispatcher reaches the buffer through it.
 $ docflow-kernel image crop <file> --region 10,10,50,50 --save /tmp/crops
 # value.observed.image:
 #   { "sha256": "6f35…", "size_bytes": 125310, "media_type": "image/png",
-#     "path": "artifacts/6f35…" }
+#     "path": "artifacts/6f35…", "delivery_name": "6f35….png" }
 # value.observed.inverse_map:  { "offset_x": 10.0, "offset_y": 10.0, "scale": 1.0 }
 # exit 0
 ```
 
-Only `observed.image` changes: it gains the hash of what was written and the path
-relative to the save root. The inverse map, the source box and `coordinate_space` are
-untouched — the record is rebuilt with one entry replaced, not replaced wholesale.
+Only `observed.image` changes: it gains the hash of what was written, the path relative
+to the save root, and the `delivery_name` a consumer selects a reader by (the digest
+plus `.png` — the stored file itself keeps no suffix, because a content-addressed
+store's name *is* its identity; see `kernel-pdf.md`'s `render` section). The inverse map,
+the source box and `coordinate_space` are untouched — the record is rebuilt with one
+entry replaced, not replaced wholesale.
 
-The check is honest — `crop` returns `Evidence` with the buffer inside
-`observed.image`, and `--save` writes a `Bytes` *value* — but the pairing means the
-flag cannot be used where §9 lists it. `--save` does work on a command that returns
-`Bytes`: `pdf render scan.pdf --page 1 --dpi 72 --save /tmp/out` exits `0` and reports
-the artifact's path in the envelope.
+The check is honest — `crop` returns `Evidence` with the buffer *inside*
+`observed.image`, and `--save` writes a `Bytes` *value* — which is why the command
+declares `observed.image` as its buffer key and the dispatcher reaches in through it.
+That declaration is the difference between a save that works and one that would take an
+arbitrary entry from a free-form mapping; on a command carrying two buffers it would
+save the wrong one and report success.
 
 ### `image rescale <file> --target-dpi N` — and its open gap
 

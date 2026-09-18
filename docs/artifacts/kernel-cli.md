@@ -197,9 +197,20 @@ A 40 MB rendered page inlined as base64 is not testable and not diffable. So std
 
 | Default — a descriptor | With `--save <dir>` |
 |---|---|
-| `{ "sha256": "9f2a…", "bytes": 41889024, "media_type": "image/png", "page": 1, "dpi": 300 }` | The same descriptor **plus** the bytes written to `<dir>/<sha256>.png` |
+| `{ "sha256": "9f2a…", "bytes": 41889024, "media_type": "image/png", "page": 1, "dpi": 300 }` | The same descriptor **plus** the bytes written to `<dir>/artifacts/<sha256>` |
 
 `--save` routes through K7, so the recorded hash is the real content hash of what was written, not a hash of something that was only in memory. That is what makes a downstream `store verify` meaningful.
+
+**The stored name carries no suffix, and that is the store's contract rather than an omission.** A store is content-addressed: the file's name *is* its identity, and `get`/`verify` have nothing but the hash to reach it by (`kernels/store.py`, FR-11). Appending an extension would give one artifact two names to look under, and would make the same bytes stored under two media types two different files — while the descriptor already says the stored bytes are one artifact.
+
+**The suffix a consumer wants is therefore carried by the descriptor, not by the path.** Every buffer descriptor gains a `delivery_name` — the digest plus the suffix its media type implies (`.png`, `.pdf`), or the bare digest for a media type that implies none, such as the `application/octet-stream` `store get` reads back:
+
+```json
+{ "sha256": "6e739084…", "size_bytes": 77070, "media_type": "image/png",
+  "path": "artifacts/6e739084…", "delivery_name": "6e739084….png" }
+```
+
+`path` is where the bytes are; `delivery_name` is the name to give them on the way out, for a consumer that selects a reader by extension. It is a name and **not a path**: nothing exists at `<dir>/<delivery_name>`, and a caller that needs the file under that name copies or links it there.
 
 ---
 
@@ -343,11 +354,14 @@ This is what makes `S1-T19` invocable from a shell before any domain component e
 | `MVP` | `pdf facts <file>` | `page_facts(page)` | `--page N` |
 | `now` | `pdf classify <file>` | `classify(page)` | `--page N` |
 | `now` | `pdf tokens <file>` | `extract_tokens(pages)` | `--pages 1-3`, `--dpi` |
+| `now` | `pdf layout <file>` | — (`layout_text`, kernel-only) | `--pages 1-3` |
 | `now` | `pdf render <file>` | `render(pages, dpi)` | `--pages`, `--dpi`, `--save` |
 | `MVP` | `pdf images <file>` | `embedded_images(page)` | `--page N`, `--save` |
 | `now` | `pdf split <file>` | `split(ranges)` | `--pages 1-7`, `--save` |
 
 `pages` accepts `1-3`, `1,4,7`, `all`. `render` **never upscales** — requesting 300 DPI on a 150 DPI scan returns exit `2` with `reason.code: insufficient_effective_resolution`, never a larger file reported as a satisfied gate.
+
+**`pdf layout` is the one command here whose operation is not a port method.** `layout_text` returns the reader's own character grid (`pdftotext -layout`), byte-identical to the binary's output and *not* derivable from the token boxes — measured on `casos/9dfc597f`: 0 of 68 lines of a token-derived reconstruction match. `plans/README.md` §3 freezes `PdfSource`'s five operations, so putting it on the port would re-open `E04-01`'s gate (`E04-02`); the adapter exposes it, and the command reaches it there. A reordered page selection is refused as a **usage error** (exit `4`) rather than sorted, because the result is the reader's own concatenation and sorting would return a document the caller did not ask for.
 
 ### K3 — `image`
 

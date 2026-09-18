@@ -80,6 +80,7 @@ NOW_COMMANDS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
     ("pdf", "probe", ()),
     ("pdf", "classify", ("--page",)),
     ("pdf", "tokens", ("--pages", "--dpi")),
+    ("pdf", "layout", ("--pages",)),
     ("pdf", "render", ("--pages", "--dpi", "--save")),
     ("pdf", "split", ("--pages", "--save")),
     ("image", "info", ()),
@@ -263,6 +264,15 @@ def _port_method(kernel: str, operation: str) -> callable | None:
     """
     # `kernel-cli.md` §9 names the two that are not port methods.
     if (kernel, operation) in {("orchestrator", "jobs"), ("registry", "hash")}:
+        return None
+
+    # And the one whose operation exists on the kernel but **not** on the port:
+    # `layout_text` is kernel-only by `E04-02`, because `plans/README.md` §3 freezes
+    # `PdfSource`'s five operations and a sixth would re-open `E04-01`'s gate. The
+    # adapter exposes it, so the command is reachable while the port stays frozen.
+    # Declared rather than discovered, so this check reports *no port method* on
+    # purpose instead of silently skipping a flag set nobody compared.
+    if (kernel, operation) == ("pdf", "layout"):
         return None
 
     name = PORTS.get(kernel)
@@ -933,3 +943,91 @@ def test_the_buffer_key_table_names_a_real_command_and_a_real_key() -> None:
         "image crop's buffer is the case this table was introduced for"
     )
     assert _buffer_is_reachable("image", "crop")
+
+
+# --- The one command whose operation is not on the port ---------------------
+
+
+def test_pdf_layout_dispatches_and_reaches_the_kernel_only_operation() -> None:
+    """``pdf layout`` exposes an operation the frozen port deliberately does not carry.
+
+    `layout_text` returns the reader's own character grid, byte-identical to
+    ``pdftotext -layout``, and `E04-02` recorded it as **kernel-only**: putting a sixth
+    operation on `PdfSource` would re-open `E04-01`'s gate, since `plans/README.md` §3
+    freezes the port's five operations. So the operation existed in the kernel and the
+    adapter, the quickstart documented it, and there was **no way to invoke it** - the
+    library-only gap this command closes.
+
+    Asserted on the *port*, not just on the surface, because that is the half a fix
+    could get wrong in the tempting direction: the command must not have been added by
+    growing `PdfSource`.
+    """
+    assert ("pdf", "layout") in main.registered_operations(), (
+        "pdf layout must dispatch; it is `now` in §9"
+    )
+    assert _port_method("pdf", "layout") is None, (
+        "pdf layout is kernel-only by E04-02: a port method would re-open E04-01"
+    )
+
+    from docflow.ports import PdfSource  # pylint: disable=import-outside-toplevel
+
+    assert not hasattr(PdfSource, "layout_text"), (
+        "the port stays at five operations; the command reaches the adapter instead"
+    )
+
+
+def test_pdf_layout_is_reachable_through_the_adapter_the_command_binds() -> None:
+    """The claim *the command can reach it* is measured, not inferred from registration.
+
+    ``_port_method`` returning ``None`` says the *port* has no such method; it does not
+    say the command's own engine does. A command bound to an adapter that never gained
+    ``layout_text`` would register, dispatch, and fail at the first call - which is the
+    registry-says-available-command-crashes shape this surface has already produced
+    twice.
+    """
+    from docflow.adapters.pdf import (  # pylint: disable=import-outside-toplevel
+        PdfEngine,
+    )
+
+    assert callable(getattr(PdfEngine, "layout_text", None)), (
+        "the adapter the command binds must expose layout_text, or `pdf layout` "
+        "cannot work however it is registered"
+    )
+
+
+def test_pdf_layout_refuses_a_reordered_selection_as_a_usage_error() -> None:
+    """A descending selection is exit ``4``, not exit ``1`` and not a silent sort.
+
+    ``layout_text`` refuses a reordered selection rather than sorting it, because the
+    result is the reader's own concatenation and a sort would return a document the
+    caller did not ask for. That refusal arrives as a ``ValueError``, and a
+    ``ValueError`` reaching `_invoke`'s catch-all is answered as exit ``1`` - *"this
+    build is broken"* - about something the caller fixes by retyping the command. The
+    command translates it, the same way `image crop` does for a region outside the
+    image.
+
+    The check reads the *distinguishing* phrase rather than the exit code alone,
+    because `parse_pages` also refuses bad ranges at exit ``4``: a code-only assertion
+    cannot tell the kernel's ordering refusal from the parser's own.
+    """
+    invocation = main.dispatch(
+        [
+            "pdf",
+            "layout",
+            "tests/fixtures/matrix/three-invoices.pdf",
+            "--pages",
+            "2,1",
+            "--root",
+            "registry",
+        ]
+    )
+
+    assert invocation.exit_code == main.EXIT_USAGE, (
+        "a malformed selection is the caller's text, not a defect in this build: "
+        f"got exit {invocation.exit_code}"
+    )
+    assert "strictly ascending" in invocation.stderr, (
+        "the refusal must be the kernel's ordering one, not the parser's range check: "
+        + invocation.stderr
+    )
+    assert invocation.stdout == "", "a usage error emits no envelope"

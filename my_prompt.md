@@ -1,6 +1,16 @@
+imagen
 arreglar 
-docflow-kernel image rescale tests/fixtures/otros/4c261bc8-3b30-4493-b5d4-6f499cde014e.jpeg --target-dpi 72
-y el save 
+- docflow-kernel image rescale tests/fixtures/otros/4c261bc8-3b30-4493-b5d4-6f499cde014e.jpeg --target-dpi 72
+- y el save 
+
+
+en pdf 
+- probe 
+- clasiffy : ver el tema de mixed
+- tokens : tenemos que tener uno que sea el texto como pdftotext --layout 
+
+docflow-kernel pdf render tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1 --dpi 72 --save /tmp/out
+no esta poniendo el tipo de imagen a la salida
 
 
 
