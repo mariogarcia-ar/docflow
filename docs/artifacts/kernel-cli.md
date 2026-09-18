@@ -395,10 +395,13 @@ Reports the **model digest**, never the tag alone — `qwen2.5` is a moving tag 
 | St. | Command | Port operation | Key flags |
 |:---:|---|---|---|
 | `now` | `llm.frontier capabilities` | `capabilities(model)` | `--model` |
+| `now` | `llm.frontier warm` | `warm(model)` | `--model` |
 | `MVP` | `llm.frontier count-tokens` | `count_tokens(text)` | `--model`, `--text-file` |
 | `now` | `llm.frontier structured` | `structured(model, prompt, schema)` | `--model`, `--prompt-file`, `--schema-file` |
 | `now` | `llm.frontier vision` | `vision(model, prompt, images, schema)` | `--model`, `--prompt-file`, `--image`, `--schema-file` |
 | `MVP` | `llm.frontier judge` | `judge(model, rubric, samples)` | `--model`, `--rubric-file`, `--samples-file` |
+
+`warm` on this kernel means **confirm the name resolves and the credential is present**, not *load the model*: a hosted provider has no cold start to avoid. It is the one way to check a provider credential before a batch begins, because `capabilities` describes the adapter's *configuration* and therefore answers without one.
 
 **The raw completion and the parsed structure are returned separately**, and the raw one is what `--save` persists first — *"the raw completion is persisted before anything coerces it."* `call_record` is always populated.
 

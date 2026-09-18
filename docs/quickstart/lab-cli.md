@@ -380,12 +380,13 @@ docflow-kernel registry hash --root registry --repeat 3
 for a sampled kernel (`kernel-cli.md` §7): it manufactures the agreement it pretends to
 find. Nothing on this surface compares two answers to decide whether to try again.
 
-A count that would demonstrate nothing is refused:
+A count that would demonstrate nothing is refused, as a **usage error**: `--repeat`'s
+value is the caller's own text, and §5 gives *"bad flag"* to exit `4`:
 
 ```bash
 docflow-kernel registry hash --root registry --repeat 0
 # --repeat must be at least 1; got 0. Running the operation zero times and reporting
-# success would demonstrate nothing.                            -> exit 1
+# success would demonstrate nothing.                            -> exit 4
 ```
 
 ## Exit codes
@@ -630,7 +631,7 @@ reporting a missing value.
 | K3 `image` | 4 | `kernel-image.md` |
 | K4 `ocr` | 3 | `kernel-ocr.md` |
 | K5 `llm.local` | 4 | `kernel-llm-local.md` |
-| K6 `llm.frontier` | 4 | `kernel-llm-frontier.md` |
+| K6 `llm.frontier` | 5 | `kernel-llm-frontier.md` |
 
 Four of those six have `MVP` operations that exit `4`; the full set of ten is listed
 under *The 10 that refuse* above.

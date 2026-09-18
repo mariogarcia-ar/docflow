@@ -69,8 +69,9 @@ The flow is trivial on purpose: a three-stage graph over a synthetic unit set, n
 # the Stage 1 closing flow, invocable from a shell before any domain component exists
 docflow-kernel orchestrator run descriptors/synthetic-3stage.yaml --out O
 
-# recovery is observable through the ledger, not through logs
-docflow-kernel orchestrator ledger-read O
+# recovery is observable through the ledger, not through logs. `ledger-read` takes a
+# **unit directory** (`kernel-cli.md` §9), not the output root: one ledger per unit.
+docflow-kernel orchestrator ledger-read O/U-0001
 ```
 
 Supporting, from the product surface (`S1-T18`) and the lab surface (`S1-T20`, `S1-T22`):
@@ -79,9 +80,9 @@ Supporting, from the product surface (`S1-T18`) and the lab surface (`S1-T20`, `
 |---|---|
 | `docflow-kernel --list` | The 8 kernels with determinism class and adapter availability; an unavailable adapter is reported `no`, never silently replaced (`kernel-cli.md` §4) |
 | `docflow pause <job>` then `docflow run …` again | Continues from the exact stage; no separate `resume` verb (`FR-01`, `FR-02`) |
-| `docflow stop --force` then `docflow-kernel orchestrator ledger-read O` | The interrupted stage reads `running`, not `pending` and not `done` |
+| `docflow stop --force` then `docflow-kernel orchestrator ledger-read O/U-0001` | The interrupted stage reads `running`, not `pending` and not `done` |
 | `docflow-kernel orchestrator manifest-rebuild O` after `rm O/run.json` | The manifest is reconstructed from ledgers alone (`kernel-cli.md` §11 row 16) |
-| `docflow-kernel store ledger-read O` | K7's read path reports the same verification outcome as K1's (`kernel-cli.md` §9) |
+| `docflow-kernel store ledger-read O/U-0001 --root O` | K7's read path reports the same verification outcome as K1's (`kernel-cli.md` §9) |
 | `pytest tests/kernel_cli/` | 16 of the 17 matrix rows assert against a committed fixture and target a `reason.code` |
 
 ### Observable evidence that the gate closed
@@ -186,9 +187,9 @@ The operator runbook for closing Stage 1, in the order a person executes it. Pre
 | 2 | **Confirm the inventory.** `docflow-kernel --list` | The 8 kernels, determinism class, adapter availability | all 8 rows; `available` reflects reality; K4/K5 read `sampled`, K6 `external`, K1/K2/K3/K7/K8 `deterministic` | an unavailable adapter reported `yes` — a silent fallback in the one place it is most expensive |
 | 3 | **Validate without executing.** `docflow-kernel orchestrator plan descriptors/synthetic-3stage.yaml --out O` | exit code; nothing on disk yet | exit `0`, no artifact written, no stage dispatched | a `plan` that already ran work; a malformed descriptor that starts a run instead of stopping |
 | 4 | **Run the happy path.** `docflow-kernel orchestrator run descriptors/synthetic-3stage.yaml --out O` | exit code; `O/run.json` | exit `0`; every stage of every unit terminal; `run.json` carries `state`, `totals`, `stages`, `outcomes`, `inflight` | a run that completes with a stage silently absent from `stages` |
-| 5 | **Read the ledger.** `docflow-kernel orchestrator ledger-read O` | per-unit, per-stage state **and** the verification outcome | every stage `done` **and** verifying; the read reports the verification outcome alongside the ledger | a ledger returned without a verification result — the check became a request |
+| 5 | **Read the ledger.** `docflow-kernel orchestrator ledger-read O/U-0001` | per-unit, per-stage state **and** the verification outcome | every stage `done` **and** verifying; the read reports the verification outcome alongside the ledger | a ledger returned without a verification result — the check became a request |
 | 6 | **Interrupt #1 — pause.** `docflow pause <job>` while units are in flight, then run step 4's command again | ledger before and after; which stages re-run | in-flight work finishes; the resumed run continues from the exact stage; nothing already `done` re-runs | a pause that leaves the ledger inconsistent, or a resume that restarts acquisition |
-| 7 | **Interrupt #2 — kill mid-stage.** `docflow stop --force` while a unit is in `transform`; then `orchestrator ledger-read O` | the interrupted stage's state | `running` — written when the stage started, so the ledger never has to guess | `pending` (reads as *never began*, the failure the whole crash-recovery design exists to prevent) or `done` (a claim about bytes that may be partial) |
+| 7 | **Interrupt #2 — kill mid-stage.** `docflow stop --force` while a unit is in `transform`; then `orchestrator ledger-read O/U-0001` | the interrupted stage's state | `running` — written when the stage started, so the ledger never has to guess | `pending` (reads as *never began*, the failure the whole crash-recovery design exists to prevent) or `done` (a claim about bytes that may be partial) |
 | 8 | **Resume after the kill.** Run step 4 again; then read every ledger | which stages re-run per unit | at most **one stage per in-flight unit** re-runs (`NFR-02`); everything before it is preserved; nothing after it had started | a resume that re-runs the whole unit — the restart cost the ledger exists to bound (`NFR-03`) |
 | 9 | **Interrupt #3 — delete a done artifact.** Remove one `done` stage's artifact by hand and read the ledger again | that stage's state, with **no flag passed** | treated as incomplete and re-run | skipped as complete — AC *Verification is not optional* fails silently if this passes |
 | 10 | **Crash between write and rename.** Inject the crash at the atomic-write boundary (row 2's procedure), then read the ledger | the two states of the affected stage | `done` is **absent** and `running` is **present** | a `done` written before the rename returned — the ordering that makes resume a lie |
@@ -362,7 +363,7 @@ An operator ticks this to declare Plan 1 closed. **Plan 2's §4 entry condition 
 
 - [ ] All 22 tasks `S1-T01`–`S1-T22` are `done`, each with its verifiable criterion passing.
 - [ ] `docflow-kernel orchestrator run descriptors/synthetic-3stage.yaml --out O` exits `0` from a clean checkout.
-- [ ] `docflow-kernel orchestrator ledger-read O` reports every stage `done` **and** verifying.
+- [ ] `docflow-kernel orchestrator ledger-read O/U-0001` reports every stage `done` **and** verifying.
 - [ ] `docflow pause <job>` followed by a plain `run` continues from the exact stage — no `resume` verb exists.
 - [ ] `docflow stop --force` mid-stage leaves `running` in the ledger; the next `run` re-runs **at most one stage per in-flight unit**.
 - [ ] Deleting a `done` stage's artifact marks the stage incomplete **without any flag** being passed.

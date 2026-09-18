@@ -94,6 +94,7 @@ NOW_COMMANDS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
     ("llm.local", "structured", ("--model", "--prompt-file", "--schema-file")),
     ("llm.local", "vision", ("--model", "--prompt-file", "--image", "--schema-file")),
     ("llm.frontier", "capabilities", ("--model",)),
+    ("llm.frontier", "warm", ("--model",)),
     ("llm.frontier", "structured", ("--model", "--prompt-file", "--schema-file")),
     (
         "llm.frontier",
@@ -289,6 +290,36 @@ def test_every_now_command_has_a_handler() -> None:
     ]
 
     assert without == [], f"`now` commands declared without a handler: {without}"
+
+
+def test_every_registered_command_appears_in_section_9() -> None:
+    """The reverse direction, and the hole that let a command in unsanctioned.
+
+    The other tests measure §9 against the surface: every §9 command dispatches, and
+    every §9 flag has a port parameter. Those pass on a surface that carries **extra**
+    commands, so `llm.frontier warm` was registered `now` and dispatched while §9
+    never mentioned it - the artifact said one thing and the binary did another, and
+    every contract test stayed green.
+
+    The measure is the same transcription (`NOW_COMMANDS` + `MVP_COMMANDS`), read in
+    the other direction. A command that is registered and in neither list is a command
+    the surface offers without the document sanctioning it, which is exactly the drift
+    §9's tables exist to prevent.
+
+    `GLOBAL_FLAGS` are the surface's own and are not commands, so they are excluded by
+    construction rather than by an exemption table: this walks the *operations*, and a
+    flag is never one.
+    """
+    sanctioned = {(kernel, operation) for kernel, operation, _ in NOW_COMMANDS}
+    sanctioned |= set(MVP_COMMANDS)
+
+    unsanctioned = sorted(set(main.registered_operations()) - sanctioned)
+
+    assert unsanctioned == [], (
+        "commands registered on the surface that §9 does not sanction: "
+        f"{unsanctioned}. Either §9 gains the row or the command leaves the surface: "
+        "a bench command nobody documented is a second API growing in the dark."
+    )
 
 
 def test_every_mvp_command_is_declared_and_exits_four() -> None:

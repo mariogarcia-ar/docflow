@@ -76,7 +76,7 @@ CLI shell: `run` (idempotent), `status`, `jobs`, `pause`, `stop [--force]`.
 - `tests/cli/test_main.py` — **41 tests**, all green.
 - `tests/cli/mutation_cli.py` — **18 mutations, all falsified, none survived.** The first harness in this stage to be clean on the first run, which is the accumulation of the four earlier lessons: unique anchors, parametrization suffixes verified, expectations that can actually fail.
 - `plan-01-kernels.md` §6 steps 6–8 — pause, kill mid-stage, resume after the kill. Requirement **FR-01**, **FR-02**, **NFR-06**.
-- `plan-01-kernels.md` §3 — the acceptance commands: `docflow pause <job>` then `docflow run …` continues from the exact stage; `docflow stop --force` then `orchestrator ledger-read O` reads `running`.
+- `plan-01-kernels.md` §3 — the acceptance commands: `docflow pause <job>` then `docflow run …` continues from the exact stage; `docflow stop --force` then `orchestrator ledger-read O/U-0001` reads `running`.
 - `plan-01-kernels.md` §8 — AC *Resume after a forced kill*; `stop` discovery test; precedence test; `--force` not settable by environment.
 - All four QA gates green: `pytest` (868 passed), `ruff check`, `ruff format --check`, `pylint src tests`.
 - The five earlier harnesses re-run and still falsify: `mutation_determinism` 15, `mutation_ordering` 15, `mutation_orchestrator` 13, `mutation_resolution` 18, `mutation_store` 20.
@@ -107,10 +107,10 @@ Crash recovery is only meaningful if a person can interrupt a run from a shell a
 
 **Test / evidence**
 - `plan-01-kernels.md` §6 step 6 — *"Interrupt #1 — pause"*: `docflow pause <job>` while units are in flight, then run the happy-path command again; the correct result is that in-flight work finishes, the resumed run continues from the exact stage, and nothing already `done` re-runs. The wrong result this guards against: a pause that leaves the ledger inconsistent, or a resume that restarts acquisition.
-- `plan-01-kernels.md` §6 step 7 — *"Interrupt #2 — kill mid-stage"*: `docflow stop --force` while a unit is in `transform`, then `orchestrator ledger-read O`; the interrupted stage must read `running`. The wrong results: `pending` (reads as *never began*) or `done` (a claim about bytes that may be partial).
+- `plan-01-kernels.md` §6 step 7 — *"Interrupt #2 — kill mid-stage"*: `docflow stop --force` while a unit is in `transform`, then `orchestrator ledger-read O/U-0001`; the interrupted stage must read `running`. The wrong results: `pending` (reads as *never began*) or `done` (a claim about bytes that may be partial).
 - `plan-01-kernels.md` §6 step 8 — *"Resume after the kill"*: run again, then read every ledger; **at most one stage per in-flight unit** re-runs (`NFR-02`); nothing after it had started.
 - `plan-01-kernels.md` §8 — AC *Resume after a forced kill*; `stop` discovery test; precedence test; `--force` not settable by environment. Requirements **FR-01**, **FR-02**, **NFR-06**.
-- `plan-01-kernels.md` §3 — the acceptance commands table: `docflow pause <job>` then `docflow run …` **continues from the exact stage; no separate `resume` verb** (`FR-01`, `FR-02`). And `docflow stop --force` then `docflow-kernel orchestrator ledger-read O` → the interrupted stage reads `running`, not `pending` and not `done`.
+- `plan-01-kernels.md` §3 — the acceptance commands table: `docflow pause <job>` then `docflow run …` **continues from the exact stage; no separate `resume` verb** (`FR-01`, `FR-02`). And `docflow stop --force` then `docflow-kernel orchestrator ledger-read O/U-0001` → the interrupted stage reads `running`, not `pending` and not `done`.
 - `plan-01-kernels.md` §3, acceptance scenario *Resume after a forced kill* (`prd.md` §8) — closes at `S1-T19` (+ **`S1-T18`**, `S1-T07`).
 - `kernel-cli.md` §4 — the two entry points: `docflow = "docflow.cli:main"` (product) and `docflow-kernel = "docflow.kernel_cli:main"` (lab); `docflow run` never invokes the lab surface.
 - `traceability.md` §4.1 FR-01/FR-02 — the proof named there is `S1-T19`: *repeat `run` skips; after a kill it continues*.

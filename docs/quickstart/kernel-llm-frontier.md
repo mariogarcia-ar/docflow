@@ -317,21 +317,26 @@ The registered surface and §9 do not fully agree, and that is the headline:
 | Operation | Command | §9 | Registered |
 |---|---|---|---|
 | `capabilities` | `llm.frontier capabilities` | `now` | dispatches |
+| `warm` | `llm.frontier warm` | `now` | dispatches |
 | `structured` | `llm.frontier structured` | `now` | dispatches |
 | `vision` | `llm.frontier vision` | `now` | dispatches |
 | `count-tokens` | `llm.frontier count-tokens` | `MVP` | exits `4` |
 | `judge` | `llm.frontier judge` | `MVP` | exits `4` |
-| `warm` | `llm.frontier warm` | **not listed** | **dispatches** |
 
-**`llm.frontier warm` is a command the spec never sanctions.** Throughout
-`kernel-cli.md`, `warm` appears exactly once, in §9's **K5** table; it is absent from
-K6's. The implementation registers it as `now` anyway, so it dispatches like any other
-K6 command and answers `provider_unavailable` when called. The contract test cannot
-catch this: it asserts every §9 `now` command **dispatches**, and a command §9 does not
-mention is outside that check. The reverse direction — *every registered command
-appears in §9* — is not asserted at all. `FrontierEngine` has a `warm` method, which is
-presumably where the registration came from; the conclusion is the same either way.
-Recorded rather than silently documented as intended.
+**`llm.frontier warm` was once a command the spec did not sanction, and the fix is
+worth recording.** `warm` appears in §9's **K5** table, and the implementation
+registered it for K6 as well, so it dispatched while the document did not list it.
+That was a real divergence, and the mechanism that let it through was a **one-way
+contract test**: `test_every_now_command_from_section_9_is_registered` asserts
+§9 ⊆ registered, which passes happily on a surface carrying *extra* commands. The
+reverse direction was not asserted at all.
+
+Two things changed. §9's K6 table now carries the row — the operation is legitimate
+and is the only way to confirm a provider credential before a batch, since
+`capabilities` describes the adapter's *configuration* and therefore answers without
+one. And `test_every_registered_command_appears_in_section_9` closes the direction
+that was open, so the next command to arrive unsanctioned fails the suite instead of
+drifting in silently.
 
 ### Provider and model naming is `<provider>:<model>`
 
@@ -449,18 +454,23 @@ completion that no command can currently produce.
 |---|---|---|
 | `0` | A value was produced | `capabilities` — and nothing else, without a key |
 | `2` | The document's answer | the provider answered: a rate limit, an outage, a 200 whose body is not JSON (§3) |
-| `3` | The call could not legitimately be made | `model_unknown`, `provider_unknown`, `provider_unavailable` (ceiling, key), `role_conflict` |
+| `3` | The call could not legitimately be made | `model_unknown`, `provider_unknown`, `provider_unavailable` (ceiling, key), `role_conflict`; and a missing `--model`, as a typed `asset_missing` refusal |
 | `4` | Usage: bad flag, `MVP` | `count-tokens`, `judge`; `--save` on any K6 command |
 
-And the same missing-parameter collapse the other pages report — `--model` is required
-on every K6 command, so omitting it raises rather than refusing:
+A missing `--model` is exit `3` and not `4`: the flag is legal and the command is
+spelled correctly, so what failed is the *precondition*. The refusal carries a typed
+`Reason` and an envelope, so a caller can branch on the code:
 
 ```console
 $ docflow-kernel llm.frontier capabilities
-ValueError: --model is required: a capability question is about a model, and this
-surface has no default one (kernel-cli.md §8 forbids a default model).
-# exit 1     <- should be 3: the call could not be made, the code is not broken
+# reason.code: "asset_missing"
+# evidence.observed.blocked_by: "missing_parameter"
+# exit 3
 ```
+
+**This was a real defect.** The handler raised a `ValueError`, so the dispatcher's
+catch-all reported exit `1` with a traceback — reporting a caller's omission as a
+broken build, which is the collapse the exit table exists to prevent.
 
 ---
 

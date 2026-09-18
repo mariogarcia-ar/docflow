@@ -119,6 +119,35 @@ def _reasons(manifest: dict) -> dict[str, str]:
     return {item["path"]: item["reason"] for item in manifest["excluded"]}
 
 
+def _detected_types(manifest: dict) -> dict[str, str]:
+    """Return the recorded ``path -> pdf_type`` map, for the PDFs that carry one."""
+    return {
+        entry["path"]: entry["pdf_type"]
+        for entry in manifest["entries"]
+        if "pdf_type" in entry
+    }
+
+
+def _without_detected_types(manifest: dict) -> dict:
+    """Return ``manifest`` with the detector's answer removed, and renamed to match.
+
+    The inverse of what the generator does when it cannot import the detector: the
+    key leaves each PDF record and ``pdf_detector`` reads ``absent``. Deriving it
+    from the committed file rather than from a second ``build`` call is what keeps
+    the comparison honest — the expectation is the committed file minus exactly one
+    detector's worth of information.
+    """
+    stripped = {
+        **manifest,
+        "pdf_detector": "absent",
+        "entries": [
+            {key: value for key, value in entry.items() if key != "pdf_type"}
+            for entry in manifest["entries"]
+        ],
+    }
+    return stripped
+
+
 def _accounted_paths() -> set[str]:
     """Return every path on disk the generator is expected to account for.
 
@@ -502,8 +531,35 @@ def test_the_committed_manifest_lists_exactly_the_files_on_disk(
 
 
 def test_the_committed_manifest_is_regenerable_without_a_diff(manifest: dict) -> None:
-    """The whole file — entries, counts, buckets and exclusions — is current."""
-    assert build(_HERE, _MANIFEST_PATH) == manifest
+    """The whole file — entries, counts, buckets and exclusions — is current.
+
+    ``pdf_type`` is the one field this test cannot always recompute, and it says so
+    instead of passing vacuously or skipping. The committed values came from the
+    legacy PoC's detector: not packaged, not declared, absent from a fresh clone. So
+    when the detector is unavailable the comparison runs over **every other field**
+    and the detected types are required to be the *whole* of the difference —
+    asserted as a delta rather than tolerated. A stale path, size, digest, count or
+    bucket still reddens this test either way.
+    """
+    rebuilt = build(_HERE, _MANIFEST_PATH)
+
+    if rebuilt["pdf_detector"] == _DETECTOR:
+        assert rebuilt == manifest
+        return
+
+    # The detector is unavailable, so the values it produced cannot be recomputed.
+    # Require the absence to be the detector's and not a third state, and require
+    # the committed file to be carrying values this rebuild genuinely cannot make.
+    assert rebuilt["pdf_detector"] == "absent"
+    assert manifest["pdf_detector"] == _DETECTOR, (
+        "the committed manifest records a detector; if it did not, this branch "
+        "would be the normal case and the comparison below would prove nothing"
+    )
+    assert _detected_types(manifest), (
+        "the committed manifest records detected types, so their absence from the "
+        "rebuild is the delta under assertion, not a clean comparison"
+    )
+    assert rebuilt == _without_detected_types(manifest)
 
 
 def test_every_committed_digest_matches_the_file(manifest: dict) -> None:
@@ -649,19 +705,20 @@ def test_no_committed_non_pdf_carries_a_pdf_type(manifest: dict) -> None:
             assert "pdf_type" not in entry, entry["path"]
 
 
-def test_every_detected_type_is_in_the_detectors_vocabulary(manifest: dict) -> None:
-    """The values are ``voucherflow``'s own, not a new vocabulary invented here.
+def test_every_detected_type_is_in_the_declared_pair(manifest: dict) -> None:
+    """The recorded values are the pair this generator declares, and no others.
 
-    Asserted against the detector's declared set rather than against a literal
-    pair, so a value the detector could never return is caught as a value this
-    file made up.
+    Asserted against :data:`PDF_TYPES` rather than against a literal, so a value
+    the generator could never produce is caught rather than confirmed.
+
+    The assertion deliberately does **not** import the detector that produced the
+    committed values. That detector is the legacy PoC's, it is not packaged and it
+    is not a dependency of this project, so importing it here would make the suite
+    red in a fresh clone for a reason that is not a defect. ``PDF_TYPES`` is the
+    vocabulary a **reader** of the manifest can rely on, and the detector that
+    produced the values is named beside them in ``pdf_detector``.
     """
-    from voucherflow.processing.type_detector import (  # pylint: disable=import-outside-toplevel
-        TIPOS_VALIDOS,
-    )
-
     for entry in _pdf_entries(manifest):
-        assert entry["pdf_type"] in TIPOS_VALIDOS, entry["path"]
         assert entry["pdf_type"] in PDF_TYPES, entry["path"]
 
 

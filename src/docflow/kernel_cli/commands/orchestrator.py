@@ -28,7 +28,7 @@ from typing import Any, Final
 
 from docflow.kernel_cli.commands.descriptor import read_descriptor_mapping
 from docflow.kernel_cli.commands.refusals import answered
-from docflow.kernel_cli.main import Call, Handler
+from docflow.kernel_cli.main import Call, Handler, UsageError
 from docflow.kernels import orchestrator
 from docflow.kernels import store as k7
 from docflow.kernels.types import Artifact, Evidence, KernelResult, Reason
@@ -189,22 +189,45 @@ def _slots(cpu_jobs: object, raw_slots: object) -> orchestrator.SlotBounds:
         The bounds.
 
     Raises:
-        ValueError: If a bound is unparseable or outside what the model permits.
+        UsageError: If a bound is unparseable or outside what the model permits. A
+            non-numeric bound is the caller's text, so it is exit ``4`` - not ``1``,
+            which would report their typo as a defect in this build.
 
     """
     bounds: dict[str, int] = dict(orchestrator.SLOT_BOUNDS.as_mapping())
     if cpu_jobs is not None:
-        bounds["cpu"] = int(str(cpu_jobs))
+        bounds["cpu"] = _bound(cpu_jobs, "--jobs")
     if raw_slots is not None:
         for pair in str(raw_slots).split(","):
             name, _, value = pair.partition("=")
             if not name.strip() or not value.strip():
-                raise ValueError(
+                raise UsageError(
                     f"--slots must be a comma-separated list of name=value pairs; "
                     f"got {pair!r}"
                 )
-            bounds[name.strip()] = int(value.strip())
+            bounds[name.strip()] = _bound(value, "--slots")
     return orchestrator.SlotBounds(bounds=MappingProxyType(bounds))
+
+
+def _bound(value: object, flag: str) -> int:
+    """Read one slot bound from a flag's text.
+
+    Args:
+        value: The flag's value.
+        flag: The flag's name, for the refusal.
+
+    Returns:
+        The bound.
+
+    Raises:
+        UsageError: If the text is not an integer. The caller wrote it, so this is a
+            usage error rather than a defect in this build.
+
+    """
+    try:
+        return int(str(value).strip())
+    except ValueError as exc:
+        raise UsageError(f"{flag} must be a whole number; got {value!r}") from exc
 
 
 def plan(*, descriptor: str, out: str, **_: object) -> Call:

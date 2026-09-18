@@ -590,15 +590,19 @@ def test_repeat_refuses_a_count_that_would_demonstrate_nothing() -> None:
 
     A demonstration of determinism that ran the operation zero times demonstrates
     nothing, and reporting success would be the stand-in this project refuses.
+
+    The refusal is exit ``4``, not ``1``: `kernel-cli.md` §5 gives *"bad flag"* to
+    ``4``, and ``--repeat``'s **value** is the caller's own text. Reporting it as
+    ``1`` would tell a caller their build is broken about a number they can change -
+    the same collapse the exit table exists to prevent, in the third direction.
     """
     for bad in ("0", "-1", "many"):
         code, _, stderr = _run(
             ["registry", "hash", "--root", REGISTRY, "--repeat", bad]
         )
-        assert code == main.EXIT_INTERNAL, (
-            f"--repeat {bad} must be refused; a ValueError inside a handler is exit 1 "
-            "rather than 2, because a bad argument is a bug in the invocation rather "
-            "than the document's answer"
+        assert code == main.EXIT_USAGE, (
+            f"--repeat {bad} must be refused as a usage error; it is the caller's "
+            "argument that is wrong, not this build"
         )
         assert "repeat" in stderr.lower()
 

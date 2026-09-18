@@ -49,29 +49,34 @@ def _engine(root: str) -> PdfEngine | Reason:
     return PdfEngine(min_chars=int(value))
 
 
-def _total_pages(engine: PdfEngine, path: Path) -> int:
+def _total_pages(engine: PdfEngine, path: Path) -> int | Reason:
     """Report how many pages a document has, from the engine's own probe.
+
+    Returns a ``Reason`` rather than raising, because *the document could not be
+    probed* is a precondition on the call - exit ``3`` - and a page range cannot be
+    validated against a document nobody could measure. Raising it would report the
+    caller's document as a defect in this build.
 
     Args:
         engine: The adapter.
         path: The PDF.
 
     Returns:
-        The page count.
-
-    Raises:
-        ValueError: If the document cannot be probed, so a page selection cannot be
-            validated against it.
+        The page count, or the probe's own reason.
 
     """
     probed = engine.probe(path)
     if probed.reason is not None:
-        raise ValueError(probed.reason.message)
+        return probed.reason
     pages = probed.evidence.measurements.get("page_count")
     if pages is None:
-        raise ValueError(
-            "The probe reported no page count, so a page selection cannot be checked "
-            "against the document. Refusing rather than assuming a range is valid."
+        return Reason(
+            code="unsupported_format",
+            message=(
+                "The probe reported no page count, so a page selection cannot be "
+                "checked against the document. Refusing rather than assuming a "
+                "range is valid."
+            ),
         )
     return int(pages)
 
@@ -90,16 +95,34 @@ def _with_engine(root: str, path: Path, work: Any) -> KernelResult[Any]:
     """
     engine = _engine(root)
     if isinstance(engine, Reason):
-        return KernelResult(
-            value=None,
-            evidence=Evidence(
-                terms={"registry_root": root},
-                measurements={},
-                observed={"blocked_by": "policy"},
-            ),
-            reason=engine,
-        )
+        return _refusal_from(engine, blocked_by="policy")
     return work(engine, path)
+
+
+def _refusal_from(reason: Reason, *, blocked_by: str) -> KernelResult[Any]:
+    """Wrap a precondition that stopped the call into a result with a typed reason.
+
+    The shape a refusal takes: no value, the reason that stopped the call, and an
+    ``observed`` key saying what the block was - a policy the registry did not
+    declare, or a document that could not be measured. Declaring ``blocked_by``
+    rather than leaving it implicit is what lets a caller branch on *why* without
+    reading the message.
+
+    Args:
+        reason: The reason the call cannot be made.
+        blocked_by: What the call was blocked by.
+
+    Returns:
+        The result, carrying no value and the reason.
+
+    """
+    return KernelResult(
+        value=None,
+        evidence=Evidence(
+            terms={}, measurements={}, observed={"blocked_by": blocked_by}
+        ),
+        reason=reason,
+    )
 
 
 def probe(*, file: str, root: str = DEFAULT_ROOT, **_: object) -> Call:
@@ -172,10 +195,13 @@ def tokens(
             path: The PDF.
 
         Returns:
-            The tokens.
+            The tokens, or the probe's reason when the page count is unreadable.
 
         """
-        chosen = parse_pages(pages, _total_pages(engine, path))
+        total = _total_pages(engine, path)
+        if isinstance(total, Reason):
+            return _refusal_from(total, blocked_by="document")
+        chosen = parse_pages(pages, total)
         return engine.tokens(path, chosen, 72 if dpi is None else int(str(dpi)))
 
     return Call(result=_with_engine(root, Path(file), work))
@@ -212,10 +238,13 @@ def render(
             path: The PDF.
 
         Returns:
-            The bitmap.
+            The bitmap, or the probe's reason when the page count is unreadable.
 
         """
-        chosen = parse_pages(pages, _total_pages(engine, path))
+        total = _total_pages(engine, path)
+        if isinstance(total, Reason):
+            return _refusal_from(total, blocked_by="document")
+        chosen = parse_pages(pages, total)
         return engine.render(path, chosen, 72 if dpi is None else int(str(dpi)))
 
     return Call(result=_with_engine(root, Path(file), work))
@@ -245,10 +274,14 @@ def split(
             path: The PDF.
 
         Returns:
-            The new document's bytes.
+            The new document's bytes, or the probe's reason when the page count is
+            unreadable.
 
         """
-        chosen = parse_pages(pages, _total_pages(engine, path))
+        total = _total_pages(engine, path)
+        if isinstance(total, Reason):
+            return _refusal_from(total, blocked_by="document")
+        chosen = parse_pages(pages, total)
         return engine.split(path, chosen)
 
     return Call(result=_with_engine(root, Path(file), work))

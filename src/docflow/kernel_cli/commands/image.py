@@ -18,7 +18,7 @@ from typing import Any, Final
 from docflow.adapters.image import RasterEngine
 from docflow.kernel_cli.commands.policy import DEFAULT_ROOT, policy_number
 from docflow.kernel_cli.commands.refusals import refusal
-from docflow.kernel_cli.main import Call, Handler
+from docflow.kernel_cli.main import Call, Handler, UsageError
 from docflow.kernels.types import Box, KernelResult, Reason
 
 #: What each refusal in this module was blocked by. One value for the module,
@@ -42,13 +42,13 @@ def _box(text: str) -> Box:
         The box.
 
     Raises:
-        ValueError: If it is not four integers. Refusing rather than defaulting: a
+        UsageError: If it is not four integers. Refusing rather than defaulting: a
             defaulted region crops pixels nobody asked for and reports success.
 
     """
     parts = [piece.strip() for piece in text.split(",")]
     if len(parts) != 4 or not all(part.isdigit() for part in parts):
-        raise ValueError(
+        raise UsageError(
             f"--region must be 'x,y,w,h' with four non-negative integers; got {text!r}."
         )
     x, y, width, height = (int(part) for part in parts)
@@ -199,8 +199,19 @@ def crop(*, file: str, region: str, **_: object) -> Call:
         The call, whose evidence carries the inverse map a result found inside the
         crop is mapped back through (`NFR-07`).
 
+    Raises:
+        UsageError: If the region falls outside the image. The kernel refuses that
+            with a ``ValueError`` - correctly, since it cannot crop pixels that are
+            not there - and the *caller wrote the region*. Reporting it as exit
+            ``1`` would tell them the build is broken about a number they can
+            change, so the surface translates it into the usage error it is.
+
     """
-    return Call(result=RasterEngine().crop(Path(file), _box(region)))
+    engine = RasterEngine()
+    try:
+        return Call(result=engine.crop(Path(file), _box(region)))
+    except ValueError as exc:
+        raise UsageError(str(exc)) from exc
 
 
 #: What this module declares, as data. Each entry is

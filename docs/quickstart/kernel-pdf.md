@@ -539,25 +539,24 @@ kernel"* would mean **no such thing**.
 |---|---|---|
 | `0` | A value was produced | all five commands above, including `classify` on a scan |
 | `2` | The document's answer | `insufficient_effective_resolution`; `blank_page`; `encrypted`; `unsupported_format`; `engine_unavailable` |
-| `4` | Usage: bad flag, `MVP`, missing argument | `pdf facts`; `pdf probe` with no file argument (`pdf probe needs the file argument`) |
+| `4` | Usage: bad flag, `MVP`, missing argument, malformed range | `pdf facts`; `pdf probe` with no file argument (`pdf probe needs the file argument`) |
 
-Note what is **not** in that table: a malformed page range should be here, and is not.
-§5 is explicit that exit `4` covers a *"malformed range"*, and `parse_pages` — whose own
-docstring says a page that does not exist *"is a usage error, not an empty read"* —
-raises `ValueError` for it. The dispatcher's single exception handler turns that into
-exit `1`:
+A page range that names a page outside the document is exit `4`, per §5's
+*"malformed range"*:
 
 ```console
 $ docflow-kernel pdf split <a 2-page pdf> --pages 9
-ValueError: page(s) [9] are outside the document, which has 2 page(s).
-# exit 1     <- should be 4: the range is malformed, the code is not broken
+page(s) [9] are outside the document, which has 2 page(s).
+# exit 4
 ```
 
-Exit `1` means *"unexpected internal error"*, and a page number the caller mistyped is
-not that. The same collapse affects K3 (`image crop --region 9999,9999,10,10` also
-exits `1`), so it is one defect in how a request-validation failure becomes an exit
-code, not a PDF problem. It is reported here rather than silently documented as
-normal; a caller matching on exit codes should currently treat `1` and `4` alike for
+The same holds for K3's out-of-image region and K4's page range, so a caller matching
+on exit codes can treat `4` alike for all three: the request was malformed and the
+caller can restate it. **This was a real defect** — the parsers raised a plain
+`ValueError`, the dispatcher's catch-all turned it into exit `1`, and the exit table's
+distinction between *"a malformed range"* and *"a bug"* was erased for those three
+cases. The surface now raises `UsageError`, and `_invoke` catches it before the
+catch-all so it reaches `4`.
 a bad range.
 
 ---
@@ -622,14 +621,14 @@ For `probe`, `classify` and `effective_dpi` the value **is** the observation
 record, and `result.evidence` is the same object — every call reports what it
 observed, and for these three that report is the answer.
 
-Three things raise `ValueError` instead, because they are mistakes in the request
-rather than answers about the document: a page number outside the document, an
-empty page selection, and a non-positive DPI.
+Three things are refused as **usage errors** rather than answered, because they are
+mistakes in the request rather than answers about the document: a page number outside
+the document, an empty page selection, and a non-positive DPI.
 
-**From a shell those three reach you as exit `1`**, not the exit `4` §5 assigns to a
-malformed range — see the exit-code table in the CLI section above, which is where
-that defect is written down. It is a property of the dispatcher rather than of this
-kernel: the same collapse affects `image crop`'s out-of-image region.
+**From a shell those three reach you as exit `4`**, the exit §5 assigns to a malformed
+range — see the exit-code table in the CLI section above. It is a property of the
+dispatcher rather than of this kernel, and `image crop`'s out-of-image region now
+exits `4` the same way.
 
 ## Verifying it against the fixture set
 

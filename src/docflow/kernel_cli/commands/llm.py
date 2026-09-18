@@ -23,10 +23,36 @@ from typing import Any, Callable, Final
 
 from docflow.adapters.frontier import FrontierEngine
 from docflow.adapters.ollama import OllamaEngine
-from docflow.kernel_cli.main import Call, Handler
+from docflow.kernel_cli.commands.refusals import missing
+from docflow.kernel_cli.main import Call, Handler, UsageError
 from docflow.kernels.types import Bytes, KernelResult
 
 __all__: list[str] = []
+
+#: Why `--model` has no default, quoted in the refusal rather than a bare *"required"*.
+#: A caller reading it learns the rule, not only that they broke it.
+_NO_DEFAULT_MODEL: Final[str] = (
+    "a model has to be named, because this surface has no default one "
+    "(kernel-cli.md §8 forbids a default model). "
+    "A default here would be the surface choosing which model read the document."
+)
+
+#: The same for the two file flags the LLM calls take. Neither is synthesized: a
+#: default schema would change what every answer means.
+_PROMPT_IS_THE_CALLERS: Final[str] = (
+    "the prompt is the caller's to supply and is never defaulted."
+)
+_SCHEMA_IS_THE_CALLERS: Final[str] = (
+    "the schema is the caller's to supply and is never defaulted (a synthesized "
+    "schema would change what every answer means)."
+)
+
+#: Why a vision call needs an image, quoted in the refusal.
+_IMAGE_IS_REQUIRED: Final[str] = (
+    "a vision call with no image is a text call, and asking a vision endpoint for "
+    "one would be a different operation."
+)
+
 
 #: Kernel name to the adapter class that answers for it. Data, not a branch: the two
 #: kernels are the same port bound to two different providers, and `E04-07` already
@@ -37,28 +63,58 @@ LLM_BACKENDS: Final[dict[str, Callable[[], Any]]] = {
 }
 
 
-def _read(path: object, what: str) -> str:
-    """Read a text file named by a flag.
+def _omitted(value: object, flag: str, because: str) -> KernelResult[Any] | None:
+    """Return the refusal for an omitted required flag, or ``None`` when it was given.
+
+    A flag the caller did not supply is *"the call could not legitimately be made"* -
+    exit ``3`` - and not a malformed invocation, because the flag itself is legal and
+    the command is spelled correctly. That is the same reading `store ls` already
+    makes for an absent `--root`, and the two would be one class of error answered two
+    ways if this raised instead.
 
     Args:
-        path: The path, or None.
-        what: The flag name, for the refusal.
+        value: The parsed flag, or None when it was not given.
+        flag: The flag's name, for the message.
+        because: Why the call cannot proceed without it.
+
+    Returns:
+        The refusal, or None when the flag was supplied.
+
+    """
+    if value is None:
+        return missing(f"{flag} is required: {because}")
+    return None
+
+
+def _first_refusal(*candidates: KernelResult[Any] | None) -> Call | None:
+    """Return the first refusal among ``candidates``, wrapped in a call, or ``None``.
+
+    The order is the order they are passed, so the refusal a caller sees names the
+    flag the command reads *first* rather than whichever check happened to run last.
+
+    Args:
+        *candidates: The refusals, in the order they should be reported.
+
+    Returns:
+        The call carrying the first refusal, or None when nothing was omitted.
+
+    """
+    for candidate in candidates:
+        if candidate is not None:
+            return Call(result=candidate)
+    return None
+
+
+def _read(path: object) -> str:
+    """Read a text file the caller named.
+
+    Args:
+        path: The path, already checked to be present by the caller's guard.
 
     Returns:
         The file's text.
 
-    Raises:
-        ValueError: If the flag was not given. The prompt and the schema are the
-            caller's to supply and are **never** synthesized here: a default schema
-            would change what every answer means.
-
     """
-    if path is None:
-        raise ValueError(
-            f"{what} is required: a prompt and a schema are the caller's to supply "
-            "and are never defaulted (a synthesized schema would change what the "
-            "answer means)."
-        )
     return Path(str(path)).read_text(encoding="utf-8")
 
 
@@ -66,18 +122,19 @@ def _schema(path: object) -> dict[str, object]:
     """Read and parse a JSON schema file.
 
     Args:
-        path: The path, or None.
+        path: The path, already checked to be present.
 
     Returns:
         The parsed schema.
 
     Raises:
-        ValueError: If the flag was not given or the file is not a JSON object.
+        UsageError: If the file does not hold a JSON object. The caller wrote the
+            file, so a malformed one is theirs to fix - exit ``4``, not ``1``.
 
     """
-    parsed = json.loads(_read(path, "--schema-file"))
+    parsed = json.loads(_read(path))
     if not isinstance(parsed, dict):
-        raise ValueError(
+        raise UsageError(
             f"--schema-file must hold a JSON object at the top level, not "
             f"{type(parsed).__name__}."
         )
@@ -119,17 +176,12 @@ def _capabilities(engine: Any, model: object) -> Call:
         model: The model name.
 
     Returns:
-        The call.
-
-    Raises:
-        ValueError: If no model was named.
+        The call, or the typed refusal when no model was named.
 
     """
-    if model is None:
-        raise ValueError(
-            "--model is required: a capability question is about a model, and this "
-            "surface has no default one (kernel-cli.md §8 forbids a default model)."
-        )
+    refused = _omitted(model, "--model", _NO_DEFAULT_MODEL)
+    if refused is not None:
+        return Call(result=refused)
     return _with_record(engine, engine.capabilities(str(model)))
 
 
@@ -143,17 +195,19 @@ def _structured(engine: Any, model: object, prompt: object, schema: object) -> C
         schema: The schema file.
 
     Returns:
-        The call.
-
-    Raises:
-        ValueError: If a required flag is missing.
+        The call, or the typed refusal naming the first flag that was omitted.
 
     """
-    if model is None:
-        raise ValueError("--model is required; there is no default model.")
+    refused = _first_refusal(
+        _omitted(model, "--model", _NO_DEFAULT_MODEL),
+        _omitted(prompt, "--prompt-file", _PROMPT_IS_THE_CALLERS),
+        _omitted(schema, "--schema-file", _SCHEMA_IS_THE_CALLERS),
+    )
+    if refused is not None:
+        return refused
     return _with_record(
         engine,
-        engine.structured(str(model), _read(prompt, "--prompt-file"), _schema(schema)),
+        engine.structured(str(model), _read(prompt), _schema(schema)),
     )
 
 
@@ -170,19 +224,17 @@ def _vision(
         schema: The schema file.
 
     Returns:
-        The call.
-
-    Raises:
-        ValueError: If a required flag is missing.
+        The call, or the typed refusal naming the first flag that was omitted.
 
     """
-    if model is None:
-        raise ValueError("--model is required; there is no default model.")
-    if images is None:
-        raise ValueError(
-            "--image is required: a vision call with no image is a text call, and "
-            "asking a vision endpoint for one would be a different operation."
-        )
+    refused = _first_refusal(
+        _omitted(model, "--model", _NO_DEFAULT_MODEL),
+        _omitted(images, "--image", _IMAGE_IS_REQUIRED),
+        _omitted(prompt, "--prompt-file", _PROMPT_IS_THE_CALLERS),
+        _omitted(schema, "--schema-file", _SCHEMA_IS_THE_CALLERS),
+    )
+    if refused is not None:
+        return refused
     loaded = [
         Bytes(data=Path(piece.strip()).read_bytes(), media_type="image/png")
         for piece in str(images).split(",")
@@ -190,9 +242,7 @@ def _vision(
     ]
     return _with_record(
         engine,
-        engine.vision(
-            str(model), _read(prompt, "--prompt-file"), loaded, _schema(schema)
-        ),
+        engine.vision(str(model), _read(prompt), loaded, _schema(schema)),
     )
 
 
@@ -227,15 +277,13 @@ def _make(kernel: str) -> dict[str, Handler]:
             **kwargs: The parsed parameters.
 
         Returns:
-            The call.
-
-        Raises:
-            ValueError: If no model was named.
+            The call, or the typed refusal when no model was named.
 
         """
         model = kwargs.get("model")
-        if model is None:
-            raise ValueError("--model is required; there is no default model.")
+        refused = _omitted(model, "--model", _NO_DEFAULT_MODEL)
+        if refused is not None:
+            return Call(result=refused)
         engine = build()
         return _with_record(engine, engine.warm(str(model)))
 

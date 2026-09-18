@@ -362,15 +362,18 @@ else:
 | `engine_unavailable` | Docling is not installed, or its converter could not be started |
 | `unsupported_format` | The file is absent, or the engine could not read it |
 
-Three things raise `ValueError` instead, because they are mistakes in the request
-rather than answers about the document: an empty page selection, a page outside the
-document, and a non-positive DPI.
+Three things are refused as **usage errors** rather than answered, because they are
+mistakes in the request rather than answers about the document: an empty page
+selection, a page outside the document, and a non-positive DPI.
 
-**From a shell those three reach you as exit `1`**, not the exit `4` §5 assigns to a
-malformed range — see the exit-code table in the CLI section above. It is a property
-of the dispatcher rather than of this kernel: the same collapse affects `pdf split
---pages 9` and `image crop`'s out-of-image region. A caller matching on exit codes
-should currently treat `1` and `4` alike for a bad page range.
+**From a shell those three reach you as exit `4`**, the exit §5 assigns to a malformed
+range — see the exit-code table in the CLI section above. The same holds for
+`pdf split --pages 9` and `image crop`'s out-of-image region. A caller matching on
+exit codes can treat `4` alike for all three: the request was malformed and can be
+restated. **This was a real defect** — the parsers raised a plain `ValueError`, the
+dispatcher's catch-all turned it into exit `1`, and a caller's typo read as a broken
+build. The surface now raises `UsageError`, which the dispatcher catches ahead of the
+catch-all.
 
 ## There is no engine setting
 

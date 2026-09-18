@@ -115,7 +115,7 @@ Integration test + demo script
 - [ ] `docflow-kernel orchestrator run descriptors/synthetic-3stage.yaml --out O` exits `0`.
 - [ ] Every stage of every unit is terminal in the ledger, with `done` **and** verification passed.
 - [ ] `O/run.json` carries `state`, `totals`, `stages`, `outcomes` and `inflight`, and is consistent with the ledgers.
-- [ ] `docflow-kernel orchestrator ledger-read O` reports the per-unit, per-stage state **and** the verification outcome alongside it.
+- [ ] `docflow-kernel orchestrator ledger-read O/U-0001` reports the per-unit, per-stage state **and** the verification outcome alongside it.
 
 *Interruption and recovery — steps 6–10*
 - [ ] `docflow pause <job>` while units are in flight lets the in-flight work finish and leaves the ledger consistent; a subsequent plain `run` continues from the **exact** stage, and nothing already `done` re-runs.
@@ -138,7 +138,7 @@ Integration test + demo script
 - [ ] Deleting a **sampled** artifact's evidence reports the stage `failed` with an evidence-missing reason, and **no fresh sample is produced**.
 
 *Non-deferrable*
-- [ ] The flow is invocable as `docflow-kernel orchestrator run descriptors/synthetic-3stage.yaml --out O`, and its recovery is observable via `docflow-kernel orchestrator ledger-read O` — **from a clean checkout**, before any domain component exists.
+- [ ] The flow is invocable as `docflow-kernel orchestrator run descriptors/synthetic-3stage.yaml --out O`, and its recovery is observable via `docflow-kernel orchestrator ledger-read O/U-0001` — **from a clean checkout**, before any domain component exists.
 - [ ] This issue is **not deferrable** and carries **no** `# TODO` marker: it is the gate.
 
 **Test / evidence**

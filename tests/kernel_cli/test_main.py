@@ -86,6 +86,7 @@ from docflow.kernel_cli.main import (
     Invocation,
     KernelSpec,
     Operation,
+    UsageError,
     dispatch,
     exit_code_for,
     inventory,
@@ -633,6 +634,85 @@ def test_exit_one_is_reachable_for_an_internal_error() -> None:
     assert invocation.exit_code == 1
     assert invocation.stdout == "", "exit 1 emits no KernelResult"
     assert "RuntimeError: boom" in invocation.stderr
+
+
+def test_a_usage_error_from_a_handler_is_exit_four_and_never_exit_one() -> None:
+    """The third collapse, and the one that survived longest.
+
+    `kernel-cli.md` §5 assigns exit ``4`` to *"a malformed range"* and reserves exit
+    ``1`` for *"a bug"*. A handler that raised a plain ``ValueError`` for the
+    caller's own bad flag value landed in the catch-all and reported ``1`` - telling
+    a caller *this build is broken* about text they can retype. The class is the
+    mechanism that keeps the two apart, and both sides are asserted here so neither
+    can drift into the other.
+    """
+    usage = run(
+        ["pdf", "probe"],
+        Operation(
+            "pdf",
+            "probe",
+            RecordingHandler(value_call(), raises=UsageError("bad text")),
+        ),
+    )
+    bug = run(
+        ["pdf", "probe"],
+        Operation(
+            "pdf", "probe", RecordingHandler(value_call(), raises=RuntimeError())
+        ),
+    )
+
+    assert usage.exit_code == EXIT_USAGE
+    assert usage.stdout == "", "exit 4 emits no KernelResult"
+    assert "bad text" in usage.stderr
+    assert "Traceback" not in usage.stderr, (
+        "a usage error is the caller's, and a traceback reads as a defect"
+    )
+
+    assert bug.exit_code == EXIT_INTERNAL
+    assert bug.exit_code != usage.exit_code
+
+
+def test_a_usage_error_is_a_value_error_so_existing_callers_keep_working() -> None:
+    """The subclassing is load-bearing, not cosmetic.
+
+    Every parser that refused a bad page range already raised ``ValueError``, and
+    the tests and callers that catch one must not stop catching it. What changed is
+    only which exit the *dispatcher* derives.
+    """
+    assert issubclass(UsageError, ValueError)
+
+    # And it is reachable through the same parser that used to raise the bare one.
+    from docflow.kernel_cli.commands.pages import (  # pylint: disable=import-outside-toplevel
+        parse_pages,
+    )
+
+    with pytest.raises(ValueError):
+        parse_pages("1-9", 3)
+
+
+def test_a_missing_required_flag_is_a_precondition_rather_than_a_usage_error() -> None:
+    """An omitted flag is exit ``3``: the call could not be made, and the flag is legal.
+
+    Distinct from §5's *"bad flag"*, which is a flag that does not exist or a value
+    of the wrong shape. ``--model`` is a real flag and the command is spelled
+    correctly; what failed is the *precondition*, which is exactly what exit ``3``
+    names. The refusal is a typed ``Reason`` and carries an envelope, so a caller can
+    branch on the code rather than parse the message.
+    """
+    invocation = dispatch(["llm.local", "structured"])
+
+    assert invocation.exit_code == EXIT_PRECONDITION
+    assert invocation.exit_code == 3
+    assert invocation.stdout != "", "exit 3 emits the envelope"
+    assert envelope_of(invocation)["reason"]["code"] == "asset_missing"
+    # Asserted on the *literal* in one place, so a mutation that moves the constant
+    # the module exports moves only one side of this comparison.
+    assert envelope_of(invocation)["reason"]["code"] != "engine_unavailable"
+    # And the block is attributable without reading prose.
+    assert (
+        envelope_of(invocation)["evidence"]["observed"]["blocked_by"]
+        == "missing_parameter"
+    )
 
 
 def test_exit_two_is_reserved_for_a_typed_reason_and_never_for_a_bug() -> None:

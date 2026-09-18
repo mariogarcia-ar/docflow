@@ -129,6 +129,7 @@ __all__: list[str] = [
     "Invocation",
     "KernelSpec",
     "Operation",
+    "UsageError",
     "dispatch",
     "inventory",
     "main",
@@ -157,6 +158,37 @@ EXIT_USAGE: Final[int] = 4
 #: Unexpected internal error. Emits no ``KernelResult``; the traceback goes to
 #: stderr. Never ``2``: a bug is not an expected negative.
 EXIT_INTERNAL: Final[int] = 1
+
+
+class UsageError(ValueError):
+    """The caller *wrote the invocation* wrongly, and that is exit ``4``.
+
+    `kernel-cli.md` §5 assigns exit ``4`` to how a call was written - *"unknown
+    kernel/operation, bad flag, malformed range"* - and reserves exit ``1`` for *"a
+    bug"*. A handler that raises a plain ``ValueError`` for a malformed flag value
+    lands in the dispatcher's catch-all and reports exit ``1``, which tells a caller
+    *"this build is broken"* about something they can fix by retyping the command.
+    That is the collapse the exit table exists to prevent, made in the third
+    direction: §5 distinguishes ``2``/``3``/``4``/``1``, and a shared exception type
+    for the last two erases the distinction between them.
+
+    So the class is the mechanism. A caller error raises **this**; the dispatcher
+    catches it before its catch-all and answers exit ``4``. A genuine defect keeps
+    raising whatever it likes and stays exit ``1``.
+
+    It subclasses ``ValueError`` deliberately, and that is not a convenience: every
+    existing caller and test that expects a ``ValueError`` from a parser keeps
+    working, and the previous behaviour was *already* a ``ValueError``. Nothing that
+    caught it before stops catching it; what changes is only which exit the
+    dispatcher derives.
+
+    The other half of the same rule: an error that is *"the call cannot be made with
+    what it has"* rather than *"the invocation is malformed"* is exit ``3``, and it
+    is raised as a refusal through ``commands/refusals.py`` - a ``KernelResult`` with
+    a typed ``Reason``, not an exception. A missing ``--model`` is that case: the flag
+    is legal and its absence is a precondition, not bad grammar.
+    """
+
 
 #: The closed set of ``reason.code`` values and the exit each maps to, transcribed
 #: from `kernel-cli.md` §5. Closing it here is what makes *"assert on a code, never
@@ -792,9 +824,11 @@ def _repetitions(raw: object) -> int:
         How many times to call the operation. One when the flag is absent.
 
     Raises:
-        ValueError: If the count is not a positive integer. A count of zero would run
-            nothing and report success, which is the one outcome a determinism
-            demonstration must not produce.
+        UsageError: If the count is not a positive integer. ``--repeat``'s *value* is
+            the caller's text, so `kernel-cli.md` §5's *"bad flag"* applies and the
+            exit is ``4``. A count of zero would run nothing and report success, which
+            is the one outcome a determinism demonstration must not produce — but it
+            is still the caller's argument that is wrong, not this build.
 
     """
     if raw is None:
@@ -802,9 +836,9 @@ def _repetitions(raw: object) -> int:
     try:
         count = int(str(raw))
     except ValueError as exc:
-        raise ValueError(f"--repeat must be a positive integer; got {raw!r}") from exc
+        raise UsageError(f"--repeat must be a positive integer; got {raw!r}") from exc
     if count < 1:
-        raise ValueError(
+        raise UsageError(
             f"--repeat must be at least 1; got {count}. Running the operation zero "
             "times and reporting success would demonstrate nothing."
         )
@@ -1200,6 +1234,12 @@ def _invoke(  # pylint: disable=too-many-arguments
     produced by a bug: everything a handler raises arrives here, and here it
     becomes :data:`EXIT_INTERNAL`.
 
+    :class:`UsageError` is the one exception that arrives *before* that, and it
+    becomes :data:`EXIT_USAGE`. A malformed invocation is not a defect in this
+    build: `kernel-cli.md` §5 gives *"a malformed range"* its own exit, and a
+    caller who typed the command can fix it. Catching it first is what keeps the
+    two apart; without it every bad flag value was reported as `1`.
+
     Args:
         handler: The operation's implementation, already resolved.
         kernel: The kernel's name, for the verbose log line.
@@ -1221,6 +1261,8 @@ def _invoke(  # pylint: disable=too-many-arguments
         envelope = _envelope_with_repetitions(written, calls)
         exit_code = exit_code_for(written.result)
         stdout = json.dumps(envelope, indent=2, sort_keys=False) + "\n"
+    except UsageError as exc:
+        return _usage_error(str(exc))
     except Exception:  # pylint: disable=broad-except
         return Invocation(
             exit_code=EXIT_INTERNAL,

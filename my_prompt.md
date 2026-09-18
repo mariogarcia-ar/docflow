@@ -1,3 +1,9 @@
+arreglar 
+docflow-kernel image rescale tests/fixtures/otros/4c261bc8-3b30-4493-b5d4-6f499cde014e.jpeg --target-dpi 72
+y el save 
+
+
+
 add cli examples to 
 docs/quickstart/kernel-image.md
 docs/quickstart/kernel-pdf.md

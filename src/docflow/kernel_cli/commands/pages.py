@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import Final
 
+from docflow.kernel_cli.main import UsageError
+
 __all__: list[str] = ["SELECT_ALL", "parse_pages"]
 
 #: The word that means *every page*. A recorded constant so the two surfaces cannot
@@ -38,14 +40,16 @@ def parse_pages(text: object, total: int | None = None) -> list[int]:
         for a page twice is a caller's choice, not an error.
 
     Raises:
-        ValueError: If a piece is not a number or a range, if the selection is empty,
+        UsageError: If a piece is not a number or a range, if the selection is empty,
             or if a page lies outside a document whose length is known. A page that
-            does not exist is a usage error, not an empty read.
+            does not exist is a usage error, not an empty read - and it is the
+            caller's own text that is wrong, so the surface answers exit ``4``
+            rather than reporting a defect in this build.
 
     """
     if text is None or str(text) == SELECT_ALL:
         if total is None:
-            raise ValueError(
+            raise UsageError(
                 f"{SELECT_ALL!r} needs a page count to expand into, and none was "
                 "available: refusing rather than expanding to nothing, which would "
                 "read as a document with no pages."
@@ -60,22 +64,22 @@ def parse_pages(text: object, total: int | None = None) -> list[int]:
         if "-" in piece:
             low, _, high = piece.partition("-")
             if not low.strip().isdigit() or not high.strip().isdigit():
-                raise ValueError(
+                raise UsageError(
                     f"page range {piece!r} must be 'low-high' with two page numbers"
                 )
             chosen.extend(range(int(low), int(high) + 1))
         elif piece.isdigit():
             chosen.append(int(piece))
         else:
-            raise ValueError(f"page {piece!r} is not a number or a range")
+            raise UsageError(f"page {piece!r} is not a number or a range")
 
     if not chosen:
-        raise ValueError(f"the page selection {text!r} selected no page")
+        raise UsageError(f"the page selection {text!r} selected no page")
 
     if total is not None:
         beyond = sorted({page for page in chosen if page < 1 or page > total})
         if beyond:
-            raise ValueError(
+            raise UsageError(
                 f"page(s) {beyond} are outside the document, which has {total} page(s)."
             )
     return chosen

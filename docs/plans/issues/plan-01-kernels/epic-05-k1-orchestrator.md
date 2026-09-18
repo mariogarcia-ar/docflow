@@ -206,7 +206,7 @@ The difference between a resume that is correct and one that silently skips work
 - [ ] No code path writes a state other than one of the seven, and no path writes `running` after the work has started.
 
 **Test / evidence**
-- `kernel-cli.md` §11 **row 1** (a killed stage reported as never started, then resumed): `orchestrator run <d> --out O`, kill mid-stage, then `orchestrator ledger-read O`; assertion the ledger reads `running` for the killed stage. Status `now` — Stage 1 CI gate. Fixture `synthetic-3stage.yaml`.
+- `kernel-cli.md` §11 **row 1** (a killed stage reported as never started, then resumed): `orchestrator run <d> --out O`, kill mid-stage, then `orchestrator ledger-read O/U-0001`; assertion the ledger reads `running` for the killed stage. Status `now` — Stage 1 CI gate. Fixture `synthetic-3stage.yaml`.
 - `kernel-cli.md` §11 **row 2** (a stage marked `done` whose artifact is partial): `orchestrator run` with a crash injected between write and rename; assertion `done` is **absent** and `running` is **present**. Status `now` — Stage 1 CI gate. Fixture `synthetic-3stage.yaml`.
 - `plan-01-kernels.md` §7b row 3 — *"`running` is written **before** the work starts"*: kill mid-stage, then read; breaking it looks like *"the scheduler writes state only on completion and a killed stage reports as never having run"*.
 - `plan-01-kernels.md` §7b row 2 — *"Never `done` about non-durable bytes"*, task cell `S1-T03`, `S1-T07`.

@@ -486,23 +486,24 @@ the fact**. A model can satisfy a schema structurally and still be useless: aske
 shape and an empty answer. That is reported as-is. The adapter's job is not to make a
 small model correct; it is to report what the model said and which bytes said it.
 
-And one exit code that is **wrong**, in the same family as the defects the other two
-pages report. Because `--model` is genuinely required, omitting it does not reach a
-refusal — the handler raises, and the dispatcher's exception handler turns that into
-exit `1`:
+And the missing-parameter case, which is a **precondition** rather than a bug. Because
+`--model` is genuinely required and has no default, omitting it answers exit `3` with a
+typed `Reason` — the call could not legitimately be made:
 
 ```console
 $ docflow-kernel llm.local capabilities
-ValueError: --model is required: a capability question is about a model, and this
-surface has no default one (kernel-cli.md §8 forbids a default model).
-# exit 1     <- should be 3: the call could not be made, the code is not broken
+# reason.code: "asset_missing"
+# reason.message: "--model is required: a model has to be named, because ..."
+# evidence.observed.blocked_by: "missing_parameter"
+# exit 3
 ```
 
-Exit `1` means *"unexpected internal error"* with a traceback, and a missing
-`--model` is a caller's omission that `--model is required` describes precisely. It is
-one defect in how a missing required parameter becomes an exit code — the `--pages 9`
-case on the `pdf` page is the same collapse — so a caller matching on exit codes
-should currently treat `3` and `4` and `1` alike for a missing parameter.
+**This was a real defect until recently.** The handler raised a `ValueError`, so the
+dispatcher's catch-all reported exit `1` with a traceback — telling a caller *"this
+build is broken"* about a flag they simply did not type. `kernel-cli.md` §5 gives the
+precondition its own code, and a missing flag is exactly that: the flag is legal and
+the command is spelled correctly. The surface now returns a typed refusal instead, the
+same reading `store ls` already made for an absent `--root`.
 
 ---
 

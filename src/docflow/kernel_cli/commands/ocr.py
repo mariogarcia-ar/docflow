@@ -27,7 +27,7 @@ from typing import Final
 from docflow.adapters.docling import DoclingEngine
 from docflow.kernel_cli.commands.pages import parse_pages
 from docflow.kernel_cli.commands.refusals import refusal
-from docflow.kernel_cli.main import Call, Handler
+from docflow.kernel_cli.main import Call, Handler, UsageError
 from docflow.kernels.types import Evidence, KernelResult, Reason, Token
 from docflow.ports.ocr import ReadResult
 
@@ -119,12 +119,19 @@ def read(
         )
 
     selected = [1] if pages is None else parse_pages(pages)
-    outcome = DoclingEngine().read(
-        Path(file),
-        selected,
-        72 if dpi is None else int(str(dpi)),
-        _DEFAULT_LANG if lang is None else str(lang),
-    )
+    try:
+        outcome = DoclingEngine().read(
+            Path(file),
+            selected,
+            72 if dpi is None else int(str(dpi)),
+            _DEFAULT_LANG if lang is None else str(lang),
+        )
+    except ValueError as exc:
+        # The engine refuses a page that does not exist - correctly, because it
+        # cannot read a page that is not there. The *caller* named the page, so the
+        # surface answers the usage error §5 assigns to a malformed range rather
+        # than exit ``1``, which would report their typo as a broken build.
+        raise UsageError(str(exc)) from exc
     if outcome.reason is not None or outcome.value is None:
         return Call(result=outcome)
     return Call(result=_described(outcome))
