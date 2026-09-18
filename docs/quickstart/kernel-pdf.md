@@ -678,7 +678,55 @@ caller can restate it. **This was a real defect** — the parsers raised a plain
 distinction between *"a malformed range"* and *"a bug"* was erased for those three
 cases. The surface now raises `UsageError`, and `_invoke` catches it before the
 catch-all so it reaches `4`.
-a bad range.
+
+### Running all eight at once
+
+`scripts/kernel/kernel-pdf.sh` drives the whole surface — the six `now` commands and
+the two `MVP` ones — against one document, which is faster than typing eight
+invocations and reports the exit code as data rather than as a failure:
+
+```console
+$ scripts/kernel/kernel-pdf.sh
+
+document: tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
+
+K2 - 'now' commands
+  probe                    exit 0  59 page(s)
+  classify(p1)             exit 0  shape=mixed chars=358 images=4
+  tokens(p1-3)             exit 0  108 token(s) on page(s) [1, 3]
+  layout(p1-3)             exit 0  1263 char(s)
+  render(p1-3,dpi72)       exit 0  63306 bytes -> ...-p1-3-dpi72.png
+  split(p1-3)              exit 0  230451 bytes -> ...-p1-3.pdf
+
+K2 - 'MVP' commands (must exit 4)
+  facts(p1)                exit 4  pdf facts is not implemented in Stage 1 ...
+  images(p1)               exit 4  pdf images is not implemented in Stage 1 ...
+
+summary: 8 command(s)
+  exit 0  value produced      6
+  exit 2  document answered   0
+  exit 3  precondition missing 0
+  exit 4  usage or MVP        2
+```
+
+The document is a parameter and defaults to the large fixture the repo carries:
+
+```console
+$ scripts/kernel/kernel-pdf.sh mi-documento.pdf
+$ scripts/kernel/kernel-pdf.sh mi-documento.pdf --save var/salida
+```
+
+**The exit codes are reported, not judged.** `2` and `4` are legitimate answers — a
+scan gives `classify` exit `2` because that is what a scan *is*, and an `MVP` command
+exits `4` on every input because it is declared and not built. The script counts them
+and fails only on exit `1`, which §5 reserves for a defect in the build: exit `1` in
+that summary means the surface is broken, never that the document was.
+
+**The page selection adapts to the document.** A hard-coded `1-3` would fail a
+two-page file with exit `4` — a usage error about a range the caller never wrote —
+so the count comes from the document's own `probe` and the selection is `1-3`, `1-2`
+or `1` accordingly. `PAGE` and `PAGES` override it, and `--help` lists the rest of
+the environment knobs.
 
 ---
 

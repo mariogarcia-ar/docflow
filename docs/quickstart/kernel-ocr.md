@@ -344,6 +344,40 @@ $ docflow-kernel ocr read <file> --correct
 Confidence is `float | null` and `null` is **never** reported as `1.0` — that is row 10
 of `kernel-cli.md` §12, and it is visible in every token above.
 
+### Running all five at once
+
+`scripts/kernel/kernel-ocr.sh` drives the whole surface — the three commands plus the
+two shapes of the `--correct` gate — against one raster:
+
+```console
+$ scripts/kernel/kernel-ocr.sh
+
+image: tests/fixtures/matrix/page.png
+
+K4 - the engine
+  capabilities               exit 0  observed: accepts_image_suffixes, engine, ...
+  engine-info                exit 0  observed: engine, engine_version
+
+K4 - reading
+  (the first read loads ONNX models: ~10s)
+  read                       exit 0  observed: dpi_applied, file, granularity, ...
+
+K4 - the correction gate
+  read --correct (bare)      exit 4  --correct requires a value
+  read --correct true        exit 3  reason engine_unavailable
+```
+
+The image is a parameter and defaults to a committed fixture; `--pages`, `--dpi` and
+`--lang` reach the `read` call when you give them, and are **absent** rather than
+empty when you do not.
+
+**The first `read` takes about ten seconds** while ONNX loads the models, and nothing
+after it does. One caution measured in practice: running several of these drivers
+*at once* makes that call abort with `SIGABRT` (exit `134`) — memory contention while
+the models load, not a defect in the surface. Eight consecutive runs with nothing else
+in flight all exit `0`, so if you see `134` here, run it alone before suspecting the
+build.
+
 ---
 
 ## Reading a result

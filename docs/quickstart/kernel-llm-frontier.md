@@ -472,6 +472,37 @@ $ docflow-kernel llm.frontier capabilities
 catch-all reported exit `1` with a traceback — reporting a caller's omission as a
 broken build, which is the collapse the exit table exists to prevent.
 
+### Running all six at once
+
+`scripts/kernel/kernel-llm.sh` drives **both model kernels** — this one and K5 — since
+they share two of their four operations:
+
+```console
+$ scripts/kernel/kernel-llm.sh
+
+K6 llm.frontier - 'now' commands (needs a provider key; external)
+  capabilities               exit 0  observed: adapter_revision, provider, ...
+  warm                       exit 3  reason provider_unavailable
+  structured                 exit 3  reason provider_unavailable
+  vision                     exit 3  reason provider_unavailable
+
+K6 llm.frontier - the naming and credential refusals
+  capabilities(slash)        exit 3  reason model_unknown
+  capabilities(no provider)  exit 3  reason provider_unknown
+```
+
+**The refusals are the point of that output, and this is the workspace to see them
+in.** `capabilities` answers with no credential because it describes the adapter's own
+configuration; everything past it refuses *before* making a call, each exit `3` naming
+its own remedy — the gate chain §4 documents. The model is a parameter
+(`--frontier-model`) and defaults to a `<provider>:<model>` pair with the **colon** the
+naming convention requires, so the `model_unknown` and `provider_unknown` refusals
+below it show what the wrong spelling answers.
+
+**K6 is `external`** (`kernel-cli.md` §7), so there is no value to compare between runs
+even with a key: what is stable is the `call_record` and the typed failure paths, and
+that is what a test may assert on.
+
 ---
 
 ## Secrets

@@ -498,6 +498,36 @@ $ docflow-kernel llm.local capabilities
 # exit 3
 ```
 
+### Running all seven at once
+
+`scripts/kernel/kernel-llm.sh` drives **both model kernels** — this one and K6 — since
+they share two of their four operations. It generates the prompt and the schema it
+needs into its output directory rather than committing them: they are the driver's
+inputs, not the project's assets.
+
+```console
+$ scripts/kernel/kernel-llm.sh
+
+local model:     smollm2:latest
+vision model:    qwen2.5vl:3b
+frontier model:  anthropic:claude-sonnet-4-6
+
+K5 llm.local - 'now' commands (needs Ollama; sampled)
+  capabilities               exit 0  observed: family, model, model_revision, ...
+  warm                       exit 0  observed: adapter_revision, model, warm
+  structured                 exit 0  observed: attempts, done_reason, model, ...
+  vision                     exit 0  observed: attempts, done_reason, model, ...
+
+K5 llm.local - the refusals worth seeing
+  capabilities(no model)     exit 3  reason asset_missing
+  capabilities(bad tag)      exit 3  reason model_not_pulled
+```
+
+The model is a parameter (`--model`) and defaults to the smallest one installed, so
+the driver stays quick. **K5 is `sampled`** (`kernel-cli.md` §7), so what it reports is
+what each call *measured* — the digest, the token counts, the `done_reason` — and never
+the value, which is not comparable between runs by definition.
+
 **This was a real defect until recently.** The handler raised a `ValueError`, so the
 dispatcher's catch-all reported exit `1` with a traceback — telling a caller *"this
 build is broken"* about a flag they simply did not type. `kernel-cli.md` §5 gives the

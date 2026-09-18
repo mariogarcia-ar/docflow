@@ -773,3 +773,50 @@ The five kernel quickstarts drive the **library**. This surface is the bench tho
 are now also probed through, one operation at a time — which is what `kernel-cli.md` §1
 asks for: *the kernels are a cornerstone of the project, so they must be tested
 independently before the domain layer is built on top of them.*
+
+### The same surface from a shell, in one command
+
+Everything this page demonstrates by hand is scripted under `scripts/kernel/`, one
+driver per kernel plus one for the product CLI:
+
+```console
+$ scripts/kernel/all.sh --fast          # the six cheap drivers
+$ scripts/kernel/all.sh                 # all eight, including OCR and the models
+```
+
+| Driver | Kernel | Commands |
+|---|---|---:|
+| `kernel-registry.sh` | K8 | 5 |
+| `kernel-store.sh` | K7 | 6 |
+| `kernel-orchestrator.sh` | K1 | 9 |
+| `kernel-pdf.sh` | K2 | 8 |
+| `kernel-image.sh` | K3 | 7 |
+| `kernel-ocr.sh` | K4 | 5 |
+| `kernel-llm.sh` | K5 + K6 | 17 |
+| `kernel-cli.sh` | the **product** CLI, not this bench | 9 |
+
+The order is deliberate — cheap and self-contained first, so a broken build fails
+before ten seconds of ONNX loading. Each driver takes its input as a parameter with a
+committed fixture as the default, and each prints one line per command plus a tally by
+exit code.
+
+**Exit codes are reported, not judged.** A driver's summary counts `2`, `3` and `4`
+because they are answers: a scan gives `classify` exit `2` because that is what a scan
+*is*, and an `MVP` command exits `4` on every input because it is declared and not
+built. The only exit that fails a driver is **`1`**, which §5 reserves for a defect in
+the build — so a green `all.sh` means *every command answered within the contract*, and
+a red one means a command reported a bug rather than a document's verdict.
+
+Two things the drivers measure that reading this page cannot. They **self-supply**
+their inputs — `kernel-store.sh` puts a file and reads the digest back *from the
+envelope* before verifying it, and `kernel-registry.sh` reads the asset key out of
+`validate` rather than hard-coding it — so a driver that invented an id would only
+exercise the refusal path. And they run the `MVP` commands **deliberately**, because an
+`MVP` command that dispatched would be the defect: it would mean the surface
+implemented something the artifacts say is not built yet.
+
+One caution if you write your own: `orchestrator pause`, `resume` and `stop` declare
+**no `--root`**, so they write `<job-id>/control.json` relative to the *current working
+directory*. `kernel-orchestrator.sh` changes into its output directory before calling
+them, and a driver that did not would leave a directory named after a job id in
+whatever directory you happened to be in.

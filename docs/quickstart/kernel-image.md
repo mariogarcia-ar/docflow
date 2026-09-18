@@ -478,6 +478,37 @@ call N times and reports a per-run digest under a `repetitions` key that appears
 when the flag is given. It **reports**, it does not retry — a `sampled` result stays
 sampled rather than being quietly re-rolled until it agrees.
 
+### Running all seven at once
+
+`scripts/kernel/kernel-image.sh` drives the whole surface — the four `now` commands
+and the three `MVP` ones — against one image:
+
+```console
+$ scripts/kernel/kernel-image.sh
+
+image: tests/fixtures/expected-extraction/dbc07b17-....jpg
+
+K3 - 'now' commands
+  info                       exit 0  observed: exif_orientation, file, format, ...
+  legibility                 exit 0  observed: file, height, threshold_applied, width
+  rescale(dpi72)             exit 2  reason unsupported_format
+  crop(10,10,50,50)          exit 0  observed: coordinate_space, image, inverse_map, ...
+
+K3 - 'MVP' commands (must exit 4)
+  deskew                     exit 4  image deskew is not implemented in Stage 1 ...
+  phash                      exit 4  ...
+  tile                       exit 4  ...
+```
+
+The image is a parameter and defaults to a committed fixture, and `--save` is passed
+to the two commands that return bytes. **`rescale` is expected to refuse** — exit `2`
+with `unsupported_format` — because `source_dpi` is read only from `image info`, and
+`info` reports no DPI. That is the gap §4 documents, not a fault in the run, and the
+driver marks it `--soft` so the summary does not report it as one.
+
+The exit codes are **reported, not judged**: `2` and `4` are answers, and only exit
+`1` — a bug in the build — fails the summary (`kernel-cli.md` §5).
+
 ---
 
 ## The split, and what it buys
