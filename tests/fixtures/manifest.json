@@ -1,9 +1,13 @@
 {
   "root": "tests/fixtures",
-  "files": 94,
-  "bytes": 71729780,
+  "files": 97,
+  "bytes": 72161742,
   "pdf_detector": "voucherflow",
   "by_folder": {
+    "blur": {
+      "files": 3,
+      "bytes": 431962
+    },
     "casos": {
       "files": 8,
       "bytes": 6160091
@@ -56,6 +60,30 @@
     }
   ],
   "entries": [
+    {
+      "path": "blur/f69d1898-40f7-4424-9c94-77a961677595.jpg",
+      "folder": "blur",
+      "name": "f69d1898-40f7-4424-9c94-77a961677595",
+      "extension": "jpg",
+      "bytes": 36288,
+      "sha256": "ceb22640d8ada86592396760d2842324498ea6063bc5d8de8d557515abf4b02a"
+    },
+    {
+      "path": "blur/image (1).jpg",
+      "folder": "blur",
+      "name": "image (1)",
+      "extension": "jpg",
+      "bytes": 198048,
+      "sha256": "7fec72a55562bc5949615a7ec896938f729c67ccb961ed75ccf8c7c6542d51c5"
+    },
+    {
+      "path": "blur/image.jpg",
+      "folder": "blur",
+      "name": "image",
+      "extension": "jpg",
+      "bytes": 197626,
+      "sha256": "ed05e3361d89e07ce816058d874f4a04cda1142002e45ed8c964982f1008ab65"
+    },
     {
       "path": "casos/2926bed9-048a-4d72-9d41-8d65d290bfdb.jpeg",
       "folder": "casos",
