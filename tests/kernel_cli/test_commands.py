@@ -44,6 +44,7 @@ What this suite does not do is assert kernel *behaviour*; that is `E07-03`.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 import json
@@ -682,3 +683,47 @@ def test_the_dispatcher_binds_a_hyphenated_flag_to_a_keyword_name() -> None:
     assert seen["max_pixels"] == "4"
     assert seen["resolve_only"] is True
     assert "target-dpi" not in seen, "the keyword cannot carry a hyphen"
+
+
+# --- A command's value must be encodable -----------------------------------
+
+
+def test_read_describes_its_result_rather_than_returning_it() -> None:
+    """`ocr read` must translate its `ReadResult`, not hand it to the encoder.
+
+    This is the falsifier for a **real defect** that shipped once, in the same class
+    as the `InverseMap` crash: `ocr read` - a `now` command - returned its port-layer
+    `ReadResult` unchanged, and the encoder refuses every type outside the seven
+    boundary types. So the command **crashed** with exit ``1`` and *"no envelope
+    encoding for ReadResult"* instead of answering, while `--list` still reported K4
+    available.
+
+    The assertion is on the **call site inside `read`**, not on the describer's
+    existence, and that distinction is the whole test: an earlier draft checked
+    `"_described(" in source` and stayed green when `read`'s return was reverted to
+    the raw object, because the function *definition* still matched. A test that a
+    defined-but-unused helper satisfies proves nothing about the call that matters.
+    """
+    module = importlib.import_module("docflow.kernel_cli.commands.ocr")
+    source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    read_function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "read"
+    )
+    # Every call the function makes, by the name it calls.
+    called = {
+        node.func.id
+        for node in ast.walk(read_function)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+
+    assert "_described" in called, (
+        "ocr read must pass its ReadResult through _described(); returning it "
+        "verbatim is the exit-1 crash this test exists to catch"
+    )
+    # The positive control: the helper exists and is callable, so a rename that
+    # broke the call above cannot pass by matching nothing.
+    assert callable(module._described)  # pylint: disable=protected-access

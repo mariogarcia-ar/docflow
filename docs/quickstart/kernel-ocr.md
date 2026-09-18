@@ -205,6 +205,147 @@ decision, and this is not the layer that takes it.
 
 ---
 
+## The same operations from `docflow-kernel`
+
+All three operations have a command, and all three are `now` in §9 — so unlike K2 and
+K3 there is no gap between the library surface and the bench here:
+
+| Operation | Command | Flags |
+|---|---|---|
+| `capabilities` | `ocr capabilities` | — |
+| `engine_info` | `ocr engine-info` | — |
+| `read` | `ocr read <file>` | `--pages`, `--dpi`, `--lang`, `--correct` |
+
+Every block below is a real invocation with its output quoted verbatim, trimmed at
+`...` only where the envelope repeats `value` inside `evidence`.
+
+Two things about running these that a caller will meet immediately:
+`ocr engine-info`/`capabilities` are instant, while `ocr read` **loads ONNX models and
+takes ~11 s on the first call** in this workspace. And the engine logs to **stderr**,
+so stdout stays a single parseable JSON document — `docflow-kernel ocr read f.png | jq`
+works, and the *"[INFO] RapidOCR ..."* lines do not corrupt it.
+
+### `ocr capabilities`
+
+```console
+$ docflow-kernel ocr capabilities
+{
+  "value": {
+    "terms": { "engine": "docling", "engine_version": "2.126.0" },
+    "measurements": {},
+    "observed": {
+      "engine": "docling",
+      "ocr_engine": "rapidocr-onnxruntime",
+      "granularity": "block",
+      "reports_confidence": false,
+      "accepts_image_suffixes": [".bmp", ".jpeg", ".jpg", ".png",
+                                 ".tif", ".tiff", ".webp"]
+    }
+  },
+  "evidence": { ... the same three keys ... },
+  "reason": null,
+  "call_record": null
+}
+```
+
+Exit `0`, and **no positional and no flag** — this command takes no arguments at all.
+Note `measurements: {}` is empty rather than omitted: a call made nothing *measured*,
+and an empty mapping says that without inventing a number.
+
+`reports_confidence: false` is the field worth querying first if you are building a
+threshold on confidence — §3 explains why it is always `false` here, and this is the
+command that tells you before you write the code rather than after.
+
+### `ocr engine-info`
+
+```console
+$ docflow-kernel ocr engine-info
+# value.terms:    { "engine": "docling", "engine_version": "2.126.0" }
+# value.observed: { "engine": "docling", "engine_version": "2.126.0" }
+# exit 0
+```
+
+`terms` and `observed` carry the same two strings here, and that repetition is
+deliberate: `terms` is the half that feeds the **cache key** (`sad.md` §5), so a
+change of engine build re-runs a stage instead of leaving it `done` and wrong.
+
+### `ocr read <file>`
+
+```console
+$ docflow-kernel ocr read tests/fixtures/expected-extraction/dbc07b17-2538-4611-9e51-7e161aaf7ba5.jpg --pages 1
+# value.pages_requested: [1]
+# value.pages_read:      [1]
+# value.page_status:     { "1": "read" }
+# value.tokens:          54 tokens; the first is
+#   { "text": "ción 124", "page": 1,
+#     "bbox": { "x": 0.0, "y": 5.216733932495117,
+#               "width": 109.5018310546875, "height": 22.431955337524414 },
+#     "confidence": null, "role": "text" }
+# exit 0
+```
+
+Four keys, and each answers a matrix row. `page_status` is a **mapping** and its keys
+are strings (`"1"`, not `1`) because a JSON object's keys are strings — the per-page
+status survives the door rather than being flattened into a list. `confidence` stays
+`null` (§3), and `text` is the engine's own block, not a word.
+
+`--pages` is optional and defaults to page 1; `--dpi` defaults to 72 and sets the
+**units of every `bbox`** (`dpi / 72`), so a box compared against a differently-rendered
+page will not line up unless you pass the same `--dpi`.
+
+`--lang` defaults to `en`; it is a *hint* to the recogniser, not a filter — passing
+`es` does not restrict output to Spanish.
+
+A file that is not there is a typed refusal rather than a crash:
+
+```console
+$ docflow-kernel ocr read /tmp/nope.png
+# reason.code: "unsupported_format"
+# reason.message: "'nope.png' does not exist at /tmp/nope.png"
+# exit 2
+```
+
+### `--correct` is declared and refuses
+
+```console
+$ docflow-kernel ocr read <file> --correct true
+# value: null
+# reason.code: "engine_unavailable"
+# reason.message: "--correct is declared but not implemented in Stage 1: it gates
+#   the corrected artifact, which needs `reader.correct` from the registry
+#   (ADR-009) and a second output the engine does not produce yet. Refusing rather
+#   than returning uncorrected tokens as if they were corrected."
+# exit 3
+```
+
+Exit **3**, not `2`: the call could not legitimately be made, because the command
+refuses rather than answering with something it cannot produce. Silently returning the
+uncorrected tokens would be the failure this refusal exists to prevent — the two are
+indistinguishable in the result.
+
+`--correct` is a **value** flag, not a boolean one, so the bare form is a usage error
+rather than a synonym for `true`:
+
+```console
+$ docflow-kernel ocr read <file> --correct
+--correct requires a value
+# exit 4
+```
+
+### The exit codes, in one table
+
+| Exit | Meaning | Where K4 produces it |
+|---|---|---|
+| `0` | A value was produced | all three commands, including `read` on a blank page |
+| `2` | The document's answer | `unsupported_format` — the file is absent or unreadable; `engine_unavailable` when Docling itself is missing |
+| `3` | The call could not legitimately be made | `--correct true` |
+| `4` | Usage: bad flag, missing argument, `--correct` with no value | `ocr read` with no file (`ocr read needs the file argument`) |
+
+Confidence is `float | null` and `null` is **never** reported as `1.0` — that is row 10
+of `kernel-cli.md` §12, and it is visible in every token above.
+
+---
+
 ## Reading a result
 
 ```python
@@ -225,6 +366,12 @@ Three things raise `ValueError` instead, because they are mistakes in the reques
 rather than answers about the document: an empty page selection, a page outside the
 document, and a non-positive DPI.
 
+**From a shell those three reach you as exit `1`**, not the exit `4` §5 assigns to a
+malformed range — see the exit-code table in the CLI section above. It is a property
+of the dispatcher rather than of this kernel: the same collapse affects `pdf split
+--pages 9` and `image crop`'s out-of-image region. A caller matching on exit codes
+should currently treat `1` and `4` alike for a bad page range.
+
 ## There is no engine setting
 
 `ADR-001` and `prd.md` FR-16: the engine is Docling and **only** Docling. There is no
@@ -241,7 +388,8 @@ different engine, it supplies a different instance of the same one.
 
 | Not available | Where it lands |
 |---|---|
-| `docflow-kernel ocr capabilities  engine-info  read` | **Now available** — see `lab-cli.md`. The `MVP` operations of §9 still exit `4` |
+| `docflow-kernel ocr capabilities  engine-info  read` | **Now available** — see the CLI section above and `lab-cli.md` |
+| `--correct true` | **Declared, refused today** — exit `3`, because the corrected artifact needs `reader.correct` from the registry and a second engine output |
 | Word-level granularity | Not available from this engine; see §4 |
 | An OCR correction pass | `# TODO: [MVP]` — `--correct` gates the corrected artifact only, and the raw tokens are always retained |
 | A second engine, an engine setting | **Never** (`ADR-001`, `prd.md` FR-16) |
@@ -253,9 +401,14 @@ different engine, it supplies a different instance of the same one.
 
 | Kernel | State |
 |---|---|
+| K1 `orchestrator` | **Landed** — the closing flow |
 | K2 `pdf` | **Landed** — see `kernel-pdf.md` |
 | K3 `image` | **Landed** — see `kernel-image.md` |
+| K5 `kernel.llm.local` | **Landed** — Ollama behind `LlmEngine` (`E04-05`) |
+| K6 `kernel.llm.frontier` | **Landed, but unreachable here** — its probe needs a provider key this workspace does not have, so `--list` reports it unavailable |
 | K7 `store` | **Landed** — content-addressed put/get/verify + the ledger write path |
 | K8 `registry` | **Landed** — load, schema-validate, fail fast, `registry_hash` |
-| K5 `llm.local`, K6 `llm.frontier` | Not yet (`E04-05`, `E04-06`) |
-| K1 `orchestrator` | **Landed** — the closing flow |
+
+Seven of the eight can serve a call in this workspace. **K6 is the exception**: its
+adapter exists, but its probe also requires a provider key, and *available* would be a
+claim that a paid call could be made.

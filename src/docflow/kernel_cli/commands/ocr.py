@@ -21,13 +21,15 @@ uncorrected artifact while the caller asked for the corrected one.
 from __future__ import annotations
 
 from pathlib import Path
+from types import MappingProxyType
 from typing import Final
 
 from docflow.adapters.docling import DoclingEngine
 from docflow.kernel_cli.commands.pages import parse_pages
 from docflow.kernel_cli.commands.refusals import refusal
 from docflow.kernel_cli.main import Call, Handler
-from docflow.kernels.types import Reason
+from docflow.kernels.types import Evidence, KernelResult, Reason, Token
+from docflow.ports.ocr import ReadResult
 
 #: What each refusal in this module was blocked by. One value for the module,
 #: because every refusal here is the same kind of event: a command whose
@@ -117,14 +119,96 @@ def read(
         )
 
     selected = [1] if pages is None else parse_pages(pages)
-    return Call(
-        result=DoclingEngine().read(
-            Path(file),
-            selected,
-            72 if dpi is None else int(str(dpi)),
-            _DEFAULT_LANG if lang is None else str(lang),
-        )
+    outcome = DoclingEngine().read(
+        Path(file),
+        selected,
+        72 if dpi is None else int(str(dpi)),
+        _DEFAULT_LANG if lang is None else str(lang),
     )
+    if outcome.reason is not None or outcome.value is None:
+        return Call(result=outcome)
+    return Call(result=_described(outcome))
+
+
+def _described(outcome: KernelResult[ReadResult]) -> KernelResult[object]:
+    """Turn a `ReadResult` into the mapping the envelope can carry.
+
+    The result is a **description** of the read, in the same shape and for the same
+    reason `store ledger-read` describes a `Ledger`: the envelope carries the seven
+    boundary types, mappings and sequences, and `ReadResult` is a port-layer value
+    that is not on that list. `E01-01`'s encoder refuses an unknown type rather than
+    stringifying it - which is what keeps a stand-in off the wire - so returning the
+    object itself made this command **crash** with exit ``1`` instead of answering.
+
+    The three matrix rows this command answers are all here, and each is a part of
+    the mapping rather than a rendering choice:
+
+    - row 9: a blank page keeps ``"blank"`` in ``page_status`` and contributes no
+      token, so it cannot read as ``read`` with invented text;
+    - row 10: a token's ``confidence`` stays ``null``;
+    - row 11: ``pages_requested`` and ``pages_read`` are both reported, so a
+      truncated call differs from a page that held no text.
+
+    ``pages_read`` is read from the result's own derived property rather than
+    recomputed from the statuses here: a second derivation is a second answer, and
+    the two would eventually disagree.
+
+    Args:
+        outcome: The succeeded read, whose value is the `ReadResult`.
+
+    Returns:
+        The result, whose value is the description.
+
+    """
+    result = outcome.value
+    assert result is not None, "the caller checked; this is not a second guard"
+    return KernelResult(
+        value={
+            "pages_requested": list(result.pages_requested),
+            "pages_read": list(result.pages_read),
+            # `PageStatus` is a `str` enum, so the status is the word a person reads
+            # and not `PageStatus.READ`. The page numbers become strings because a
+            # JSON object's keys are strings: the mapping survives the door rather
+            # than being replaced by a list of records.
+            "page_status": {
+                str(page): status.value for page, status in result.page_status.items()
+            },
+            "tokens": [_token(token) for token in result.tokens],
+        },
+        evidence=Evidence(
+            terms=MappingProxyType(dict(outcome.evidence.terms)),
+            measurements=MappingProxyType(dict(outcome.evidence.measurements)),
+            observed=MappingProxyType(dict(outcome.evidence.observed)),
+        ),
+        reason=None,
+    )
+
+
+def _token(token: Token) -> dict[str, object]:
+    """Describe one token as the boundary's own members.
+
+    Written out rather than `dataclasses.asdict` so that a field added to `Token`
+    fails this function's next reader rather than silently widening the wire format.
+
+    Args:
+        token: The token to describe.
+
+    Returns:
+        The token, as the four members the port declares.
+
+    """
+    return {
+        "text": token.text,
+        "page": token.page,
+        "bbox": {
+            "x": token.bbox.x,
+            "y": token.bbox.y,
+            "width": token.bbox.width,
+            "height": token.bbox.height,
+        },
+        "confidence": token.confidence,
+        "role": token.role,
+    }
 
 
 #: What this module declares, as data. Each entry is

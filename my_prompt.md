@@ -1,3 +1,13 @@
+add cli examples to 
+docs/quickstart/kernel-image.md
+docs/quickstart/kernel-pdf.md
+
+docs/quickstart/kernel-ocr.md
+docs/quickstart/kernel-llm-local.md
+docs/quickstart/kernel-llm-frontier.md
+
+
+
 hay que revisar que se cumpla 
 
 kernel, port, adapter 
