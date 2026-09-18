@@ -469,23 +469,27 @@ goes to the store. `path` is `null` without `--save`; with it, the artifact is w
 and the location reported — a path *relative to the save root*, not to your working
 directory.
 
-**`path` keeps no suffix, and `delivery_name` is where the suffix lives.** That is not
-an oversight: a store is content-addressed, so the file's name *is* its identity and
+**`path` keeps no suffix, and the delivered copy is what carries it.** That is not an
+oversight: a store is content-addressed, so the file's name *is* its identity and
 `get`/`verify` have only the hash to reach it by (`FR-11`). Appending `.png` there would
-give one artifact two names to look under. The extension a consumer selects a reader by
-is a property of how bytes are **handed over**, so it travels on the descriptor — for an
-`image/png` artifact, the digest with `.png` appended:
+give one artifact two names to look under. So `--save` writes **two files with the same
+bytes**: the artifact of record, and a delivery copy whose name carries the extension a
+consumer selects a reader by.
 
 ```console
-$ ls /tmp/out/artifacts
-# 6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d
+$ ls /tmp/out
+# 6e739084af5058d68004ed5b51c3a64e8b27335d6ca64ecbcc4ecf1dee3fc75d.png   <- delivered
+# artifacts                                                              <- the store
+$ file /tmp/out/*.png
+# PNG image data, 595 x 842, 8-bit/color RGB, non-interlaced
 ```
 
-`delivery_name` is a **name, not a path**: nothing exists at `/tmp/out/<delivery_name>`.
-A caller that needs the file under that name copies or links it there. A media type this
-surface does not know — the `application/octet-stream` that `store get` reads bytes back
-as — yields the bare digest rather than a guessed extension, because a name nobody
-measured is the kind of stand-in this code refuses everywhere else.
+The suffixed copy sits **directly under the save root**, and `delivery_name` in the
+descriptor is its name — so the envelope tells you the file exists and what it is called,
+without reading the directory. A media type this surface does not know — the
+`application/octet-stream` that `store get` reads bytes back as — yields the bare digest
+and **no delivery copy**, because a name nobody measured is the kind of stand-in this
+code refuses everywhere else.
 
 Now the matrix row. `kernel-cli.md` §12 row 4 is *"a 150 DPI scan rendered at 300 and
 reported as 300"*, and the answer is a refusal:

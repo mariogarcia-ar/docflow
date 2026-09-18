@@ -197,20 +197,22 @@ A 40 MB rendered page inlined as base64 is not testable and not diffable. So std
 
 | Default — a descriptor | With `--save <dir>` |
 |---|---|
-| `{ "sha256": "9f2a…", "bytes": 41889024, "media_type": "image/png", "page": 1, "dpi": 300 }` | The same descriptor **plus** the bytes written to `<dir>/artifacts/<sha256>` |
+| `{ "sha256": "9f2a…", "bytes": 41889024, "media_type": "image/png", "page": 1, "dpi": 300 }` | The same descriptor **plus** the bytes written twice: `<dir>/artifacts/<sha256>` (the store's copy) and `<dir>/<sha256>.png` (the delivered copy) |
 
 `--save` routes through K7, so the recorded hash is the real content hash of what was written, not a hash of something that was only in memory. That is what makes a downstream `store verify` meaningful.
 
-**The stored name carries no suffix, and that is the store's contract rather than an omission.** A store is content-addressed: the file's name *is* its identity, and `get`/`verify` have nothing but the hash to reach it by (`kernels/store.py`, FR-11). Appending an extension would give one artifact two names to look under, and would make the same bytes stored under two media types two different files — while the descriptor already says the stored bytes are one artifact.
+**Two copies are written, and the second one exists because the first cannot carry a suffix.** A store is content-addressed: the file's name *is* its identity, and `get`/`verify` have nothing but the hash to reach it by (`kernels/store.py`, FR-11). Appending an extension there would give one artifact two names to look under, and would make the same bytes stored under two media types two different files.
 
-**The suffix a consumer wants is therefore carried by the descriptor, not by the path.** Every buffer descriptor gains a `delivery_name` — the digest plus the suffix its media type implies (`.png`, `.pdf`), or the bare digest for a media type that implies none, such as the `application/octet-stream` `store get` reads back:
+So the store keeps `<dir>/artifacts/<sha256>`, and `--save` writes a **delivery copy** at the save root under the name the media type implies — `<sha256>.png`, `<sha256>.pdf` — which is the file a consumer that selects a reader by extension needs, and the name §6 always promised. Every buffer descriptor reports it as `delivery_name`:
 
 ```json
 { "sha256": "6e739084…", "size_bytes": 77070, "media_type": "image/png",
   "path": "artifacts/6e739084…", "delivery_name": "6e739084….png" }
 ```
 
-`path` is where the bytes are; `delivery_name` is the name to give them on the way out, for a consumer that selects a reader by extension. It is a name and **not a path**: nothing exists at `<dir>/<delivery_name>`, and a caller that needs the file under that name copies or links it there.
+`path` is the artifact of record, relative to the save root; `delivery_name` is the copy's name, *directly* under the save root — not under `artifacts/`. Both files hold the same bytes; the store's is the one `verify` checks.
+
+A media type with no known suffix — the `application/octet-stream` that `store get` reads back — gets **no suffix and no delivery copy**, rather than a guessed `.bin`. Inventing one would publish a name this surface made up, and writing a second copy under the bare digest would put two files with the same name in one tree.
 
 ---
 

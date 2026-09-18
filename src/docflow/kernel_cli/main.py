@@ -813,22 +813,22 @@ _DELIVERY_SUFFIXES: Final[Mapping[str, str]] = {
 def _delivery_name(sha256: str, media_type: str) -> str:
     """Name a buffer's bytes for a consumer that picks a reader by extension.
 
-    `kernel-cli.md` §6 prints a saved buffer as ``<dir>/<sha256>.png``, and the store
-    writes ``<dir>/artifacts/<sha256>`` with **no** suffix - because there the name
-    *is* the artifact's identity, and ``get``/``verify`` have nothing but the hash to
-    reach it by (`kernels/store.py`). Both are right about different things, and the
-    split is reconciled here rather than in the store: a suffix is a property of how
-    bytes are **handed over**, not of where they live.
+    A saved buffer is written **twice**, and the two names answer different
+    questions:
 
-    So the descriptor carries both, and they answer different questions:
+    - ``path`` is the store's name - ``artifacts/<sha256>``, no suffix - because a
+      store is content-addressed and the file's name *is* its identity: ``get`` and
+      ``verify`` have nothing but the hash to reach it by (`kernels/store.py`,
+      `FR-11`). Appending a suffix there would give one artifact two names to look
+      under and make the same bytes under two media types two different files.
+    - ``delivery_name`` is ``<sha256><suffix>``, and ``--save`` writes a second copy
+      under it **at the save root**, which is what a consumer that selects an engine
+      by extension needs. `kernel-cli.md` §6 promised ``<dir>/<sha256>.png`` and this
+      is the file that makes the promise true.
 
-    - ``path`` is where the bytes are, relative to the ``--save`` root;
-    - ``delivery_name`` is the name to give them on the way out, for the consumers
-      that select an engine by extension rather than by media type.
-
-    It is a name and **not a path**: nothing exists at ``<save-root>/delivery_name``,
-    so joining the two produces a location that was never written. A caller that
-    needs the file under this name copies or links it there.
+    The second copy is not redundancy for its own sake: the store cannot carry the
+    suffix without losing its identity, so the suffix has to be delivered somewhere,
+    and the save root is where a caller already looks.
 
     Args:
         sha256: The buffer's digest, which is the name's stem.
@@ -836,10 +836,45 @@ def _delivery_name(sha256: str, media_type: str) -> str:
 
     Returns:
         ``<sha256><suffix>``, or the bare digest when the media type declares no
-        suffix this surface knows.
+        suffix this surface knows - in which case nothing is delivered, because
+        there is no extension to add and the artifact is already named for itself.
 
     """
     return f"{sha256}{_DELIVERY_SUFFIXES.get(media_type, '')}"
+
+
+def _deliver(root: pathlib.Path, artifact: Artifact, data: bytes) -> None:
+    """Write a second copy of the bytes under the suffixed delivery name.
+
+    Deliberately **not** a hard link. ``os.link`` fails across filesystems, and the
+    save root is a directory the caller names - usually a temporary one on another
+    mount - so a link would work in testing and fail in use. Falling back to a copy
+    silently would be worse: the caller would have two behaviours and no way to tell
+    which one ran. A copy always works.
+
+    A media type with no known suffix delivers nothing, so ``store get --save`` does
+    not leave a second copy of the same bytes named after its hash alone.
+
+    The write is staging-then-rename, so a reader never sees a partial file under the
+    delivery name - the same discipline the store applies to the artifact itself.
+
+    Args:
+        root: The ``--save`` root the delivery file goes directly under.
+        artifact: The stored artifact, whose digest and media type name the copy.
+        data: The bytes to write, already in hand from the buffer that was stored.
+
+    """
+    name = _delivery_name(artifact.sha256, artifact.media_type)
+    if name == artifact.sha256:
+        return
+
+    target = root / name
+    staging = target.with_name(f".{target.name}.delivery")
+    staging.write_bytes(data)
+    # TODO: [RELEASE] No fsync before the rename, unlike the store's own write: the
+    # artifact of record is already durable and verifiable, so a delivery copy lost
+    # to a power cut is recoverable by re-running rather than a lost result.
+    os.replace(staging, target)
 
 
 def _describe_bytes(value: Bytes) -> Mapping[str, object]:
@@ -1402,7 +1437,9 @@ def _apply_save(
             f"{type(value).__name__}"
         )
 
-    artifact = store.put(pathlib.Path(str(save_dir)), value.data, value.media_type)
+    root = pathlib.Path(str(save_dir))
+    artifact = store.put(root, value.data, value.media_type)
+    _deliver(root, artifact, value.data)
     return Call(
         result=KernelResult(
             value=artifact, evidence=call.result.evidence, reason=call.result.reason
@@ -1449,9 +1486,9 @@ def _saved_embedded(call: Call, save_dir: object, buffer_key: str) -> Call | Inv
             f"observed[{buffer_key!r}] holds {type(embedded).__name__}"
         )
 
-    artifact = store.put(
-        pathlib.Path(str(save_dir)), embedded.data, embedded.media_type
-    )
+    root = pathlib.Path(str(save_dir))
+    artifact = store.put(root, embedded.data, embedded.media_type)
+    _deliver(root, artifact, embedded.data)
     rebuilt = Evidence(
         terms=value.terms,
         measurements=value.measurements,

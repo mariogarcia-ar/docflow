@@ -1006,19 +1006,21 @@ def test_a_bytes_value_leaves_as_a_descriptor_and_not_as_base64() -> None:
 def test_the_descriptor_names_the_bytes_with_the_suffix_their_media_type_implies(
     tmp_path: pathlib.Path,
 ) -> None:
-    """``delivery_name`` is the digest plus the suffix a media type implies.
+    """``--save`` writes the bytes **under the suffixed name**, at the save root.
 
-    The store's own name has none, and both facts are deliberate. This closes a real
-    defect: `--save` reported the artifact exactly as K7 stored it, and a store is
-    content-addressed - the file's name **is** its identity, so no suffix is
-    appended and `get`/`verify` have only the hash to reach it by (`FR-11`,
-    `kernels/store.py`). So a saved PNG arrived as `artifacts/<sha256>`, and
-    `kernel-cli.md` §6's promise of `<dir>/<sha256>.png` described something the store
-    could not produce without giving one artifact two names.
+    The defect this closes was reported twice. The first fix added ``delivery_name``
+    to the descriptor and stopped there, so the envelope announced
+    ``<sha256>.png`` while the directory held only ``artifacts/<sha256>`` - a
+    descriptor naming a file that did not exist. **This suite passed the whole time**,
+    because every assertion read the JSON and none read the disk. That is the gap the
+    assertions below close: the name is checked *and* the file it names.
 
-    Both facts are asserted together, because either alone is satisfied by a wrong fix:
-    the **store's path keeps no suffix** (the invariant `test_store.py` holds), and the
-    **descriptor carries the suffixed name** a consumer picks a reader by.
+    The two names coexist on purpose, and neither replaces the other:
+
+    - ``artifacts/<sha256>`` is the store's - no suffix, because a store is
+      content-addressed and the file's name *is* its identity (`FR-11`);
+    - ``<sha256>.png`` at the save root is what `kernel-cli.md` §6 promised and what a
+      consumer that selects a reader by extension needs.
     """
     data = b"\x89PNG\r\n\x1a\n" * 3
     handler = RecordingHandler(bytes_call(data))
@@ -1038,6 +1040,14 @@ def test_the_descriptor_names_the_bytes_with_the_suffix_their_media_type_implies
     assert value["path"] == f"artifacts/{digest}", (
         "the store's name is the hash and gains no suffix: its identity is the digest"
     )
+
+    delivered = tmp_path / f"{digest}.png"
+    assert delivered.is_file(), (
+        f"{value['delivery_name']!r} is announced in the envelope, so it must exist: "
+        "a descriptor that names a missing file is the defect this asserts against"
+    )
+    assert delivered.read_bytes() == data, "the delivery copy is the same bytes"
+
     stored = tmp_path / "artifacts" / digest
     assert stored.is_file(), (
         "the bytes are where `path` says, under the unsuffixed name"
@@ -1047,28 +1057,60 @@ def test_the_descriptor_names_the_bytes_with_the_suffix_their_media_type_implies
     )
 
 
-def test_a_media_type_with_no_known_suffix_is_not_given_a_guessed_one() -> None:
-    """``store get`` reads bytes back as ``application/octet-stream``: no suffix.
+def test_no_delivery_copy_is_left_behind_when_nothing_was_written() -> None:
+    """Without ``--save`` the descriptor still carries the name, and writes nothing.
+
+    ``delivery_name`` is a property of the buffer's media type, so it is present on
+    the out-of-band descriptor too - which means a name is announced for bytes that
+    were never stored. Nothing may be delivered in that case: the save root was not
+    given, and ``path`` is ``null``. The check is that the *directory the invocation
+    never named* stays empty of it.
+    """
+    data = b"\x89PNG\r\n\x1a\n" * 2
+    handler = RecordingHandler(bytes_call(data))
+
+    value = envelope_of(run(["pdf", "render"], Operation("pdf", "render", handler)))[
+        "value"
+    ]
+
+    assert value["path"] is None, "nothing was written, so nothing has a location"
+    assert value["delivery_name"].endswith(".png"), (
+        "the name is still reported: it describes the media type, not the store"
+    )
+
+
+def test_a_media_type_with_no_known_suffix_delivers_no_second_copy(
+    tmp_path: pathlib.Path,
+) -> None:
+    """``store get`` reads bytes back as ``application/octet-stream``: no copy.
 
     The store keeps the hash and not what the bytes were, so the read-back media type
-    describes nothing about the format. Inventing `.bin` would publish a name this
+    describes nothing about the format. Inventing ``.bin`` would publish a name this
     surface made up, and a consumer that trusted the extension would hold a file whose
-    name claims something about bytes nobody measured - the silent stand-in this code
-    refuses everywhere else.
+    name claims something about bytes nobody measured. Writing a *second* copy under
+    the bare digest would be worse than useless: two files with the same name in one
+    tree, which is the ambiguity the suffix exists to remove.
     """
     data = bytes(range(256)) * 2
     handler = RecordingHandler(
         value_call(Bytes(data=data, media_type="application/octet-stream"))
     )
 
-    value = envelope_of(run(["store", "get"], Operation("store", "get", handler)))[
-        "value"
-    ]
+    invocation = run(
+        ["store", "get", "--save", str(tmp_path)],
+        Operation("store", "get", handler),
+    )
 
+    value = envelope_of(invocation)["value"]
     digest = hashlib.sha256(data).hexdigest()
+
     assert value["delivery_name"] == digest, (
         "an unknown media type yields the bare digest, never a guessed extension"
     )
+    assert not (tmp_path / digest).exists(), (
+        "no delivery copy is written when there is no suffix to deliver"
+    )
+    assert (tmp_path / "artifacts" / digest).is_file(), "the artifact itself is stored"
 
 
 def test_a_pdf_is_named_with_the_pdf_suffix() -> None:

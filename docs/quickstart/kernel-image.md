@@ -383,11 +383,12 @@ $ docflow-kernel image crop <file> --region 10,10,50,50 --save /tmp/crops
 ```
 
 Only `observed.image` changes: it gains the hash of what was written, the path relative
-to the save root, and the `delivery_name` a consumer selects a reader by (the digest
-plus `.png` — the stored file itself keeps no suffix, because a content-addressed
-store's name *is* its identity; see `kernel-pdf.md`'s `render` section). The inverse map,
-the source box and `coordinate_space` are untouched — the record is rebuilt with one
-entry replaced, not replaced wholesale.
+to the save root, and the `delivery_name` a consumer selects a reader by. As with every
+`--save`, **two files with the same bytes land in the tree**: `artifacts/<sha256>` is the
+store's copy (its name *is* its identity, so it carries no suffix) and
+`<sha256>.png` sits at the save root under the suffixed name — see `kernel-pdf.md`'s
+`render` section. The inverse map, the source box and `coordinate_space` are untouched:
+the record is rebuilt with one entry replaced, not replaced wholesale.
 
 The check is honest — `crop` returns `Evidence` with the buffer *inside*
 `observed.image`, and `--save` writes a `Bytes` *value* — which is why the command
