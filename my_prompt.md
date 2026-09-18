@@ -15,26 +15,24 @@ en pdf
 - clasiffy : ver el tema de mixed
 - tokens : tenemos que tener uno que sea el texto como pdftotext --layout 
 
+```bash
+docflow-kernel pdf probe tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf
 
-$ docflow-kernel pdf probe tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf
+docflow-kernel pdf classify tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1
 
-$ docflow-kernel pdf classify tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1
-
-$ docflow-kernel pdf tokens tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf
-
-
-$ docflow-kernel pdf render tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1 --dpi 72 --save /tmp/out
-
-$ docflow-kernel pdf layout tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --pages 1
+docflow-kernel pdf tokens tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf
 
 
-$ docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 1,2
-$ docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 11-22
+docflow-kernel pdf render tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1 --dpi 72 --save /tmp/out
 
-$ docflow-kernel pdf facts <file>
+docflow-kernel pdf layout tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --pages 1
 
-$ docflow-kernel pdf split <a 2-page pdf> --pages 9
 
+docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 1,2
+docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 11-22
+
+s
+```
 ---
 
 add cli examples to 
