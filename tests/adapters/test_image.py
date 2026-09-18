@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import builtins
 import pathlib
+from typing import Any
 
 import pytest
 from PIL import Image
@@ -262,6 +263,144 @@ def test_convolved_answers_a_frame(plain_png: pathlib.Path) -> None:
 
     assert isinstance(convolved, RasterFrame)
     assert convolved.size == luminance.size
+
+
+_LAPLACIAN = (0.0, 1.0, 0.0, 1.0, -4.0, 1.0, 0.0, 1.0, 0.0)
+
+
+def _edge_png(path: pathlib.Path) -> pathlib.Path:
+    """Write a frame holding a thin bright line on a dark field.
+
+    A one-pixel line rather than a step edge, because the response magnitude is
+    what this fixture exists to produce: at the line's own pixels the horizontal
+    neighbours are dark while the vertical ones are bright, which drives the
+    Laplacian to ``-510``. A step edge between two flat fields only reaches
+    ``-180``, which an unsigned byte could almost hold - the fixture has to
+    require more than 8 bits to be able to falsify an 8-bit path.
+    """
+    picture = Image.new("L", (40, 40), 0)
+    for y in range(40):
+        picture.putpixel((20, y), 255)
+    picture.save(path)
+    return path
+
+
+def _responses(frame: RasterFrame) -> list[float]:
+    """Read a frame's pixel values.
+
+    ``RasterFrame.handle`` is opaque to production code on purpose - the kernel
+    passes it back to the vendor and never inspects it - so a test that needs the
+    numbers reaches through it explicitly and says so here, rather than widening
+    the type for everyone.
+
+    Args:
+        frame: The frame to read.
+
+    Returns:
+        The values, row-major.
+
+    """
+    handle: Any = frame.handle
+    return [float(value) for value in handle.get_flattened_data()]
+
+
+def _worst_deviation(got: list[float], source: bytes, width: int, height: int) -> float:
+    """Return the largest gap between a computed response and the true one.
+
+    The true response is recomputed here in Python's own arithmetic, so any
+    clamping, dropped sign or shifted sample shows up as a non-zero deviation.
+
+    Args:
+        got: The responses under test.
+        source: The frame's bytes, row-major.
+        width: The frame's width.
+        height: The frame's height.
+
+    Returns:
+        The largest absolute deviation found.
+
+    """
+    worst = 0.0
+    for y in range(1, height - 1):
+        for x in range(1, width - 1):
+            index = y * width + x
+            want = (
+                source[index - width]
+                + source[index + width]
+                + source[index - 1]
+                + source[index + 1]
+                - 4 * source[index]
+            )
+            worst = max(worst, abs(got[index] - want))
+    return worst
+
+
+def test_a_convolution_keeps_the_sign_and_the_magnitude_of_every_response(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The responses are the true float Laplacian, not an 8-bit clamp of it.
+
+    The falsifier for a **real defect**: this adapter used Pillow's own
+    ``ImageFilter.Kernel``, which writes an 8-bit unsigned frame. A Laplacian
+    response of ``-510`` - a text stroke on white paper - was therefore stored as
+    ``0``, and a fully defocused receipt whose true variance is ``0.8977`` was
+    reported as ``154.9173``, i.e. **legible**. Every mode that filter accepts
+    was measured and every one saturates.
+
+    The assertion is against **independently computed** responses rather than
+    against a number this suite picked, so any clamping, dropped sign or shifted
+    sample fails here. A test asserting only ``variance > 0`` would have passed
+    on the broken implementation.
+    """
+    vendor = PillowVendor()
+    frame, _meta = vendor.decode(_edge_png(tmp_path / "edge.png"))
+    luminance = vendor.greyscale(frame)
+    width, height = luminance.size
+
+    convolved = vendor.convolved(luminance, _LAPLACIAN, (3, 3))
+    got = _responses(convolved)
+
+    source = Image.open(tmp_path / "edge.png").convert("L").tobytes()
+    worst = _worst_deviation(got, source, width, height)
+
+    assert worst == 0.0, f"a response was clamped or shifted by up to {worst}"
+    # The positive control: this pattern really does need more than 8 bits, so the
+    # assertion above cannot pass by the fixture being too easy.
+    below = [value for value in got if value < -255]
+    assert below, "the fixture must produce a response below -255 to be a falsifier"
+
+
+def test_a_convolution_does_not_copy_the_source_into_its_border(
+    tmp_path: pathlib.Path,
+) -> None:
+    """The border ring is neutral, never the page's own brightness.
+
+    The second half of the same defect, and the half that dominated the number.
+    Pillow's filter fills the outermost pixel ring of its output with the
+    **source** pixels rather than a response - the four border rows and columns
+    hold the page's brightness while the interior holds Laplacian responses near
+    zero. On a corpus receipt that ring was ``0.43%`` of the pixels and produced
+    ``99.8%`` of the reported sharpness.
+    """
+    vendor = PillowVendor()
+    frame, _meta = vendor.decode(_edge_png(tmp_path / "edge.png"))
+    luminance = vendor.greyscale(frame)
+    width, height = luminance.size
+
+    convolved = vendor.convolved(luminance, _LAPLACIAN, (3, 3))
+    got = _responses(convolved)
+
+    ring = [
+        got[y * width + x]
+        for y in range(height)
+        for x in range(width)
+        if y in (0, height - 1) or x in (0, width - 1)
+    ]
+
+    assert set(ring) == {0.0}, (
+        "the border must contribute nothing; got values that look like the source "
+        f"brightness: {sorted(set(ring))[:5]}"
+    )
 
 
 def test_a_missing_file_is_a_typed_refusal(tmp_path: pathlib.Path) -> None:

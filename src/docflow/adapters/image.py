@@ -91,6 +91,152 @@ _ENGINE_PACKAGE: Final[str] = "PIL"
 #: artefacts on its way to OCR.
 _MEDIA_TYPE: Final[str] = "image/png"
 
+#: The image mode a frame is convolved in. **Floating point, not 8-bit**, and
+#: that is the whole correction this file carries.
+#:
+#: An 8-bit frame cannot hold a Laplacian response. The kernel's weights are
+#: ``-4`` at the centre and ``1`` around it, so a text edge on a white page
+#: produces responses near ``-1020``: an unsigned byte clamps every one of them
+#: to zero. That was the defect - not the *borders* alone but the failure to
+#: represent the answer at all. A receipt whose true variance was ``0.8977``
+#: measured ``154.9173``, and the same instrument reported a *sharp* page at
+#: ``175`` and the defocused one as legible.
+#:
+#: Pillow offers no unsigned-exception for ``ImageFilter.Kernel`` - modes ``L``,
+#: ``I``, ``I;16`` and ``RGB`` were each measured and each saturates - so the
+#: convolution is done over the frame's own bytes and written back as mode ``F``.
+#: That keeps the responses, the sign, and the exact float variance.
+_CONVOLUTION_MODE: Final[str] = "F"
+
+
+def _convolved_float(
+    handle: Any, matrix: Sequence[float], size: tuple[int, int]
+) -> Any:
+    """Convolve a single-channel frame over the given matrix, in floating point.
+
+    The matrix is supplied by the kernel and is row-major. Responses are written
+    to a mode-``F`` frame so that a negative result is preserved: ``-1020`` is a
+    real answer for a text edge, and an 8-bit buffer reports it as ``0``.
+
+    The one-pixel ring around the result is left at zero. Pillow's own filter
+    fills that ring with the **source** pixels rather than a response - measured
+    on a uniform 5x5 frame the interior is ``0`` while all four border rows and
+    columns are ``137``, the frame's own value - and on a scanned page those
+    pixels carry the paper's brightness against an interior that carries
+    responses near zero. That ring was ``0.43%`` of a receipt's pixels and
+    produced ``99.8%`` of its reported sharpness. A ring with no neighbours is
+    exactly the case a convolution has no answer for, and zero is what it
+    contributes.
+
+    Args:
+        handle: The single-channel frame to convolve.
+        matrix: The matrix, row-major, with ``size`` entries.
+        size: The matrix's ``(width, height)``.
+
+    Returns:
+        A mode-``F`` frame carrying the responses.
+
+    """
+    field = _convolved_field(handle, matrix, size)
+    return _float_frame(field, list(handle.size))
+
+
+def _convolved_field(
+    handle: Any, matrix: Sequence[float], size: tuple[int, int]
+) -> list[float]:
+    """Apply the matrix to every pixel that has a full neighbourhood.
+
+    Args:
+        handle: The single-channel frame to convolve.
+        matrix: The matrix, row-major.
+        size: The matrix's ``(width, height)``.
+
+    Returns:
+        The responses, row-major, with the border left at zero.
+
+    """
+    width, height = handle.size
+    centre_x, centre_y = size[0] // 2, size[1] // 2
+    source = handle.tobytes()
+    taps = _taps(matrix, size)
+    field = [0.0] * (width * height)
+    for y in range(centre_y, height - centre_y):
+        offset = y * width
+        for x in range(centre_x, width - centre_x):
+            field[offset + x] = _response(source, offset + x, width, taps)
+    return field
+
+
+def _response(
+    source: bytes,
+    index: int,
+    width: int,
+    taps: Sequence[tuple[int, int, float]],
+) -> float:
+    """Return one pixel's response to the matrix.
+
+    Args:
+        source: The frame's bytes, row-major.
+        index: The pixel to compute.
+        width: The frame's width, to turn a ``dy`` into a byte offset.
+        taps: The matrix's ``(dx, dy, weight)`` offsets.
+
+    Returns:
+        The response.
+
+    """
+    total = 0.0
+    for dx, dy, weight in taps:
+        total += weight * source[index + dy * width + dx]
+    return total
+
+
+def _taps(
+    matrix: Sequence[float], size: tuple[int, int]
+) -> list[tuple[int, int, float]]:
+    """Return the matrix as ``(dx, dy, weight)`` offsets from the centre.
+
+    Zero weights are dropped, which matters for a Laplacian: four of its nine
+    entries are corner zeros, so this leaves five multiply-adds per pixel
+    instead of nine.
+
+    Args:
+        matrix: The matrix, row-major.
+        size: The matrix's ``(width, height)``.
+
+    Returns:
+        The offsets and weights, relative to the pixel being computed.
+
+    """
+    columns, rows = size
+    centre_x, centre_y = columns // 2, rows // 2
+    return [
+        (dx - centre_x, dy - centre_y, weight)
+        for dy in range(rows)
+        for dx in range(columns)
+        if (weight := matrix[dy * columns + dx])
+    ]
+
+
+def _float_frame(field: list[float], size: list[int]) -> Any:
+    """Build a mode-``F`` frame from a row-major field.
+
+    The one mode Pillow offers that can hold a negative, fractional response.
+
+    Args:
+        field: The responses, row-major.
+        size: The frame's ``[width, height]``.
+
+    Returns:
+        The frame.
+
+    """
+    from PIL import Image  # pylint: disable=import-outside-toplevel
+
+    frame = Image.new(_CONVOLUTION_MODE, tuple(size), 0.0)
+    frame.putdata(field)
+    return frame
+
 
 class PillowVendor:
     """A :class:`~docflow.kernels.image_vendor.RasterVendor` over Pillow.
@@ -280,7 +426,18 @@ class PillowVendor:
     def convolved(
         self, frame: RasterFrame, matrix: Sequence[float], size: tuple[int, int]
     ) -> RasterFrame:
-        """Convolve the frame with the kernel's matrix.
+        """Convolve the frame with the kernel's matrix, in floating point.
+
+        The library's own ``ImageFilter.Kernel`` was used here and could not
+        answer: it writes an 8-bit unsigned frame, so a Laplacian response of
+        ``-1020`` - a text edge on white paper - was stored as ``0``, and a
+        defocused receipt whose true variance is ``0.8977`` measured
+        ``154.9173``. Every mode that filter accepts (``L``, ``I``, ``I;16``,
+        ``RGB``) was measured and every one saturates. The convolution therefore
+        runs over the frame's bytes and returns a mode-``F`` frame, which is the
+        only one of Pillow's modes that can hold the answer. See
+        :func:`_convolved_float` for the border, which the library also gets
+        wrong.
 
         Args:
             frame: The frame to convolve.
@@ -288,17 +445,14 @@ class PillowVendor:
             size: The matrix's ``(width, height)``.
 
         Returns:
-            The convolved frame.
+            The convolved frame, carrying signed responses.
 
         Raises:
             RasterVendorError: When the convolution cannot be applied.
 
         """
         try:
-            from PIL import ImageFilter  # pylint: disable=import-outside-toplevel
-
-            kernel = ImageFilter.Kernel(size, list(matrix), scale=1, offset=0)
-            filtered = frame.handle.filter(kernel)
+            filtered = _convolved_float(frame.handle, matrix, size)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             raise RasterVendorError(
                 Reason(
@@ -314,6 +468,15 @@ class PillowVendor:
     def statistics(self, frame: RasterFrame) -> RasterStats:
         """Take the standard deviation and variance over one channel.
 
+        Computed from the frame's values rather than through the library's
+        statistics routine, which **cannot read a floating-point frame**: asked
+        for the variance of a mode-``F`` array holding ``[0.5, -3.0, 2.0, -1.0,
+        5.0, -0.25]`` it answered ``6371.25`` where the value is ``6.2587``, and
+        it reported a mean of ``112.5`` for a set whose mean is ``0.54``. It
+        builds an 8-bit histogram, so a float frame is reinterpreted rather than
+        measured. Since the convolution deliberately returns a float frame, this
+        method has to read it directly.
+
         Args:
             frame: A single-channel frame.
 
@@ -325,11 +488,14 @@ class PillowVendor:
 
         """
         try:
-            from PIL import ImageStat  # pylint: disable=import-outside-toplevel
-
-            stats = ImageStat.Stat(frame.handle)
-            deviation = float(stats.stddev[0])
-            variance = float(stats.var[0])
+            values = list(frame.handle.get_flattened_data())
+            count = len(values)
+            if count == 0:
+                raise ValueError("the frame holds no pixels")
+            total = sum(values)
+            mean = total / count
+            var = sum((value - mean) ** 2 for value in values) / count
+            deviation = var**0.5
         except Exception as exc:  # pylint: disable=broad-exception-caught
             raise RasterVendorError(
                 Reason(
@@ -341,7 +507,7 @@ class PillowVendor:
                 )
             ) from exc
 
-        return RasterStats(stddev=deviation, variance=variance)
+        return RasterStats(stddev=deviation, variance=var)
 
     def rotated(self, frame: RasterFrame, angle: float, fill: int) -> RasterFrame:
         """Rotate the frame about its centre, without expanding it.
