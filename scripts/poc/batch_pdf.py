@@ -23,8 +23,11 @@ tally, and it is unusable on the 11k-document corpus (`prd.md`) for exactly that
 reason.
 
 **This is not K1.** Like `batch.py`, it composes the adapters for one walk of a
-folder: no ledger, no cache key, no `pause`/`resume`, and re-running re-does the
-work. "Batch" names the shape of the run, not the orchestrator.
+folder: no ledger, no cache key, no `pause`/`resume`. What it *does* have is a
+resume journal (`_mirror.Resume`): a document already routed by this driver under
+these settings is skipped, so a walk killed at document 8 000 does not re-classify
+the first 7 999. That is not the same thing as K1 - there is no stage graph, no
+per-stage key and no derived manifest, and `--redo` throws the journal away.
 
 Per page, not per document
 --------------------------
@@ -71,7 +74,6 @@ Examples:
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import json
 import pathlib
@@ -558,16 +560,12 @@ def main(argv: list[str] | None = None) -> int:
         argv: The command-line arguments, or ``None`` for `sys.argv`.
 
     Returns:
-        The number of problems: mirrored-ness violations plus refused documents.
+        The number of problems: mirrored-ness violations plus refused documents,
+        and **not** the skipped ones - a skip is a question already answered.
 
     """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("input", type=pathlib.Path, help="the folder to walk")
-    parser.add_argument(
-        "--out",
-        type=pathlib.Path,
-        default=None,
-        help="the output root (default: var/poc/batch_pdf)",
+    parser = _mirror.batch_parser(
+        __doc__.splitlines()[0], _lib.DEFAULT_OUT / "batch_pdf"
     )
     parser.add_argument(
         "--pages",
@@ -601,6 +599,18 @@ def main(argv: list[str] | None = None) -> int:
     directories = _mirror.mirror_directories(root, out_root)
     engine = _engine()
 
+    # Everything that decides what a routed page *means*: the target resolution and
+    # the page selection. Change either and a stored answer describes a different
+    # request, so the journal is discarded rather than partially trusted.
+    resume = _mirror.Resume.begin(
+        out_root,
+        "batch_pdf",
+        redo=args.redo,
+        engine="pdf",
+        pages=args.pages,
+        dpi=dpi,
+    )
+
     print(f"in  = {root}")
     print(f"out = {out_root}")
     print(
@@ -611,13 +621,27 @@ def main(argv: list[str] | None = None) -> int:
 
     files = list(_mirror.walk(root))
     pdfs = [path for path in files if _mirror.kind_of(path) == "pdf"]
-    for source in files:
+    for source in pdfs:
+        relative = _mirror.relative_to(source, root)
+        digest = _mirror.digest_of(source)
+        if resume.is_done(relative, digest):
+            print(f" == {relative:44} skipped: already routed by this driver")
+            continue
+
         outcome = process_file(
             engine, source, root, out_root, selection=args.pages, save=save
         )
         if outcome is None:
             continue
         OUTCOMES.append(outcome)
+
+        # A document that was walked is recorded whether or not it exported
+        # anything: *every page is blank* is the kernel's own answer, and K2's route
+        # is deterministic, so re-asking would return the same word. A document that
+        # was **refused** (`note`) is not recorded - a refusal is retried next time.
+        if save and not outcome.note:
+            resume.record(relative, digest, produced=outcome.produced)
+            resume.flush_if_due()
 
         attended = sum(1 for page in outcome.pages if page.route is not None)
         if outcome.produced:
@@ -637,18 +661,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f" .. {outcome.source:44} nothing to export  {shapes}")
 
     print()
-    print("=== the mirror")
     # Only the files this driver walks: a `.md` in the input tree is outside a
     # PDF-only driver's scope, and reporting it as a violation would blame this run
     # for a file it was never asked about.
     problems = _mirror_scope(root, out_root, pdfs)
-    if not problems:
-        print(
-            f" ok {len(pdfs)} PDF(s) and {directories} director(ies) mirrored "
-            "at the same relative paths"
-        )
-    for problem in problems:
-        print(f" !! {problem}")
+    _mirror.report_mirror(problems, len(pdfs), directories, "PDF")
 
     print()
     print(f"{'shape':<14}{'pages':>6}")
@@ -674,13 +691,17 @@ def main(argv: list[str] | None = None) -> int:
         outcome for outcome in OUTCOMES if not outcome.note and not outcome.produced
     ]
     print(f"{len(pdfs)} PDF(s) walked, {written} artifact(s) written.")
+    if resume.reused:
+        print(f"{resume.reused} PDF(s) skipped as already processed.")
     if blank:
         print(f"{len(blank)} document(s) held nothing to export.")
     if refused:
         print(f"{len(refused)} document(s) produced nothing; see the notes above.")
     if not problems and not refused:
         print("every PDF was walked and the tree mirrors exactly.")
+        resume.flush(save)
         return 0
+    resume.flush(save)
     return len(problems) + len(refused)
 
 

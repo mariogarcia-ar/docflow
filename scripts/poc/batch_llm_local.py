@@ -22,8 +22,13 @@ a generation that was cut, or a prompt that did not fit the window, returns a
 plausible object that a consumer cannot tell from a good one.
 
 **This is not K1.** Like `batch.py`, it composes the adapter for one walk of a
-folder: no ledger, no cache key, no `pause`/`resume`. Re-running re-does every
-generation.
+folder: no ledger, no cache key, no `pause`/`resume`. What it *does* have is a
+resume journal (`_mirror.Resume`): a document already extracted by this driver under
+these settings is skipped, so a walk killed at document 8 000 does not re-pay for
+7 999 generations. That matters more here than anywhere else - every other driver's
+unit of work is milliseconds of local measurement, and this one's is a model call.
+It is still not K1: no stage graph, no per-stage key, no derived manifest, and
+`--redo` throws the journal away.
 
 Two modes, because §4 names two requirements
 --------------------------------------------
@@ -507,11 +512,13 @@ def main(argv: list[str] | None = None) -> int:
         The number of problems: mirrored-ness violations, plus refused documents,
         plus the documents whose prompt was truncated. A truncated run is counted
         because its fields describe only the start of each document, and a caller
-        that trusted them would be reading a partial answer.
+        that trusted them would be reading a partial answer. A **skipped** document
+        is not counted - it is a question already answered.
 
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("input", type=pathlib.Path, help="the folder to walk")
+    _mirror.add_resume_flag(parser)
     parser.add_argument(
         "--schema",
         type=pathlib.Path,
@@ -596,7 +603,28 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  -> {_mirror.relative_to(source, root)}")
     print()
 
+    # **The signature covers the model, the schema and the prompt**, and it has to:
+    # the fields a document produced are the answer to *this* model, under *this*
+    # schema, from *this* prompt. Skipping across any of those would silently mix two
+    # answers into one tree and report it as a single run.
+    resume = _mirror.Resume.begin(
+        out_root,
+        "batch_llm_local",
+        redo=args.redo,
+        model=model,
+        mode=args.mode,
+        schema=schema,
+        prompt=prompt_template,
+        engine=f"ollama:{model}",
+    )
+
     for source in files:
+        relative = _mirror.relative_to(source, root)
+        digest = _mirror.digest_of(source)
+        if resume.is_done(relative, digest):
+            print(f" == {relative:44} skipped: fields already extracted")
+            continue
+
         extraction = process_file(
             engine,
             source,
@@ -609,6 +637,15 @@ def main(argv: list[str] | None = None) -> int:
             save=save,
         )
         OUTCOMES.append(extraction)
+
+        # **Only an answer is recorded, and the rule is the whole reason this is
+        # safe.** A refusal - including every `provider_unavailable` of a
+        # credential-less run - is retried next time. Recording it would make a
+        # transient condition permanent: a dry run would mark the corpus done, and a
+        # later credentialed run would skip all of it and report success.
+        if save and extraction.value is not None:
+            resume.record(relative, digest, artifact=extraction.artifact)
+            resume.flush_if_due()
 
         if extraction.value is None:
             print(f" -- {extraction.source:44} {extraction.note}")
@@ -623,17 +660,8 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     print()
-    print("=== the mirror")
-    # Only the files this mode reads: the other kind is outside this run's scope, and
-    # reporting it as a violation would blame the run for a file it was not given.
     problems = _mirror.verify_mirror_for(root, out_root, files)
-    if not problems:
-        print(
-            f" ok {len(files)} document(s) and {directories} director(ies) mirrored "
-            "at the same relative paths"
-        )
-    for problem in problems:
-        print(f" !! {problem}")
+    _mirror.report_mirror(problems, len(files), directories, "document")
 
     print()
     written = sum(1 for item in OUTCOMES if item.artifact is not None)
@@ -644,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"{'documents':<14}{len(OUTCOMES):>6}")
     print(f"{'fields':<14}{written:>6}")
+    print(f"{'skipped':<14}{resume.reused:>6}   (already extracted, not re-asked)")
     print(f"{'refused':<14}{len(refused):>6}")
     print(f"{'cut':<14}{len(cut):>6}")
     print(f"{'truncated':<14}{len(silent):>6}")
@@ -691,7 +720,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if not problems and not refused and not truncated:
         print("every document was extracted and the tree mirrors exactly.")
+        resume.flush(save)
         return 0
+    resume.flush(save)
     return len(problems) + len(refused) + len(truncated)
 
 

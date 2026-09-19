@@ -33,7 +33,10 @@ a driver imports it before `docflow` is on `sys.path`.
 
 from __future__ import annotations
 
+import argparse
 import contextlib
+import dataclasses
+import hashlib
 import io
 import json
 import pathlib
@@ -42,11 +45,18 @@ from typing import Any, Final
 
 __all__: list[str] = [
     "IMAGE_SUFFIXES",
+    "JOURNAL_NAME",
     "PDF_SUFFIXES",
+    "Resume",
+    "add_resume_flag",
+    "batch_parser",
+    "digest_of",
     "directory_problems",
     "kind_of",
     "mirror_directories",
     "relative_to",
+    "report_mirror",
+    "signature_of",
     "silently",
     "verify_mirror",
     "verify_mirror_for",
@@ -108,6 +118,15 @@ def walk(root: pathlib.Path) -> Iterator[pathlib.Path]:
     Sorted rather than filesystem order, so two runs of the same tree produce the
     same report and a diff between them means something.
 
+    The resume journal is **excluded by name**. It is written into an output root,
+    and an output root is a legitimate input for a later driver (`batch_llm_local.py`
+    reads `batch_pdf.py`'s tree) - so without this exclusion one driver would walk
+    its own or another's journal and report it as a document. The `.skipped.json`
+    records are deliberately *not* excluded: they are per-document findings, and a
+    consumer that walks a tree should see them (the suffix-selecting drivers filter
+    them by the suffix their mode reads, which is a statement about their scope
+    rather than about this walk).
+
     Args:
         root: The directory to walk.
 
@@ -116,7 +135,11 @@ def walk(root: pathlib.Path) -> Iterator[pathlib.Path]:
 
     """
     yield from sorted(
-        (path for path in root.rglob("*") if path.is_file()),
+        (
+            path
+            for path in root.rglob("*")
+            if path.is_file() and path.name != JOURNAL_NAME
+        ),
         key=lambda path: path.relative_to(root).as_posix(),
     )
 
@@ -143,6 +166,387 @@ def silently(call: Callable[..., Any], *args: object, **kwargs: object) -> Any:
     sink = io.StringIO()
     with contextlib.redirect_stdout(sink):
         return call(*args, **kwargs)
+
+
+def digest_of(path: pathlib.Path) -> str:
+    """Fingerprint a file's bytes, so a re-run can tell it apart from itself.
+
+    The journal is only sound if an **edited input is reprocessed**. A signature over
+    the driver's settings catches *the run changed*; this catches *the file changed*,
+    and the two are independent - a caller who re-exports a PDF under the same name
+    has changed the input without changing any flag.
+
+    Args:
+        path: The file to fingerprint.
+
+    Returns:
+        A hex digest, or ``""`` when the file could not be read. An empty digest is
+        **not a stand-in for content**: `Resume.is_done` treats it as *cannot be
+        signed, therefore never skipped*, so an unreadable file is attempted rather
+        than assumed unchanged.
+
+    """
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+    except OSError:
+        return ""
+    return digest.hexdigest()
+
+
+def signature_of(**parts: object) -> str:
+    """Fingerprint the settings a run was made under.
+
+    **The whole safety of skipping rests on this.** A journal keyed only by path
+    would report a document as done after a run that used a different model, a
+    different page selection or a different target resolution - and the second run's
+    output would be a mix of two configurations that nothing distinguishes.
+
+    The parts are canonicalised (`sort_keys`) and hashed, so adding a setting to a
+    driver is one keyword and cannot accidentally reorder anything.
+
+    Args:
+        **parts: The settings that decide the output, e.g. ``model=``, ``pages=``,
+            ``mode=``. Values must be JSON-encodable; a mapping's **content** is
+            covered, so changing a schema changes the signature.
+
+    Returns:
+        A hex digest.
+
+    """
+    canonical = json.dumps(parts, sort_keys=True, default=repr)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+#: The resume journal's filename, inside an output root. Hidden, and excluded from
+#: `walk` by name, because a tree this module helped write is a legitimate input to
+#: another driver.
+JOURNAL_NAME: Final[str] = ".batch_journal.json"
+
+
+@dataclasses.dataclass(slots=True)
+class Resume:
+    """The record of what a previous run of the **same** driver already finished.
+
+    Why this exists
+    ---------------
+
+    Every driver here documents *"no ledger, no cache key, no `pause`/`resume`"*, and
+    that was true: killing a walk over 11k documents (`prd.md`) and starting it again
+    re-paid for every document, which on K4 is an ONNX load per file and on K6 is
+    money. This is the smallest thing that closes that - **not** K1. It has no stage
+    graph, no cache key per stage and no derived manifest; it answers one question,
+    *was this file already answered, by this driver, under these settings*.
+
+    What it refuses to do
+    ---------------------
+
+    - **A refusal is never recorded.** Only a file that produced its output is
+      marked done. Otherwise a transient condition becomes permanent: a K6 run with
+      no credential refuses *every* document with `provider_unavailable`, and a
+      journal written from it would make a later credentialed run skip the entire
+      corpus and report success. The same argument covers a render refused for
+      `insufficient_effective_resolution` and a legibility gate that found no
+      sidecar. A refusal is retried on the next run, always.
+    - **A changed input is not skipped.** The entry carries the file's own digest.
+    - **A changed signature is not used at all.** Settings that differ make this a
+      different run, so the journal is discarded rather than partially trusted - and
+      `stale` says so, because a run that silently ignored its journal would look
+      like a run that had nothing to resume.
+
+    Attributes:
+        path: The journal file.
+        driver: The driver's name, so two drivers pointed at one output root do not
+            read each other's entries.
+        signature: This run's settings fingerprint.
+        entries: The recorded entries, keyed by the input's relative path.
+        reused: How many files this run skipped, counted as they are asked about.
+        stale: Whether a journal existed and was discarded for a different
+            signature.
+
+    """
+
+    path: pathlib.Path
+    driver: str
+    signature: str
+    entries: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
+    reused: int = 0
+    stale: bool = False
+    _unflushed: int = 0
+
+    @classmethod
+    def open(
+        cls,
+        out_root: pathlib.Path,
+        driver: str,
+        signature: str,
+        *,
+        redo: bool = False,
+    ) -> Resume:
+        """Load the journal a previous run of this driver left, if it is usable.
+
+        Args:
+            out_root: The output root the run writes into.
+            driver: The driver's own name.
+            signature: This run's settings fingerprint, from `signature_of`.
+            redo: ``True`` to ignore the journal entirely - the caller asked for
+                every file again.
+
+        Returns:
+            The journal, empty when there was none, when it belonged to another
+            driver or another signature, or when `redo` was asked for.
+
+        """
+        target = out_root / JOURNAL_NAME
+        if redo:
+            return cls(target, driver, signature)
+        try:
+            stored = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # Absent, unreadable or corrupt: no resumption either way, and never a
+            # guess about which entries were good. A corrupt journal costs a full
+            # re-run, which is the safe direction.
+            return cls(target, driver, signature)
+
+        if stored.get("driver") != driver or stored.get("signature") != signature:
+            return cls(target, driver, signature, stale=True)
+
+        entries = stored.get("entries")
+        if not isinstance(entries, dict):
+            return cls(target, driver, signature, stale=True)
+        return cls(target, driver, signature, entries=entries)
+
+    def is_done(self, relative: str, digest: str) -> bool:
+        """Whether a previous run already answered for this file, unchanged.
+
+        Args:
+            relative: The input's path relative to the walk's root.
+            digest: The input's own fingerprint, from `digest_of`.
+
+        Returns:
+            ``True`` when the entry exists and was recorded against the same bytes.
+            An empty digest is never done - an unsignable file is attempted.
+
+        """
+        if not digest:
+            return False
+        entry = self.entries.get(relative)
+        if entry is None or entry.get("digest") != digest:
+            return False
+        self.reused += 1
+        return True
+
+    def record(self, relative: str, digest: str, **facts: object) -> None:
+        """Mark a file as answered, with the facts that make the entry checkable.
+
+        Args:
+            relative: The input's path relative to the walk's root.
+            digest: The input's fingerprint. An empty digest records nothing,
+                because an entry that cannot be invalidated is worse than no entry.
+            **facts: What the driver wants a later reader to see - the artifact it
+                wrote, and whatever measurement the entry turns on.
+
+        """
+        if not digest:
+            return
+        self.entries[relative] = {"digest": digest, **facts}
+        self._unflushed += 1
+
+    def flush_if_due(self, every: int = 100) -> None:
+        """Write the journal once every `every` recorded files.
+
+        Rewriting it per file would cost O(n) bytes per file, which on an 11k-document
+        corpus is a quadratic amount of writing for a bookkeeping file. Waiting until
+        the end would lose the entire record to one Ctrl-C - and losing it is exactly
+        what this exists to prevent. The middle of those two is a periodic flush.
+
+        Args:
+            every: How many records may accumulate before a write. ``0`` disables the
+                periodic write, leaving only the final one.
+
+        """
+        if every > 0 and self._unflushed >= every:
+            self.flush()
+
+    def flush(self, saving: bool = True) -> pathlib.Path | None:
+        """Write the journal, atomically enough that a kill cannot truncate it.
+
+        A run that is killed half way leaves a journal covering the files it did
+        finish, which is the whole point - so this is called as the walk goes rather
+        than once at the end, and the write is a rename so a kill during it leaves
+        the previous journal intact instead of a half-written one.
+
+        **A `--no-save` run writes nothing, and this is where that is enforced.** The
+        flag means *do not write output*, and a journal is output: a dry run that
+        left one would make the next real run skip exactly the files the dry run
+        declined to write. Enforcing it here rather than at each of the six callers
+        is why the callers have no `if` around it.
+
+        Args:
+            saving: Whether this run writes output at all - i.e. ``not --no-save``.
+
+        Returns:
+            The path written, or ``None`` when the run is not saving.
+
+        """
+        if not saving:
+            return None
+        payload = {
+            "driver": self.driver,
+            "signature": self.signature,
+            "entries": self.entries,
+        }
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        staging = self.path.with_name(self.path.name + ".tmp")
+        staging.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True),
+            encoding="utf-8",
+        )
+        staging.replace(self.path)
+        self._unflushed = 0
+        return self.path
+
+    def footer(self) -> str:
+        """One line describing what this run reused, for the console.
+
+        Returns:
+            A sentence. It names the signature mismatch when there was one, because
+            a discarded journal otherwise reads identically to an absent one.
+
+        """
+        if self.stale:
+            return (
+                "the previous run used different settings, so nothing was skipped "
+                "and the journal has been restarted"
+            )
+        if not self.reused:
+            return "nothing to resume: no entry matched an unchanged input"
+        return f"{self.reused} file(s) skipped: already processed by this driver"
+
+    def announce(self) -> None:
+        """Print the mismatch when there is one, and a blank line either way.
+
+        A discarded journal has to be announced: a run that silently ignored its own
+        previous result looks identical to a run that had nothing to resume, and the
+        reader has no way to tell *the settings changed* from *this is a fresh
+        corpus*. Six drivers print this line, so it is stated once.
+
+        """
+        if self.stale:
+            print("the previous run used different settings: nothing will be skipped")
+        print()
+
+    @classmethod
+    def begin(
+        cls,
+        out_root: pathlib.Path,
+        driver: str,
+        *,
+        redo: bool,
+        **settings: object,
+    ) -> Resume:
+        """Open this run's journal and announce a discarded one, in one call.
+
+        The two steps always happen together - a caller that opened a journal and
+        forgot to mention it was stale would hide the fact from the operator - so
+        they are one call rather than two the six drivers must remember to pair.
+
+        Args:
+            out_root: The output root the run writes into.
+            driver: The driver's own name.
+            redo: ``True`` when the caller asked for every file again.
+            **settings: Everything that decides what this run's output *means*; see
+                `signature_of`.
+
+        Returns:
+            The journal, ready to ask `is_done` and to `record` into.
+
+        """
+        resume = cls.open(out_root, driver, signature_of(**settings), redo=redo)
+        resume.announce()
+        return resume
+
+
+def add_resume_flag(parser: argparse.ArgumentParser) -> None:
+    """Declare ``--redo`` on a driver's argument parser.
+
+    One grammar, one owner - the same discipline `commands/pages.py::parse_pages`
+    imposes on ``--pages``. Six drivers declare this flag; six copies of its name and
+    help text is six places for them to drift apart, and a driver whose spelling
+    differed would refuse a flag the others accept.
+
+    Args:
+        parser: The driver's parser.
+
+    """
+    parser.add_argument(
+        "--redo",
+        action="store_true",
+        help="ignore the resume journal and process every file again",
+    )
+
+
+def batch_parser(
+    description: str, default_out: pathlib.Path
+) -> argparse.ArgumentParser:
+    """Build the parser every batch driver shares: an input root, ``--redo``, ``--out``.
+
+    The three flags are the walk itself rather than any kernel's business, and six
+    hand-written copies of them is where an option silently diverges - `--out`
+    documented in one driver and absent from another is a defect this repo has
+    already paid for once (`kernel-cli.sh`'s `--out`). A driver appends its own
+    kernel-specific flags to what this returns.
+
+    Args:
+        description: The driver's one-line summary.
+        default_out: Where this driver writes when ``--out`` is not given.
+
+    Returns:
+        The parser, with the shared arguments already declared.
+
+    """
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument("input", type=pathlib.Path, help="the folder to walk")
+    add_resume_flag(parser)
+    parser.add_argument(
+        "--out",
+        type=pathlib.Path,
+        default=None,
+        help=f"the output root (default: {default_out})",
+    )
+    return parser
+
+
+def report_mirror(
+    problems: Sequence[str], walked: int, directories: int, noun: str
+) -> None:
+    """Print the mirror check's verdict.
+
+    The mirror is the deliverable of every driver here (`FR-28`, `S3-T06`), so all
+    six report it the same way: the count of what was walked, the count of
+    directories the tree holds even where they are empty, and one line per
+    violation. Stated once because the *wording* is part of the contract - a driver
+    that printed its violations without a heading would read as a different check.
+
+    Args:
+        problems: What the driver's own verification returned; empty when exact.
+        walked: How many files the driver was responsible for.
+        directories: How many directories the output holds, the root included.
+        noun: What those files are called in this driver's scope - ``"image"``,
+            ``"PDF"``, ``"document"`` or ``"file"``.
+
+    """
+    print()
+    print("=== the mirror")
+    if not problems:
+        print(
+            f" ok {walked} {noun}(s) and {directories} director(ies) mirrored "
+            "at the same relative paths"
+        )
+    for problem in problems:
+        print(f" !! {problem}")
 
 
 def mirror_directories(root: pathlib.Path, out_root: pathlib.Path) -> int:

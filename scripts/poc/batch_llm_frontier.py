@@ -24,7 +24,17 @@ it cannot ask a model to adjudicate them, because that costs a frontier request 
 document and a batch is the only shape in which that is affordable or auditable.
 
 **This is not K1.** Like `batch.py`, it composes the adapter for one walk of a folder:
-no ledger, no cache key, no `pause`/`resume`. Re-running re-pays for every request.
+no ledger, no cache key, no `pause`/`resume`. What it *does* have is a resume journal
+(`_mirror.Resume`): a document already assessed by this driver under these settings is
+skipped, so a walk killed at document 8 000 does not **re-pay** for 7 999 frontier
+requests. That is the strongest case for the journal anywhere here - the unit of work
+is money. It is still not K1: no stage graph, no per-stage key, no derived manifest,
+and `--redo` throws the journal away.
+
+**Nothing refused is ever recorded.** A credential-less run refuses *every* document
+with `provider_unavailable`; if those refusals were journalled, a later run with a key
+would skip the whole corpus and report success. So a dry run leaves an empty journal,
+and the credit it earns is exactly zero - which is the honest amount.
 
 Why this driver works without a credential, and what it can still do
 --------------------------------------------------------------------
@@ -98,7 +108,6 @@ To measure for real, export a key and re-run:
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import json
 import os
@@ -514,8 +523,9 @@ def main(argv: list[str] | None = None) -> int:
         reporting it as one is how a dry run gets mistaken for a verified corpus.
 
     """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("input", type=pathlib.Path, help="the folder that was walked")
+    parser = _mirror.batch_parser(
+        __doc__.splitlines()[0], _lib.DEFAULT_OUT / "batch_llm_frontier"
+    )
     parser.add_argument(
         "--fields",
         type=pathlib.Path,
@@ -584,9 +594,28 @@ def main(argv: list[str] | None = None) -> int:
     print(f"out = {out_root}")
     print(f"mode = {args.mode}    model = {model}    save = {save}")
     print()
-
     files = [path for path in _mirror.walk(root) if _mirror.kind_of(path) != "invalid"]
+
+    # The model and the mode decide what an assessment *is*; the local fields it
+    # judged are inputs this driver reads rather than produces, so they are covered by
+    # the document's own digest and by `find_fields` re-reading them. Change the model
+    # and every stored verdict answers a different question, so the journal is
+    # discarded rather than partially trusted.
+    resume = _mirror.Resume.begin(
+        out_root,
+        "batch_llm_frontier",
+        redo=args.redo,
+        model=model,
+        mode=args.mode,
+    )
+
     for source in files:
+        relative = _mirror.relative_to(source, root)
+        digest = _mirror.digest_of(source)
+        if resume.is_done(relative, digest):
+            print(f" == {relative:44} skipped: already assessed by this driver")
+            continue
+
         assessment = process_document(
             engine,
             source,
@@ -600,6 +629,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         OUTCOMES.append(assessment)
 
+        # **Only a real contrast is recorded**, for the reason the module docstring
+        # gives: a refusal is a transient condition, and journalling one would let a
+        # credential-less dry run silence the corpus for every later run.
+        if save and assessment.contrasted:
+            resume.record(relative, digest, artifact=assessment.artifact)
+            resume.flush_if_due()
+
         if assessment.note.startswith("not contrasted"):
             print(f" .. {assessment.source:44} {assessment.note}")
         elif assessment.contrasted:
@@ -611,15 +647,8 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     print()
-    print("=== the mirror")
     problems = _mirror.verify_mirror_for(root, out_root, files)
-    if not problems:
-        print(
-            f" ok {len(files)} document(s) and {directories} director(ies) mirrored "
-            "at the same relative paths"
-        )
-    for problem in problems:
-        print(f" !! {problem}")
+    _mirror.report_mirror(problems, len(files), directories, "document")
 
     print()
     contrasted = [item for item in OUTCOMES if item.contrasted]
@@ -632,6 +661,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"{'documents':<14}{len(files):>6}")
     print(f"{'contrasted':<14}{len(contrasted):>6}")
+    print(f"{'skipped':<14}{resume.reused:>6}   (already assessed, not re-asked)")
     print(f"{'no fields':<14}{len(missing):>6}")
     print(f"{'no assessment':<14}{len(refused):>6}")
     print()
@@ -656,7 +686,9 @@ def main(argv: list[str] | None = None) -> int:
         return len(problems) + len(missing) + len(refused)
     if not problems and not missing and not refused:
         print("every document was contrasted and the tree mirrors exactly.")
+        resume.flush(save)
         return 0
+    resume.flush(save)
     return len(problems) + len(missing) + len(refused)
 
 

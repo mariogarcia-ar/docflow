@@ -78,7 +78,9 @@ Each probe declares the bucket it expects (`expect=`), so `run_all.py` can tell
 `_lib.py` is the reporting contract and `_mirror.py` is the folder-in/mirrored-tree-out
 plumbing the three batch drivers share (the walk, the skip records, `verify_mirror` for
 a whole tree and `verify_mirror_for` for a scope-limited one). Neither is a driver, and
-neither is probed by `run_all.py`.
+neither is probed by `run_all.py`. `_mirror.py` also owns the **resume journal**
+(`Resume`, `signature_of`, `add_resume_flag`, `batch_parser`, `report_mirror`) that every
+`batch_*.py` now uses — see *Resuming an interrupted walk* below.
 
 `run_all.py` aggregates the five **probe** drivers. `batch.py`, `batch_pdf.py`,
 `batch_image.py`, `batch_ocr.py` and `hitl.py` are run explicitly, because they take
@@ -128,6 +130,9 @@ python scripts/poc/batch_llm_local.py <input-dir> --schema FIELDS.json [--out <o
 python scripts/poc/batch_llm_frontier.py <input-dir> --fields <local-out-dir> [--out <out-dir>] [--mode judge|vision]
 python scripts/poc/hitl.py        <input-dir> --out <out-dir>
 ```
+
+Every `batch_*.py` also takes `--redo` (ignore the resume journal) and writes
+`.batch_journal.json` into its output root.
 
 ### `batch_llm_local.py` extracts fields, and reports a silence
 
@@ -185,6 +190,39 @@ not a clean run.
 `judge` **cannot see the image**: introspected, its signature has no `images`
 parameter and it delegates to `structured`. It grades a transcript. `--mode vision` is
 the branch that reads pixels.
+
+### Resuming an interrupted walk: the journal every `batch_*.py` writes
+
+Every driver here used to document *"no ledger, no cache key, no `pause`/`resume`"*, and
+that was accurate: killing a walk over the 11k-document corpus and starting it again
+re-read, re-classified or **re-paid for** every document. All six now write
+`.batch_journal.json` into their output root, and a file already processed under the
+same settings is skipped on the next run.
+
+This is **not** K1 and does not pretend to be. There is no stage graph, no cache key per
+stage, no derived manifest and no control file. It answers one question: *was this file
+already answered, by this driver, under these settings?*
+
+| Property | How it is guaranteed |
+|---|---|
+| a changed setting re-does the work | `signature_of(**settings)` — model, schema, prompt, page selection, target DPI, region, render DPI, page cap, registry assets. Any change discards the **whole** journal and says so on the console |
+| a changed input re-does the work | the entry carries the file's own sha256 (`digest_of`) |
+| a refusal is retried, always | **only a produced output is recorded**. A dry run with no frontier key, a protected PDF, an illegible scan or a `region` K3 rejects leave no entry — otherwise a transient condition would become permanent, and a later credentialed run would skip the whole corpus and report success |
+| a dry run leaves nothing behind | `--no-save` writes no journal (`Resume.flush(saving=)`), so a dry run cannot make the next real run skip what it declined to write |
+| a kill does not lose the record | the journal is re-written every 100 recorded files (`flush_if_due`) and each write is a rename, so an interrupted run keeps everything it finished |
+| two drivers in one output root do not collide | the journal names its `driver`, and its entries are keyed by the input's relative path |
+| the journal is not walked as a document | `_mirror.walk` excludes `JOURNAL_NAME` by name — an output root is a legitimate *input* for the next driver |
+
+`--redo` ignores the journal and processes everything again. It is declared once, by
+`_mirror.add_resume_flag`, so all six drivers accept the same spelling.
+
+A second run then reads:
+
+```
+ == a.jpeg                       skipped: already read by this driver
+2 image(s) walked, 0 text file(s) written.
+2 image(s) skipped as already processed.
+```
 
 ### `batch_ocr.py` isolates the expensive, non-deterministic step
 

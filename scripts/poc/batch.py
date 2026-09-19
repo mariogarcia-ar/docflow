@@ -30,6 +30,19 @@ not trying to. What it does is compose the adapters the way the flow describes, 
 one walk of a folder - which is the piece none of the single-kernel drivers can do,
 because each of them proves one adapter in isolation.
 
+What it *does* have is a **resume journal** (`_mirror.Resume`): a file already
+processed under these settings is skipped, so a walk killed at document 8 000 does
+not pay for ONNX and a generation again on the first 7 999. That is the one thing
+K1's ledger exists for and this driver cannot do without: a full-corpus run is
+defined by the fact that it will be interrupted. It is still not a ledger - no stage
+graph, no per-stage cache key, no derived manifest - and `--redo` throws it away.
+
+**A refusal is never journalled**, and here that is load-bearing rather than tidy:
+a password-protected PDF, an illegible scan and a `.md` are all *the flow working*,
+and marking any of them done would turn a transient condition into a permanent one.
+They are re-asked on every run, which is also what makes the skip safe to add to a
+driver whose output a consumer treats as a corpus answer.
+
 Where the pieces come from, since none of this is re-invented here:
 
 - **classification** - `_mirror.kind_of`, whose vocabulary `batch_pdf.py` shares;
@@ -57,7 +70,6 @@ distinguishable when both are pointed at one folder.
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import json
 import pathlib
@@ -963,17 +975,11 @@ def main(argv: list[str] | None = None) -> int:
         argv: The command-line arguments, or ``None`` for ``sys.argv``.
 
     Returns:
-        The number of problems: mirrored-ness violations plus file refusals.
+        The number of problems: mirrored-ness violations plus file refusals, and
+        **not** the skipped ones - a skip is a question already answered.
 
     """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("input", type=pathlib.Path, help="the folder to walk")
-    parser.add_argument(
-        "--out",
-        type=pathlib.Path,
-        default=None,
-        help="the output root (default: var/poc/batch)",
-    )
+    parser = _mirror.batch_parser(__doc__.splitlines()[0], _lib.DEFAULT_OUT / "batch")
     args = parser.parse_args(argv)
 
     root: pathlib.Path = args.input
@@ -997,11 +1003,41 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     files = list(walk(root))
+
+    # Everything that decides what the output *means*: the field model, the registry
+    # assets the prompt and schema are read from, the render target and the page cap.
+    # A stored `.json` produced under a different model answers a different question,
+    # so the journal is discarded rather than partially trusted.
+    assets, _ = _assets()
+    resume = _mirror.Resume.begin(
+        out_root,
+        "batch",
+        redo=args.redo,
+        field_model=FIELD_MODEL,
+        assets=assets,
+        render_dpi=RENDER_DPI,
+        max_pages=MAX_PAGES,
+    )
+
     for source in files:
+        relative = _relative_to(source, root)
+        digest = _mirror.digest_of(source)
+        if resume.is_done(relative, digest):
+            print(f" == {relative:52} skipped: already processed by this driver")
+            continue
+
         outcome = process_file(
             source, root, out_root, pdf_engine, ocr_engine, raster_engine
         )
         OUTCOMES.append(outcome)
+
+        # **Only a file that produced text is recorded.** That single condition covers
+        # all three of §6's deliberate refusals - the invalid kind, the protected PDF,
+        # and a page the legibility gate sent aside - because none of them writes a
+        # `.txt`. A refusal is retried on the next run, always.
+        if outcome.text_path is not None:
+            resume.record(relative, digest, text=outcome.text_path)
+            resume.flush_if_due()
 
         if outcome.text_path is None:
             print(f" -- {outcome.source:52} {outcome.kind:7} {outcome.note}")
@@ -1033,16 +1069,8 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     print()
-    print("=== the mirror")
     problems = verify_mirror(root, out_root)
-    if problems:
-        for problem in problems:
-            print(f" !! {problem}")
-    else:
-        print(
-            f" ok {len(files)} file(s) and {directories} director(ies) mirrored "
-            "at the same relative paths"
-        )
+    _mirror.report_mirror(problems, len(files), directories, "file")
 
     print()
     print(f"{'file':<10}{'count':>6}")
@@ -1082,6 +1110,7 @@ def main(argv: list[str] | None = None) -> int:
     # in the one place a reader looks for the run's verdict.
     partial = sum(1 for outcome in OUTCOMES if outcome.partial)
     print(f"{'skipped':<10}{skipped:>6}   (refused on purpose, each with its reason)")
+    print(f"{'reused':<10}{resume.reused:>6}   (already processed, not re-read)")
     print(f"{'failed':<10}{failed:>6}   (in scope and produced nothing)")
     print(
         f"{'no fields':<10}{unextracted:>6}   (text read, but the model produced none)"
@@ -1094,7 +1123,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not problems and not failed and not unextracted and not partial:
         print("every file was answered and the tree mirrors exactly.")
+        resume.flush()
         return 0
+    resume.flush()
     return len(problems) + failed + unextracted + partial
 
 

@@ -21,8 +21,11 @@ and one `legibility` per image and needs no engine downstream of K3, which is wh
 makes this usable on the 11k-document corpus (`prd.md`) where `batch.py` is not.
 
 **This is not K1.** Like `batch.py`, it composes the adapters for one walk of a
-folder: no ledger, no cache key, no `pause`/`resume`, and re-running re-does the
-work. "Batch" names the shape of the run, not the orchestrator.
+folder: no ledger, no cache key, no `pause`/`resume`. What it *does* have is a
+resume journal (`_mirror.Resume`): an image already measured by this driver under
+these settings is skipped, so a walk killed at image 8 000 does not re-measure the
+first 7 999. That is not the same thing as K1 - there is no stage graph, no
+per-stage key and no derived manifest, and `--redo` throws the journal away.
 
 The image is the unit, and there are no sub-units
 -------------------------------------------------
@@ -89,7 +92,6 @@ Examples:
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import json
 import pathlib
@@ -765,16 +767,12 @@ def main(argv: list[str] | None = None) -> int:
         argv: The command-line arguments, or ``None`` for `sys.argv`.
 
     Returns:
-        The number of problems: mirrored-ness violations plus refused images.
+        The number of problems: mirrored-ness violations plus refused images, and
+        **not** the skipped ones - a skip is a question already answered.
 
     """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("input", type=pathlib.Path, help="the folder to walk")
-    parser.add_argument(
-        "--out",
-        type=pathlib.Path,
-        default=None,
-        help="the output root (default: var/poc/batch_image)",
+    parser = _mirror.batch_parser(
+        __doc__.splitlines()[0], _lib.DEFAULT_OUT / "batch_image"
     )
     parser.add_argument(
         "--region",
@@ -819,6 +817,19 @@ def main(argv: list[str] | None = None) -> int:
     directories = _mirror.mirror_directories(root, out_root)
     engine = _engine()
 
+    # Every setting that decides what a measurement means: the target resolution, the
+    # region, and the resolution the caller asserts the pixels hold. Change one and a
+    # stored record describes a different request.
+    resume = _mirror.Resume.begin(
+        out_root,
+        "batch_image",
+        redo=args.redo,
+        engine="pillow",
+        target_dpi=target_dpi,
+        region=args.region,
+        assumed_dpi=args.assumed_dpi,
+    )
+
     threshold = image_driver.policy_threshold()
     print(f"in  = {root}")
     print(f"out = {out_root}")
@@ -838,7 +849,13 @@ def main(argv: list[str] | None = None) -> int:
 
     files = list(_mirror.walk(root))
     images = [path for path in files if _mirror.kind_of(path) == "image"]
-    for source in files:
+    for source in images:
+        relative = _mirror.relative_to(source, root)
+        digest = _mirror.digest_of(source)
+        if resume.is_done(relative, digest):
+            print(f" == {relative:44} skipped: already measured by this driver")
+            continue
+
         outcome = process_file(
             engine,
             source,
@@ -852,6 +869,13 @@ def main(argv: list[str] | None = None) -> int:
         if outcome is None:
             continue
         OUTCOMES.append(outcome)
+
+        # Only a measurement that landed is recorded. A refusal - `info` refused, or
+        # the crop's region rejected - is retried next time, because recording it
+        # would turn a transient condition into a permanent one.
+        if save and outcome.legibility in {"ok", "illegible"}:
+            resume.record(relative, digest, artifacts=list(outcome.artifacts))
+            resume.flush_if_due()
 
         size = f"{outcome.width}x{outcome.height}" if outcome.width else "unmeasured"
         sharp = f"{outcome.sharpness:.4f}" if outcome.sharpness is not None else "none"
@@ -871,18 +895,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"      {outcome.note}")
 
     print()
-    print("=== the mirror")
     # Only the files this driver walks: a `.pdf` in the input tree is outside an
     # image-only driver's scope, and reporting it as a violation would blame this run
     # for a file it was never asked about.
     problems = _mirror.verify_mirror_for(root, out_root, images)
-    if not problems:
-        print(
-            f" ok {len(images)} image(s) and {directories} director(ies) mirrored "
-            "at the same relative paths"
-        )
-    for problem in problems:
-        print(f" !! {problem}")
+    _mirror.report_mirror(problems, len(images), directories, "image")
 
     print()
     print(f"{'legibility':<14}{'images':>7}")
@@ -908,6 +925,8 @@ def main(argv: list[str] | None = None) -> int:
     illegible = [o for o in OUTCOMES if o.legibility == "illegible"]
     below = [o for o in OUTCOMES if o.note.startswith("below the floor")]
     print(f"{len(images)} image(s) walked, {written} artifact(s) written.")
+    if resume.reused:
+        print(f"{resume.reused} image(s) skipped as already processed.")
     if illegible:
         print(f"{len(illegible)} image(s) measured illegible.")
     if below:
@@ -921,7 +940,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(refused)} image(s) produced no measurement; see the notes above.")
     if not problems and not refused:
         print("every image was walked and the tree mirrors exactly.")
+        resume.flush(save)
         return 0
+    resume.flush(save)
     return len(problems) + len(refused)
 
 

@@ -31,8 +31,11 @@ inspected **on its own** - before a model, before a verdict - and it is the only
 to see what the recogniser produced rather than what a pipeline did with it.
 
 **This is not K1.** Like `batch.py`, it composes the adapter for one walk of a
-folder: no ledger, no cache key, no `pause`/`resume`, and re-running re-reads
-everything. "Batch" names the shape of the run, not the orchestrator.
+folder: no ledger, no cache key, no `pause`/`resume`. What it *does* have is a
+resume journal (`_mirror.Resume`): a file already read by this driver under these
+settings is skipped, so a walk killed at document 8 000 does not pay for ONNX again
+on the first 7 999. That is not the same thing as K1 - there is no stage graph, no
+per-stage key and no derived manifest, and `--redo` throws the journal away.
 
 One image is one read, and the read answers for its single page
 ---------------------------------------------------------------
@@ -112,7 +115,6 @@ Examples:
 
 from __future__ import annotations
 
-import argparse
 import dataclasses
 import json
 import pathlib
@@ -430,16 +432,12 @@ def main(argv: list[str] | None = None) -> int:
         argv: The command-line arguments, or ``None`` for `sys.argv`.
 
     Returns:
-        The number of problems: mirrored-ness violations plus refused images.
+        The number of problems: mirrored-ness violations plus refused images, and
+        **not** the skipped ones - a skip is a question already answered.
 
     """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("input", type=pathlib.Path, help="the folder to walk")
-    parser.add_argument(
-        "--out",
-        type=pathlib.Path,
-        default=None,
-        help="the output root (default: var/poc/batch_ocr)",
+    parser = _mirror.batch_parser(
+        __doc__.splitlines()[0], _lib.DEFAULT_OUT / "batch_ocr"
     )
     parser.add_argument(
         "--pages",
@@ -477,6 +475,19 @@ def main(argv: list[str] | None = None) -> int:
     directories = _mirror.mirror_directories(root, out_root)
     engine = _engine()
 
+    # The signature covers everything that decides what a reading *means*. Change any
+    # of it and a stored reading answers a different question, so the journal is
+    # discarded rather than partially trusted.
+    resume = _mirror.Resume.begin(
+        out_root,
+        "batch_ocr",
+        redo=args.redo,
+        engine="docling",
+        lang=lang,
+        pages=args.pages,
+        dpi=72,
+    )
+
     print(f"in  = {root}")
     print(f"out = {out_root}")
     print(f"lang = {lang!r}    pages = {args.pages or '1'}    save = {save}")
@@ -489,12 +500,25 @@ def main(argv: list[str] | None = None) -> int:
     # that said nothing would read as a broken driver rather than as a scope decision.
     declined = [path for path in files if _mirror.kind_of(path) in {"pdf", "invalid"}]
     for source in images:
+        relative = _mirror.relative_to(source, root)
+        digest = _mirror.digest_of(source)
+        if resume.is_done(relative, digest):
+            print(f" == {relative:40} skipped: already read by this driver")
+            continue
+
         outcome = process_file(
             engine, source, root, out_root, selection=args.pages, lang=lang, save=save
         )
         if outcome is None:
             continue
         OUTCOMES.append(outcome)
+
+        # Only a reading that produced text is recorded. A refusal is retried next
+        # time: `blank` and an unreadable file can both change, and recording them
+        # would turn a transient condition into a permanent one.
+        if save and outcome.pages:
+            resume.record(relative, digest, artifact=outcome.artifact)
+            resume.flush_if_due()
 
         if outcome.pages:
             statuses = " ".join(
@@ -516,18 +540,11 @@ def main(argv: list[str] | None = None) -> int:
             f"{len(declined)} file(s) declined: this driver reads images only - a PDF "
             "is walked by batch_pdf.py, which routes it per page"
         )
-    print("=== the mirror")
     # Only the files this driver walks: a `.md` in the input tree is outside an OCR
     # driver's scope, and reporting it as a violation would blame this run for a file
     # it was never asked about.
     problems = _mirror.verify_mirror_for(root, out_root, images)
-    if not problems:
-        print(
-            f" ok {len(images)} image(s) and {directories} director(ies) mirrored "
-            "at the same relative paths"
-        )
-    for problem in problems:
-        print(f" !! {problem}")
+    _mirror.report_mirror(problems, len(images), directories, "image")
 
     print()
     print(f"{'page status':<14}{'pages':>6}")
@@ -551,7 +568,10 @@ def main(argv: list[str] | None = None) -> int:
     silent = [
         outcome for outcome in OUTCOMES if outcome.pages and outcome.artifact is None
     ]
+    written = sum(1 for outcome in OUTCOMES if outcome.artifact is not None)
     print(f"{len(images)} image(s) walked, {written} text file(s) written.")
+    if resume.reused:
+        print(f"{resume.reused} image(s) skipped as already processed.")
     if silent:
         print(
             f"{len(silent)} image(s) yielded no text; each page's status is recorded."
@@ -560,7 +580,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(refused)} image(s) could not be read; see the notes above.")
     if not problems and not refused:
         print("every image was walked and the tree mirrors exactly.")
+        resume.flush(save)
         return 0
+    resume.flush(save)
     return len(problems) + len(refused)
 
 
