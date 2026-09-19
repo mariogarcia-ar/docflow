@@ -51,6 +51,8 @@ import _lib
 # the ordering of these two imports is load-bearing.
 _lib.bootstrap()
 
+import llm_local  # noqa: E402 - see above
+
 from docflow.adapters.frontier import FrontierEngine  # noqa: E402 - see above
 from docflow.kernels.types import Bytes  # noqa: E402 - see above
 
@@ -281,8 +283,14 @@ def judge_local(
         RUBRIC if rubric is None else rubric,
         [LOCAL_RESULT] if samples is None else list(samples),
         # The local model that produced the samples, so `role_conflict` is
-        # mechanical rather than a rule someone has to remember.
-        produced_by="ollama:smollm2" if produced_by is None else produced_by,
+        # mechanical rather than a rule someone has to remember. Read from
+        # `llm_local` rather than spelled out: it was the literal
+        # `"ollama:smollm2"`, a second copy of a fact that lives in one place, and a
+        # stale one would make the guard compare against the wrong model - so the
+        # prohibition would quietly stop being enforced.
+        produced_by=f"ollama:{llm_local.TEXT_MODEL}"
+        if produced_by is None
+        else produced_by,
         expect=expect,
     )
     if attempt.succeeded:

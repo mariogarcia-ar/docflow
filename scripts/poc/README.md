@@ -121,6 +121,19 @@ in the code: looking for `truncated_output` (which fires on `done_reason: 'lengt
 never produced by a dropped prompt), and comparing files against each other (a single
 cut file has no peer, so a three-file run named none). The mechanism is per call.
 
+**The default local model changed to `deepseek-r1:1.5b` because `smollm2` stalls a
+run.** On `chicos/22f0e9af-…-p1.txt` (1 589 bytes) `smollm2` intermittently enters an
+unbounded repetition loop — measured once in 5 calls with no token ceiling — and a
+sequential driver with a 600 s per-call ceiling stalls on it with no output between
+files. `deepseek-r1:1.5b` answered 10 of 10 on that file in 4–11 s.
+
+**And on the new default the silent cut above does not arise**, because
+`deepseek-r1:1.5b` refuses an oversized prompt with `HTTP 400
+exceed_context_size_error` naming `n_prompt_tokens` and `n_ctx`, where `smollm2` drops
+it past the window and answers `done_reason: 'stop'`. `PROMPT_WINDOW_SHARE`
+accordingly still fires only for `smollm2` — which stays selectable with
+`--model smollm2:latest` — and its measurement is labelled as that model's.
+
 ### `batch_llm_frontier.py` is the contrast step
 
 Two independent reads that disagree are the only detector of a silent error, and a

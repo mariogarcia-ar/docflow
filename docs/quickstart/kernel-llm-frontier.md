@@ -481,7 +481,7 @@ behind every line; all eight drivers share the flag (`lab-cli.md`):
 ```console
 $ scripts/kernel/kernel-llm.sh
 
-  local model      smollm2:latest  (default)
+  local model      deepseek-r1:1.5b  (default)
   vision model     qwen2.5vl:3b  (default)
   frontier model   anthropic:claude-sonnet-4-6  (default)
   image            tests/fixtures/matrix/page.png

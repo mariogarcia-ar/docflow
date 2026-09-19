@@ -42,8 +42,27 @@ from docflow.kernels.types import Bytes  # noqa: E402 - see the note above
 __all__: list[str] = []
 
 #: The text-only model. A small instruct model, so a probe is a couple of seconds
-#: rather than a couple of minutes.
-TEXT_MODEL: str = "smollm2:latest"
+#: rather than a couple of minutes. **`deepseek-r1:1.5b` and not `smollm2:latest`**,
+#: and the reason is measured rather than a preference:
+#:
+#: - **`smollm2` runs away.** On `chicos/22f0e9af-…-p1.txt` (1 589 bytes - *not*
+#:   large, so input size is not the trigger) it intermittently enters an unbounded
+#:   repetition loop, emitting digits for as long as it is allowed. A batch driver is
+#:   **sequential** and the adapter's per-call ceiling is 600 s, so one runaway stalls
+#:   the whole run with no output between files - which is what a hang looks like.
+#:   Measured: 1 runaway in 5 calls with no token ceiling.
+#: - **`deepseek-r1:1.5b` answered every one of 10 consecutive calls on that same
+#:   file**, 4.1-10.6 s each (`done_reason: 'stop'`). A repeating generation there is
+#:   bounded by the context, and the model stops on its own.
+#: - **And it fails LOUDLY where `smollm2` fails silently.** An oversized prompt is
+#:   refused with `HTTP 400 exceed_context_size_error` (`n_prompt_tokens` vs `n_ctx`
+#:   both named), instead of being dropped past the window's edge with
+#:   `done_reason: 'stop'`. That does not retire `prompt_was_cut` below - the silent
+#:   cut is a property of the *runtime and the model*, and `smollm2` still has it -
+#:   but it does mean the default no longer depends on that detector to be safe.
+#:   `deepseek-r1` declares `completion` and `thinking`, so it emits reasoning
+#:   tokens; they were measured to stay inside the schema-constrained channel.
+TEXT_MODEL: str = "deepseek-r1:1.5b"
 
 #: The vision model. Both are named as the caller names them, which is the whole
 #: point of the tag: `qwen2.5vl` is a moving tag, and the digest is the identity.

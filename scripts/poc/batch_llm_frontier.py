@@ -116,6 +116,7 @@ import _mirror
 _lib.bootstrap()
 
 import llm_frontier as frontier_driver  # noqa: E402 - see the note above
+import llm_local  # noqa: E402 - see the note above
 
 from docflow.adapters.frontier import FrontierEngine  # noqa: E402 - see the note above
 from docflow.kernels.types import Bytes  # noqa: E402 - see the note above
@@ -145,8 +146,13 @@ VISION_PROMPT: str = (
 
 #: The `produced_by` passed to `judge` when the fields came from K5. It is the local
 #: model's identity, and it is what makes `role_conflict` mechanical: grading samples
-#: a *different* model produced is the point of contrast.
-PRODUCER: str = "ollama:smollm2"
+#: a *different* model produced is the point of contrast. **Derived from `llm_local`
+#: and never spelled out here.** It was a literal `"ollama:smollm2"` while that was
+#: the default, which is a second copy of a fact that lives in one place - and this
+#: one is load-bearing: a stale name makes the guard compare against the wrong model,
+#: so `role_conflict` would stop firing and the prohibition would silently become
+#: prose. `hitl.py` derives the same value the same way.
+PRODUCER: str = f"ollama:{llm_local.TEXT_MODEL}"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

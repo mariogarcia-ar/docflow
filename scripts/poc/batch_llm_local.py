@@ -138,6 +138,14 @@ DEFAULT_VISION_PROMPT: str = (
 )
 
 
+#: What the `structured` mode reads. A **suffix** set rather than a use of
+#: `_mirror.kind_of`, because that vocabulary answers *what kind of document is
+#: this* and has no word for *a text file*: its `"invalid"` means *neither a PDF nor
+#: an image*, which also describes every JSON sidecar a previous stage wrote.
+#: Selecting on it fed this driver `*.pages.json` as if it were document text - which
+#: is the defect that produced a `cuit` equal to a file name.
+TEXT_SUFFIXES: frozenset[str] = frozenset({".txt", ".md", ".text"})
+
 #: How much of the context window is available to the prompt. **Measured, not
 #: chosen.** Ollama splits `num_ctx` between the prompt and the generation, and the
 #: split is what makes a long prompt silent: on `smollm2` at `num_ctx=4096`, a prompt
@@ -149,11 +157,26 @@ DEFAULT_VISION_PROMPT: str = (
 #: driver names as answered from a truncated prompt, and it never changes how a
 #: document is processed. `ADR-009` governs corpus thresholds; this is not one.
 #:
+#: **The measurement above is `smollm2`'s, and the default is now
+#: `deepseek-r1:1.5b`.** That matters in one direction and not the other:
+#:
+#: - `deepseek-r1:1.5b` answers an oversized prompt with **`HTTP 400
+#:   exceed_context_size_error`**, naming `n_prompt_tokens` and `n_ctx` — so on the
+#:   default there is nothing silent left for this basis to catch, and it simply
+#:   never fires. A device that reports no cut when the runtime refused outright is
+#:   correct, not defanged.
+#: - The share stays here because **the silent cut belongs to `smollm2`, which is
+#:   still selectable** with `--model smollm2:latest`. Measured again on it today:
+#:   prompts of 45 000 and 80 000 characters both evaluate exactly **2 050** tokens
+#:   at `num_ctx=4096` with `done_reason: 'stop'`.
+#:
 #: TODO: [MVP] The split is Ollama's and is not in its public API - it was derived by
 #: measurement here (four unrelated prompts of 34 000 / 128 020 / 144 020 / 153 000
 #: characters all evaluating exactly 2 050 tokens, and the value tracking `num_ctx`).
 #: A runtime that reserves a different fraction would make this wrong, so the driver
-#: reports the plateau rather than refusing on it.
+#: reports the plateau rather than refusing on it. **A different model may reserve a
+#: different share** - re-measure before trusting the number for a model other than
+#: `smollm2`.
 PROMPT_WINDOW_SHARE: float = 0.5
 
 
@@ -555,13 +578,24 @@ def main(argv: list[str] | None = None) -> int:
     engine = _engine()
 
     wanted = {"image"} if args.mode == "vision" else None
+    files = _walk_for(root, wanted)
+
     print(f"in  = {root}")
     print(f"out = {out_root}")
     print(f"mode = {args.mode}    model = {model}    save = {save}")
     print(f"schema = {args.schema} ({len(schema.get('properties', {}))} propert(ies))")
+    # What was selected, and out of what. A run that fed the model the wrong files
+    # looks exactly like a run that fed it the right ones, so the two facts a reader
+    # needs to tell them apart - how many were walked and which ones - are reported
+    # before any of them is processed.
+    walked = sum(1 for _ in _mirror.walk(root))
+    print(
+        f"files = {len(files)} of {walked} under {root} (mode reads {_selection(args.mode)})"
+    )
+    for source in files:
+        print(f"  -> {_mirror.relative_to(source, root)}")
     print()
 
-    files = _walk_for(root, wanted)
     for source in files:
         extraction = process_file(
             engine,
@@ -642,20 +676,64 @@ def main(argv: list[str] | None = None) -> int:
             )
     if refused:
         print(f"{len(refused)} document(s) produced no fields; see the notes above.")
+    if not OUTCOMES:
+        # **Zero selected is not a clean run.** Measured: pointed at a tree holding
+        # only `*.pages.json` sidecars, this driver selected nothing and printed
+        # *"every document was extracted and the tree mirrors exactly"* - a run that
+        # did nothing reporting success, which is the failure mode the whole bench
+        # exists to catch, arriving from the bench itself.
+        print(
+            f"NOTHING WAS SELECTED: {len(files)} file(s) out of {walked} under {root} "
+            f"matched {_selection(args.mode)}. The tree was walked and the mirror is "
+            "exact, but no document was processed - check that the input is the "
+            "output of the stage this mode reads."
+        )
+        return 1
     if not problems and not refused and not truncated:
         print("every document was extracted and the tree mirrors exactly.")
         return 0
     return len(problems) + len(refused) + len(truncated)
 
 
+def _selection(mode: str) -> str:
+    """Describe what a mode selects, for the run's own header.
+
+    Args:
+        mode: ``"structured"`` or ``"vision"``.
+
+    Returns:
+        A short description of the suffix or kind the mode reads.
+
+    """
+    if mode == "vision":
+        return "images"
+    return ", ".join(sorted(TEXT_SUFFIXES))
+
+
 def _walk_for(root: pathlib.Path, wanted: set[str] | None) -> list[pathlib.Path]:
     """List the files this mode reads, in a stable order.
 
+    The `structured` mode's selection is **by what the file holds**, not by what it
+    is not. An earlier version selected `kind_of(path) == "invalid"` - which means
+    *neither a PDF nor an image* - and that is a different statement: it swept up
+    every sidecar a previous stage wrote, so the driver's input was
+    `*.pages.json`, `*.ocr.json` and `*.fields.json` alongside the text.
+
+    Measured, running it on `batch_pdf.py`'s output: the model was handed
+    `3ac5a2ec-….pages.json` and "extracted" a `cuit` of
+    `"3ac5a2ec-d129-47c0-947a-4680c7e25f06"` - the document's name, read out of a
+    JSON sidecar, reported as a field of the document. Every one of the five files
+    in that run was a sidecar and not one was text.
+
+    Text is selected by its **suffix**. `TEXT_SUFFIXES` is deliberately separate
+    from `_mirror.kind_of`'s vocabulary, which answers *what kind of document is
+    this* and has no word for *a text file*.
+
     Args:
         root: The input root.
-        wanted: The `_mirror.kind_of` categories to keep, or ``None`` for every file
-            - the `structured` mode reads text, which `kind_of` classifies as neither
-            a PDF nor an image, so it cannot use that vocabulary to select.
+        wanted: The `_mirror.kind_of` categories to keep, or ``None`` for the text
+            suffixes - the `structured` mode reads text, so it cannot use a
+            vocabulary that only names PDFs and images.
 
     Returns:
         The files to process, sorted.
@@ -663,9 +741,7 @@ def _walk_for(root: pathlib.Path, wanted: set[str] | None) -> list[pathlib.Path]
     """
     if wanted is None:
         return [
-            path
-            for path in _mirror.walk(root)
-            if _mirror.kind_of(path) in {"invalid"} or path.suffix.lower() == ".txt"
+            path for path in _mirror.walk(root) if path.suffix.lower() in TEXT_SUFFIXES
         ]
     return [path for path in _mirror.walk(root) if _mirror.kind_of(path) in wanted]
 

@@ -11,8 +11,13 @@ un cli deberia tener
 entrada > proceso > salida 
 
 ---
+rm -rf var
+python scripts/poc/batch_pdf.py  tests/fixtures/ 
+ python scripts/poc/batch_llm_local.py 'var/poc/batch_pdf/' --schema scripts/poc/FIELDS.json
 
- python scripts/poc/batch_llm_local.py 'var/poc/batch_pdf/casos' --schema FIELDS.json
+
+ python scripts/poc/batch_llm_local.py 'var/poc/batch_pdf/casos' --schema scripts/poc/FIELDS.json
+ python scripts/poc/batch_llm_local.py 'var/poc/batch_pdf/pdf_escaneados' --schema scripts/poc/FIELDS.json
 
 
 **Kernels and methods (from `quickstart`)**
