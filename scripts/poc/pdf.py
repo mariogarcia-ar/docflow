@@ -453,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
     # A selection of two enumerated pages, then the same grammar a caller would
     # type. Both go through `parse_pages`, so neither reaches the kernel as text.
     render_page(engine, _lib.LARGE_PDF, "1,2", RENDER_DPI, "ok", large_pages)
+    render_page(engine, _lib.LARGE_PDF, "all", RENDER_DPI, "ok", large_pages)
     render_page(
         engine,
         _lib.LARGE_PDF,
