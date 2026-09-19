@@ -70,7 +70,7 @@ Each probe declares the bucket it expects (`expect=`), so `run_all.py` can tell
 | `batch.py` | §6 | folder in, **mirrored tree out**; reuses the drivers' methods rather than re-implementing them |
 | `batch_pdf.py` | §1 | **PDF-only** batch: per page, `.txt` for text and `.png` for scans, plus a page census |
 | `batch_image.py` | §2 | **image-only** batch: size, `legibility`, the rescale to the floor, and any `--region` crop |
-| `batch_ocr.py` | §3 | **OCR-only** batch: per-page status census plus the ordered text, with the engine's stdout captured |
+| `batch_ocr.py` | §3 | **image-only** batch: per-page status census plus the ordered text, with the engine's stdout captured. A PDF is declined — its route to OCR is `batch_pdf.py` |
 | `batch_llm_local.py` | §4 | **fields from text**: one generation per document, with the prompt window reported |
 | `batch_llm_frontier.py` | §5 | **contrast**: pairs `llm.local`'s fields with the document and asks a different model |
 | `hitl.py` | §7 | finds the extractions, pairs them by relative path, contrasts them, writes `review.json` |
@@ -123,7 +123,7 @@ which re-opens `E04-01`.
 python scripts/poc/batch.py       <input-dir> --out <out-dir>
 python scripts/poc/batch_pdf.py   <input-dir> --out <out-dir> [--pages 1-3] [--no-save]
 python scripts/poc/batch_image.py <input-dir> --out <out-dir> [--target-dpi 150] [--assumed-dpi 96] [--region x,y,w,h]
-python scripts/poc/batch_ocr.py   <input-dir> --out <out-dir> [--pages 1-3] [--lang es]
+python scripts/poc/batch_ocr.py   <input-dir> --out <out-dir> [--lang es]   # images only
 python scripts/poc/batch_llm_local.py <input-dir> --schema FIELDS.json [--out <out-dir>] [--mode structured|vision]
 python scripts/poc/batch_llm_frontier.py <input-dir> --fields <local-out-dir> [--out <out-dir>] [--mode judge|vision]
 python scripts/poc/hitl.py        <input-dir> --out <out-dir>
@@ -190,9 +190,16 @@ the branch that reads pixels.
 
 `batch.py` reaches K4 only for the pages `pdf.route_page` sent it and then goes on to
 a model; `batch_pdf.py` stops before OCR entirely. Neither answers *what does this
-folder of scans read as, page by page* — and OCR is the step whose cost (~1.5 s per
-call warm, ~10 s for the first call in a process) and determinism class make it worth
-inspecting on its own.
+folder of images read as* — and OCR is the step whose cost (~1.5 s per call warm,
+~10 s for the first call in a process) and determinism class make it worth inspecting
+on its own.
+
+**It reads images only, and that is `my_kernel_flow.md` §3's own scope.** §3's input
+is *an image*; a PDF's route to OCR runs through render + a per-page decision, which
+is `batch_pdf.py`'s job. So a `.pdf` in the input tree is **declined**: not walked, not
+recorded per file, but **counted in one line** at the end of the run — a folder of
+PDFs otherwise produces no output at all, and a run that said nothing would read as a
+broken driver rather than as a scope decision.
 
 **Both `read` and `layout` run, and that is a decision.** `layout` answers §3 — the
 text with its rows — but it **names no page**: measured, `layout 1-3` on the fixture
@@ -202,13 +209,19 @@ reports `page_status` per page and is the only operation that can account for on
 census built on `layout` alone would silently drop blank pages — precisely the loss
 this project exists to make visible.
 
-One `.txt` per document, not per page: `layout` returns a single string and names no
-page inside it, so a per-page split would be a guess. (`ocr.SEPARATOR` is the **row**
+“Per page” is exact even for an image: an image **is** one page, and the engine says
+so itself — measured on a `.jpeg`, `pages_requested` is `(1,)` and `page_status` is
+`{'1': 'read'}`. So the census, the `-p<selection>` in the artifact name and the caps
+the record carries all remain meaningful without a second code path.
+
+One `.txt` per image, not per page: `layout` returns a single string and names no page
+inside it, so a per-page split would be a guess. (`ocr.SEPARATOR` is the **row**
 separator `" | "`, so splitting on it would cut rows.) The per-page facts live in
 `<stem>.ocr.json`, built from `read`.
 
-A blank page gets **no** `.txt`: an empty file is indistinguishable from a read that
-produced nothing. It gets a record instead, and the run reports the count:
+An image the engine finds blank gets **no** `.txt`: an empty file is
+indistinguishable from a read that produced nothing. It gets a record instead, and the
+run reports the count:
 
 ```
 page status    pages

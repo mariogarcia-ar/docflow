@@ -1,16 +1,25 @@
-"""The OCR-only batch walk: a folder of scans in, a mirrored tree of text out.
+"""The OCR-only batch walk: a folder of images in, a mirrored tree of text out.
 
 `my_kernel_flow.md` §3, applied to a folder:
 
 > take an image and extract its text **to a file, preserving the layout as far as
 > possible**.
 
+Images only
+-----------
+
+§3's input is an **image**, and this driver takes it literally: the walk covers
+`_mirror.IMAGE_SUFFIXES` and nothing else. A `.pdf` is **not walked** - silently, the
+same way `batch_image.py` declines one - because the caller chose the scope, and a
+PDF's route to OCR is `batch_pdf.py`'s question: it is the driver that decides the
+route *per page* and renders the bitmap this one would then read. Handing a PDF here
+would read page 1 of it and report it as the whole document.
+
 This is the step `batch.py` runs *inside* a larger chain and the one no other driver
 isolates: `batch.py` reaches K4 only for the pages `pdf.route_page` sent it, and then
 goes on to a model; `batch_pdf.py` stops before OCR entirely. Neither answers *what
-does this folder of scans read as, page by page* - and that is the question a corpus
-of 11k documents (`prd.md`) has to be asked before anything downstream can be built
-on it.
+does this folder of images read as* - and that is the question a corpus of 11k
+documents (`prd.md`) has to be asked before anything downstream can be built on it.
 
 Why a driver of its own
 -----------------------
@@ -25,12 +34,13 @@ to see what the recogniser produced rather than what a pipeline did with it.
 folder: no ledger, no cache key, no `pause`/`resume`, and re-running re-reads
 everything. "Batch" names the shape of the run, not the orchestrator.
 
-One file is one read, and the read answers for every page
---------------------------------------------------------
+One image is one read, and the read answers for its single page
+---------------------------------------------------------------
 
 K4's `read` takes a page range and reports, **per page**, whether that page was read
-or found blank. So the file is the unit of work and the page is the unit of the
-answer:
+or found blank. An image is one page, and the engine says so itself - measured,
+`pages_requested` is `(1,)` and `page_status` is `{'1': 'read'}` for a `.jpeg`. So the
+file is the unit of work and that one page is the unit of the answer:
 
 | Step | Operation | What it gives |
 |---|---|---|
@@ -48,22 +58,22 @@ Both run, and that is a decision rather than belt-and-braces:
   A census built on `layout` alone would silently drop the blank pages, which is
   precisely the loss this project exists to make visible.
 
-One text file per document, not per page
-----------------------------------------
+One text file per image, not per page
+-------------------------------------
 
 `layout` returns a single string for the whole selection and names no page inside it,
 so a per-page split would be a guess. Measured: `ocr.SEPARATOR` is the **row**
 separator (`" | "`), so splitting on it would cut rows rather than pages. The
 selection therefore lands in one `<stem>-p<selection>.txt`, and the per-page facts
 live in `<stem>.ocr.json`, which is built from `read` and knows each page's status and
-token count.
+token count - for an image, the one page it is.
 
 What each file becomes
 ----------------------
 
 | Engine's word | Meaning | Output at the mirrored path |
 |---|---|---|
-| `read` | the page carried text | the document's `.txt`, plus its status in the record |
+| `read` | the page carried text | the image's `.txt`, plus its status in the record |
 | `blank` | the page carried nothing | nothing; the page is recorded as blank |
 | `unreadable` | part of the vocabulary | nothing; recorded, and the run says so |
 | refused | the file could not be read at all | `.skipped.json` naming the reason |
@@ -96,8 +106,8 @@ Run it:
 
 Examples:
 
-    python scripts/poc/batch_ocr.py tests/fixtures/pdf_escaneados
-    python scripts/poc/batch_ocr.py /tmp/pages --lang es --out /tmp/ocr-out
+    python scripts/poc/batch_ocr.py tests/fixtures/otros
+    python scripts/poc/batch_ocr.py /tmp/imagenes --lang es --out /tmp/ocr-out
 """
 
 from __future__ import annotations
@@ -143,12 +153,14 @@ class PageOutcome:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ScanOutcome:
-    """What happened to one scanned document.
+    """What happened to one scanned image.
 
     Attributes:
         source: The file's path relative to the input root - also its mirrored
             location in the output.
-        pages: One entry per page the engine answered for.
+        pages: One entry per page the engine answered for. An image is one page, so
+            this is a one-element tuple in every reachable case - and empty when the
+            read itself was refused.
         characters: How many characters the ordered text holds.
         artifact: The written text, relative to the output root, or ``None``.
         note: Why nothing was written, when nothing was.
@@ -166,8 +178,8 @@ class ScanOutcome:
         """How many pages the engine reported as read.
 
         Returns:
-            The count. A document that is entirely blank reports zero, which is a
-            real answer rather than a failure.
+            The count. An image the engine found blank reports zero, which is a real
+            answer rather than a failure.
 
         """
         return sum(1 for page in self.pages if page.status == "read")
@@ -221,7 +233,7 @@ def read_pages(
 
     Args:
         engine: The K4 adapter.
-        source: The document to read.
+        source: The image to read.
         written: The selection as a caller writes it, in the `--pages` grammar.
         lang: The language hint passed to the engine.
 
@@ -260,11 +272,11 @@ def process_document(
     lang: str,
     save: bool,
 ) -> ScanOutcome:
-    """Read one scanned document and write its ordered text.
+    """Read one scanned image and write its ordered text.
 
     Args:
         engine: The K4 adapter.
-        source: The document to read.
+        source: The image to read.
         root: The input root.
         out_root: The output root.
         selection: Which pages to read, in the `--pages` grammar, or ``None`` for
@@ -398,13 +410,13 @@ def process_file(
         save: Whether to write the text.
 
     Returns:
-        The document's outcome, or ``None`` when the file is not one of the two kinds
-        K4 converts - this driver is scoped by name, and a file outside that scope is
-        *not walked* rather than skipped-with-a-record, because the caller chose the
-        scope.
+        The image's outcome, or ``None`` when the file is not an image - this driver
+        reads images only (``my_kernel_flow.md`` §3), so a PDF is *not walked*
+        rather than skipped-with-a-record: the caller chose the scope, and a PDF's
+        route to OCR is `batch_pdf.py`'s per-page decision.
 
     """
-    if _mirror.kind_of(source) not in {"pdf", "image"}:
+    if _mirror.kind_of(source) != "image":
         return None
     return process_document(
         engine, source, root, out_root, selection=selection, lang=lang, save=save
@@ -412,13 +424,13 @@ def process_file(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Walk a folder of scans, read every one, and verify the mirrored tree.
+    """Walk a folder of images, read every one, and verify the mirrored tree.
 
     Args:
         argv: The command-line arguments, or ``None`` for `sys.argv`.
 
     Returns:
-        The number of problems: mirrored-ness violations plus refused documents.
+        The number of problems: mirrored-ness violations plus refused images.
 
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -432,7 +444,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--pages",
         default=None,
-        help="which pages to read, in the --pages grammar (default: page 1)",
+        help="which pages to read, in the --pages grammar (default: page 1; an image "
+        "has exactly one)",
     )
     parser.add_argument(
         "--lang",
@@ -442,7 +455,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-save",
         action="store_true",
-        help="read every document without writing any text",
+        help="read every image without writing any text",
     )
     args = parser.parse_args(argv)
 
@@ -471,8 +484,11 @@ def main(argv: list[str] | None = None) -> int:
     print()
 
     files = list(_mirror.walk(root))
-    scans = [path for path in files if _mirror.kind_of(path) in {"pdf", "image"}]
-    for source in files:
+    images = [path for path in files if _mirror.kind_of(path) == "image"]
+    # Declared, never silent: a folder of PDFs produces no output at all, and a run
+    # that said nothing would read as a broken driver rather than as a scope decision.
+    declined = [path for path in files if _mirror.kind_of(path) in {"pdf", "invalid"}]
+    for source in images:
         outcome = process_file(
             engine, source, root, out_root, selection=args.pages, lang=lang, save=save
         )
@@ -495,14 +511,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"      {outcome.note}")
 
     print()
+    if declined:
+        print(
+            f"{len(declined)} file(s) declined: this driver reads images only - a PDF "
+            "is walked by batch_pdf.py, which routes it per page"
+        )
     print("=== the mirror")
     # Only the files this driver walks: a `.md` in the input tree is outside an OCR
     # driver's scope, and reporting it as a violation would blame this run for a file
     # it was never asked about.
-    problems = _mirror.verify_mirror_for(root, out_root, scans)
+    problems = _mirror.verify_mirror_for(root, out_root, images)
     if not problems:
         print(
-            f" ok {len(scans)} scan(s) and {directories} director(ies) mirrored "
+            f" ok {len(images)} image(s) and {directories} director(ies) mirrored "
             "at the same relative paths"
         )
     for problem in problems:
@@ -523,22 +544,22 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{'written':<14}{written:>6}")
     print()
 
-    # A document the engine answered *blank* about was read successfully and answered
+    # An image the engine answered *blank* about was read successfully and answered
     # the question - an empty page is a statement, not an error. Only an unreadable
-    # document is a problem, and that is a fact about the file.
+    # image is a problem, and that is a fact about the file.
     refused = [outcome for outcome in OUTCOMES if not outcome.pages]
     silent = [
         outcome for outcome in OUTCOMES if outcome.pages and outcome.artifact is None
     ]
-    print(f"{len(scans)} scan(s) walked, {written} text file(s) written.")
+    print(f"{len(images)} image(s) walked, {written} text file(s) written.")
     if silent:
         print(
-            f"{len(silent)} document(s) yielded no text; each page's status is recorded."
+            f"{len(silent)} image(s) yielded no text; each page's status is recorded."
         )
     if refused:
-        print(f"{len(refused)} document(s) could not be read; see the notes above.")
+        print(f"{len(refused)} image(s) could not be read; see the notes above.")
     if not problems and not refused:
-        print("every scan was walked and the tree mirrors exactly.")
+        print("every image was walked and the tree mirrors exactly.")
         return 0
     return len(problems) + len(refused)
 

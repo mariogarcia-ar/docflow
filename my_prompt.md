@@ -12,7 +12,11 @@ entrada > proceso > salida
 
 ---
 rm -rf var
-python scripts/poc/batch_pdf.py  tests/fixtures/ 
+python scripts/poc/batch_pdf.py  tests/fixtures/ --out var/run
+python scripts/poc/batch_ocr.py  tests/fixtures/ --out var/run
+
+
+
  python scripts/poc/batch_llm_local.py 'var/poc/batch_pdf/' --schema scripts/poc/FIELDS.json
 
 
@@ -35,22 +39,6 @@ python scripts/poc/batch_pdf.py  tests/fixtures/
 
 
 
-La idea de los kernels es tener una primitivas que luego seran usadas por componentes y pipelines.
-Los mismos deben de ser usable desde linea de comandos para realizar pruebas antes de avanzar.
-Los kernels son necesario:
-- pdf: cortar en paginas los pdf, determinar si son mas texto que imagenes, si son mas textos que imagenes usar pdftotext --layout para obtener el texto y guardarlo en un archivo, si es una imagen poder exportarla a imagen para su posterior tratamiento con ocr de imagenes
-
-- imagenes: redimensionarlas por dpi y size, recortarlas, validar su legibilidad
-
-- ocr: tomar una imagen y extraer su texto en un archivo respetando lo mas posible el layout del mismo
-
-- llm.local: modelos no de vison le envio un prompt con el texto extraido del ocr para extraer campos , para modelos de vision le envio la imagen adecuada con prompts para que extraingan los valores de los campos 
-
-- llm.frontier: envio la imagen adecuada con prompts de mas alto nivel para extrear los campos, puedo tambien enviarle el resultado del llm.local en conjunto a la imagen original para que analizce la eficacia 
-
-- orquestado: toma una carpeta , por cada archivo determianr si es imagen / pdf / no validao, si es pdf extrae texto en un archivo txt o exporta a la imagen , si es imagen extrae con el ocr y guarda la extraccion en un archivo txt, luego con llm.local trato de extraer los campos de mismo
-
-- hitl: vamos a suar al llm.frontier para tomar la salida del llm.local para avaluar la extraccion  
 
 ---
 
