@@ -12,6 +12,8 @@ entrada > proceso > salida
 
 ---
 
+ python scripts/poc/batch_llm_local.py 'var/poc/batch_pdf/casos' --schema FIELDS.json
+
 
 **Kernels and methods (from `quickstart`)**
 

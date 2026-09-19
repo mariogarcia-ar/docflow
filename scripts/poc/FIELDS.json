@@ -1,0 +1,16 @@
+{
+  "type": "object",
+  "properties": {
+    "total": {
+      "type": "integer"
+    },
+    "cuit": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "total",
+    "cuit"
+  ],
+  "additionalProperties": false
+}
