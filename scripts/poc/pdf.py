@@ -393,6 +393,8 @@ def main(argv: list[str] | None = None) -> int:
     # library's equivalent of exit 4 - and this probe confirms it does not crash
     # the process with a traceback.
     render_page(engine, _lib.TEXT_PDF, [_MISSING_PAGE], RENDER_DPI, "usage")
+    render_page(engine, _lib.LARGE_PDF, [1,2], RENDER_DPI, "ok")
+    render_page(engine, _lib.LARGE_PDF, '12-23', RENDER_DPI, "ok")
 
     print()
     # The requirement that spans two operations.
