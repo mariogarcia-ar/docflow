@@ -10,10 +10,10 @@ This driver does that, and it is built to be honest about **three limits**, each
 measured rather than assumed:
 
 **1. `judge` cannot see the image.** §7's sentence says *"junto con la imagen
-original"*, but `FrontierEngine.judge(model, rubric, samples, produced_by)` takes no
-`images` parameter - its body builds the prompt from the rubric, a sentence asking for
-a JSON object, and `json.dumps(samples)`, and calls `self.structured(...)`, which
-passes `images=()`. So `judge` grades a **transcript**, not the page. The
+original"*, but `FrontierEngine.judge(model, rubric, samples, produced_by, schema)`
+takes no `images` parameter - its body builds the prompt from the rubric, a sentence
+asking for a JSON object, and `json.dumps(samples)`, and calls `self.structured(...)`,
+which passes `images=()`. So `judge` grades a **transcript**, not the page. The
 image-carrying comparison is `vision`, and this driver runs both so the difference is
 a measurement.
 
@@ -21,23 +21,20 @@ a measurement.
 enforced before any request leaves, because retrying until two samples agree
 manufactures the contrast the design depends on (`sad.md` §4, §11 row 15).
 
-**2b. The grade has no shape, and one measurement shows why that matters.** `judge`
-carries no schema on the port, so the adapter sends `{"type": "object"}` and nothing in
-the request says what a grade looks like. Measured against the local runtime, the model
-answers by **echoing the samples back**:
+**2b. The grade has a shape, and one measurement is why it is passed explicitly.**
+`judge` used to carry no schema, so the adapter sent `{"type": "object"}` and nothing
+in the request said what a grade looks like. Measured against the local runtime, the
+model answered by **echoing the samples back**:
 
     judge(...) -> {"total": "1789830", "cuit": "20-12345678-9"}
 
-That is a valid object, so it parses and the call reports a **value** — the grade *is*
-the thing being graded, and nothing can fail, because all a parser can check is that the
-answer is an object. Measured on the same model and samples, one variable at a time: with
-a result-shaped schema the answer becomes
-`{"fields": [{"name": "total", "supported": true}, …]}`. So the schema is what fixes it.
-`GRADE_SCHEMA` below is that shape, and **it cannot be handed over**: `judge`'s port
-signature has no parameter for it, and an adapter that supplied one would be inventing a
-default and putting a domain noun — *grade*, *supported* — into a kernel API. The schema
-is therefore kept here, beside the call, as the evidence of the gap and not as something
-this driver can use. Closing it is a port change.
+That is a valid object, so it parsed and the call reported a **value** - the grade *is*
+the thing being graded, and nothing could fail, because all a parser can check is that the
+answer is an object. The frontier path failed loudly (`unsupported_format`, 1138 tokens of
+prose); this one could not fail at all. `GRADE_SCHEMA` below is the fix, and it is passed
+at the call site on purpose: the schema is the caller's, the port carries it, and the
+adapter supplies none - an adapter that invented one would be choosing a policy and
+naming the domain noun *grade* in a kernel API.
 
 **3. `src/docflow/components/` does not exist.** `Reviewer` is `S2-T15`, so there is
 no queue, no `promote`, and no workflow UI. What this driver can do is the
@@ -69,6 +66,7 @@ import _lib
 _lib.bootstrap()
 
 import batch as batch_driver  # noqa: E402 - see above
+import llm_frontier as frontier_driver  # noqa: E402 - see above
 import llm_local  # noqa: E402 - see above
 
 from docflow.adapters.frontier import FrontierEngine  # noqa: E402 - see above
@@ -93,35 +91,14 @@ RUBRIC: Final[str] = (
     "Do not assign an overall score. Report per field."
 )
 
-#: The shape a grade must have. **It is deliberately not passed to `judge`, and that is
-#: the limitation, not an oversight.** `judge(model, rubric, samples, produced_by)` has
-#: no schema parameter, so the adapter behind it sends `{"type": "object"}` and the model
-#: is told nothing about what a grade looks like. Measured: it echoes the samples back,
-#: the echo parses as an object, and the call reports a *value*. Handing this schema to
-#: the adapter is what fixes that, and there is nowhere to hand it. It is kept here so
-#: the gap has a name and a shape rather than a sentence in a docstring.
-#: TODO: [MVP] `judge` needs a `schema` parameter on the port for this to be usable.
-GRADE_SCHEMA: Final[dict[str, object]] = {
-    "type": "object",
-    "properties": {
-        "fields": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string"},
-                    "supported": {"type": "boolean"},
-                    "comment": {"type": "string"},
-                },
-                "required": ["name", "supported", "comment"],
-                "additionalProperties": False,
-            },
-        },
-        "unsupported_source": {"type": "boolean"},
-    },
-    "required": ["fields", "unsupported_source"],
-    "additionalProperties": False,
-}
+#: The shape a grade must have. **It is passed at the call site on purpose**, and it is
+#: imported rather than redeclared: `llm_frontier` already had this schema, two identical
+#: copies would drift, and a drifted copy is the failure this repo names repeatedly. The
+#: name is re-exported so a reader of this file sees what the call above sends.
+#: Measured before the port carried a schema: with no shape in the request, the local
+#: runtime echoed the samples back, the echo parsed as an object, and the call reported a
+#: *value*. The per-field judgement is also `sad.md` §9's rule - never one aggregate score.
+GRADE_SCHEMA: Final[dict[str, object]] = dict(frontier_driver.GRADE_SCHEMA)
 
 #: The name the comparison is written under, beside the document in the mirror.
 COMPARISON_NAME: Final[str] = "review.json"
@@ -282,6 +259,7 @@ def request_judgement(
         RUBRIC,
         [proposed],
         PRODUCER_MODEL,
+        GRADE_SCHEMA,
     )
     if attempt.value is None:
         code = attempt.reason.code if attempt.reason else "unknown"

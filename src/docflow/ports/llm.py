@@ -149,6 +149,7 @@ class LlmEngine(Protocol):
         rubric: str,
         samples: Sequence[Mapping[str, object]],
         produced_by: str,
+        schema: Mapping[str, object],
     ) -> KernelResult[Mapping[str, object]]:
         """Grade samples against a rubric.
 
@@ -159,6 +160,10 @@ class LlmEngine(Protocol):
             produced_by: The model that produced the samples. It is a required
                 parameter because the prohibition below is only checkable if the
                 call site has to state it.
+            schema: The schema the grade must satisfy, supplied by the caller from
+                the registry — the same rule ``structured`` and ``vision`` follow. It
+                is last for the same reason it is last there: the shape of the answer
+                does not belong in the middle of the question.
 
         Returns:
             The grades, or no value and a typed ``Reason``. Asking a model to
@@ -167,5 +172,24 @@ class LlmEngine(Protocol):
             governor role, because a model grading its own output measures its
             own habits rather than the answer's correctness (row 15 of the
             silent-failure matrix).
+
+        **Why this parameter exists, measured on both adapters.** Without it the
+        adapter sent ``{"type": "object"}`` — a schema with no properties — so
+        nothing in the request said what a grade looks like:
+
+        - The frontier path **failed loudly**: the model answered in prose (1138
+          completion tokens of reasoning and a text block, no tool call), which the
+          reader reports ``unsupported_format`` with the raw completion preserved.
+        - The local path **failed silently**, which is worse: the model **echoed the
+          samples back**, the echo parsed as an object, and the call reported a
+          *value*. The grade was the thing being graded and nothing could object,
+          because all a parser can check is that the answer is an object.
+
+        Measured on the local runtime, one variable at a time, on the same samples:
+        with a result-shaped schema the answer becomes
+        ``{"fields": [{"name": "total", "supported": true}, …]}``. The schema is what
+        tells the model what a grade is, and only the caller can supply it — an
+        adapter that invented one would be choosing a policy and putting the domain
+        noun *grade* into a kernel API, both of which are forbidden.
 
         """

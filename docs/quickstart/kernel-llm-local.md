@@ -69,7 +69,7 @@ engine = OllamaEngine()          # the address is defaulted; no model ever is
 | `warm(model)` | Load it, so the first real call is not the slow one |
 | `structured(model, prompt, schema)` | A JSON answer satisfying a schema |
 | `vision(model, prompt, images, schema)` | The same, about images |
-| `judge(model, rubric, samples, produced_by)` | Grade samples against a rubric |
+| `judge(model, rubric, samples, produced_by, schema)` | Grade samples against a rubric, in the shape the caller declares |
 
 A `KernelResult` carries one of two things: a `value`, or a `reason`. It never
 carries a stand-in for a missing answer.
@@ -288,7 +288,7 @@ resident*, not *what does it say*.
 ## 5. `judge` — and the self-grading refusal
 
 ```python
-r = engine.judge('smollm2:latest', rubric, samples, produced_by='smollm2')
+r = engine.judge('smollm2:latest', rubric, samples, produced_by='smollm2', schema=grade)
 r.reason.code    # 'role_conflict'
 ```
 

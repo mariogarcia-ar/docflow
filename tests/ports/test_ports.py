@@ -430,6 +430,7 @@ class FakeLlmEngine:
         rubric: str,
         samples: Sequence[Mapping[str, object]],
         produced_by: str,
+        schema: Mapping[str, object],
     ) -> KernelResult[Mapping[str, object]]:
         """Raise: this fake exists to be checked against the protocol, not called."""
         raise NotImplementedError

@@ -637,6 +637,7 @@ class FrontierEngine:
         rubric: str,
         samples: Sequence[Mapping[str, object]],
         produced_by: str,
+        schema: Mapping[str, object],
     ) -> KernelResult[Mapping[str, object]]:
         """Grade samples against a rubric.
 
@@ -645,6 +646,7 @@ class FrontierEngine:
             rubric: The grading criteria, supplied by the caller.
             samples: The samples to grade.
             produced_by: The model that produced the samples.
+            schema: The schema the grade must satisfy, supplied by the caller.
 
         Returns:
             The grades, or no value and a typed ``Reason``. Grading one's own output
@@ -689,7 +691,7 @@ class FrontierEngine:
             f"{json.dumps(list(samples), ensure_ascii=False)}"
         )
 
-        return self.structured(model, payload, {"type": "object"})
+        return self.structured(model, payload, schema)
 
     # --- The shared generation path -----------------------------------------
 

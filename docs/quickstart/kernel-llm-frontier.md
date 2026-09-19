@@ -111,7 +111,7 @@ engine = FrontierEngine()        # the address is defaulted; no model ever is
 | `warm(model)` | Is the name valid and the credential present? |
 | `structured(model, prompt, schema)` | A JSON answer satisfying a schema |
 | `vision(model, prompt, images, schema)` | The same, about images |
-| `judge(model, rubric, samples, produced_by)` | Grade samples against a rubric |
+| `judge(model, rubric, samples, produced_by, schema)` | Grade samples against a rubric, in the shape the caller declares |
 
 Two properties carry what a `KernelResult` cannot:
 
@@ -333,7 +333,7 @@ difference.
 ## 5. `judge` — and the self-grading refusal
 
 ```python
-r = engine.judge('anthropic:m', rubric, samples, produced_by='anthropic:m')
+r = engine.judge('anthropic:m', rubric, samples, produced_by='anthropic:m', schema=grade)
 r.reason.code     # 'role_conflict'
 ```
 

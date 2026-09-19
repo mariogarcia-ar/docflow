@@ -29,6 +29,7 @@ one-purpose stand-ins by design (``too-few-public-methods``).
 from __future__ import annotations
 
 import json
+from typing import Final
 
 import pytest
 
@@ -288,10 +289,24 @@ def _posted_prompt(client: _StubClient) -> str:
         The user message's content, as sent.
 
     """
+    return _posted_body(client)["messages"][0]["content"]
+
+
+def _posted_body(client: _StubClient) -> dict:
+    """Return the body of the last generation the adapter posted.
+
+    Args:
+        client: The stub the adapter posted through.
+
+    Returns:
+        The request body, so a test can assert what was actually sent — which is the
+        only way to catch a constraint that never left the adapter.
+
+    """
     _method, sent = next(
         (method, body) for method, body in reversed(client.calls) if method == "POST"
     )
-    return sent["messages"][0]["content"]
+    return sent
 
 
 # --- The port contract -------------------------------------------------------
@@ -793,6 +808,26 @@ def test_no_adapter_revision_is_invented_when_the_runtime_will_not_say() -> None
 
 # --- Self-grading is refused on this path too -------------------------------
 
+#: A grade, in the shape a caller would supply from the registry. Deliberately **not**
+#: an empty object: the defect these tests guard was the adapter substituting
+#: `{"type": "object"}` for whatever the caller asked, and an empty schema would make
+#: the assertion below pass against the broken code.
+GRADE: Final[dict[str, object]] = {
+    "type": "object",
+    "properties": {
+        "fields": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+    },
+    "required": ["fields"],
+    "additionalProperties": False,
+}
+
 
 def test_a_model_grading_its_own_output_is_refused() -> None:
     """``judge`` refuses when the grader produced the samples.
@@ -803,7 +838,11 @@ def test_a_model_grading_its_own_output_is_refused() -> None:
     engine = _engine(chat=_chat_body('{"grade": "ok"}'))
 
     result = engine.judge(
-        "smollm2:latest", "rubric", [{"x": 1}], produced_by="smollm2:latest"
+        "smollm2:latest",
+        "rubric",
+        [{"x": 1}],
+        produced_by="smollm2:latest",
+        schema=GRADE,
     )
 
     assert result.value is None
@@ -819,7 +858,9 @@ def test_the_self_grading_guard_ignores_the_tag() -> None:
     """
     engine = _engine(chat=_chat_body('{"grade": "ok"}'))
 
-    result = engine.judge("smollm2", "rubric", [{"x": 1}], produced_by="smollm2:latest")
+    result = engine.judge(
+        "smollm2", "rubric", [{"x": 1}], produced_by="smollm2:latest", schema=GRADE
+    )
 
     assert result.value is None
     assert result.reason is not None
@@ -834,7 +875,7 @@ def test_a_different_model_may_grade() -> None:
     engine = _engine(chat=_chat_body('{"grade": "ok"}'))
 
     result = engine.judge(
-        "qwen2.5vl:3b", "rubric", [{"x": 1}], produced_by="smollm2:latest"
+        "qwen2.5vl:3b", "rubric", [{"x": 1}], produced_by="smollm2:latest", schema=GRADE
     )
 
     assert result.reason is None, "a different model is a legitimate grader"
@@ -843,39 +884,14 @@ def test_a_different_model_may_grade() -> None:
 def test_judge_asks_for_the_answer_in_json_and_not_only_in_the_schema() -> None:
     """``judge`` states in words that the grade is JSON.
 
-    **This is necessary here, and it is not sufficient — measured, and the limit is
-    worth stating precisely because the fix looks complete without it.**
-
-    ``judge`` passes ``{"type": "object"}``: a schema with no properties, so nothing
-    in the request says what a grade looks like. Measured against the local runtime,
-    the model answers by **echoing the samples back**:
-
-        judge(...) -> {"total": "1789830", "cuit": "20-12345678-9"}
-
-    That is a valid object, so ``load_object`` accepts it and the call reports a
-    **value**. Nothing is raised and nothing is typed: the grade *is* the thing being
-    graded. That is a silent wrong answer, the exact class this project exists to
-    catch, and no parser can reject it — all a parser can check is that the answer is
-    an object.
-
-    The sentence below does not by itself stop that echo. Measured on the same model
-    and the same samples, changing one variable at a time:
-
-    | schema | answer |
-    |---|---|
-    | ``{"type": "object"}`` | ``{"total": "1789830", "cuit": "20-12345678-9"}``
-     — the echo |
-    | a result-shaped object | ``{"fields": [{"name": "total", "supported":
-     true}, …]}`` |
-
-    So the **schema** is what tells this runtime what a grade looks like; the
-    instruction only tells it that the answer is JSON. What the instruction buys here
-    is that the answer is *an object at all* rather than prose — which is what the
-    frontier path fails on loudly. The echo itself cannot be fixed from this side:
-    ``judge``'s signature on the port carries no schema, so the adapter has no way to
-    describe a grade and must not invent one (a grade schema in a kernel would be a
-    domain noun in a kernel API, and a default besides). Closing that gap is a
-    **port change**, and it is not made here.
+    The schema now carries the *shape* of a grade (see the test below). This one
+    covers the other half, because the two are not interchangeable: a schema reaches
+    the runtime as a constraint on an answer that is already JSON, and it says nothing
+    about the answer being JSON in the first place. Measured on this path with the
+    schema alone, the runtime produces the echo below rather than prose — and on the
+    frontier path, where the constraint travels as a tool definition the provider may
+    decline to call, the same gap produced 1138 tokens of prose and a typed
+    ``unsupported_format``.
 
     The assertion is about the **request body**: the stub answers ``{"grade": "ok"}``
     whether or not the instruction was sent, so asserting on the parsed value would
@@ -885,10 +901,58 @@ def test_judge_asks_for_the_answer_in_json_and_not_only_in_the_schema() -> None:
     client = _StubClient(chat=_chat_body('{"grade": "ok"}'))
     engine = OllamaEngine(base_url="http://stub", client=client)
 
-    engine.judge("qwen2.5vl:3b", "rubric", [{"x": 1}], produced_by="smollm2:latest")
+    engine.judge(
+        "qwen2.5vl:3b",
+        "rubric",
+        [{"x": 1}],
+        produced_by="smollm2:latest",
+        schema=GRADE,
+    )
 
     prompt = _posted_prompt(client)
     assert JSON_ANSWER_INSTRUCTION in prompt
+
+
+def test_judge_sends_the_schema_it_was_given() -> None:
+    """The grade's shape reaches the runtime, and is not an empty object.
+
+    **This is the port change that closed the silent failure, asserted where it can be
+    lost.** ``judge`` used to build its own ``{"type": "object"}`` and drop the
+    caller's schema on the floor. Measured against this runtime, the consequence was
+    not an error:
+
+        judge(...) -> {"total": "1789830", "cuit": "20-12345678-9"}
+
+    The model **echoed the samples back**. That is a valid object, so ``load_object``
+    accepted it and the call reported a **value** — the grade was the thing being
+    graded, and nothing could object, because all a parser can check is that the answer
+    is an object. Measured on the same runtime and samples, one variable at a time:
+
+    | schema | answer |
+    |---|---|
+    | ``{"type": "object"}`` | the echo, with or without the instruction |
+    | a result-shaped object | ``{"fields": [{"name": "total", …}]}`` |
+
+    The assertion is about the **request body**, in Ollama's `format` field. A
+    cooperative stub answers ``{"grade": "ok"}`` whatever was sent, so a test on the
+    parsed value would pass with the defect fully in place — which is exactly how this
+    survived: the echo *is* a parseable value.
+
+    """
+    client = _StubClient(chat=_chat_body('{"grade": "ok"}'))
+    engine = OllamaEngine(base_url="http://stub", client=client)
+
+    engine.judge(
+        "qwen2.5vl:3b",
+        "rubric",
+        [{"x": 1}],
+        produced_by="smollm2:latest",
+        schema=GRADE,
+    )
+
+    sent = _posted_body(client)
+    assert sent["format"] == GRADE
+    assert sent["format"] != {"type": "object"}
 
 
 def test_the_judge_instruction_does_not_replace_the_rubric_or_the_samples() -> None:
@@ -901,7 +965,13 @@ def test_the_judge_instruction_does_not_replace_the_rubric_or_the_samples() -> N
     client = _StubClient(chat=_chat_body('{"grade": "ok"}'))
     engine = OllamaEngine(base_url="http://stub", client=client)
 
-    engine.judge("qwen2.5vl:3b", "weigh it", [{"x": 1}], produced_by="smollm2:latest")
+    engine.judge(
+        "qwen2.5vl:3b",
+        "weigh it",
+        [{"x": 1}],
+        produced_by="smollm2:latest",
+        schema=GRADE,
+    )
 
     prompt = _posted_prompt(client)
     assert prompt.startswith("weigh it")
@@ -914,7 +984,13 @@ def test_judge_does_not_call_the_runtime_to_grade_itself() -> None:
     client = _StubClient(chat=_chat_body('{"grade": "ok"}'))
     engine = OllamaEngine(base_url="http://stub", client=client)
 
-    engine.judge("smollm2:latest", "rubric", [{"x": 1}], produced_by="smollm2:latest")
+    engine.judge(
+        "smollm2:latest",
+        "rubric",
+        [{"x": 1}],
+        produced_by="smollm2:latest",
+        schema=GRADE,
+    )
 
     assert not client.calls
 

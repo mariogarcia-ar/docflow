@@ -455,7 +455,7 @@ Reports the **model digest**, never the tag alone — `qwen2.5` is a moving tag 
 | `MVP` | `llm.frontier count-tokens` | `count_tokens(text)` | `--model`, `--text-file` |
 | `now` | `llm.frontier structured` | `structured(model, prompt, schema)` | `--model`, `--prompt-file`, `--schema-file` |
 | `now` | `llm.frontier vision` | `vision(model, prompt, images, schema)` | `--model`, `--prompt-file`, `--image`, `--schema-file` |
-| `MVP` | `llm.frontier judge` | `judge(model, rubric, samples)` | `--model`, `--rubric-file`, `--samples-file` |
+| `MVP` | `llm.frontier judge` | `judge(model, rubric, samples, produced_by, schema)` | `--model`, `--rubric-file`, `--samples-file`, `--schema-file` |
 
 `warm` on this kernel means **confirm the name resolves and the credential is present**, not *load the model*: a hosted provider has no cold start to avoid. It is the one way to check a provider credential before a batch begins, because `capabilities` describes the adapter's *configuration* and therefore answers without one.
 

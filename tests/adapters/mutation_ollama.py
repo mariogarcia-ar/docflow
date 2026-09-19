@@ -196,6 +196,18 @@ MUTATIONS: list[tuple[str, str, str, set[str], Path]] = [
         {"test_the_judge_instruction_does_not_replace_the_rubric_or_the_samples"},
         SOURCE,
     ),
+    (
+        # Restores the defect the silent failure came from: the adapter dropped the
+        # caller's schema and sent `{"type": "object"}`. Measured on this runtime, the
+        # consequence was not an error — the model **echoed the samples back**, the
+        # echo parsed as an object, and the call reported a *value*. Nothing could
+        # fail, because all a parser can check is that the answer is an object.
+        "M17: substitute an empty schema for the caller's grade shape",
+        "        return self.structured(model, payload, schema)",
+        '        return self.structured(model, payload, {"type": "object"})',
+        {"test_judge_sends_the_schema_it_was_given"},
+        SOURCE,
+    ),
 ]
 
 

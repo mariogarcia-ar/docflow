@@ -285,6 +285,37 @@ RUBRIC: str = (
     "missed."
 )
 
+#: The shape a grade must take, and it is supplied here because the caller owns it.
+#: `judge` carries it on the port for exactly this reason: with no shape in the
+#: request, the model is free to answer with the samples it was handed (measured on
+#: the local path: the echo parsed as an object and the call reported a *value*), and
+#: an adapter that supplied its own would be inventing a policy and naming the domain
+#: noun *grade* inside a kernel.
+#:
+#: It asks for a **per-field** judgement rather than one score, which is `sad.md` §9's
+#: rule: an aggregate confidence mixes *not checked* with *checked and matching*.
+GRADE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "fields": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "supported": {"type": "boolean"},
+                    "comment": {"type": "string"},
+                },
+                "required": ["name", "supported", "comment"],
+                "additionalProperties": False,
+            },
+        },
+        "unsupported_source": {"type": "boolean"},
+    },
+    "required": ["fields", "unsupported_source"],
+    "additionalProperties": False,
+}
+
 
 # --- The cases this bench reads ---------------------------------------------
 
@@ -1058,6 +1089,7 @@ def judge_local(
     samples: Sequence[Mapping[str, object]] | None = None,
     produced_by: str | None = None,
     rubric: str | None = None,
+    schema: Mapping[str, object] | None = None,
     label: str = "",
 ) -> _lib.Attempt:
     """Hand the frontier model the local result *and* the image, and ask it to grade.
@@ -1068,9 +1100,10 @@ def judge_local(
     not evidence of correctness.
 
     **`judge` cannot see the image, and the signature says so.** It takes
-    `(model, rubric, samples, produced_by)` and its body builds
-    `f"{rubric}\\n\\n" + json.dumps(samples)` before calling `structured`, which passes
-    `images=()`. So it grades a **transcript**: the `vision` call above is the one
+    `(model, rubric, samples, produced_by, schema)` and its body builds the prompt
+    from the rubric, a sentence asking for a JSON object, and `json.dumps(samples)`
+    before calling `structured`, which passes `images=()`. So it grades a
+    **transcript**: the `vision` call above is the one
     that reads pixels. The flow's *"junto con la imagen original"* is therefore
     satisfied by running both, which is what `hitl.py` does and what this driver
     reports rather than papers over.
@@ -1088,6 +1121,10 @@ def judge_local(
             rather than a rule someone has to remember. A batch caller passes the
             model it ran, because grading one's own output is the prohibition.
         rubric: The rubric to grade against, defaulting to this driver's.
+        schema: The shape the grade must take, defaulting to this driver's
+            `GRADE_SCHEMA`. A caller with its own rubric passes its own shape with it:
+            the two are one request, and a rubric asking for a per-field judgement
+            against a schema asking for one score would be two different questions.
         label: Which document this call is about, appended to the probe id.
 
     Returns:
@@ -1109,6 +1146,7 @@ def judge_local(
         produced_by=f"ollama:{llm_local.TEXT_MODEL}"
         if produced_by is None
         else produced_by,
+        schema=GRADE_SCHEMA if schema is None else schema,
         expect=expect,
     )
     if attempt.succeeded:
@@ -1138,6 +1176,7 @@ def role_conflict(engine: FrontierEngine, model: str) -> None:
         RUBRIC,
         [LOCAL_RESULT],
         produced_by=model,
+        schema=GRADE_SCHEMA,
         expect="precondition",
     )
 

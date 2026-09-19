@@ -554,6 +554,7 @@ class OllamaEngine:
         rubric: str,
         samples: Sequence[Mapping[str, object]],
         produced_by: str,
+        schema: Mapping[str, object],
     ) -> KernelResult[Mapping[str, object]]:
         """Grade samples against a rubric.
 
@@ -567,6 +568,7 @@ class OllamaEngine:
             rubric: The grading criteria, supplied by the caller.
             samples: The samples to grade.
             produced_by: The model that produced the samples.
+            schema: The schema the grade must satisfy, supplied by the caller.
 
         Returns:
             The grades, or no value and a typed ``Reason``. Grading one's own output
@@ -587,31 +589,37 @@ class OllamaEngine:
                 {"model": model, "produced_by": produced_by},
             )
 
-        # The same sentence the frontier path appends, and for the same reason: the
-        # schema below is an empty object, so nothing in this request states that the
-        # grading is to be JSON, and the model is free to answer in prose.
+        # The same sentence the frontier path appends, and for the same reason, but
+        # **it is the schema below that carries the weight here.**
         #
-        # **It fixes less here than it does there, and the difference is measured.**
-        # With the instruction withheld, this runtime answers by **echoing the samples
-        # back** — a valid object, so `load_object` accepts it and the call reports a
-        # `value`: the grade *is* the thing being graded. Nothing can fail, because all
-        # a parser can check is that the answer is an object.
+        # `judge` used to send `{"type": "object"}` — an empty object, so nothing in
+        # the request said what a grade looks like. Measured against this runtime, the
+        # model answers by **echoing the samples back**:
         #
-        # Adding the instruction makes the answer an object rather than prose, and it
-        # does **not** stop the echo. Measured, one variable at a time, on the same
-        # model and samples: with `{"type": "object"}` the echo persists, and with a
-        # result-shaped schema the answer becomes
-        # `{"fields": [{"name": "total", "supported": true}, …]}`. So this path needs
-        # the *schema* to say what a grade looks like, and the port gives `judge` no
-        # way to carry one. Supplying a grade schema here would put a domain noun in a
-        # kernel API and invent a default besides — both forbidden — so the gap is
-        # named and left open rather than papered over with a plausible object.
+        #     {"total": "1789830", "cuit": "20-12345678-9"}
+        #
+        # That is a valid object, so `load_object` accepts it and the call reports a
+        # **value**. Nothing fails, and nothing can: all a parser can check is that
+        # the answer *is an object*, never that it is an answer. The grade is the
+        # thing being graded, silently — the exact class this project exists to catch.
+        #
+        # Measured on the same runtime and samples, one variable at a time:
+        #
+        #     empty schema, no instruction -> the echo
+        #     empty schema + instruction   -> the echo, still
+        #     result-shaped schema         -> {"fields": [{"name": "total", …}]}
+        #
+        # So the instruction makes the answer an object rather than prose (which is
+        # what the frontier path needed), and the *schema* is what tells the model
+        # what a grade is. That is why this parameter was added to the port: the
+        # adapter cannot supply the shape without inventing a default and naming the
+        # domain noun *grade* in a kernel API, and both are forbidden.
         payload = (
             f"{rubric}\n\n"
             f"{JSON_ANSWER_INSTRUCTION}\n\n"
             f"{json.dumps(list(samples), ensure_ascii=False)}"
         )
-        return self.structured(model, payload, {"type": "object"})
+        return self.structured(model, payload, schema)
 
     # --- The shared generation path -----------------------------------------
 

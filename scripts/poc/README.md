@@ -466,17 +466,28 @@ limit stated instead of silently applied.
    `json.dumps(samples)`, and calls `self.structured(...)`, which passes `images=()`.
    So it grades a *transcript*. The comparison that sees the page is **`vision`**, and
    `hitl.py` runs both so the difference is a measurement rather than a claim.
-2. **The grade has no shape, and it shows.** `judge` carries no schema on the port, so
-   the adapter sends `{"type": "object"}` and nothing tells the model what a grade
-   looks like. Measured against the local runtime, it **echoes the samples back** —
-   `{"total": "1789830", "cuit": "20-12345678-9"}` — which parses as an object, so the
-   call reports a *value*: the grade is the thing being graded, and nothing can fail,
-   because all a parser can check is that the answer is an object. Measured one
-   variable at a time on the same model: with a result-shaped schema the answer becomes
-   `{"fields": [{"name": "total", "supported": true}, …]}`. So the schema is the fix,
-   and `judge` cannot be handed one. `GRADE_SCHEMA` in `hitl.py` is that shape, kept
-   beside the call as the *evidence* of the gap because there is nowhere to pass it —
-   the port change is the `TODO`.
+2. **The grade has a shape, and the caller supplies it.** `judge` carries the schema on
+   the port, exactly as `structured` and `vision` do. Before that parameter existed the
+   adapter sent `{"type": "object"}` and nothing said what a grade looked like, and the
+   two paths failed differently — both measured:
+
+   | path | without a schema |
+   |---|---|
+   | frontier (K6) | **loud**: 1138 tokens of prose, no tool call, `unsupported_format` |
+   | local (K5) | **silent**: the samples **echoed back**, the echo parsed as an object, and the call reported a *value* |
+
+   The local case is the dangerous one: the grade *was* the thing being graded, and
+   nothing could object, because all a parser can check is that the answer is an object.
+   Passing `GRADE_SCHEMA` fixes the mechanism on both paths — measured after the change,
+   K6 returns a per-field grade **3/3** and K5 stops echoing.
+
+   **What it does not fix is the model.** Measured on K5 with the real schema, the 1.5B
+   model returns a grade whose field names are invented — `["Cumann", "cumann",
+   "Cumann"]`, `["Malformed"]` — so `review.json` is populated with judgements about
+   fields that do not exist. That is the same split the extraction prompt showed: **the
+   mechanism is fixed, the reliability is the model's**, and `batch_llm_frontier.py`
+   is the contrast that makes it visible. A grade from a 1.5B model is a claim, not
+   evidence.
 3. **`Reviewer` is `S2-T15` and `src/docflow/components/` does not exist.** So there
    is no queue, no `correct` and no `promote`. What `hitl.py` does is the mechanical
    half: find the extractions, pair them by relative path, contrast them, and write

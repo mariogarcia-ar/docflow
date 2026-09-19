@@ -210,6 +210,22 @@ MUTATIONS: list[tuple[str, str, str, set[str], Path]] = [
         {"test_the_judge_instruction_does_not_replace_the_rubric"},
         SOURCE,
     ),
+    (
+        # Restores the defect the `schema` parameter on the port exists to close: the
+        # adapter substituted `{"type": "object"}` for whatever the caller asked, so
+        # nothing in the request said what a grade was. Measured on this provider: the
+        # model answered in prose (1138 completion tokens, one `thinking` block, one
+        # `text` block, no tool call) and the call reported `unsupported_format`.
+        #
+        # It survived because the only test that called `judge` asserted the parsed
+        # value from a *cooperative* stub, which answers a valid tool_use whether or
+        # not a constraint was sent. Assert on the request body, always.
+        "M18: substitute an empty schema for the caller's grade shape",
+        "        return self.structured(model, payload, schema)",
+        '        return self.structured(model, payload, {"type": "object"})',
+        {"test_judge_sends_the_schema_it_was_given"},
+        SOURCE,
+    ),
 ]
 
 

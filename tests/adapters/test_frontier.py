@@ -30,6 +30,7 @@ one-purpose stand-ins by design (``too-few-public-methods``).
 from __future__ import annotations
 
 import json
+from typing import Final
 
 import pytest
 
@@ -656,13 +657,32 @@ def test_there_is_no_call_record_before_any_call() -> None:
 
 # --- Row 15: self-grading ----------------------------------------------------
 
+#: A grade, in the shape a caller would supply from the registry. Used by the judge
+#: tests below, and deliberately **not** an empty object: the defect these tests guard
+#: was the adapter substituting `{"type": "object"}` for whatever the caller asked.
+GRADE: Final[dict[str, object]] = {
+    "type": "object",
+    "properties": {
+        "fields": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+    },
+    "required": ["fields"],
+    "additionalProperties": False,
+}
+
 
 def test_a_model_grading_its_own_output_is_refused() -> None:
     """``judge`` refuses when the grader produced the samples."""
     engine = _engine(_Response(200, PROVIDER_BODY))
 
     result = engine.judge(
-        "anthropic:m", "rubric", [{"x": 1}], produced_by="anthropic:m"
+        "anthropic:m", "rubric", [{"x": 1}], produced_by="anthropic:m", schema=GRADE
     )
 
     assert result.value is None
@@ -678,7 +698,9 @@ def test_the_self_grading_guard_ignores_the_provider_prefix() -> None:
     """
     engine = _engine(_Response(200, PROVIDER_BODY))
 
-    result = engine.judge("anthropic:m", "rubric", [{"x": 1}], produced_by="m")
+    result = engine.judge(
+        "anthropic:m", "rubric", [{"x": 1}], produced_by="m", schema=GRADE
+    )
 
     assert result.value is None
     assert result.reason is not None
@@ -693,7 +715,7 @@ def test_a_different_model_may_grade() -> None:
     engine = _engine(_Response(200, PROVIDER_BODY))
 
     result = engine.judge(
-        "anthropic:other", "rubric", [{"x": 1}], produced_by="anthropic:m"
+        "anthropic:other", "rubric", [{"x": 1}], produced_by="anthropic:m", schema=GRADE
     )
 
     assert result.reason is None, "a different model is a legitimate grader"
@@ -726,7 +748,9 @@ def test_judge_asks_for_the_answer_in_json_and_not_only_in_the_schema() -> None:
     client = _StubClient(_Response(200, PROVIDER_BODY))
     engine = FrontierEngine(base_url="http://stub", client=client)
 
-    engine.judge("anthropic:other", "rubric", [{"x": 1}], produced_by="anthropic:m")
+    engine.judge(
+        "anthropic:other", "rubric", [{"x": 1}], produced_by="anthropic:m", schema=GRADE
+    )
 
     _path, sent = client.calls[0]
     prompt = sent["messages"][0]["content"][0]["text"]
@@ -746,7 +770,13 @@ def test_the_judge_instruction_does_not_replace_the_rubric() -> None:
     client = _StubClient(_Response(200, PROVIDER_BODY))
     engine = FrontierEngine(base_url="http://stub", client=client)
 
-    engine.judge("anthropic:other", "weigh it", [{"x": 1}], produced_by="anthropic:m")
+    engine.judge(
+        "anthropic:other",
+        "weigh it",
+        [{"x": 1}],
+        produced_by="anthropic:m",
+        schema=GRADE,
+    )
 
     _path, sent = client.calls[0]
     prompt = sent["messages"][0]["content"][0]["text"]
@@ -763,9 +793,39 @@ def test_judge_does_not_call_the_model_to_grade_itself() -> None:
     client = _StubClient(_Response(200, PROVIDER_BODY))
     engine = FrontierEngine(base_url="http://stub", client=client)
 
-    engine.judge("anthropic:m", "rubric", [{"x": 1}], produced_by="anthropic:m")
+    engine.judge(
+        "anthropic:m", "rubric", [{"x": 1}], produced_by="anthropic:m", schema=GRADE
+    )
 
     assert not client.calls
+
+
+def test_judge_sends_the_schema_it_was_given() -> None:
+    """The grade's shape reaches the provider, and is not an empty object.
+
+    **This is the port change that closed the defect, asserted where it can be lost.**
+    ``judge`` used to build its own ``{"type": "object"}`` and drop the caller's
+    schema on the floor, so nothing in the request said what a grade was. The failure
+    differed by provider and both were measured: the frontier path returned prose and
+    reported ``unsupported_format``; the local path **echoed the samples back**, which
+    parsed, so the call reported a *value* — the grade was the thing being graded and
+    nothing could object.
+
+    The assertion is about the **request body**: a cooperative stub answers the same
+    body whatever schema was sent, so a test on the parsed value would pass with the
+    defect fully in place.
+
+    """
+    client = _StubClient(_Response(200, PROVIDER_BODY))
+    engine = FrontierEngine(base_url="http://stub", client=client)
+
+    engine.judge(
+        "anthropic:other", "rubric", [{"x": 1}], produced_by="anthropic:m", schema=GRADE
+    )
+
+    _path, sent = client.calls[0]
+    assert sent["tools"][0]["input_schema"] == GRADE
+    assert sent["tools"][0]["input_schema"] != {"type": "object"}
 
 
 # --- Secrets -----------------------------------------------------------------

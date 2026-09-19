@@ -55,9 +55,9 @@ The two modes, and why `judge` cannot see the image
 
 **`judge` never receives the image, and that is measured rather than assumed.**
 Introspecting the adapter: `inspect.signature(FrontierEngine.judge)` is
-`(model, rubric, samples, produced_by)` - there is **no `images` parameter**, the
-body does not contain the name `images`, and it calls `self.structured(...)`, which
-takes no images either. So `judge` grades a **transcript**.
+`(model, rubric, samples, produced_by, schema)` - there is **no `images` parameter**,
+the body does not contain the name `images`, and it calls `self.structured(...)`,
+which takes no images either. So `judge` grades a **transcript**.
 
 The flow's *"junto con la imagen original"* is therefore satisfied by **`vision`**,
 which does take `Sequence[Bytes]` and reads pixels. This driver runs `judge` by
@@ -338,6 +338,11 @@ def assess(
         [fields],
         PRODUCER,
         RUBRIC,
+        # The shape travels with the rubric: this driver's rubric asks whether each
+        # value is plausible for the document type, and the schema it is paired with
+        # asks for exactly that per field. Passing the rubric and letting the shape
+        # default would be asking one question and constraining another.
+        frontier_driver.GRADE_SCHEMA,
     )
 
 
