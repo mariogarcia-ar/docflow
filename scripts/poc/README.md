@@ -82,7 +82,33 @@ neither is probed by `run_all.py`.
 
 `run_all.py` aggregates the five **probe** drivers. `batch.py`, `batch_pdf.py`,
 `batch_image.py`, `batch_ocr.py` and `hitl.py` are run explicitly, because they take
-a folder rather than probing fixtures:
+a folder rather than probing fixtures.
+
+### `llm_frontier.py` asks for the same fields three ways
+
+`FIELDS.json` is the pipeline's own schema — the file `batch_llm_local.py` takes as
+`--schema` — so the K6 probes answer about the caller's fields and not about a fixture
+the driver carries. All three are handed **one** document, read twice by K2:
+
+| Probe | Operation | Sent |
+|---|---|---|
+| text only | `structured` | the page's text in the prompt |
+| image only | `vision` | the page's pixels on the message |
+| text and image | `vision` | both, on one call |
+
+**The pair is derived, never committed as a pair.** Nothing in the corpus is a
+text/image pair — `casos/*.pdf` are born as PDFs and their readings are produced on
+demand — and two unrelated fixtures would make a disagreement between the three answers
+unattributable to the input. So `layout_text` and `render` both run on the same page,
+and the render is capped by the page's own measured resolution because the adapter
+**refuses to upscale** (asking the fixture's 149.69-DPI page for 150 yields no image at
+all, not a bigger one).
+
+**"Text and image" is a caller-side composition, and that is forced.** The frozen port
+has no combined operation: `vision` is the only method with an `images` parameter, and
+`structured` always passes `images=()`. The probe names the limitation instead of
+hiding it — assuming a combined operation existed would mean inventing a port member,
+which re-opens `E04-01`.
 
 ```bash
 python scripts/poc/batch.py       <input-dir> --out <out-dir>

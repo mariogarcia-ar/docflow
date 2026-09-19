@@ -27,6 +27,38 @@ request leaves**: `judge` refuses to grade samples the same model produced. Retr
 to obtain agreement is forbidden (`sad.md` §4), and this is the code that makes it
 mechanical rather than a rule in prose.
 
+The same fields, asked for three ways
+-------------------------------------
+
+`FIELDS.json` is the pipeline's own field schema - the file `batch_llm_local.py` takes
+as `--schema` - so these probes answer about the caller's fields rather than about a
+fixture this bench carries. All three are given the **same** document, read twice:
+
+| Probe | Operation | What is sent |
+|---|---|---|
+| text only | `structured` | the page's text in the prompt |
+| image only | `vision` | the page's pixels on the message |
+| text and image | `vision` | both, on one call |
+
+**The pair is derived from one committed PDF, never committed as a pair.** Nothing in
+the corpus is a text/image pair - `casos/*.pdf` are born as PDFs and their readings are
+produced on demand - and two unrelated fixtures would make a disagreement between the
+three answers unattributable to the input. So K2 produces the text (`layout_text`) and
+the pixels (`render`, capped at the page's own measured resolution because the adapter
+refuses to upscale) from the same page.
+
+**"Text and image" is a caller-side composition, and that is forced.** The frozen port
+has no combined operation: `vision` is the only method with an `images` parameter, and
+`structured` always passes `images=()`. So the text rides in the prompt while the image
+rides on the message, in one call. The probe names that limitation rather than hiding
+it - a caller who assumed a combined operation existed would be inventing a port member,
+which re-opens `E04-01`.
+
+Asking the same fields three ways is the point, not a convenience: the project's claim
+is that **contrast** - two independent reads that disagree - is the only detector of a
+silent error, and one document read three ways is what makes a difference attributable
+to the input rather than to the model or the page.
+
 Run it with no arguments:
 
     python scripts/poc/llm_frontier.py
@@ -40,6 +72,7 @@ To measure the calls for real, export a key and re-run - nothing else changes:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import pathlib
 import sys
@@ -52,8 +85,10 @@ import _lib
 _lib.bootstrap()
 
 import llm_local  # noqa: E402 - see above
+import pdf as pdf_driver  # noqa: E402 - see above
 
 from docflow.adapters.frontier import FrontierEngine  # noqa: E402 - see above
+from docflow.adapters.pdf import PdfEngine  # noqa: E402 - see above
 from docflow.kernels.types import Bytes  # noqa: E402 - see above
 
 __all__: list[str] = []
@@ -89,6 +124,39 @@ FIELD_SCHEMA: dict[str, object] = {
 FIELD_PROMPT: str = (
     "Read this invoice and return its total amount and its CUIT. "
     "Report only what the image supports; do not infer a value you cannot see."
+)
+
+#: The schema **file** the three input probes below are constrained by. A file
+#: rather than a literal, because the fields a corpus holds are the caller's: the
+#: pipeline hands them over, `batch_llm_local.py` takes them as `--schema`, and a
+#: caller swapping them must not have to edit this bench. It is the same file those
+#: runs use, so these probes answer about the caller's fields and not about a fixture
+#: this driver happens to carry.
+FIELDS_PATH: pathlib.Path = _lib.ROOT / "scripts" / "poc" / "FIELDS.json"
+
+#: The **text** input, with ``{text}`` replaced by the document's own text. It is the
+#: same handoff `my_kernel_flow.md` §6 describes: the text a reader produced, plus the
+#: fields wanted.
+TEXT_PROMPT: str = (
+    "Read this document's text and return the fields described by the schema. "
+    "Report only what the text supports; do not infer a value you cannot see."
+    "\n\n{text}"
+)
+
+#: The **both** input. The port has no text-plus-image operation - `vision` is the
+#: only method with an `images` parameter, and `structured` always passes `images=()`
+#: - so *both* is the caller composing the two onto one call: the text rides in the
+#: prompt and the pixels ride on the message. That is a property of the frozen port
+#: rather than a shortcut taken here.
+#:
+#: The prompt asks the model to **say** where the two disagree instead of silently
+#: picking one. Two reads of one page are the only detector of a silent error, and
+#: collapsing them into one answer here would destroy exactly that.
+BOTH_PROMPT: str = (
+    "Read this document's text AND its image, and return the fields described by "
+    "the schema. Where the text and the image disagree, report the disagreement "
+    "rather than choosing one. Do not infer a value neither supports."
+    "\n\n{text}"
 )
 
 #: The `llm.local` output this driver hands to `judge`, verbatim. It is the second
@@ -228,6 +296,242 @@ def extract_from_image(
     # The raw completion lives on a property rather than on the result: `E01` froze
     # `KernelResult` at three fields, and a port cannot grow a member (that re-opens
     # `E04-01`'s gate). Reported because it is the artifact of record.
+    print(f"         call_record={engine.last_call_record}")
+    return attempt
+
+
+# --- The three input shapes, all of them against the pipeline's FIELDS.json --
+#
+# *Text*, *image* and *both*, so that the same fields are asked for three ways and
+# the three answers can be compared. That comparison is the point rather than a
+# convenience: the project's central claim is that **contrast** - two independent
+# reads that disagree - is the only detector of a silent error, and three inputs
+# drawn from **one** document is what makes a disagreement attributable to the
+# input rather than to a different page.
+#
+# The pair is derived here instead of committed, because nothing in the corpus is a
+# text/imagen pair: `casos/*.pdf` are born as PDFs and the readings are produced on
+# demand. Deriving both from one committed PDF is what keeps them the *same*
+# document - two unrelated fixtures would make the comparison meaningless.
+
+
+def _fields_schema(path: pathlib.Path) -> Mapping[str, object]:
+    """Read the field schema the three probes are constrained by.
+
+    The fields a corpus holds are the caller's, so the schema is read from a file
+    rather than written into this bench: `batch_llm_local.py` takes the same file as
+    `--schema`, which is what makes these probes answer about the pipeline's fields
+    instead of about a fixture this driver carries.
+
+    Args:
+        path: The schema file.
+
+    Returns:
+        The schema.
+
+    Raises:
+        ValueError: When the file is absent or does not hold a JSON object. A
+            refusal is right here rather than a default: a missing schema would
+            otherwise become a generation constrained by nothing, reported as a
+            success.
+
+    """
+    if not path.is_file():
+        raise ValueError(
+            f"{path} is not a file; the schema is required and is never defaulted. "
+            "A generation constrained by nothing would be reported as a success."
+        )
+
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{path} does not hold a JSON object")
+
+    return loaded
+
+
+def _readable_dpi(engine: PdfEngine, source: pathlib.Path, page: int) -> int:
+    """Decide the resolution a page is rendered at for a model to read.
+
+    The registry's floor is the **target** and the page's own resolved pixels are the
+    **ceiling**, exactly as `batch_pdf.py::_export_dpi` does it: the adapter refuses to
+    upscale (`kernel-cli.md` §11 row 4), and that refusal is correct - a bigger
+    bitmap is not a more legible one. Asking a 149.69-DPI page for 150 yields **no
+    image at all**, which is the one outcome a read-the-pixels probe must not have.
+
+    Measured on the committed fixture: `render @120` returns 152 035 bytes, `@150` is
+    refused `insufficient_effective_resolution`.
+
+    Args:
+        engine: The K2 adapter.
+        source: The PDF being rendered.
+        page: One-based page number.
+
+    Returns:
+        The floor, or the page's measured resolution when that is lower. An
+        unmeasurable page returns the floor unchanged: the render's own refusal is a
+        better answer than a number invented here.
+
+    """
+    floor = int(_lib.policy("diagnosis.min_dpi"))
+    measured = engine.effective_dpi(source, page)
+    if measured.value is None or measured.evidence is None:
+        return floor
+
+    held = measured.evidence.measurements.get("effective_dpi")
+    if held is None:
+        return floor
+
+    return max(1, min(floor, int(held)))
+
+
+def document_pair(
+    engine: PdfEngine,
+    source: pathlib.Path,
+    page: int,
+    *,
+    dpi: int | None = None,
+) -> tuple[str, Bytes]:
+    """Derive one page's text **and** its pixels, so the three probes read one document.
+
+    Args:
+        engine: The K2 adapter.
+        source: The PDF to read.
+        page: One-based page number.
+        dpi: The resolution to render at. ``None`` measures the page and caps the
+            registry's floor by what it holds.
+
+    Returns:
+        The page's text as the reader returns it, and the page as `Bytes`.
+
+    Raises:
+        RuntimeError: When either reading refuses. The pair *is* the input to all
+            three probes, so a half-derived pair would make two of them answer about
+            one document and the third about another - which is precisely the
+            comparison this driver exists to make valid.
+
+    """
+    text = engine.layout_text(source, [page])
+    if text.value is None:
+        raise RuntimeError(
+            f"layout_text refused page {page}: "
+            f"{text.reason.code if text.reason else 'unknown'}"
+        )
+
+    resolution = _readable_dpi(engine, source, page) if dpi is None else dpi
+    rendered = engine.render(source, [page], resolution)
+    if rendered.value is None:
+        raise RuntimeError(
+            f"render refused page {page} at {resolution} DPI: "
+            f"{rendered.reason.code if rendered.reason else 'unknown'}"
+        )
+
+    print(
+        f"         pair  page={page}  text={len(text.value)} chars  "
+        f"image={len(rendered.value.data)} bytes @{resolution} DPI"
+    )
+    return text.value, Bytes(
+        data=rendered.value.data, media_type=rendered.value.media_type
+    )
+
+
+def extract_from_text(
+    engine: FrontierEngine,
+    model: str,
+    expect: str,
+    prompt: str | None = None,
+    schema: Mapping[str, object] | None = None,
+    text: str | None = None,
+) -> _lib.Attempt:
+    """Ask the frontier model for the fields out of **text alone**.
+
+    The text-only branch, and the one K6 is not advertised for: `my_kernel_flow.md`
+    §5 sends §4's pixels, so this probe exists to measure what the *hosted* model
+    answers when it is given only what the local model was given. Without it, a
+    difference between the local and frontier answers could be attributed to the
+    model when it is the input that changed.
+
+    Args:
+        engine: The K6 adapter.
+        model: The model as the caller names it.
+        expect: The bucket this probe is declared to land in.
+        prompt: The prompt template, with ``{text}`` replaced. Public because a
+            caller with documents of its own must pass its own.
+        schema: The schema the generation is constrained by, defaulting to the
+            fixture's two-field one.
+        text: The document's own text, as the reader returned it.
+
+    Returns:
+        The attempt, carrying the fields.
+
+    """
+    template = TEXT_PROMPT if prompt is None else prompt
+    body = template.replace("{text}", "" if text is None else text)
+
+    attempt = _lib.run(
+        f"llm_frontier.structured[{model}]",
+        engine.structured,
+        model,
+        body,
+        FIELD_SCHEMA if schema is None else schema,
+        expect=expect,
+    )
+    if attempt.succeeded:
+        print(f"         value={dict(attempt.result.value)}")
+    print(f"         call_record={engine.last_call_record}")
+    return attempt
+
+
+def extract_from_text_and_image(
+    engine: FrontierEngine,
+    model: str,
+    expect: str,
+    prompt: str | None = None,
+    schema: Mapping[str, object] | None = None,
+    text: str | None = None,
+    images: list[Bytes] | None = None,
+) -> _lib.Attempt:
+    """Ask the frontier model for the fields, given the text **and** the pixels.
+
+    **This is a caller-side composition, and that is forced rather than chosen.** The
+    port has no text-plus-image operation: `vision` is the only method with an
+    `images` parameter and `structured` always passes `images=()`. So the text rides
+    in the prompt while the image rides on the message, on one call. Naming the
+    limitation here is the point of the probe - a caller who assumed a combined
+    operation existed would be inventing a port member, which re-opens `E04-01`.
+
+    It is also the shape the flow's §5 sentence describes: *"send the llm.local result
+    together with the original image"*, where the local result stands in for the
+    text it read.
+
+    Args:
+        engine: The K6 adapter.
+        model: The model as the caller names it.
+        expect: The bucket this probe is declared to land in.
+        prompt: The prompt template, with ``{text}`` replaced.
+        schema: The schema the generation is constrained by.
+        text: The document's own text, as the reader returned it.
+        images: The page as `Bytes`. `Bytes` and never a `Path`, for the reason
+            `llm_local.payload_types` measures: the encoder accepts a `Path` and
+            base64-encodes the *file name*.
+
+    Returns:
+        The attempt, carrying the fields.
+
+    """
+    template = BOTH_PROMPT if prompt is None else prompt
+    body = template.replace("{text}", "" if text is None else text)
+
+    attempt = _lib.run(
+        f"llm_frontier.text_and_image[{model}]",
+        engine.vision,
+        model,
+        body,
+        [_image(_lib.CASE_IMAGE)] if images is None else images,
+        FIELD_SCHEMA if schema is None else schema,
+        expect=expect,
+    )
+    if attempt.succeeded:
+        print(f"         value={dict(attempt.result.value)}")
     print(f"         call_record={engine.last_call_record}")
     return attempt
 
@@ -386,6 +690,45 @@ def main(argv: list[str] | None = None) -> int:
 
     capabilities(engine, MODEL, "ok")
     extract_from_image(engine, MODEL, reachable)
+
+    print()
+    print("=== the same fields, asked for three ways")
+    # The schema comes from the pipeline's own file, so these probes answer about the
+    # caller's fields rather than about a fixture this driver carries.
+    try:
+        schema = _fields_schema(FIELDS_PATH)
+    except ValueError as exc:
+        _lib.note("llm_frontier.fields", f"NOT PROBED: {exc}")
+        schema = None
+
+    if schema is not None:
+        print(
+            f"  schema = {FIELDS_PATH.relative_to(_lib.ROOT)} "
+            f"({len(schema.get('properties', {}))} propert(ies))"
+        )
+        # One document, read twice: the pair is what makes the three answers
+        # comparable. Two unrelated fixtures would make a disagreement
+        # unattributable to the input.
+        pdf_engine = pdf_driver._engine()
+        source = _lib.SOURCE_PDF
+        page = 1
+        try:
+            text, image = document_pair(pdf_engine, source, page)
+        except (RuntimeError, ValueError) as exc:
+            _lib.note("llm_frontier.pair", f"NOT PROBED: {exc}")
+        else:
+            print(f"  source = {source.relative_to(_lib.ROOT)} page {page}")
+            print()
+            print("  -- text only")
+            extract_from_text(engine, MODEL, reachable, schema=schema, text=text)
+            print()
+            print("  -- image only")
+            extract_from_image(engine, MODEL, reachable, images=[image], schema=schema)
+            print()
+            print("  -- text and image together")
+            extract_from_text_and_image(
+                engine, MODEL, reachable, schema=schema, text=text, images=[image]
+            )
 
     print()
     judge_local(engine, MODEL, reachable)
