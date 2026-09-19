@@ -41,7 +41,9 @@ Los kernels son necesario:
 
 - llm.frontier: envio la imagen adecuada con prompts de mas alto nivel para extrear los campos, puedo tambien enviarle el resultado del llm.local en conjunto a la imagen original para que analizce la eficacia 
 
+- orquestado: toma una carpeta , por cada archivo determianr si es imagen / pdf / no validao, si es pdf extrae texto en un archivo txt o exporta a la imagen , si es imagen extrae con el ocr y guarda la extraccion en un archivo txt, luego con llm.local trato de extraer los campos de mismo
 
+- hitl: vamos a suar al llm.frontier para tomar la salida del llm.local para avaluar la extraccion  
 
 ---
 

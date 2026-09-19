@@ -48,6 +48,7 @@ __all__: list[str] = [
     "Outcome",
     "bootstrap",
     "note",
+    "out_dir",
     "policy",
     "reset",
     "run",
@@ -107,6 +108,20 @@ def bootstrap() -> None:
     text = str(SRC)
     if text not in sys.path:
         sys.path.insert(0, text)
+
+
+def out_dir() -> pathlib.Path:
+    """Report where the probes write, creating the directory if absent.
+
+    A probe that needs to place a generated fixture beside its siblings asks here
+    rather than rebuilding the path, so the root has one owner.
+
+    Returns:
+        The output directory.
+
+    """
+    _OUT.mkdir(parents=True, exist_ok=True)
+    return _OUT
 
 
 def set_out(path: pathlib.Path) -> None:
