@@ -337,3 +337,55 @@ def test_evidence_mappings_are_immutable() -> None:
 
     assert isinstance(result.evidence.observed, MappingProxyType)
     assert isinstance(result.evidence.measurements, MappingProxyType)
+
+
+# --- Table cells in the reading ----------------------------------------------
+
+
+def test_cells_on_one_table_row_form_one_row() -> None:
+    """Cells sharing a `y` are one row, which is what makes a table readable.
+
+    This is the property `--tables` exists for: a table row read across its columns
+    is the construct the engine's blocks cannot express, because a `TableItem`
+    carries no `text` of its own and its cells each carry their own box.
+    """
+    cells = [
+        token("Código", 22.0, 249.0, width=30.0, height=8.0),
+        token("Detalle", 69.0, 249.0, width=30.0, height=8.0),
+        token("Total", 537.0, 249.0, width=22.0, height=8.0),
+    ]
+    for cell in cells:
+        object.__setattr__(cell, "role", "table_cell")
+
+    result = ocr.layout(cells, line_tolerance=6.0)
+
+    assert result.value == "Código | Detalle | Total\n"
+
+
+def test_a_tolerance_wide_enough_to_merge_table_rows_does_merge_them() -> None:
+    """The row test cannot tell a header band from the item band below it.
+
+    Measured on `casos/66cd35e9` at 72 DPI: the table's header sits at `y=249` and
+    its first item row at `y=263`, so a tolerance of `25.0` — the legacy's own
+    figure, unconverted — joins them, and one row then reads
+    `Código | Detalle | ... | Vendedor: | Felipe CUIT:`. At `6.0` the header reads
+    on its own.
+
+    The behaviour is asserted rather than described because it is a **real limit**
+    of ordering by position: cells elsewhere on the page at a similar height are
+    indistinguishable from this row's own, and only a component that knows a grid
+    from a page can separate them (`S2-T07`). A caller reading a table therefore
+    sets the tolerance from the row pitch, not from the font, and the evidence
+    reports the value it applied.
+    """
+    header = token("Código", 22.0, 249.0, width=30.0, height=8.0)
+    body_item = token("Vendedor:", 400.0, 263.0, width=40.0, height=8.0)
+
+    merged = ocr.layout([header, body_item], line_tolerance=25.0)
+    separate = ocr.layout([header, body_item], line_tolerance=6.0)
+
+    assert merged.value == "Código | Vendedor:\n", (
+        "a tolerance wider than the row pitch merges the bands, which is the "
+        "limit a caller tunes the value against"
+    )
+    assert separate.value == "Código\nVendedor:\n"

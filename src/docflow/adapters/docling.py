@@ -47,7 +47,7 @@ from typing import Any, Final
 
 from docflow.kernels import ocr as ocr_layout
 from docflow.kernels.types import Box, Evidence, KernelResult, Reason, Token
-from docflow.ports.ocr import PageStatus, ReadResult
+from docflow.ports.ocr import TABLE_TOKEN_ROLE, PageStatus, ReadResult
 
 # Pylint sees the optional-engine import shape below as a duplicate of the one in
 # `docflow/kernels/pdf.py`. It is: both translate a missing optional library into the
@@ -231,6 +231,8 @@ class DoclingEngine:
         pages: Sequence[int],
         dpi: int,
         lang: str,
+        *,
+        tables: bool,
     ) -> KernelResult[ReadResult]:
         """Read a document and return positioned text.
 
@@ -250,6 +252,14 @@ class DoclingEngine:
                 version shipped here does not expose a per-call language setting,
                 and silently ignoring it would be a configuration that does
                 nothing.
+            tables: Whether to report a table's cells as tokens. The engine gives
+                a table no ``text`` of its own, so without this the whole
+                construct is dropped - measured on ``casos/66cd35e9``, a 27-cell
+                invoice table vanished and the row naming ``EZ9F34110`` was
+                absent from the reading. ``True`` reports each cell as a token
+                with its own box and the role ``table_cell``; the table's
+                *structure* still leaves nothing here, because reassembling a
+                grid is `S2-T07`'s work.
 
         Returns:
             The items with their boxes and per-page status, or no value and a typed
@@ -307,6 +317,8 @@ class DoclingEngine:
         for page in selection:
             height = _page_height(document, page)
             items = _items_on_page(document, page, scale, height)
+            if tables:
+                items.extend(_table_cells_on_page(document, page, scale, height))
             if items:
                 tokens.extend(items)
                 status[page] = PageStatus.READ
@@ -342,6 +354,7 @@ class DoclingEngine:
                     "reading_order": "not_resolved",
                     "granularity": "block",
                     "layout_dropped": True,
+                    "tables": "cells_included" if tables else "dropped",
                 },
             ),
             reason=None,
@@ -363,6 +376,7 @@ class DoclingEngine:
         *,
         line_tolerance: float,
         orientation: str = "horizontal",
+        tables: bool,
     ) -> KernelResult[str]:
         """Read a selection and order it into rows.
 
@@ -388,13 +402,17 @@ class DoclingEngine:
                 in PDF points, so ``25.0 * dpi / 72`` reproduces it and a constant
                 here could not.
             orientation: ``horizontal`` or ``vertical``.
+            tables: Whether a table's cells join the reading. Off by default, so
+                a caller that wants the reading the engine's blocks gave it is
+                unaffected; on, a table's row reads across its columns the way a
+                line reads across a page.
 
         Returns:
             The ordered text, or the read's own typed ``Reason`` — a selection the
             engine cannot read refuses here exactly as it refuses in ``read``.
 
         """
-        outcome = self.read(path, pages, dpi, lang)
+        outcome = self.read(path, pages, dpi, lang, tables=tables)
         if outcome.reason is not None or outcome.value is None:
             return KernelResult(
                 value=None,
@@ -625,6 +643,80 @@ def _items_on_page(
                 role=str(getattr(item, "label", "text")),
             )
         )
+
+    return tokens
+
+
+def _table_cells_on_page(
+    document: Any, page: int, scale: float, page_height: float | None
+) -> list[Token]:
+    """Extract one page's table cells as positioned tokens.
+
+    A table is the one construct the engine reports as *nothing*: a ``TableItem``
+    carries no ``text`` of its own, so a boundary that keeps only text-carrying
+    items loses the whole thing. Its **cells** do carry text and each one carries
+    its own box, so reporting them is reporting what the engine measured rather
+    than reconstructing anything.
+
+    It reports cells and not a table. A token for the table itself would have the
+    table's box and none of its cells' positions, which is a position no
+    measurement supports — and the grid, the spans and the header association are
+    `S2-T07`'s work (`prd.md` FR-17). What this leaves is the material a row can be
+    read across.
+
+    Cells whose box is missing are skipped rather than placed at a made-up
+    position, and the count of what was skipped travels in nothing here because the
+    caller's token count already differs — a cell with no box has nothing to say
+    about where it is, and inventing an origin would put text at a place the
+    document does not have it.
+
+    Args:
+        document: The engine's document model.
+        page: The one-based page number to keep.
+        scale: The factor converting points into the requested resolution.
+        page_height: The page's height in the engine's units, or ``None``.
+
+    Returns:
+        The page's table-cell tokens, in the order the engine listed them, which
+        is row-major.
+
+    """
+    tokens: list[Token] = []
+
+    for table in getattr(document, "tables", None) or []:
+        provenance = getattr(table, "prov", None)
+        if not provenance:
+            continue
+        if int(getattr(provenance[0], "page_no", 0)) != page:
+            continue
+
+        data = getattr(table, "data", None)
+        if data is None:
+            continue
+
+        for cell in getattr(data, "table_cells", None) or []:
+            text = getattr(cell, "text", None)
+            if not text or not str(text).strip():
+                continue
+            # A cell's box is already top-left, unlike the table's own provenance
+            # box, so the origin flip `_to_source_box` performs for a bottom-left
+            # box does not apply here. It reads the origin from the box, so this is
+            # stated rather than assumed: a future engine that switched the cell
+            # origin would be converted correctly and would not need this line
+            # changed.
+            box = _to_source_box(getattr(cell, "bbox", None), scale, page_height)
+            if box is None:
+                continue
+
+            tokens.append(
+                Token(
+                    text=str(text),
+                    page=page,
+                    bbox=box,
+                    confidence=None,
+                    role=TABLE_TOKEN_ROLE,
+                )
+            )
 
     return tokens
 

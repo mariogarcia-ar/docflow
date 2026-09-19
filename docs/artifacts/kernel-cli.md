@@ -412,12 +412,18 @@ declaration, it does not widen the vocabulary.
 |:---:|---|---|---|
 | `now` | `ocr capabilities` | `capabilities()` | — |
 | `now` | `ocr engine-info` | `engine_info()` | — |
-| `now` | `ocr read <file…>` | `read(pages, options)` | `--pages`, `--dpi`, `--lang`, `--correct` |
-| `now` | `ocr layout <file…>` | — (`layout`, kernel-only) | `--pages`, `--dpi`, `--lang`, `--tolerance`, `--orientation` |
+| `now` | `ocr read <file…>` | `read(pages, options)` | `--pages`, `--dpi`, `--lang`, `--tables`, `--correct` |
+| `now` | `ocr layout <file…>` | — (`layout`, kernel-only) | `--pages`, `--dpi`, `--lang`, `--tolerance`, `--orientation`, `--tables` |
 
-Returns positioned tokens with **no reading order resolved**, plus per-page status (`read` with zero tokens vs `blank` vs `unreadable`). Docling's layout and table output is **dropped at the boundary** — the tokens are the contract. Confidence is `float | null`, and `null` is never reported as `1.0`.
+Returns positioned tokens with **no reading order resolved**, plus per-page status (`read` with zero tokens vs `blank` vs `unreadable`). Confidence is `float | null`, and `null` is never reported as `1.0`.
 
-**`ocr layout` is the second command on this surface whose operation is not a port method**, and it is the OCR counterpart of `pdf layout` with one difference that is the reason both exist. `pdf layout` delegates to `pdftotext -layout`, which returns the reader's own **character grid** because a text reader has the font metrics. A recogniser has none: it reports *blocks*, so the rows are rebuilt from the token boxes. The output pairs a value with its label — a ticket's `ALICUOTA 21,00% | 10196,06` — and it does **not** reproduce column widths, because an engine that reports blocks does not measure them; padding them into a grid would synthesise whitespace no measurement supports. `E04-04` freezes `OcrEngine`'s three operations, so a fourth would re-open it; the adapter exposes `layout` and the command reaches it there.
+**`--tables` keeps a table's cells, off by default.** A table is the one construct the engine reports as *nothing*: a `TableItem` carries no `text` of its own, so a boundary that keeps only text-carrying items loses the whole construct — measured on `casos/66cd35e9`, a 27-cell invoice table vanished and the row naming `EZ9F34110` was simply absent from the reading (`42` tokens without the flag, `69` with it). The flag reports each cell as a token with **its own box** and the role `table_cell`, which is what lets a row read across a table's columns the way a line reads across a page.
+
+The default is `False` because `E04-04` froze this port with the cells dropped and its criterion 3 asserts `layout_dropped`; inverting it would change what every existing caller receives without re-opening that gate, so the inclusion is opt-in and the evidence says which way it went (`tables: dropped | cells_included`).
+
+**It is cells, not a table.** The grid, the spans and the header association are still not here — those are `S2-T07`'s (`prd.md` FR-17). A token carrying a whole rendered table would have the table's box and none of its cells' positions, which is a position no measurement supports. The role says which cells came from a table, so a consumer that wants the structure can group them without guessing.
+
+**`ocr layout` is the second command on this surface whose operation is not a port method**, and it is the OCR counterpart of `pdf layout` with one difference that is the reason both exist. `pdf layout` delegates to `pdftotext -layout`, which returns the reader's own **character grid** because a text reader has the font metrics. A recogniser has none: it reports *blocks*, so the rows are rebuilt from the token boxes. The output pairs a value with its label — a ticket's `ALICUOTA 21,00% | 10196,06` — and it does **not** reproduce column widths, because an engine that reports blocks does not measure them; padding them into a grid would synthesise whitespace no measurement supports. `E04-04` freezes `OcrEngine`'s methods, so adding one would re-open it; the adapter exposes `layout` and the command reaches it there.
 
 **The row tolerance is the caller's, and the legacy's constant does not transfer.** The previous system's `TOLERANCIA_LINEA = 25.0` was in PDF points at 72 DPI and could be a constant because nothing in it read at another resolution. Here `--dpi` is a flag, so `--tolerance` is explicit and its absence means `25.0 * dpi / 72` — a conversion rather than a copied number, because a literal `25.0` at 300 DPI is a fifth of the row height and would split every row. `--orientation` is likewise explicit; its absence means the dominant orientation the token boxes support, which is reported as a measurement in the evidence either way.
 
@@ -500,7 +506,7 @@ A malformed asset stops the run. A missing asset is never defaulted: *"a missing
 | `--format json` | all | Default and only machine format |
 | `--verbose` | all | More on stderr; never changes stdout |
 
-**Allowed flag vocabulary** — asset and call parameters: `--model`, `--schema-file`, `--prompt-file`, `--rubric-file`, `--dpi`, `--page`, `--pages`, `--region`, `--lang`, `--media-type`, `--root`, `--out`, `--save`, `--correct`, `--jobs`, `--slots`, `--force`, `--repeat`, `--resolve-only`, `--timeout`.
+**Allowed flag vocabulary** — asset and call parameters: `--model`, `--schema-file`, `--prompt-file`, `--rubric-file`, `--dpi`, `--page`, `--pages`, `--region`, `--lang`, `--media-type`, `--root`, `--out`, `--save`, `--correct`, `--jobs`, `--slots`, `--force`, `--repeat`, `--resolve-only`, `--timeout`, `--tables`, `--tolerance`, `--orientation`.
 
 `--out` and `--root` are both allowed and are not synonyms: `--out` is **where a run's artifacts go** (`orchestrator run`), `--root` is **which store or registry a kernel reads** (`store`, `registry`). K1 receives an `--out`; K7 and K8 receive a `--root`. A command that needs both is a sign the boundary has been crossed, and the contract test in `S1-T21` is what notices.
 

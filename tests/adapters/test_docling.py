@@ -72,6 +72,67 @@ class _Item:
         self.prov = prov
 
 
+class _Cell:
+    """One table cell, with its own box and its grid position.
+
+    A cell's box is **top-left**, unlike the table's own provenance box, which is
+    the difference the real engine has and the reason the adapter reads the origin
+    from the box rather than assuming one.
+
+    The attribute count is above Pylint's ceiling because this is a fake of the
+    engine's cell type, not a value of ours: it holds the four grid indices, the
+    two header flags and the box and text, which is what the real type carries.
+    Dropping the indices would make the fake agree with the adapter's current
+    reading rather than with the engine's model.
+    """
+
+    # pylint: disable=too-many-instance-attributes
+
+    def __init__(
+        self,
+        text: str,
+        box: _Box | None,
+        row: int = 0,
+        col: int = 0,
+    ) -> None:
+        self.text = text
+        self.bbox = box
+        self.start_row_offset_idx = row
+        self.end_row_offset_idx = row + 1
+        self.start_col_offset_idx = col
+        self.end_col_offset_idx = col + 1
+        self.column_header = False
+        self.row_header = False
+
+
+def _cell_box(left: float, top: float, right: float, bottom: float) -> _Box:
+    """Build a cell box with the top-left origin the engine reports for a cell."""
+    box = _Box(left, top, right, bottom)
+    box.coord_origin = "CoordOrigin.TOPLEFT"
+    return box
+
+
+class _TableData:
+    """The cells and the grid of a table."""
+
+    def __init__(self, cells: list[_Cell]) -> None:
+        self.table_cells = cells
+        self.num_rows = 1
+        self.num_cols = len(cells)
+        self.grid = [[cell] for cell in cells]
+
+
+class _Table:
+    """A table item: no ``text`` of its own, cells with their own boxes."""
+
+    def __init__(self, cells: list[_Cell], prov: list[_Prov] | None) -> None:
+        self.data = _TableData(cells)
+        self.prov = prov
+        self.label = "table"
+        # Deliberately absent: a real ``TableItem`` carries no ``text`` member,
+        # and that absence is the whole reason the cells vanish without the flag.
+
+
 class _Size:
     """A page's dimensions."""
 
@@ -90,9 +151,15 @@ class _Page:
 class _Document:
     """The engine's document model, reduced to what the adapter reads."""
 
-    def __init__(self, pages: int, items: list[_Item]) -> None:
+    def __init__(
+        self, pages: int, items: list[_Item], tables: list[_Table] | None = None
+    ) -> None:
         self.pages = {n: _Page(600.0, 800.0) for n in range(1, pages + 1)}
         self._items = items
+        # ``None`` is not the same as ``[]``: the real model always exposes the
+        # attribute, and a fake that omitted it would let the adapter's ``or []``
+        # guard go untested.
+        self.tables = [] if tables is None else tables
 
     def iterate_items(self) -> list[tuple[_Item, int]]:
         """Yield the items with their nesting level."""
@@ -219,7 +286,7 @@ def test_read_returns_the_text_with_its_box(a_file: pathlib.Path) -> None:
         )
     )
 
-    result = engine.read(a_file, [1], dpi=72, lang="es")
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=False)
 
     assert result.value is not None
     assert len(result.value.tokens) == 1
@@ -248,7 +315,7 @@ def test_the_box_is_flipped_into_top_left_source_coordinates(
         )
     )
 
-    result = engine.read(a_file, [1], dpi=72, lang="es")
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=False)
 
     assert result.value is not None
     token = result.value.tokens[0]
@@ -264,8 +331,8 @@ def test_the_box_scales_with_the_requested_resolution(a_file: pathlib.Path) -> N
     )
     engine, _ = _engine_with(document)
 
-    at_72 = engine.read(a_file, [1], dpi=72, lang="es").value
-    at_144 = engine.read(a_file, [1], dpi=144, lang="es").value
+    at_72 = engine.read(a_file, [1], dpi=72, lang="es", tables=False).value
+    at_144 = engine.read(a_file, [1], dpi=144, lang="es", tables=False).value
 
     assert at_72 is not None and at_144 is not None
     assert at_144.tokens[0].bbox.x == pytest.approx(at_72.tokens[0].bbox.x * 2)
@@ -291,7 +358,7 @@ def test_confidence_is_none_and_never_coerced(a_file: pathlib.Path) -> None:
         )
     )
 
-    result = engine.read(a_file, [1], dpi=72, lang="es")
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=False)
 
     assert result.value is not None
     assert result.value.tokens
@@ -314,7 +381,7 @@ def test_a_page_the_engine_reports_nothing_for_is_blank_not_read(
     """
     engine, _ = _engine_with(_Document(1, []))
 
-    result = engine.read(a_file, [1], dpi=72, lang="es")
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=False)
 
     assert result.value is not None
     assert result.value.page_status[1] is PageStatus.BLANK
@@ -331,7 +398,7 @@ def test_a_page_with_items_is_read(a_file: pathlib.Path) -> None:
         _Document(1, [_Item("x", "text", [_Prov(1, _Box(1.0, 2.0, 3.0, 1.0))])])
     )
 
-    result = engine.read(a_file, [1], dpi=72, lang="es")
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=False)
 
     assert result.value is not None
     assert result.value.page_status[1] is PageStatus.READ
@@ -347,7 +414,7 @@ def test_a_blank_page_and_a_read_page_are_distinguishable_in_one_call(
         )
     )
 
-    result = engine.read(a_file, [1, 2], dpi=72, lang="es")
+    result = engine.read(a_file, [1, 2], dpi=72, lang="es", tables=False)
 
     assert result.value is not None
     assert result.value.page_status[1] is PageStatus.READ
@@ -371,7 +438,7 @@ def test_a_truncated_read_is_visible_in_the_page_accounting(
         _Document(3, [_Item("x", "text", [_Prov(2, _Box(1.0, 2.0, 3.0, 1.0))])])
     )
 
-    result = engine.read(a_file, [1, 2, 3], dpi=72, lang="es")
+    result = engine.read(a_file, [1, 2, 3], dpi=72, lang="es", tables=False)
 
     assert result.value is not None
     assert result.value.pages_requested == (1, 2, 3)
@@ -388,7 +455,7 @@ def test_pages_read_is_derived_from_the_statuses(a_file: pathlib.Path) -> None:
         _Document(2, [_Item("x", "text", [_Prov(2, _Box(1.0, 2.0, 3.0, 1.0))])])
     )
 
-    result = engine.read(a_file, [1, 2], dpi=72, lang="es")
+    result = engine.read(a_file, [1, 2], dpi=72, lang="es", tables=False)
 
     assert result.value is not None
     assert result.value.pages_read == tuple(sorted(result.value.page_status))
@@ -416,7 +483,7 @@ def test_layout_and_reading_order_do_not_leave_the_adapter(
         )
     )
 
-    result = engine.read(a_file, [1], dpi=72, lang="es")
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=False)
 
     assert result.value is not None
     assert result.evidence.observed["reading_order"] == "not_resolved"
@@ -436,7 +503,9 @@ def test_a_missing_file_is_a_typed_reason(tmp_path: pathlib.Path) -> None:
     """An absent file reports ``unsupported_format``, never an empty read."""
     engine, _ = _engine_with(_Document(1, []))
 
-    result = engine.read(tmp_path / "no-existe.png", [1], dpi=72, lang="es")
+    result = engine.read(
+        tmp_path / "no-existe.png", [1], dpi=72, lang="es", tables=False
+    )
 
     assert result.value is None
     assert result.reason is not None
@@ -449,7 +518,7 @@ def test_bytes_the_engine_cannot_read_are_a_typed_reason(
     """A conversion failure is reported, not raised."""
     engine = DoclingEngine(engine=_RaisingConverter())
 
-    result = engine.read(a_file, [1], dpi=72, lang="es")
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=False)
 
     assert result.value is None
     assert result.reason is not None
@@ -469,7 +538,7 @@ def test_a_missing_engine_is_a_typed_reason_and_not_a_substitute(
         engine, "_converter_or_failure", lambda: (None, _missing_engine_reason())
     )
 
-    result = engine.read(a_file, [1], dpi=72, lang="es")
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=False)
 
     assert result.value is None
     assert result.reason is not None
@@ -496,7 +565,7 @@ def test_an_empty_selection_is_refused(a_file: pathlib.Path) -> None:
     engine, _ = _engine_with(_Document(1, []))
 
     with pytest.raises(ValueError, match="selection is empty"):
-        engine.read(a_file, [], dpi=72, lang="es")
+        engine.read(a_file, [], dpi=72, lang="es", tables=False)
 
 
 def test_a_page_outside_the_document_is_refused(a_file: pathlib.Path) -> None:
@@ -504,7 +573,7 @@ def test_a_page_outside_the_document_is_refused(a_file: pathlib.Path) -> None:
     engine, _ = _engine_with(_Document(1, []))
 
     with pytest.raises(ValueError, match="outside the document"):
-        engine.read(a_file, [1, 9], dpi=72, lang="es")
+        engine.read(a_file, [1, 9], dpi=72, lang="es", tables=False)
 
 
 def test_a_non_positive_dpi_is_refused(a_file: pathlib.Path) -> None:
@@ -512,7 +581,7 @@ def test_a_non_positive_dpi_is_refused(a_file: pathlib.Path) -> None:
     engine, _ = _engine_with(_Document(1, []))
 
     with pytest.raises(ValueError, match="dpi must be positive"):
-        engine.read(a_file, [1], dpi=0, lang="es")
+        engine.read(a_file, [1], dpi=0, lang="es", tables=False)
 
 
 # --- The engine is not a setting --------------------------------------------
@@ -560,4 +629,162 @@ def test_every_reason_code_raised_here_is_in_the_closed_set() -> None:
     assert declared, "the adapter declares reason codes, so this is not vacuous"
     assert declared <= closed_set, (
         f"codes outside the closed set: {declared - closed_set}"
+    )
+
+
+# --- The `tables` parameter --------------------------------------------------
+
+
+def _invoice_with_a_table() -> _Document:
+    """A page carrying body text and a two-cell table.
+
+    The table is what `E04-04` dropped: a ``TableItem`` has no ``text`` of its own,
+    so the filter that keeps text-carrying items loses the whole construct. The
+    cells below are the two columns of one row, and the body item is there so the
+    page is not solely a table.
+    """
+    return _Document(
+        1,
+        [_Item("cuerpo", "text", [_Prov(1, _Box(1.0, 20.0, 3.0, 19.0))])],
+        [
+            _Table(
+                [
+                    _Cell(
+                        "EZ9F34110", _cell_box(20.0, 249.0, 62.0, 257.0), row=0, col=0
+                    ),
+                    _Cell(
+                        "8.613,90", _cell_box(543.0, 249.0, 560.0, 257.0), row=0, col=8
+                    ),
+                ],
+                [_Prov(1, _Box(19.0, 597.0, 575.0, 560.0))],
+            )
+        ],
+    )
+
+
+def test_table_cells_are_dropped_by_default(a_file: pathlib.Path) -> None:
+    """The default is what every existing caller receives, and it is unchanged.
+
+    `E04-04` froze this port with the cells dropped and its criterion 3 asserts
+    `layout_dropped`, so the inclusion is opt-in: inverting the default would change
+    what every caller gets without re-opening that gate.
+    """
+    engine, _ = _engine_with(_invoice_with_a_table())
+
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=False)
+
+    assert result.value is not None
+    assert [token.text for token in result.value.tokens] == ["cuerpo"]
+    assert result.evidence.observed["tables"] == "dropped"
+
+
+def test_table_cells_join_the_reading_when_asked_for(a_file: pathlib.Path) -> None:
+    """`tables=True` recovers the cells, which is the defect this parameter closes.
+
+    Measured on `casos/66cd35e9`: 42 tokens without the flag and 69 with it, and the
+    row naming `EZ9F34110` is absent from the first and present in the second.
+    """
+    engine, _ = _engine_with(_invoice_with_a_table())
+
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=True)
+
+    assert result.value is not None
+    texts = [token.text for token in result.value.tokens]
+    assert texts == ["cuerpo", "EZ9F34110", "8.613,90"], (
+        "the cells are reported in the engine's own order, after the body items, "
+        "and no cell is invented or dropped"
+    )
+    assert result.evidence.observed["tables"] == "cells_included"
+
+
+def test_a_table_cell_carries_its_own_role_and_box(a_file: pathlib.Path) -> None:
+    """A cell is a positioned token, which is what makes a row readable across it.
+
+    The role says which tokens came from a table, so a consumer that wants the
+    structure can group them without guessing - and the box is the cell's own, not
+    the table's: a token carrying the table's box would have a position no
+    measurement supports for the text it holds.
+    """
+    engine, _ = _engine_with(_invoice_with_a_table())
+
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=True)
+
+    assert result.value is not None
+    cells = [token for token in result.value.tokens if token.role == "table_cell"]
+    assert len(cells) == 2
+
+    first = cells[0]
+    assert first.bbox.x == pytest.approx(20.0), (
+        "the cell's own left edge, not the table's (19.0)"
+    )
+    assert first.bbox.width == pytest.approx(42.0)
+    assert first.confidence is None, "a cell's confidence is not invented either"
+
+
+def test_a_cell_without_a_box_is_skipped_rather_than_placed(
+    a_file: pathlib.Path,
+) -> None:
+    """A cell with no box has nothing to say about where it is.
+
+    Placing it at a made-up origin would put text at a position the document does
+    not have it, which is the synthesis this layer refuses everywhere.
+    """
+    document = _Document(
+        1,
+        [],
+        [
+            _Table(
+                [_Cell("sin caja", None)], [_Prov(1, _Box(19.0, 597.0, 575.0, 560.0))]
+            )
+        ],
+    )
+    engine, _ = _engine_with(document)
+
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=True)
+
+    assert result.value is not None
+    assert result.value.tokens == ()
+    assert result.value.page_status[1] is PageStatus.BLANK
+
+
+def test_a_table_on_another_page_is_not_reported(a_file: pathlib.Path) -> None:
+    """Provenance decides the page, and a cell is not moved onto a page it is not on."""
+    document = _Document(
+        2,
+        [],
+        [
+            _Table(
+                [_Cell("de la pagina 2", _cell_box(20.0, 249.0, 62.0, 257.0))],
+                [_Prov(2, _Box(19.0, 597.0, 575.0, 560.0))],
+            )
+        ],
+    )
+    engine, _ = _engine_with(document)
+
+    first = engine.read(a_file, [1], dpi=72, lang="es", tables=True)
+    second = engine.read(a_file, [2], dpi=72, lang="es", tables=True)
+
+    assert first.value is not None and second.value is not None
+    assert first.value.tokens == ()
+    assert [token.text for token in second.value.tokens] == ["de la pagina 2"]
+
+
+def test_a_cell_box_is_not_origin_flipped_twice(a_file: pathlib.Path) -> None:
+    """A cell's box is already top-left, and the adapter reads the origin from it.
+
+    The table's *own* provenance box is bottom-left, so a conversion that assumed
+    one origin for both would place every cell at the page's height minus its top -
+    which lands the text near the wrong edge and looks plausible on a short page.
+    """
+    engine, _ = _engine_with(_invoice_with_a_table())
+
+    result = engine.read(a_file, [1], dpi=72, lang="es", tables=True)
+
+    assert result.value is not None
+    cell = next(t for t in result.value.tokens if t.role == "table_cell")
+    # The cell's top is 249.0 and the page is 800 points tall. A flip would give
+    # 800 - 257 = 543, so the assertion distinguishes the two rather than passing
+    # under both.
+    assert cell.bbox.y == pytest.approx(249.0), (
+        f"a top-left cell box must pass through unchanged; got {cell.bbox.y}"
     )

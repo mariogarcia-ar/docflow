@@ -71,12 +71,18 @@ def engine_info(**_: object) -> Call:
     return Call(result=DoclingEngine().engine_info())
 
 
-def read(
+def read(  # pylint: disable=too-many-arguments
+    # Six flags, and each one is a parameter of the port method this command
+    # mirrors: `read(path, pages, dpi, lang, tables)` plus K4's own `--correct`,
+    # which is a refusal today. §9's table names them, and the contract test
+    # compares that table against this signature, so grouping them into a flag
+    # object would hide the set the check reads.
     *,
     file: str,
     pages: object = None,
     dpi: object = None,
     lang: object = None,
+    tables: object = False,
     correct: object = False,
     **_: object,
 ) -> Call:
@@ -88,6 +94,7 @@ def read(
             whole-document read with no bound is not what a lab command is for.
         dpi: The resolution the boxes are expressed in.
         lang: The language hint.
+        tables: Whether a table's cells join the reading.
         correct: Whether to ask for the corrected artifact.
         **_: Accepted, so an unknown flag reaches the dispatcher.
 
@@ -126,6 +133,7 @@ def read(
             selected,
             72 if dpi is None else int(str(dpi)),
             _DEFAULT_LANG if lang is None else str(lang),
+            tables=bool(tables),
         )
     except ValueError as exc:
         # The engine refuses a page that does not exist - correctly, because it
@@ -231,6 +239,7 @@ def layout(  # pylint: disable=too-many-arguments
     lang: object = None,
     tolerance: object = None,
     orientation: object = None,
+    tables: object = False,
     **_: object,
 ) -> Call:
     """Read a selection and return it ordered into rows.
@@ -259,6 +268,9 @@ def layout(  # pylint: disable=too-many-arguments
             converted to `dpi`, which is the reading the previous system produced.
         orientation: `horizontal` or `vertical`; absent means the dominant one the
             tokens' boxes support, which is reported in the evidence either way.
+        tables: Whether a table's cells join the reading. Off by default, so an
+            existing caller receives the reading it did before; on, a table's row
+            reads across its columns the way a line reads across a page.
         **_: Accepted, so an unknown flag reaches the dispatcher.
 
     Returns:
@@ -298,7 +310,9 @@ def layout(  # pylint: disable=too-many-arguments
             # The orientation is the tokens' own measurement, so it is read from
             # them rather than defaulted: a default would be this surface deciding
             # how a document is laid out.
-            probe = engine.read(Path(file), selected, resolved_dpi, _lang(lang))
+            probe = engine.read(
+                Path(file), selected, resolved_dpi, _lang(lang), tables=bool(tables)
+            )
             if probe.reason is not None or probe.value is None:
                 return Call(result=probe)
             chosen, counts = ocr_layout.dominant_orientation(probe.value.tokens)
@@ -312,6 +326,7 @@ def layout(  # pylint: disable=too-many-arguments
             _lang(lang),
             line_tolerance=_tolerance(tolerance, resolved_dpi),
             orientation=chosen,
+            tables=bool(tables),
         )
     except ValueError as exc:
         # The engine refuses a page that does not exist, and the kernel refuses a
@@ -413,11 +428,11 @@ _POINTS_PER_INCH: Final[float] = 72.0
 COMMANDS: Final[tuple[tuple[str, Handler | None, str | None, tuple[str, ...]], ...]] = (
     ("capabilities", capabilities, "", ()),
     ("engine-info", engine_info, "", ()),
-    ("read", read, "file", ("--pages", "--dpi", "--lang", "--correct")),
+    ("read", read, "file", ("--pages", "--dpi", "--lang", "--tables", "--correct")),
     (
         "layout",
         layout,
         "file",
-        ("--pages", "--dpi", "--lang", "--tolerance", "--orientation"),
+        ("--pages", "--dpi", "--lang", "--tolerance", "--orientation", "--tables"),
     ),
 )

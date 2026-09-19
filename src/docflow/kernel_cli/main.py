@@ -280,6 +280,7 @@ BOOLEAN_FLAGS: Final[tuple[str, ...]] = (
     "--force",
     "--list",
     "--resolve-only",
+    "--tables",
     "--verbose",
 )
 
