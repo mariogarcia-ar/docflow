@@ -55,6 +55,7 @@ __all__: list[str] = [
     "save_bytes",
     "save_text",
     "set_out",
+    "shown",
     "summary",
 ]
 
@@ -122,6 +123,31 @@ def out_dir() -> pathlib.Path:
     """
     _OUT.mkdir(parents=True, exist_ok=True)
     return _OUT
+
+
+def shown(path: pathlib.Path) -> str:
+    """Describe a written path relative to either root, whichever contains it.
+
+    A driver used to print `path.relative_to(ROOT)`, which assumes the output lives
+    inside the repository. A **batch caller** points `--out` anywhere - `/tmp`,
+    another mount - and then `relative_to` raises rather than printing. This picks
+    the root that actually contains the path, and falls back to the absolute path
+    when neither does, so a batch run cannot be broken by where someone put its
+    output.
+
+    Args:
+        path: The written path.
+
+    Returns:
+        A short description of it.
+
+    """
+    for root in (_OUT, ROOT):
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            continue
+    return str(path)
 
 
 def set_out(path: pathlib.Path) -> None:

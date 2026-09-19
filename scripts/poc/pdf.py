@@ -112,46 +112,72 @@ def split_pages(
 
     name = f"{path.stem}-p{'-'.join(map(str, pages))}.pdf"
     written = _lib.save_bytes(name, attempt.result.value.data)
-    print(f"         wrote {written.relative_to(_lib.ROOT)}")
+    print(f"         wrote {_lib.shown(written)}")
 
 
 # --- Requirement 3: text -> pdftotext --layout, saved ----------------------
 
 
 def layout_text(
-    engine: PdfEngine, path: pathlib.Path, pages: list[int], expect: str
-) -> None:
+    engine: PdfEngine,
+    path: pathlib.Path,
+    pages: list[int],
+    expect: str,
+    *,
+    save: bool = True,
+) -> _lib.Attempt:
     """Extract a page range's text with its physical layout preserved, and save it.
 
     `layout_text` is deliberately **not** on `PdfSource` (`plans/README.md` §3
     freezes the port at five operations) - it is reached on the adapter, which is
     exactly what this bench is for.
 
+    Returns the attempt rather than nothing, so a batch caller reuses this call's
+    result instead of running the extraction a second time.
+
     Args:
         engine: The K2 adapter.
         path: The PDF to read.
         pages: The one-based page numbers to read.
         expect: The bucket this probe is declared to land in.
+        save: Whether to write the text under the driver's own output root. A
+            batch caller passes ``False``: it writes the text into its mirrored
+            tree, and a second flat copy would be a file nothing pairs with a
+            document.
+
+    Returns:
+        The attempt, carrying the result the probe described.
 
     """
     attempt = _lib.run(
         f"pdf.layout_text{pages}", engine.layout_text, path, pages, expect=expect
     )
     if not attempt.succeeded:
-        return
+        return attempt
 
-    name = f"{path.stem}-p{'-'.join(map(str, pages))}.layout.txt"
-    written = _lib.save_text(name, attempt.result.value)
-    print(f"         wrote {written.relative_to(_lib.ROOT)}")
+    if save:
+        name = f"{path.stem}-p{'-'.join(map(str, pages))}.layout.txt"
+        written = _lib.save_text(name, attempt.result.value)
+        print(f"         wrote {_lib.shown(written)}")
+    return attempt
 
 
 # --- Requirement 4: image -> export the page for OCR -----------------------
 
 
 def render_page(
-    engine: PdfEngine, path: pathlib.Path, pages: list[int], dpi: int, expect: str
-) -> None:
+    engine: PdfEngine,
+    path: pathlib.Path,
+    pages: list[int],
+    dpi: int,
+    expect: str,
+    *,
+    save: bool = True,
+) -> _lib.Attempt:
     """Render a page range as a bitmap, ready to be handed to K4.
+
+    Returns the attempt rather than nothing, so a batch caller reuses this call's
+    result instead of rendering the page a second time.
 
     Args:
         engine: The K2 adapter.
@@ -159,18 +185,25 @@ def render_page(
         pages: The one-based page numbers to render.
         dpi: The resolution requested.
         expect: The bucket this probe is declared to land in.
+        save: Whether to write the bitmap under the driver's own output root.
+            A batch caller passes ``False`` and writes its own mirrored name.
+
+    Returns:
+        The attempt, carrying the result the probe described.
 
     """
     label = f"pdf.render{pages}@{dpi}"
     attempt = _lib.run(label, engine.render, path, pages, dpi, expect=expect)
     if not attempt.succeeded:
-        return
+        return attempt
 
     value = attempt.result.value
-    suffix = ".png" if value.media_type == "image/png" else ".bin"
-    name = f"{path.stem}-p{'-'.join(map(str, pages))}-dpi{dpi}{suffix}"
-    written = _lib.save_bytes(name, value.data)
-    print(f"         wrote {written.relative_to(_lib.ROOT)}")
+    if save:
+        suffix = ".png" if value.media_type == "image/png" else ".bin"
+        name = f"{path.stem}-p{'-'.join(map(str, pages))}-dpi{dpi}{suffix}"
+        written = _lib.save_bytes(name, value.data)
+        print(f"         wrote {_lib.shown(written)}")
+    return attempt
 
 
 def effective_dpi(engine: PdfEngine, path: pathlib.Path, page: int) -> None:
@@ -221,7 +254,7 @@ def extract_page(engine: PdfEngine, path: pathlib.Path, page: int) -> None:
             written = _lib.save_text(
                 f"{path.stem}-p{page}.routed.txt", named.result.value
             )
-            print(f"         wrote {written.relative_to(_lib.ROOT)}")
+            print(f"         wrote {_lib.shown(written)}")
     else:
         rendered = _lib.run(
             f"pdf.extract_page[{page}]/render",
@@ -235,7 +268,7 @@ def extract_page(engine: PdfEngine, path: pathlib.Path, page: int) -> None:
                 f"{path.stem}-p{page}-routed{RENDER_DPI}.png",
                 rendered.result.value.data,
             )
-            print(f"         wrote {written.relative_to(_lib.ROOT)} (for K4)")
+            print(f"         wrote {_lib.shown(written)} (for K4)")
 
     _lib.note(f"pdf.extract_page[{page}]", f"routed on shape={shape!r}")
 

@@ -136,18 +136,33 @@ def read_text(
 
 
 def layout_rows(
-    engine: DoclingEngine, path: pathlib.Path, pages: list[int], expect: str
-) -> None:
-    """Read a page range and order the engine's blocks into rows, then save it.
+    engine: DoclingEngine,
+    path: pathlib.Path,
+    pages: list[int],
+    expect: str,
+    *,
+    save: bool = True,
+) -> _lib.Attempt:
+    """Read a page range and order the engine's blocks into rows, and save it.
 
     This is the operation that satisfies the requirement - it is the text **with its
     layout**, as opposed to `read`'s unordered tokens.
+
+    Returns the attempt rather than nothing, so a batch caller reuses this call's
+    text instead of reading the page twice - and on this kernel a second read is
+    another ten seconds of ONNX.
 
     Args:
         engine: The K4 adapter.
         path: The document to read.
         pages: The one-based page numbers to read.
         expect: The bucket this probe is declared to land in.
+        save: Whether to write the text under the driver's output root. A batch
+            caller passes ``False``: it writes into its mirrored tree, and this
+            flat copy would be a file nothing pairs with a document.
+
+    Returns:
+        The attempt, carrying the result the probe described.
 
     """
     label = f"ocr.layout[{path.suffix.lstrip('.')}]"
@@ -163,16 +178,17 @@ def layout_rows(
         expect=expect,
     )
     if not attempt.succeeded:
-        return
+        return attempt
 
     text = attempt.result.value
-    written = _lib.save_text(f"{path.stem}-p{pages[0]}.ocr-layout.txt", text)
     rows = [row for row in text.splitlines() if row.strip()]
-    print(
-        f"         {len(rows)} rows, {len(text)} chars -> {written.relative_to(_lib.ROOT)}"
-    )
+    print(f"         {len(rows)} rows, {len(text)} chars")
     if rows:
         print(f"         first row: {rows[0][:70]!r}")
+    if save:
+        written = _lib.save_text(f"{path.stem}-p{pages[0]}.ocr-layout.txt", text)
+        print(f"         wrote {_lib.shown(written)}")
+    return attempt
 
 
 def layout_with_tables(
@@ -249,7 +265,7 @@ def compare_read_and_layout(
         written = _lib.save_text(
             f"{path.stem}-p{pages[0]}.requirement.txt", laid.result.value
         )
-        print(f"         layout: ordered rows -> {written.relative_to(_lib.ROOT)}")
+        print(f"         layout: ordered rows -> {_lib.shown(written)}")
 
     _lib.note(
         "ocr.requirement",

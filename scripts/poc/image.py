@@ -118,7 +118,7 @@ def load_bitmap(engine: RasterEngine, path: pathlib.Path, expect: str) -> None:
 
     value = attempt.result.value
     written = _lib.save_bytes(f"{path.stem}-loaded.png", value.data)
-    print(f"         wrote {written.relative_to(_lib.ROOT)}")
+    print(f"         wrote {_lib.shown(written)}")
 
 
 # --- Requirement 3: validate legibility -------------------------------------
@@ -182,7 +182,7 @@ def resize_by_dpi(
     written = _lib.save_bytes(
         f"{path.stem}-dpi{target_dpi}.png", attempt.result.value.data
     )
-    print(f"         wrote {written.relative_to(_lib.ROOT)}")
+    print(f"         wrote {_lib.shown(written)}")
 
 
 def resize_by_dpi_like_the_cli(engine: RasterEngine, path: pathlib.Path) -> None:
@@ -287,7 +287,7 @@ def crop_region(
     agrees = list(local or []) == expected_local
 
     print(
-        f"         wrote {written.relative_to(_lib.ROOT)}  "
+        f"         wrote {_lib.shown(written)}  "
         f"space={observed.get('coordinate_space')!r} local_size={local} "
         f"inverse=({inverse.offset_x:g},{inverse.offset_y:g} scale={inverse.scale:g})"
     )

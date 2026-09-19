@@ -127,25 +127,36 @@ def capabilities(engine: OllamaEngine, model: str, expect: str) -> None:
 # --- Requirement 1: text + prompt -> fields ---------------------------------
 
 
-def extract_from_text(engine: OllamaEngine, model: str, expect: str) -> None:
+def extract_from_text(
+    engine: OllamaEngine, model: str, expect: str, prompt: str | None = None
+) -> _lib.Attempt:
     """Ask a text-only model for structured fields out of OCR text.
+
+    Returns the attempt rather than nothing, so a batch caller reuses this call's
+    value instead of paying for a second generation.
 
     Args:
         engine: The K5 adapter.
         model: The model as the caller names it.
         expect: The bucket this probe is declared to land in.
+        prompt: The prompt to send, defaulting to the driver's own fixture text. A
+            batch caller passes the text it just extracted from a document, which
+            is the handoff `my_kernel_flow.md` §6 describes.
+
+    Returns:
+        The attempt, carrying the fields the probe described.
 
     """
     attempt = _lib.run(
         f"llm_local.structured[{model}]",
         engine.structured,
         model,
-        TEXT_PROMPT,
+        TEXT_PROMPT if prompt is None else prompt,
         INVOICE_SCHEMA,
         expect=expect,
     )
     if not attempt.succeeded:
-        return
+        return attempt
 
     observed = attempt.result.evidence.observed
     print(f"         value={dict(attempt.result.value)}")
@@ -154,6 +165,7 @@ def extract_from_text(engine: OllamaEngine, model: str, expect: str) -> None:
         f"num_ctx={observed.get('num_ctx')!r} vision={observed.get('vision')!r}"
     )
     _report_two_windows(observed)
+    return attempt
 
 
 def _report_two_windows(observed: object) -> None:

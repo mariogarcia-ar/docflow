@@ -67,6 +67,50 @@ Each probe declares the bucket it expects (`expect=`), so `run_all.py` can tell
 | `ocr.py` | §3 | `read` vs `layout`, side by side — the second is what "preserve the layout" means |
 | `llm_local.py` | §4 | `structured` (text) and `vision` (pixels), plus truncation and the payload types |
 | `llm_frontier.py` | §5 | `vision` and `judge`; reports the gate chain when there is no credential |
+| `batch.py` | §6 | folder in, **mirrored tree out**; reuses the drivers' methods rather than re-implementing them |
+| `hitl.py` | §7 | finds the extractions, pairs them by relative path, contrasts them, writes `review.json` |
+
+`run_all.py` aggregates the five **probe** drivers. `batch.py` and `hitl.py` are run
+explicitly, because they take a folder rather than probing fixtures:
+
+```bash
+python scripts/poc/batch.py <input-dir> --out <out-dir>
+python scripts/poc/hitl.py  <input-dir> --out <out-dir>
+```
+
+### `batch.py` is not K1
+
+K1 (`kernels/orchestrator.py`) drives a stage graph over units with a ledger, a
+cache key per stage, `pause`/`resume`/`stop` and a manifest derived from the
+ledgers. `batch.py` has **none of that** and cannot resume: re-running re-does the
+work. It composes the **adapters** the way §6 describes, for one walk of a folder —
+which is the piece no single-kernel probe can cover.
+
+The mirror is the deliverable, so `batch.py` **asserts** it rather than printing it:
+every input file gets an output at the same relative path, and every input directory
+exists in the output **including the empty ones** (`FR-28`, `S3-T06`). A file that is
+refused or invalid gets `<stem>.skipped.json` — never `<stem>.json`, because that
+name means *these are the extracted fields*, and reading a skip record as an empty
+extraction is the collapse this project exists to prevent.
+
+### `hitl.py` and the two limits it reports
+
+1. **`judge` cannot see the page.** §7 asks to send *"el resultado de `llm.local`
+   junto con la imagen original"*, but
+   `judge(model, rubric, samples, produced_by)` has **no `images` parameter** — its
+   body builds `f"{rubric}\n\n" + json.dumps(samples)` and calls
+   `self.structured(...)`, which passes `images=()`. So it grades a *transcript*.
+   The comparison that sees the page is **`vision`**, and `hitl.py` runs both so the
+   difference is a measurement rather than a claim.
+2. **`Reviewer` is `S2-T15` and `src/docflow/components/` does not exist.** So there
+   is no queue, no `correct` and no `promote`. What `hitl.py` does is the mechanical
+   half: find the extractions, pair them by relative path, contrast them, and write
+   `review.json` where a person should look. **The decision is still a human's.**
+
+A missing second reading is reported as **`NOT CONTRASTED`**, not as a divergence:
+*the readings disagree* is a finding about the document; *nobody read it twice* is
+an absence of evidence, and counting the second as the first makes an uncalled check
+look like a detected problem.
 
 ## What the probes found
 
