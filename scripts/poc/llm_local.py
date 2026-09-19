@@ -28,6 +28,7 @@ import argparse
 import os
 import pathlib
 import sys
+from collections.abc import Mapping
 
 import _lib
 
@@ -128,12 +129,20 @@ def capabilities(engine: OllamaEngine, model: str, expect: str) -> None:
 
 
 def extract_from_text(
-    engine: OllamaEngine, model: str, expect: str, prompt: str | None = None
+    engine: OllamaEngine,
+    model: str,
+    expect: str,
+    prompt: str | None = None,
+    schema: Mapping[str, object] | None = None,
 ) -> _lib.Attempt:
     """Ask a text-only model for structured fields out of OCR text.
 
     Returns the attempt rather than nothing, so a batch caller reuses this call's
     value instead of paying for a second generation.
+
+    A caller with a document of its own passes **both** the prompt and the schema:
+    defaulting either to this driver's invoice fixture would answer a question about
+    a fixture while reporting on a real document.
 
     Args:
         engine: The K5 adapter.
@@ -142,6 +151,8 @@ def extract_from_text(
         prompt: The prompt to send, defaulting to the driver's own fixture text. A
             batch caller passes the text it just extracted from a document, which
             is the handoff `my_kernel_flow.md` §6 describes.
+        schema: The schema the generation is constrained by, defaulting to the
+            invoice fixture above.
 
     Returns:
         The attempt, carrying the fields the probe described.
@@ -152,7 +163,7 @@ def extract_from_text(
         engine.structured,
         model,
         TEXT_PROMPT if prompt is None else prompt,
-        INVOICE_SCHEMA,
+        INVOICE_SCHEMA if schema is None else schema,
         expect=expect,
     )
     if not attempt.succeeded:
@@ -164,25 +175,47 @@ def extract_from_text(
         f"         done_reason={observed.get('done_reason')!r} "
         f"num_ctx={observed.get('num_ctx')!r} vision={observed.get('vision')!r}"
     )
-    _report_two_windows(observed)
+    report_prompt_window(attempt.result.evidence.measurements)
     return attempt
 
 
-def _report_two_windows(observed: object) -> None:
+def report_prompt_window(measurements: Mapping[str, object]) -> None:
     """Print the prompt's sent length and its evaluated length side by side.
 
-    The runtime truncates an oversized prompt and reports nothing, so *whether the
-    cut surfaces depends on the window* - which is what makes it silent. The adapter
-    records both numbers so a caller can see them disagree; this prints them so the
-    disagreement is what a person reads.
+    The runtime truncates an oversized prompt and reports nothing: it answers
+    `done_reason: 'stop'` with a plausible value, so *whether the cut surfaces at
+    all* depends on the window, which is what makes it silent.
+
+    **These two numbers live in `measurements`, not in `observed`.** This function
+    read the wrong mapping and returned early on every call, so the disagreement it
+    exists to expose was never printed - a check that looks like a check and reports
+    nothing.
+
+    The two numbers are printed **raw, with no ratio and no threshold**, because
+    neither could be honest here:
+
+    - a ratio is not available, because they do not measure the same thing.
+      `prompt_characters` counts the prompt text; `prompt_tokens` counts what the
+      engine evaluated, which includes the schema and the chat template. Measured:
+      36 characters evaluate 47 tokens, and the vision call's 730 456 characters
+      (the base64 image rides in the prompt) evaluate 3 896 - so a
+      characters-per-token figure would differ wildly between two runs that were
+      both cut normally.
+    - a threshold would be a decision against the loaded window (`num_ctx`), and
+      inventing one in a bench is the class of error `prd.md` FR-15 forbids in a
+      kernel.
+
+    **The signal is the plateau, and it is a comparison across calls.** Measured on
+    `smollm2` at `num_ctx=4096`: 6 420 characters evaluate 2 050 tokens, 32 020
+    evaluate 2 050, and 128 020 evaluate **the same 2 050** while `done_reason`
+    stays `'stop'`. One call cannot be read on its own; two can.
 
     Args:
-        observed: The call's observables, as a mapping.
+        measurements: The call's numeric evidence.
 
     """
-    mapping = dict(observed) if observed else {}
-    sent = mapping.get("prompt_characters")
-    evaluated = mapping.get("prompt_tokens")
+    sent = measurements.get("prompt_characters")
+    evaluated = measurements.get("prompt_tokens")
     if sent is None and evaluated is None:
         return
     print(f"         prompt sent={sent} chars, evaluated={evaluated} tokens")
@@ -191,26 +224,46 @@ def _report_two_windows(observed: object) -> None:
 # --- Requirement 2: image + prompt -> fields --------------------------------
 
 
-def extract_from_image(engine: OllamaEngine, model: str, expect: str) -> None:
+def extract_from_image(
+    engine: OllamaEngine,
+    model: str,
+    expect: str,
+    prompt: str | None = None,
+    schema: Mapping[str, object] | None = None,
+    images: list[Bytes] | None = None,
+) -> _lib.Attempt:
     """Ask a vision model for structured fields read off the pixels.
+
+    Returns the attempt rather than nothing, so a batch caller reuses this call's
+    value instead of paying for a second generation - and a generation against a
+    vision model is the most expensive call this bench makes.
 
     Args:
         engine: The K5 adapter.
         model: The model as the caller names it.
         expect: The bucket this probe is declared to land in.
+        prompt: The prompt to send, defaulting to the driver's own fixture text.
+        schema: The schema the generation is constrained by, defaulting to the
+            fixture's single-description schema.
+        images: The images to send, defaulting to the committed case fixture. They
+            must be `Bytes` - a path is accepted by the encoder and silently
+            encodes the **file name**, which `payload_types` below demonstrates.
+
+    Returns:
+        The attempt, carrying the fields the probe described.
 
     """
     attempt = _lib.run(
         f"llm_local.vision[{model}]",
         engine.vision,
         model,
-        VISION_PROMPT,
-        [_image(_lib.CASE_IMAGE)],
-        _VISION_SCHEMA,
+        VISION_PROMPT if prompt is None else prompt,
+        [_image(_lib.CASE_IMAGE)] if images is None else images,
+        _VISION_SCHEMA if schema is None else schema,
         expect=expect,
     )
     if not attempt.succeeded:
-        return
+        return attempt
 
     observed = attempt.result.evidence.observed
     print(f"         value={dict(attempt.result.value)}")
@@ -218,6 +271,8 @@ def extract_from_image(engine: OllamaEngine, model: str, expect: str) -> None:
         f"         vision={observed.get('vision')!r} "
         f"done_reason={observed.get('done_reason')!r}"
     )
+    report_prompt_window(attempt.result.evidence.measurements)
+    return attempt
 
 
 # --- The failure modes ------------------------------------------------------
@@ -333,6 +388,57 @@ def payload_types(engine: OllamaEngine) -> None:
     )
 
 
+def oversized_prompt(engine: OllamaEngine, model: str) -> None:
+    """Show a prompt the window cannot hold being cut **without a word**.
+
+    The runtime answers `done_reason: 'stop'` and a plausible value, so nothing in
+    the result says the prompt was shortened - the only signal is that
+    `prompt_tokens` **stops growing** while `prompt_characters` keeps climbing. Both
+    numbers are printed for a small prompt and a large one so the plateau is a
+    measurement rather than a claim.
+
+    Measured on `smollm2` at `num_ctx=4096`: 6 420 characters evaluate 2 050 tokens,
+    and a **128 020-character** prompt evaluates the same 2 050. A batch that hands
+    this kernel a whole document's text is therefore reading an answer to a question
+    about the document's **beginning**, and nothing returns an error.
+
+    This is the third silent failure K5 has, after the `Path`-that-encodes-a-file-name
+    in `payload_types` and the missing `num_ctx` before a load. It is recorded rather
+    than fixed: a fix means deciding how to fit a document into a window, and that is
+    a Stage 2 question (`S2-T09`'s escalation ladder), not a bench's.
+
+    Args:
+        engine: The K5 adapter.
+        model: The model as the caller names it.
+
+    """
+    for label, repeats in (("small", 1), ("large", 8000)):
+        text = f"Extract the total.\n\n{'Total: 1500.00. ' * repeats}"
+        attempt = _lib.run(
+            f"llm_local.oversized_prompt[{label}]",
+            engine.structured,
+            model,
+            text,
+            INVOICE_SCHEMA,
+        )
+        if attempt.result is None or attempt.result.evidence is None:
+            continue
+        measured = attempt.result.evidence.measurements
+        observed = attempt.result.evidence.observed
+        print(
+            f"      {label:6} {len(text):>7} chars sent -> "
+            f"done_reason={observed.get('done_reason')!r} "
+            f"value={dict(attempt.result.value) if attempt.result.value else None}"
+        )
+        report_prompt_window(measured)
+
+    _lib.note(
+        "llm_local.oversized_prompt",
+        "a prompt past the window is cut silently: done_reason stays 'stop', and "
+        "prompt_tokens plateaus while prompt_characters grows",
+    )
+
+
 # --- The run ----------------------------------------------------------------
 
 
@@ -377,6 +483,10 @@ def main(argv: list[str] | None = None) -> int:
     warm(engine, TEXT_MODEL, "ok")
     missing_model(engine)
     truncation(_engine())
+
+    print()
+    # The silent one: a prompt the window cannot hold, answered anyway.
+    oversized_prompt(engine, TEXT_MODEL)
 
     print()
     # What the vision path accepts.
