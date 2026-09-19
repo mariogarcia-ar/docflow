@@ -53,6 +53,11 @@ __all__: list[str] = []
 #: writing a second one: two parsers for one grammar would be two answers.
 PAGES_AS_WRITTEN: str = "5-15"
 
+#: The same grammar asked of `render`, which is the second operation in this bench
+#: whose selection a caller *writes* rather than enumerates - and therefore the
+#: second place that text could be handed to an adapter expecting page numbers.
+RENDER_PAGES_AS_WRITTEN: str = "12-23"
+
 #: The resolution a render is asked for. 72 DPI is 1:1 with PDF user units, so a
 #: page rendered at 72 needs no resampling - which is what makes it the honest
 #: default for a probe that is measuring the adapter rather than a pipeline.
@@ -221,13 +226,21 @@ def layout_text(
 def render_page(
     engine: PdfEngine,
     path: pathlib.Path,
-    pages: list[int],
+    written: str,
     dpi: int,
     expect: str,
+    total: int | None = None,
     *,
     save: bool = True,
 ) -> _lib.Attempt:
     """Render a page range as a bitmap, ready to be handed to K4.
+
+    Same boundary as `split_pages`, for the same reason: the selection arrives
+    **as a caller writes it** - `kernel-cli.md` §9's `--pages` grammar - and is
+    expanded here, because `PdfSource.render` takes page numbers. Text handed
+    straight to the adapter is not refused at the call: it reaches the kernel's
+    own validation and raises `TypeError` on comparing a `str` with an `int`,
+    which reads as a broken build rather than as a wrong selection.
 
     Returns the attempt rather than nothing, so a batch caller reuses this call's
     result instead of rendering the page a second time.
@@ -235,9 +248,14 @@ def render_page(
     Args:
         engine: The K2 adapter.
         path: The PDF to render.
-        pages: The one-based page numbers to render.
+        written: The selection as a caller writes it, in `kernel-cli.md` §9's
+            grammar - the same text `--pages` accepts.
         dpi: The resolution requested.
         expect: The bucket this probe is declared to land in.
+        total: How many pages the document has, so the range is checked against
+            the document. ``None`` - the reading a batch caller takes, having not
+            probed the file - leaves the numbers unvalidated rather than checked
+            against an invented count.
         save: Whether to write the bitmap under the driver's own output root.
             A batch caller passes ``False`` and writes its own mirrored name.
 
@@ -245,7 +263,8 @@ def render_page(
         The attempt, carrying the result the probe described.
 
     """
-    label = f"pdf.render{pages}@{dpi}"
+    pages = parse_pages(written, total)
+    label = f"pdf.render[{written}]@{dpi}"
     attempt = _lib.run(label, engine.render, path, pages, dpi, expect=expect)
     if not attempt.succeeded:
         return attempt
@@ -253,9 +272,9 @@ def render_page(
     value = attempt.result.value
     if save:
         suffix = ".png" if value.media_type == "image/png" else ".bin"
-        name = f"{path.stem}-p{'-'.join(map(str, pages))}-dpi{dpi}{suffix}"
-        written = _lib.save_bytes(name, value.data)
-        print(f"         wrote {_lib.shown(written)}")
+        name = f"{path.stem}-{page_token(written)}-dpi{dpi}{suffix}"
+        written_to = _lib.save_bytes(name, value.data)
+        print(f"         wrote {_lib.shown(written_to)}")
     return attempt
 
 
@@ -368,12 +387,12 @@ def main(argv: list[str] | None = None) -> int:
     print()
     # Requirements 3 and 4, on the fixture each is right for.
     layout_text(engine, _lib.SOURCE_PDF, [1], "ok")
-    render_page(engine, _lib.SCAN_PDF, [1], RENDER_DPI, "ok")
+    render_page(engine, _lib.SCAN_PDF, "1", RENDER_DPI, "ok")
 
     print()
     # The anti-upscale rule, which is the adapter refusing rather than obeying.
     effective_dpi(engine, _lib.LARGE_PDF, 1)
-    render_page(engine, _lib.LARGE_PDF, [1], OVER_THE_CEILING_DPI, "reason")
+    render_page(engine, _lib.LARGE_PDF, "1", OVER_THE_CEILING_DPI, "reason")
 
     print()
     # Requirement 1. The selection is written the way a caller writes it, and
@@ -392,9 +411,18 @@ def main(argv: list[str] | None = None) -> int:
     # A page the document does not have. The kernel raises `ValueError` - the
     # library's equivalent of exit 4 - and this probe confirms it does not crash
     # the process with a traceback.
-    render_page(engine, _lib.TEXT_PDF, [_MISSING_PAGE], RENDER_DPI, "usage")
-    render_page(engine, _lib.LARGE_PDF, [1,2], RENDER_DPI, "ok")
-    render_page(engine, _lib.LARGE_PDF, '12-23', RENDER_DPI, "ok")
+    render_page(engine, _lib.TEXT_PDF, str(_MISSING_PAGE), RENDER_DPI, "usage")
+    # A selection of two enumerated pages, then the same grammar a caller would
+    # type. Both go through `parse_pages`, so neither reaches the kernel as text.
+    render_page(engine, _lib.LARGE_PDF, "1,2", RENDER_DPI, "ok", large_pages)
+    render_page(
+        engine,
+        _lib.LARGE_PDF,
+        RENDER_PAGES_AS_WRITTEN,
+        RENDER_DPI,
+        "ok",
+        large_pages,
+    )
 
     print()
     # The requirement that spans two operations.

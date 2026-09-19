@@ -218,9 +218,11 @@ def _extract_text(
             return None, None, f"layout_text refused ({attempt.outcome.detail})"
         return attempt.result.value, "layout_text", ""
 
-    # An image page: render it, then read the pixels. §1's second branch.
+    # An image page: render it, then read the pixels. §1's second branch. The
+    # selection is written the way a caller writes it, because that is the text
+    # `--pages` accepts and what this driver would receive.
     rendered = _silently(
-        pdf_driver.render_page, pdf_engine, path, [1], RENDER_DPI, "ok", save=False
+        pdf_driver.render_page, pdf_engine, path, "1", RENDER_DPI, "ok", save=False
     )
     if not rendered.succeeded:
         return None, None, f"render refused ({rendered.outcome.detail})"
