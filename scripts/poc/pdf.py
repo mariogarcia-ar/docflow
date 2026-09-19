@@ -49,14 +49,21 @@ __all__: list[str] = []
 #: bench that hands the text straight to an adapter produces a plausible call that
 #: fails inside the kernel (`TypeError: '<' not supported between instances of
 #: 'str' and 'int'`) instead of a page range. Expanding it is the *surface's* job
-#: (`commands/pages.py`), which is why this probe borrows that parser rather than
+#: (`commands/pages.py`), which is why this bench borrows that parser rather than
 #: writing a second one: two parsers for one grammar would be two answers.
+#:
+#: **One constant for the three operations that take a selection.** `split`,
+#: `render` and `layout_text` accept the same text because `--pages` is one flag;
+#: separate constants would let them drift into three grammars, which is the class
+#: of defect this bench exists to make unrepresentable.
 PAGES_AS_WRITTEN: str = "5-15"
 
-#: The same grammar asked of `render`, which is the second operation in this bench
-#: whose selection a caller *writes* rather than enumerates - and therefore the
-#: second place that text could be handed to an adapter expecting page numbers.
-RENDER_PAGES_AS_WRITTEN: str = "12-23"
+#: The selection that must be **refused** rather than honoured, because
+#: `pdf layout` requires its pages strictly ascending (`commands/pdf.py`) while
+#: `split` and `render` honour whatever order they are given. So a reordering is a
+#: *usage* answer - the library's equivalent of exit 4 - and never a defect, which
+#: is the distinction `REORDERED_PAGES` is here to keep visible.
+REORDERED_PAGES: str = "15,5"
 
 #: The resolution a render is asked for. 72 DPI is 1:1 with PDF user units, so a
 #: page rendered at 72 needs no resampling - which is what makes it the honest
@@ -179,16 +186,29 @@ def document_pages(engine: PdfEngine, path: pathlib.Path) -> int | None:
 def layout_text(
     engine: PdfEngine,
     path: pathlib.Path,
-    pages: list[int],
+    written: str,
     expect: str,
+    total: int | None = None,
     *,
     save: bool = True,
 ) -> _lib.Attempt:
     """Extract a page range's text with its physical layout preserved, and save it.
 
+    Same boundary as `split_pages` and `render_page`, for the same reason: the
+    selection arrives **as a caller writes it** - `kernel-cli.md` §9's `--pages`
+    grammar - and is expanded here, because the adapter takes page numbers. Text
+    handed straight to the adapter is not refused at the call; it reaches the
+    kernel's own validation and raises `TypeError` on comparing a `str` with an
+    `int`, which reads as a broken build rather than as a wrong selection.
+
     `layout_text` is deliberately **not** on `PdfSource` (`plans/README.md` §3
     freezes the port at five operations) - it is reached on the adapter, which is
     exactly what this bench is for.
+
+    Unlike `split` and `render`, this operation **refuses a reordered selection**
+    rather than honouring it: the reader returns one page's text after another's,
+    so an order the caller chose is an order no measurement supports. That is a
+    usage answer and the caller sees it as one - see `REORDERED_PAGES`.
 
     Returns the attempt rather than nothing, so a batch caller reuses this call's
     result instead of running the extraction a second time.
@@ -196,8 +216,13 @@ def layout_text(
     Args:
         engine: The K2 adapter.
         path: The PDF to read.
-        pages: The one-based page numbers to read.
+        written: The selection as a caller writes it, in `kernel-cli.md` §9's
+            grammar - the same text `--pages` accepts.
         expect: The bucket this probe is declared to land in.
+        total: How many pages the document has, so the range is checked against
+            the document. ``None`` - the reading a batch caller takes, having not
+            probed the file - leaves the numbers unvalidated rather than checked
+            against an invented count.
         save: Whether to write the text under the driver's own output root. A
             batch caller passes ``False``: it writes the text into its mirrored
             tree, and a second flat copy would be a file nothing pairs with a
@@ -207,16 +232,17 @@ def layout_text(
         The attempt, carrying the result the probe described.
 
     """
+    pages = parse_pages(written, total)
     attempt = _lib.run(
-        f"pdf.layout_text{pages}", engine.layout_text, path, pages, expect=expect
+        f"pdf.layout_text[{written}]", engine.layout_text, path, pages, expect=expect
     )
     if not attempt.succeeded:
         return attempt
 
     if save:
-        name = f"{path.stem}-p{'-'.join(map(str, pages))}.layout.txt"
-        written = _lib.save_text(name, attempt.result.value)
-        print(f"         wrote {_lib.shown(written)}")
+        name = f"{path.stem}-{page_token(written)}.layout.txt"
+        written_to = _lib.save_text(name, attempt.result.value)
+        print(f"         wrote {_lib.shown(written_to)}")
     return attempt
 
 
@@ -303,6 +329,12 @@ def extract_page(engine: PdfEngine, path: pathlib.Path, page: int) -> None:
     performed **here** rather than in the kernel: `classify` answers what the page
     is, and the caller decides what to ask for next.
 
+    Both branches go through this bench's own helpers (`layout_text`,
+    `render_page`) rather than calling the adapter, so this routing cannot be the
+    one place a selection reaches the kernel as text. A second call site is a
+    second boundary, and that is how the defect this bench now prevents survived
+    review the first time.
+
     Args:
         engine: The K2 adapter.
         path: The PDF to process.
@@ -319,22 +351,14 @@ def extract_page(engine: PdfEngine, path: pathlib.Path, page: int) -> None:
     shape = str(measured.evidence.observed.get("shape", "?"))
 
     if shape in {"text", "mixed"}:
-        named = _lib.run(
-            f"pdf.extract_page[{page}]/layout_text", engine.layout_text, path, [page]
-        )
+        named = layout_text(engine, path, str(page), "ok", save=False)
         if named.succeeded:
             written = _lib.save_text(
                 f"{path.stem}-p{page}.routed.txt", named.result.value
             )
             print(f"         wrote {_lib.shown(written)}")
     else:
-        rendered = _lib.run(
-            f"pdf.extract_page[{page}]/render",
-            engine.render,
-            path,
-            [page],
-            RENDER_DPI,
-        )
+        rendered = render_page(engine, path, str(page), RENDER_DPI, "ok", save=False)
         if rendered.succeeded:
             written = _lib.save_bytes(
                 f"{path.stem}-p{page}-routed{RENDER_DPI}.png",
@@ -375,6 +399,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"out       = {args.out}")
     print()
 
+    # The page counts, measured once from each document's own probe and before
+    # anything is asked of a selection: a range is checked against the document it
+    # belongs to, and a count hardcoded here would keep validating against a
+    # fixture that had since changed.
+    large_pages = document_pages(engine, _lib.LARGE_PDF)
+    source_pages = document_pages(engine, _lib.SOURCE_PDF)
+
+    print()
     # Requirement 2, on both fixtures the folder names label. A text PDF and a
     # scanned one are the two answers the routing depends on.
     classify_page(engine, _lib.TEXT_PDF, 1, "ok")
@@ -385,8 +417,7 @@ def main(argv: list[str] | None = None) -> int:
     classify_page(engine, _lib.LARGE_PDF, 2, "reason")
 
     print()
-    # Requirements 3 and 4, on the fixture each is right for.
-    layout_text(engine, _lib.SOURCE_PDF, [1], "ok")
+    # Requirement 4, on the fixture it is right for.
     render_page(engine, _lib.SCAN_PDF, "1", RENDER_DPI, "ok")
 
     print()
@@ -395,15 +426,22 @@ def main(argv: list[str] | None = None) -> int:
     render_page(engine, _lib.LARGE_PDF, "1", OVER_THE_CEILING_DPI, "reason")
 
     print()
+    # Requirement 3, on a range wide enough to be a range rather than a page.
+    layout_text(engine, _lib.SOURCE_PDF, "1", "ok", source_pages)
+    layout_text(engine, _lib.LARGE_PDF, PAGES_AS_WRITTEN, "ok", large_pages)
+    # `pdf layout` requires its pages strictly ascending, so this is the one
+    # operation of the three where a reordered selection is refused rather than
+    # honoured - an answer, not a defect.
+    layout_text(engine, _lib.LARGE_PDF, REORDERED_PAGES, "usage", large_pages)
+
+    print()
     # Requirement 1. The selection is written the way a caller writes it, and
     # expanded against a page count measured from the document itself.
-    large_pages = document_pages(engine, _lib.LARGE_PDF)
-    source_pages = document_pages(engine, _lib.SOURCE_PDF)
     split_pages(engine, _lib.SOURCE_PDF, "1", source_pages, "ok")
     split_pages(engine, _lib.LARGE_PDF, "2,3", large_pages, "ok")
     split_pages(engine, _lib.LARGE_PDF, "22,33", large_pages, "ok")
     # The range grammar, which is the surface's and not the port's: `5-15` is
-    # fifteen pages, and passing the text straight to `split` raises a `TypeError`
+    # eleven pages, and passing the text straight to `split` raises a `TypeError`
     # about comparing a `str` with an `int`.
     split_pages(engine, _lib.LARGE_PDF, PAGES_AS_WRITTEN, large_pages, "ok")
 
@@ -418,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:
     render_page(
         engine,
         _lib.LARGE_PDF,
-        RENDER_PAGES_AS_WRITTEN,
+        PAGES_AS_WRITTEN,
         RENDER_DPI,
         "ok",
         large_pages,

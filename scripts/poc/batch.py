@@ -212,7 +212,7 @@ def _extract_text(
 
     if shape in {"text", "mixed"}:
         attempt = _silently(
-            pdf_driver.layout_text, pdf_engine, path, [1], "ok", save=False
+            pdf_driver.layout_text, pdf_engine, path, "1", "ok", save=False
         )
         if not attempt.succeeded:
             return None, None, f"layout_text refused ({attempt.outcome.detail})"
