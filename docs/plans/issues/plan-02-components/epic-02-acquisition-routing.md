@@ -143,7 +143,7 @@ The Reader is where two silent failures become possible at once. The first is a 
 **Out of scope for this issue**
 - **No M2/M3 switch.** The shared implementation with the rasterization switch at the front is `E02-03`.
 - **No routing decision.** Per-page routing is *executed* here and *decided* in `E02-01`; a Reader that re-judges quality duplicates the gate.
-- **No reading order, no layout, no table structure.** Ordering is `E03-01`'s; the boundary refuses it here **and the Reconstructor's reason to exist depends on that refusal**.
+- **No reading order and no layout.** Ordering is `E03-01`'s; the boundary refuses it here **and the Reconstructor's reason to exist depends on that refusal**. A table's **cells** may cross (opt-in, `read(tables=True)`, `E04-04`'s amendment) and its **structure** never does — which leaves this component exactly the work it had: cells at known positions are material, and a grid is a reconstruction.
 - **No OCR correction.** `# TODO: [MVP]` — and whether it belongs inside the OCR step is open decision **#4**, carried in §6 below, not resolved.
 - **No `--engine` flag, no second engine, no engine setting.** **Never** (`ADR-001`, `FR-16`).
 - **No fallback reader when `pdftotext` is absent.** **Never** (`wbs.md` §9) — the temptation to "just use OCR instead" is exactly the silent substitution the architecture forbids.

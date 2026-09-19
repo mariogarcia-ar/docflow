@@ -357,7 +357,7 @@ K4 `kernel.ocr` port + Docling adapter: `capabilities`, `read`, `engine_info`.
 |---:|---|---|
 | 1 | The port and the adapter exist; the adapter is reachable only through the port | ✅ met — `isinstance(DoclingEngine(), OcrEngine)` holds, and `ports/ocr.py` imports no adapter (asserted over its syntax tree) |
 | 2 | `read` returns positioned items with **no reading order resolved** | ✅ met — the engine's own order is preserved and never re-sorted; `reading_order: not_resolved` is in the evidence |
-| 3 | Docling's layout output is dropped at the boundary | ✅ met — only text-bearing items with provenance leave; `layout_dropped: true` is asserted, and no layout or order field exists on the result |
+| 3 | Docling's layout output is dropped at the boundary | ✅ met — only text-bearing items with provenance leave; `layout_dropped: true` is asserted, and no layout or order field exists on the result. **Amended**: a table's cells may cross, opt-in — see *The `tables` parameter* below |
 | 4 | `read` returns a per-page status distinguishing `read` / `blank` / `unreadable` | ⚠️ **partially met** — `read` and `blank` are produced; **`unreadable` is never produced**, because Docling reports on the document rather than per page: a page it cannot read fails the whole conversion, which this adapter reports as one typed reason for the call |
 | 5 | A blank page reports `blank`, never `read` with invented tokens | ✅ met |
 | 6 | Token confidence is `float \| null`, and `null` is never coerced to `1.0` | ✅ met, and stronger than the row assumes — see below |
@@ -384,7 +384,7 @@ OCR output is the one place where the system cannot re-derive what it saw: a sam
 **Acceptance criteria**
 - [ ] `docflow/ports/ocr.py` and `docflow/adapters/docling.py` exist; the adapter is reachable only through the port.
 - [ ] `read` returns **positioned tokens with no reading order resolved** — tokens carry boxes; no order field, no sorted sequence is produced by the kernel.
-- [ ] Docling's **layout output is dropped at the boundary**; table structure and layout regions do not leave the kernel.
+- [ ] Docling's **layout output is dropped at the boundary**; layout regions do not leave the kernel. **Amended after this issue closed** — see *The `tables` parameter* below: a table's **cells** may cross when the caller asks, and its **structure** never does.
 - [ ] `read` returns a **per-page status** distinguishing `read` (with a possibly empty token list) from `blank` from `unreadable`.
 - [ ] A blank page reports status `blank`, **never** `read` with invented tokens.
 - [ ] Token confidence is `float | null`, and **`null` is never coerced to `1.0`** — missing confidence stays missing.
@@ -403,8 +403,30 @@ OCR output is the one place where the system cannot re-derive what it saw: a sam
 
 **Out of scope for this issue**
 - **No OCR correction pass.** `# TODO: [MVP]` — `--correct` gates the corrected artifact only and the raw tokens are always retained (`kernel-cli.md` §9, K4).
+
+---
+
+### The `tables` parameter — a boundary decision taken after `E04-04` closed
+
+**Status: taken, and it amends criterion 3.** Recorded here rather than in a silent diff, because it changes a contract `plans/README.md` §3 lists as frozen and a later reader must be able to find the reasoning.
+
+**What changed.** `OcrEngine.read` gained a keyword-only parameter:
+
+```python
+def read(self, path, pages, dpi, lang, *, tables: bool) -> KernelResult[ReadResult]
+```
+
+It is **required and has no default**. `E04-01` forbids a port member carrying one — *"a parameter with a default is a default the caller never stated"* — so every call site states its inclusion decision, and the eighteen existing sites in `tests/adapters/test_docling.py` were updated to say `tables=False` explicitly rather than inheriting a value.
+
+**What it fixes, measured.** A `TableItem` carries no `text` of its own, so criterion 3's filter — keep text-carrying items with provenance — loses a whole table. On `casos/66cd35e9` a 27-cell invoice table vanished, and the row naming `EZ9F34110` was absent from the reading entirely: **42 tokens without the flag, 69 with it**, the extra 27 carrying the role `table_cell`.
+
+**Why cells and not a table.** Each cell carries its own box, in **top-left** coordinates — unlike the table's own provenance box, which is bottom-left, a difference an implementation that assumed one origin for both would get wrong plausibly rather than obviously (a test pins it). The grid, the spans and the header association still do not cross: a token holding a whole rendered table would have the table's box and none of its cells' positions, which is a position no measurement supports.
+
+**What it costs, and where the rest lands.** Ordering by position **cannot** tell a cell on a table row from a body item at the same height. Measured on `casos/66cd35e9` at 72 DPI: the table's header sits at `y=249` and its first item row at `y=263`, so a tolerance above the ~14-unit row pitch merges them and one row reads `Código | Detalle | … | Vendedor: | Felipe CUIT:`. Only a component that knows a grid from a page can separate them, and that is `S2-T07` — whose reason to exist is unchanged by this decision, because *ordering* and *table reconstruction* were always its work (`prd.md` FR-17).
+
+**The narrow reading of criterion 3 still holds**: no layout region, no reading order, no table structure leaves the boundary. Cells with boxes are not a table; they are the material one is rebuilt from, and the role says which ones came from one.
 - **No second OCR engine and no OCR engine setting.** **Never** (ADR-001, `prd.md` FR-16).
-- **No reading order, no layout, no table structure.** Dropped at the boundary; ordering is the Reconstructor's job at Stage 2 (`S2-T07`).
+- **No reading order and no layout.** Dropped at the boundary; ordering is the Reconstructor's job at Stage 2 (`S2-T07`). A table's **cells** may cross when `read(tables=True)` asks; its **structure** never does.
 - **No confidence score aggregation** and no "usable / route to OCR" style output. **Never** (`kernel-cli.md` §3, guardrail 2).
 - **No threshold inside the kernel.** **Never** (FR-15).
 - **No determinism-class decision.** This adapter **reports** `sampled`; what `sampled` means for resume is `E05-03`'s.

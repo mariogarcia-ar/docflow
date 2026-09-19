@@ -51,14 +51,17 @@ isinstance(engine, OcrEngine)      # True
 
 ## The whole surface
 
-Three operations, all returning `KernelResult` — a value with evidence, or no value
-with a `Reason`.
+Three operations on the port, all returning `KernelResult` — a value with evidence,
+or no value with a `Reason`. The adapter also exposes `layout`, which is **not** on
+`OcrEngine`: `plans/README.md` §3 freezes the port's methods, so a fourth would
+re-open `E04-04`'s gate.
 
 | Operation | Question it answers |
 |---|---|
 | `capabilities` | What can this engine do? |
 | `engine_info` | Which revision answered, for the cache key? |
 | `read` | Give me the text on these pages, with positions |
+| `layout` | *(adapter only)* Give me that text ordered into rows |
 
 ## 1. `capabilities` — what can this engine do?
 
@@ -190,13 +193,29 @@ The evidence says so at the boundary instead of leaving it to be inferred:
 result.evidence.observed["granularity"]      # 'block'
 result.evidence.observed["layout_dropped"]   # True
 result.evidence.observed["reading_order"]    # 'not_resolved'
+result.evidence.observed["tables"]           # 'dropped' | 'cells_included'
 ```
 
 ## 5. What the boundary deliberately drops
 
-Docling returns a full document model — sections, reading order, item nesting, table
-structure, layout regions. **None of it leaves the adapter.** What leaves is text
-with a box and the engine's label as the token's `role`.
+Docling returns a full document model — sections, reading order, item nesting,
+layout regions, and table **structure**. Almost none of it leaves the adapter. What
+leaves is text with a box and the engine's label as the token's `role`.
+
+**A table's cells are the one exception, and they are opt-in.** A `TableItem`
+carries no `text` of its own, so a boundary that keeps only text-carrying items
+loses the whole construct: measured on `casos/66cd35e9`, a 27-cell invoice table
+vanished and the row naming `EZ9F34110` was absent from the reading entirely.
+`read(..., tables=True)` reports each cell as a token with its own box and the role
+`table_cell`, which is what lets a row read across a table's columns the way a line
+reads across a page.
+
+The parameter is **required and has no default**: `E04-01` forbids a port member
+carrying one, so every caller states its inclusion decision rather than inheriting
+one. The structural part — the grid, the spans, the header association — still does
+not cross, and reassembling it is `S2-T07`'s work (`prd.md` FR-17). A token holding
+a whole rendered table would have the table's box and none of its cells' positions,
+which is a position no measurement supports.
 
 An order resolved here would be a domain-level interpretation performed by a kernel,
 and ordering is the Reconstructor's job at Stage 2 (`S2-T07`). The engine's own item
@@ -306,7 +325,82 @@ $ docflow-kernel ocr read /tmp/nope.png
 # exit 2
 ```
 
-### `--correct` is declared and refuses
+### `ocr layout <file>`
+
+The OCR counterpart of `pdf layout`, and the reason both exist is the one
+difference between them: `pdftotext -layout` returns the reader's own **character
+grid** because a text reader has the font metrics, and a recogniser has none. So the
+rows are rebuilt from the token boxes.
+
+```console
+$ docflow-kernel ocr layout tests/fixtures/casos/66e6e0ea-e910-41f4-9037-13f0309812c1.jpg --pages 1
+# value:
+#   Cád. 081 - Tique Factura A | 00059-00003856
+#   Otros Impue - 12.600 | (21)[81,18] | 48552,68
+#   SUBTOT. IMP. NETO GRAVADO | 48552,68
+#   ALICUOTA 21,00% | 10196,06
+#   10 - Impuesto interno a nivel item | 11251,28
+#   07 - IIBB Bs.As. ARBA General | 299,02
+#   IMPORTE TOTAL OTROS TRIBUTOS | 11550,30
+#   TOTAL | 70299,04
+# evidence.measurements: { "tokens_read": 32.0, "tokens_placed": 32.0,
+#                          "rows": 23.0, "characters": 804.0,
+#                          "line_tolerance_applied": 25.0 }
+# evidence.observed: { "orientation": "horizontal", "row_test": "anchor",
+#                      "separator": " | ", "reading": "rows_from_boxes",
+#                      "orientation_applied": "horizontal",
+#                      "orientation_measured": { "horizontal": 32.0, "vertical": 0.0 } }
+# exit 0
+```
+
+`line_tolerance_applied: 25.0` is the legacy's figure **because no `--dpi` was
+given**: the default resolution is 72, and the conversion `25.0 * 72 / 72` is the
+identity. Passing `--dpi 300` multiplies it by `300 / 72` — the same reading, in
+boxes 4.16 times larger.
+
+**What it pairs, and what it does not.** `ALICUOTA 21,00% | 10196,06` is the fact
+the engine's blocks alone cannot express: read in engine order, the label and its
+value arrive separated by other items, and `10196,06` reads as an orphan. Pairing
+them is the whole value of the operation.
+
+It does **not** reproduce column widths. An engine that reports blocks reports where
+each block *starts*, not how wide its column is, so padding them into a grid would
+synthesise whitespace no measurement supports. `reading: "rows_from_boxes"` says
+which kind of reading this is, so a consumer cannot mistake it for `pdf layout`'s
+character grid.
+
+**`--tolerance` is the row spacing, and it does not transfer from the legacy.** The
+previous system's `25.0` was in PDF points at 72 DPI; here the default is
+`25.0 * dpi / 72`, because a literal `25.0` at 300 DPI is a fifth of the row height
+and splits every row. Passing it explicitly states a number in the boxes' own units.
+
+**`--orientation` is a measurement, not a default.** Absent, the orientation is read
+from the tokens' boxes and reported as `orientation_measured`; given, it is used and
+still reported, so a caller who forced `vertical` on a horizontal document can see
+the disagreement from the envelope rather than only from a reading that looks wrong.
+The rule is a **proxy** — a box is `horizontal` when it is at least as wide as it is
+tall — so a two-line block in a table cell counts as `vertical` although no glyph in
+it is rotated. That is why both the winner and the counts are reported.
+
+**`--tables` keeps a table's cells, and it is off by default.** A `TableItem` has no
+`text` of its own, so without the flag the whole table is absent — measured on
+`casos/66cd35e9`, `42` tokens without it and `69` with it, the extra `27` all
+carrying the role `table_cell`:
+
+```console
+$ docflow-kernel ocr layout casos/66cd35e9.pdf --pages 1                 # 9 rows
+$ docflow-kernel ocr layout casos/66cd35e9.pdf --pages 1 --tables        # 10 rows
+# with --tables, the table's own rows appear:
+#   EZ9F34110 | KL04181 | ... | TERMICA SCHNEIDER 1 x 10 ap. Easy9 | CABLE CANAL KALOP ...
+```
+
+A caller reading a table sets `--tolerance` from the **row pitch** rather than from
+the font, and that is a measured limit rather than a preference: on
+`casos/66cd35e9` the table's header sits at `y=249` and its first item row at
+`y=263`, so a tolerance of `25.0` joins them and one row reads
+`Código | Detalle | ... | Vendedor: | Felipe CUIT:`. At `6.0` the header reads on its
+own. Ordering by position cannot tell a cell on the row from a body item at the same
+height — only a component that knows a grid from a page can, and that is `S2-T07`.
 
 ```console
 $ docflow-kernel ocr read <file> --correct true
@@ -438,11 +532,12 @@ different engine, it supplies a different instance of the same one.
 | Not available | Where it lands |
 |---|---|
 | `docflow-kernel ocr capabilities  engine-info  read` | **Now available** — see the CLI section above and `lab-cli.md` |
+| `ocr layout` | **Now available** — `docflow-kernel ocr layout <file> --pages …`; the adapter's, not the port's |
 | `--correct true` | **Declared, refused today** — exit `3`, because the corrected artifact needs `reader.correct` from the registry and a second engine output |
 | Word-level granularity | Not available from this engine; see §4 |
 | An OCR correction pass | `# TODO: [MVP]` — `--correct` gates the corrected artifact only, and the raw tokens are always retained |
 | A second engine, an engine setting | **Never** (`ADR-001`, `prd.md` FR-16) |
-| Reading order, layout, table structure | **Never** at this boundary (`S2-T07` owns ordering) |
+| Reading order and layout | **Never** at this boundary (`S2-T07` owns ordering). A table's **structure** is likewise never here; its **cells** may cross, opt-in, and `--tables` is how a caller asks for them |
 | A confidence score or an aggregate | **Never** — the engine reports none, and `kernel-cli.md` §3 forbids aggregating measurements here |
 | Per-page `unreadable` | Not producible by this engine; see §3 |
 

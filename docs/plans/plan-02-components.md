@@ -54,6 +54,7 @@ Stage 2 exists to make the system's answer to *"can this extracted value be trus
 | `--format md\|html`, `--schema`, `--golden`, `--keep-artifacts`, `--isolate` | `# TODO: [MVP]` |
 | A minimal document-type catalog in K8 (the Identifier ships with a minimal one) | `# TODO: [MVP]` |
 | A real 3-invoice corpus fixture for the Segmenter (a synthetic one closes the flow) | `# TODO: [MVP]` |
+| A table's cells are available from K4 (`read(tables=True)`, `E04-04`'s amendment); the **grid**, the spans and the header association are not, and rebuilding them is `S2-T07`'s | `# TODO: [MVP]` |
 | Telemetry, caching layers, HA, security compliance | `# TODO: [RELEASE]` |
 | A `--no-validate` flag; any pipeline variant without `V`; a single confidence score; an OCR engine setting; merged-document detection; a `--verify` flag | **Never** (`prd.md` §10, ADR-001, ADR-002, ADR-005, ADR-006) |
 
