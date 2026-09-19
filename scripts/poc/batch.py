@@ -137,7 +137,12 @@ class FileOutcome:
             ``"render+ocr"``, or ``None`` when no text was produced.
         text_path: The written `.txt`, relative to the output root.
         fields_path: The written `.json`, relative to the output root.
-        note: A short explanation, for the invalid and refused cases.
+        note: A short explanation, for the invalid and refused cases - and for a
+            partial reading, where it names what was dropped.
+        partial: Whether the document was read **in part**. Declared as a field rather
+            than left to a prefix match on the note: it is the fact the summary and
+            the exit code turn on, and a consumer should be able to read it without
+            parsing prose.
 
     """
 
@@ -147,6 +152,7 @@ class FileOutcome:
     text_path: str | None
     fields_path: str | None
     note: str = ""
+    partial: bool = False
 
 
 #: Every outcome of this walk, in order.
@@ -395,6 +401,61 @@ def _extract_text(
     return _extract_pdf_text(pdf_engine, ocr_engine, raster_engine, path)
 
 
+#: How many pages of one document this version reads.
+#:
+#: TODO: [MVP] **A proof-of-concept cap, not a policy — and it is declared rather
+#: than assumed.** The real answer is not a smaller window: it is to read every page
+#: and *chunk* the text so each generation fits `num_ctx`, merging the per-chunk
+#: extractions. That is a dependency (a tokenizer, and a merge rule for fields two
+#: chunks disagree about), so this version reads the first few pages and **says so in
+#: the output**, which is the difference between a documented limit and a silent
+#: truncation.
+#:
+#: The number is measured rather than chosen: three pages of the large fixture are
+#: 1 262 characters, against a prompt budget of roughly 8 000 for `num_ctx: 4096`
+#: (the whole 59-page document is 167 035 — an oversize prompt is an HTTP 400, not a
+#: truncated answer). A larger cap would fit *this* fixture and fail on a denser one,
+#: which is why the cap is conservative and the omission is reported per document.
+#:
+#: TODO: [MVP] A `--max-pages` flag would let a bench compare a capped run against a
+#: full one. It is not here because the cap is a *limit* rather than a parameter, and
+#: a flag invites treating the limited reading as the document.
+MAX_PAGES: Final[int] = 3
+
+
+#: What one page's text is separated by when the pages are joined. A form feed —
+#: what `pdftotext` emits between pages and what a page break has meant in plain text
+#: for decades. Deliberately **not** `ocr.SEPARATOR`, which separates *rows*: reusing
+#: it would make a page break and a row break the same character.
+PAGE_BREAK: Final[str] = "\f"
+
+
+def _cap_pages(pages: list[int]) -> tuple[list[int], str]:
+    """Apply this version's page cap, and report it when it bites.
+
+    **The announcement is the point, not the cap.** A document read in part and
+    reported as read is the same failure as a prompt cut by `num_ctx` — the answer
+    arrives looking complete, and nothing says what was left out. So a capped read
+    returns the pages it will read *and a sentence naming what it dropped*, and that
+    sentence travels with the text to the console, the skip record and the exit code.
+
+    Args:
+        pages: Every page number the document has, in order.
+
+    Returns:
+        The pages to read, and a note that is empty when nothing was dropped.
+
+    """
+    if len(pages) <= MAX_PAGES:
+        return pages, ""
+
+    return pages[:MAX_PAGES], (
+        f"PARTIAL: read the first {MAX_PAGES} of {len(pages)} pages — this version "
+        f"caps a document at {MAX_PAGES} (MAX_PAGES); the text below is NOT the "
+        "whole document"
+    )
+
+
 def _extract_pdf_text(
     pdf_engine: PdfEngine,
     ocr_engine: DoclingEngine,
@@ -443,9 +504,11 @@ def _extract_pdf_text(
         counted = probed.value.measurements.get("page_count")
         total = int(counted) if counted else None
 
-    pages = parse_pages(None, total)
-    if not pages:
+    every = parse_pages(None, total)
+    if not every:
         return None, None, "the document reports no pages"
+
+    pages, partial = _cap_pages(every)
 
     min_chars = _lib.policy("reader.min_chars")
     scratch = pathlib.Path(tempfile.mkdtemp(prefix="docflow-batch-"))
@@ -468,7 +531,11 @@ def _extract_pdf_text(
         if not texts:
             return None, None, "; ".join(refusals) or "no page produced text"
 
-        return _join_pages(texts), "+".join(routes), ""
+        # The cap note and any per-page refusals are joined, never one replacing the
+        # other: a document can be both partial *and* have had a page go aside, and a
+        # reader needs to know each separately.
+        notes = [note for note in (partial, "; ".join(refusals)) if note]
+        return _join_pages(texts), "+".join(routes), "; ".join(notes)
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -727,13 +794,23 @@ def process_file(
         )
         fields_path = _relative_to(target, out_root)
 
+    # **The extraction's note is joined to the reading's, never substituted for it.**
+    # The two answer different questions — *did the model produce fields* and *was the
+    # text the whole document* — and a document can be partial *and* extracted. The
+    # first version of the page cap assigned `fields_note` alone, so a capped run that
+    # produced fields reported `ok` with the PARTIAL warning dropped: the truncation
+    # this whole change exists to announce would have been silent exactly when the
+    # pipeline looked most successful.
+    notes = [note for note in (note, fields_note) if note]
+
     return FileOutcome(
         source=relative,
         kind=kind,
         route=route,
         text_path=_relative_to(text_path, out_root),
         fields_path=fields_path,
-        note=fields_note,
+        note="; ".join(notes),
+        partial=note.startswith("PARTIAL"),
     )
 
 
@@ -843,6 +920,16 @@ def main(argv: list[str] | None = None) -> int:
                 f"{outcome.route or '-':12} -> {outcome.text_path} + NO FIELDS: "
                 f"{outcome.note}"
             )
+        elif outcome.partial:
+            # Text *and* fields, from a document read in part. The `~` is the third
+            # state and it exists because the other two would each be a lie: `ok`
+            # would not mention the omission, and `..` would hide that an extraction
+            # happened.
+            print(
+                f"  ~ {outcome.source:52} {outcome.kind:7} "
+                f"{outcome.route:12} -> {outcome.text_path} + {outcome.fields_path}\n"
+                f"      {outcome.note}"
+            )
         else:
             print(
                 f" ok {outcome.source:52} {outcome.kind:7} "
@@ -893,17 +980,26 @@ def main(argv: list[str] | None = None) -> int:
         for outcome in OUTCOMES
         if outcome.text_path is not None and outcome.fields_path is None
     )
+    # **A partial reading is counted, and it is the one this version must not hide.**
+    # The cap is a deliberate PoC limit, so a run over long documents *should* report
+    # partials — and if they were absent from the tally, the limit would be invisible
+    # in the one place a reader looks for the run's verdict.
+    partial = sum(1 for outcome in OUTCOMES if outcome.partial)
     print(f"{'skipped':<10}{skipped:>6}   (refused on purpose, each with its reason)")
     print(f"{'failed':<10}{failed:>6}   (in scope and produced nothing)")
     print(
         f"{'no fields':<10}{unextracted:>6}   (text read, but the model produced none)"
     )
+    print(
+        f"{'partial':<10}{partial:>6}   "
+        f"(read in part: MAX_PAGES = {MAX_PAGES}, the rest of the document is NOT read)"
+    )
     print()
 
-    if not problems and not failed and not unextracted:
+    if not problems and not failed and not unextracted and not partial:
         print("every file was answered and the tree mirrors exactly.")
         return 0
-    return len(problems) + failed + unextracted
+    return len(problems) + failed + unextracted + partial
 
 
 if __name__ == "__main__":

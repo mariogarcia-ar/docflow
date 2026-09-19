@@ -365,6 +365,41 @@ made a clean run over unprocessable inputs — a protected PDF, an illegible sca
 `.md` file — report as broken. A skip is the flow working (it asked, the document
 said no, the output says why); a failure is a file in scope that produced nothing.
 
+#### A document is read per page, and capped at three — and the cap is announced
+
+Every page is classified and decided **on its own**, then joined with a form feed.
+The decision has to be per page: one PDF mixes text pages, image pages and `blank`
+ones, and reading only page 1 — which this driver used to do — reported a cover as
+the document's text on the 59-page fixture (1 page of 59).
+
+**`MAX_PAGES = 3` is this version's limit, not a policy.** Measured: three pages of
+the large fixture are 1 262 characters against a prompt budget of roughly 8 000 for
+`num_ctx: 4096`, while the whole document is 167 035 — an oversize prompt is an HTTP
+400, not a shorter answer. Chunking is what actually solves it, and it needs a
+tokenizer plus a merge rule for fields two chunks disagree about.
+
+**What ships is the announcement, not the number.** A document read in part and
+reported as read is the same failure class as a prompt cut by `num_ctx`: the answer
+looks whole and nothing says what is missing. So a capped read returns a sentence
+naming what it dropped, and that sentence reaches the console, the skip record and
+the exit code:
+
+```
+  ~ MetodoCITRA17-APL.pdf   pdf   layout_text -> …txt + …json
+      PARTIAL: read the first 3 of 59 pages — this version caps a document at 3
+      (MAX_PAGES); the text below is NOT the whole document; p2: the page holds
+      neither usable text nor an image
+```
+
+`~` is the third state, and it exists because the other two would each be a lie:
+`ok` would omit the truncation, and `..` would hide that an extraction happened.
+Verified: a 3-page document reports `ok` / `partial 0`; 59 pages reports the banner
+and **exit 1**. Muting the field leaves the banner absent *and* the exit code back at
+0 — which is how the announcement was falsified rather than assumed.
+
+This is also why the run got fast: 2 m 40 s → **14 s** on the large fixture, with the
+limit stated instead of silently applied.
+
 ### `hitl.py` and the two limits it reports
 
 1. **`judge` cannot see the page.** §7 asks to send *"el resultado de `llm.local`
