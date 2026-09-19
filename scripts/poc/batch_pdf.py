@@ -118,6 +118,11 @@ class PageOutcome:
         artifact: The written file, relative to the output root, or ``None`` for a
             blank page or a refusal.
         note: A short explanation, for the refused cases.
+        measured_dpi: The resolution the page's pixels actually hold, or ``None``
+            when it could not be measured.
+        rendered_dpi: The resolution the artifact was written at, or ``None`` when
+            nothing was rendered. For a `layout_text` route it is ``None``, because
+            no pixels were produced — and that is different from ``0``.
 
     """
 
@@ -126,6 +131,8 @@ class PageOutcome:
     route: str | None
     artifact: str | None
     note: str = ""
+    measured_dpi: int | None = None
+    rendered_dpi: int | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -195,6 +202,42 @@ def _render_dpi() -> int:
     return int(_lib.policy(MIN_DPI_KEY))
 
 
+def _measured_dpi(engine: PdfEngine, source: pathlib.Path, page: int) -> int | None:
+    """Report the resolution a page's pixels hold, or ``None`` when unmeasurable.
+
+    **This is the number `batch_image.py` cannot obtain for itself**, and the reason
+    it travelled no further than this driver until now: K3's `info` reports
+    `width`, `height`, `mode`, `format` and the EXIF orientation, and **no DPI at
+    all** (`image.py` records that finding, and it is why `--assumed-dpi` exists).
+    K2 can measure it, this driver already does measure it to cap the render, and it
+    was thrown away — so a second pass over the artifacts had to be told the
+    resolution by hand, as an *assumption*, for a number that was known exactly one
+    step earlier.
+
+    ``None`` is a real answer and is **not** the same as ``0``: it means the page's
+    resolution could not be established, and a caller reading it must fall back to
+    its own assumption rather than treat it as a measurement.
+
+    Args:
+        engine: The K2 adapter.
+        source: The PDF being exported.
+        page: One-based page number.
+
+    Returns:
+        The measured resolution in DPI, or ``None``.
+
+    """
+    measured = _mirror.silently(engine.effective_dpi, source, page)
+    if measured.value is None:
+        return None
+
+    held = measured.evidence.measurements.get("effective_dpi")
+    if held is None:
+        return None
+
+    return int(held)
+
+
 def _export_dpi(engine: PdfEngine, source: pathlib.Path, page: int) -> int:
     """Decide what resolution a page is exported at, within what its pixels hold.
 
@@ -257,43 +300,87 @@ def process_page(
 
     """
     shape, refused = _mirror.silently(pdf_driver.shape_of, engine, source, page)
+    measured_dpi = _measured_dpi(engine, source, page)
     if not shape:
         # Nothing measured a shape at all, so there is no decision to take.
-        return PageOutcome(page, "", None, None, f"classify refused: {refused}")
+        return PageOutcome(
+            page,
+            "",
+            None,
+            None,
+            f"classify refused: {refused}",
+            measured_dpi=measured_dpi,
+        )
 
     # A blank page carries neither usable text nor an image: rendering it would
     # hand K4 a bitmap of nothing. It is accounted for, not exported - and it is
     # *blank*, not *refused*: `classify` answers such a page with a `blank_page`
     # reason while still reporting the shape, and the two mean different things.
     if shape == "blank":
-        return PageOutcome(page, shape, None, None, "blank: nothing to export")
+        return PageOutcome(
+            page,
+            shape,
+            None,
+            None,
+            "blank: nothing to export",
+            measured_dpi=measured_dpi,
+        )
 
     # The route **and** its name come from the one owner of the shape table. This
     # driver must not re-derive it: a `if shape in TEXT_SHAPES` here is a second
     # copy of a decision `pdf.route_page` already made, and the copy is what a
     # mutation can outlive without anything noticing.
+    rendered_dpi = _export_dpi(engine, source, page)
     route, routed = _mirror.silently(
         pdf_driver.route_page,
         engine,
         source,
         page,
         shape,
-        _export_dpi(engine, source, page),
+        rendered_dpi,
     )
     if not routed.succeeded:
-        return PageOutcome(page, shape, None, None, routed.outcome.detail)
+        return PageOutcome(
+            page,
+            shape,
+            None,
+            None,
+            routed.outcome.detail,
+            measured_dpi=measured_dpi,
+        )
 
     if not save:
-        return PageOutcome(page, shape, route, None, "not written (--no-save)")
+        return PageOutcome(
+            page,
+            shape,
+            route,
+            None,
+            "not written (--no-save)",
+            measured_dpi=measured_dpi,
+            rendered_dpi=rendered_dpi if route != "layout_text" else None,
+        )
 
     if route == "layout_text":
         target = mirror_dir / f"{source.stem}-p{page}.txt"
         target.write_text(routed.result.value, encoding="utf-8")
-    else:
-        target = mirror_dir / f"{source.stem}-p{page}.png"
-        target.write_bytes(routed.result.value.data)
+        return PageOutcome(
+            page,
+            shape,
+            route,
+            _mirror.relative_to(target, out_root),
+            measured_dpi=measured_dpi,
+        )
 
-    return PageOutcome(page, shape, route, _mirror.relative_to(target, out_root))
+    target = mirror_dir / f"{source.stem}-p{page}.png"
+    target.write_bytes(routed.result.value.data)
+    return PageOutcome(
+        page,
+        shape,
+        route,
+        _mirror.relative_to(target, out_root),
+        measured_dpi=measured_dpi,
+        rendered_dpi=rendered_dpi,
+    )
 
 
 def process_document(
@@ -388,6 +475,16 @@ def _write_pages_record(
                 "route": page.route,
                 "artifact": page.artifact,
                 "note": page.note,
+                # **The two resolutions, because the next pass cannot measure
+                # either.** `measured_dpi` is what the page's pixels hold and
+                # `rendered_dpi` is what the artifact was written at. A caller that
+                # wants to rescale needs the *rendered* one as its `source_dpi`; a
+                # caller reasoning about quality needs the measured one. They are
+                # equal whenever the render was capped, and they are recorded
+                # separately anyway, because *what the corpus asked for* and *what
+                # the page could give* are different facts.
+                "measured_dpi": page.measured_dpi,
+                "rendered_dpi": page.rendered_dpi,
             }
             for page in outcome.pages
         ],

@@ -113,7 +113,7 @@ which re-opens `E04-01`.
 ```bash
 python scripts/poc/batch.py       <input-dir> --out <out-dir>
 python scripts/poc/batch_pdf.py   <input-dir> --out <out-dir> [--pages 1-3] [--no-save]
-python scripts/poc/batch_image.py <input-dir> --out <out-dir> [--assumed-dpi 96] [--region x,y,w,h]
+python scripts/poc/batch_image.py <input-dir> --out <out-dir> [--target-dpi 150] [--assumed-dpi 96] [--region x,y,w,h]
 python scripts/poc/batch_ocr.py   <input-dir> --out <out-dir> [--pages 1-3] [--lang es]
 python scripts/poc/batch_llm_local.py <input-dir> --schema FIELDS.json [--out <out-dir>] [--mode structured|vision]
 python scripts/poc/batch_llm_frontier.py <input-dir> --fields <local-out-dir> [--out <out-dir>] [--mode judge|vision]
@@ -234,25 +234,44 @@ The unit is the **file**: an image has no sub-units, so there is no equivalent o
 that silently dropped every blurred image would answer its cut of the corpus without
 saying what it had thrown away.
 
-**The resolution is the one thing that cannot be measured.** `rescale` requires
-`source_dpi` and `K3` reports no DPI at all (`info` gives `width`, `height`, `mode`,
-`format`, EXIF orientation — nothing else), so `--assumed-dpi` supplies it and there is
-**no default**: an invented source resolution decides whether the target is reachable.
-Without it the rescale is **skipped and the skip is printed**, never silent.
+**The resolution comes from a sidecar first, and from the caller second.** `rescale`
+requires `source_dpi` and K3 reports no DPI at all (`info` gives `width`, `height`,
+`mode`, `format`, EXIF orientation — nothing else), so this step used to depend
+entirely on `--assumed-dpi`. But a number the caller *asserts* is an assumption, and
+`batch_pdf.py` **measures** exactly that number to cap its render — it was simply
+thrown away.
 
-Two skips are worth telling apart, and the driver names each:
+So `batch_pdf.py` now records two resolutions per page in `<stem>.pages.json`, and
+`batch_image.py` reads them back:
+
+| Field | What it is |
+|---|---|
+| `measured_dpi` | what the page's original pixels hold — a fact about the PDF |
+| `rendered_dpi` | what the artifact was written at — a fact about the bytes on disk |
+
+`read_source_dpi` consults **the sidecar first, `--assumed-dpi` second**, and that is
+the reverse of the usual flag precedence on purpose: a flag describes what the caller
+*believes*, and a recorded measurement is knowledge. Letting a belief override a
+measurement is how a rescale gets refused for being below a floor it actually clears.
+It reads **`rendered_dpi`**, because that describes the file the next stage holds; the
+two coincide while the render is capped by the page and diverge the moment the floor
+is raised.
+
+Faithfulness of the search order is visible in the message:
 
 ```
-not rescaled: no --assumed-dpi, and K3 cannot measure the DPI
-below the floor: 96 < 150 declared readable, and upscaling is refused
+before:  not rescaled: no --assumed-dpi, and K3 cannot measure the DPI
+now:     below the floor: 100 < 150 declared readable, and upscaling is refused
 ```
 
-The second is the interesting one. `diagnosis.min_dpi` is a **minimum readable**
-resolution, so a 96-DPI image against a 150 floor cannot be brought *up* to it: the
-adapter refuses to upscale, and that refusal is right — resampling cannot put
-information into pixels that were never sampled. That is a finding about the corpus,
-not a failure, and reporting it as a bare absence of a file is the silent failure this
-bench exists to catch. (It is also why `image rescale` cannot succeed from the CLI —
+The first is a **non-event** — the driver did not look. The second is a **finding
+about the corpus**: this image is below what the corpus calls readable, and no rescale
+will change that. `diagnosis.min_dpi` is a *minimum readable* resolution, so a 100-DPI
+image against a 150 floor cannot be brought up to it; the adapter refuses to upscale,
+and that refusal is right, because resampling cannot put information into pixels that
+were never sampled. Reporting it as a bare absence of a file is the silent failure
+this bench exists to catch. (It is also why `image rescale` cannot succeed from the
+CLI —
 see `image.py` FINDING D in `/memories/repo/build-and-test.md`.)
 
 ### `batch_pdf.py` is `batch.py` with K3 onward taken out

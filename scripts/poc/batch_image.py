@@ -133,6 +133,12 @@ class ImageOutcome:
         legibility: ``"ok"``, ``"illegible"``, or the reason code that stopped it.
         artifacts: The files written, relative to the output root.
         note: A short explanation, for the refused cases.
+        source_dpi: The resolution the rescale was attempted against, or ``None``
+            when neither a sidecar nor the caller supplied one.
+        source_dpi_origin: Where that resolution came from - a recorded sidecar or
+            the caller's assumption. Recorded because the two are **not** the same
+            kind of fact, and a reader comparing two runs has to be able to tell
+            which one decided whether the floor was reachable.
 
     """
 
@@ -145,6 +151,8 @@ class ImageOutcome:
     legibility: str
     artifacts: tuple[str, ...]
     note: str = ""
+    source_dpi: int | None = None
+    source_dpi_origin: str = ""
 
     @property
     def produced(self) -> int:
@@ -211,6 +219,189 @@ def describe_image(
     )
 
 
+def read_source_dpi(
+    source: pathlib.Path, assumed_dpi: int | None
+) -> tuple[int | None, str]:
+    """Find the resolution the pixels hold: from a sidecar, or from the caller.
+
+    **This closes the gap `--assumed-dpi` was papering over.** K3 cannot report a
+    source resolution (`info` carries width, height, format and the EXIF orientation
+    and no DPI at all), so this step could only ever be told one — and a number the
+    caller asserts is an *assumption*, not a measurement. Meanwhile `batch_pdf.py`
+    **measures** exactly this number to cap its render, and used to throw it away; it
+    now writes both resolutions into `<stem>.pages.json`.
+
+    So the search order is *measured, then assumed*, and the two are never confused:
+
+    1. **A sibling sidecar that records `rendered_dpi`.** This is the measurement —
+       the PNG beside it was written at that resolution, by a step that read it from
+       the PDF rather than being told it.
+    2. **The caller's `--assumed-dpi`.** An assumption, kept because a folder of
+       images that never went through a PDF has no sidecar and no other way in.
+
+    The sidecar **wins over the caller**, which is the opposite of the usual flag
+    precedence and is deliberate: `--assumed-dpi` describes what the caller *believes*
+    about a file, and a recorded measurement is knowledge. Letting a belief override
+    a measurement is how a rescale gets refused for being below a floor it actually
+    clears.
+
+    Note what is read: **`rendered_dpi` and not `measured_dpi`.** The first is the
+    resolution of *this* file — the artifact the next stage holds. The second is what
+    the page's original pixels held, which is a fact about the PDF, not about the
+    bitmap derived from it. They are equal whenever the render was capped by the
+    page, and they diverge the moment the registry's floor is raised: a 120-DPI page
+    rendered at 120 has both at 120, and one rendered at a higher floor would have
+    `measured_dpi` 120 with a `rendered_dpi` above it — and it is the latter that
+    describes the bytes on disk.
+
+    Args:
+        source: The image being processed.
+        assumed_dpi: The resolution the caller asserts, or ``None``.
+
+    Returns:
+        The resolution, or ``None`` when neither a sidecar nor the caller supplied
+        one, and a short note saying where it came from — recorded so a reader can
+        tell a measurement from an assumption without re-deriving either.
+
+    """
+    recorded = _sidecar_dpi(source)
+    if recorded is not None:
+        return recorded, f"from the sidecar: {_sidecar_name(source)}"
+
+    if assumed_dpi is not None:
+        return assumed_dpi, "from --assumed-dpi (an assumption, not a measurement)"
+
+    return None, "no sidecar and no --assumed-dpi"
+
+
+def _sidecar_name(source: pathlib.Path) -> str:
+    """Report the sidecar's name for one artifact, without touching the disk.
+
+    The naming rule has two shapes because the two producers write different names:
+    `batch_pdf.py` renders a page as ``<stem>-p<N>.png`` and records it in
+    ``<document-stem>.pages.json``, so the document stem has to be recovered from the
+    page artifact's. A file with no ``-pN`` suffix is its own stem.
+
+    Args:
+        source: The artifact.
+
+    Returns:
+        The sidecar's file name.
+
+    """
+    return f"{_document_stem(source)}.pages.json"
+
+
+def _document_stem(source: pathlib.Path) -> str:
+    """Recover the document's stem from a page artifact's name.
+
+    ``66cd35e9-…-p3.png`` belongs to ``66cd35e9-….pages.json``. Recovering it matters
+    because the page number is in the artifact's name and **not** in the sidecar's:
+    one record covers every page of a document, so a walk needs the stem to find it
+    and the page number to pick the right entry.
+
+    Args:
+        source: The artifact.
+
+    Returns:
+        The document's stem.
+
+    """
+    stem = source.stem
+    _head, separator, tail = stem.rpartition("-p")
+    if separator and tail.isdigit():
+        return _head
+
+    return stem
+
+
+def _page_number(source: pathlib.Path) -> int | None:
+    """Report which page of its document an artifact is, if its name says so.
+
+    Args:
+        source: The artifact.
+
+    Returns:
+        The one-based page number, or ``None`` when the name carries none - which is
+        a legitimate answer for an image that never came from a PDF.
+
+    """
+    _head, separator, tail = source.stem.rpartition("-p")
+    if separator and tail.isdigit():
+        return int(tail)
+
+    return None
+
+
+def _sidecar_dpi(source: pathlib.Path) -> int | None:
+    """Read the recorded render resolution for one artifact, if a sidecar has it.
+
+    Never raises and never guesses: an absent file, unreadable JSON, a missing key or
+    a null value all return ``None``, which the caller reports as *no measurement*.
+    A malformed sidecar is not this driver's to diagnose — it would be reporting a
+    defect in `batch_pdf.py`'s output from inside an image walk.
+
+    Args:
+        source: The artifact.
+
+    Returns:
+        The recorded resolution, or ``None``.
+
+    """
+    sidecar = source.parent / _sidecar_name(source)
+    if not sidecar.is_file():
+        return None
+
+    try:
+        record = json.loads(sidecar.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+    entry = _page_entry(record, _page_number(source))
+    if entry is None:
+        return None
+
+    recorded = entry.get("rendered_dpi")
+    if not isinstance(recorded, int) or isinstance(recorded, bool):
+        return None
+
+    return recorded
+
+
+def _page_entry(record: object, page: int | None) -> dict | None:
+    """Find one page's entry in a pages record.
+
+    A record with no usable ``pages`` list, or no entry for the page asked about,
+    yields ``None``: the sidecar exists but does not answer this question, which is a
+    different fact from *there is no sidecar* and is reported the same way — as *no
+    measurement*.
+
+    Args:
+        record: The parsed sidecar.
+        page: The one-based page number, or ``None`` for a single-page artifact.
+
+    Returns:
+        The entry, or ``None``.
+
+    """
+    if not isinstance(record, dict):
+        return None
+
+    pages = record.get("pages")
+    if not isinstance(pages, list):
+        return None
+
+    entries = [entry for entry in pages if isinstance(entry, dict)]
+    if page is None:
+        return entries[0] if len(entries) == 1 else None
+
+    for entry in entries:
+        if entry.get("number") == page:
+            return entry
+
+    return None
+
+
 def read_legibility(
     engine: RasterEngine, source: pathlib.Path
 ) -> tuple[float | None, str]:
@@ -258,11 +449,13 @@ def bring_to_floor(
     """Rescale the image to the corpus's floor, and say what happened either way.
 
     **The one thing this driver cannot measure.** `rescale` requires `source_dpi` and
-    K3 reports no DPI at all, so the number can only come from the caller. With
-    ``None`` the step is **skipped and recorded**, never guessed: an invented source
-    resolution is what decides whether the target is reachable, so a default here
-    would either enlarge a scan or refuse a rescale that was possible - and it would
-    do it while reporting a resolution nobody measured.
+    K3 reports no DPI at all, so the number has to come from somewhere else — a
+    recorded sidecar when the artifact came through `batch_pdf.py`, or the caller's
+    `--assumed-dpi` otherwise (see `read_source_dpi`). With neither, the step is
+    **skipped and recorded**, never guessed: an invented source resolution is what
+    decides whether the target is reachable, so a default here would either enlarge a
+    scan or refuse a rescale that was possible - and it would do it while reporting a
+    resolution nobody measured.
 
     An image whose resolution is **below** the floor is the case worth naming. The
     floor is a *minimum readable* resolution, so a 96-DPI image against a 150 floor
@@ -288,7 +481,10 @@ def bring_to_floor(
 
     """
     if source_dpi is None:
-        return None, "not rescaled: no --assumed-dpi, and K3 cannot measure the DPI"
+        return None, (
+            "not rescaled: no sidecar recorded a resolution and no --assumed-dpi was "
+            "given, and K3 cannot measure the DPI itself"
+        )
 
     if source_dpi < target_dpi:
         return None, (
@@ -400,6 +596,13 @@ def process_image(
 
     sharpness, legibility = read_legibility(engine, source)
 
+    # Where the source resolution comes from, and why the order matters. See
+    # `read_source_dpi`: a **recorded** resolution beats a caller's assumption, so an
+    # artifact that came through `batch_pdf.py` is rescaled against a measurement
+    # rather than against a belief about it. That is the whole reason item 1 recorded
+    # `rendered_dpi` in the sidecar.
+    source_dpi, dpi_origin = read_source_dpi(source, assumed_dpi)
+
     artifacts: list[str] = []
     notes: list[str] = []
     if not save:
@@ -416,7 +619,7 @@ def process_image(
         )
 
     scaled, scale_note = bring_to_floor(
-        engine, source, mirror_dir, out_root, assumed_dpi, target_dpi, save=save
+        engine, source, mirror_dir, out_root, source_dpi, target_dpi, save=save
     )
     if scaled is not None:
         artifacts.append(scaled)
@@ -458,6 +661,8 @@ def process_image(
         legibility,
         tuple(artifacts),
         "; ".join(notes),
+        source_dpi=source_dpi,
+        source_dpi_origin=dpi_origin,
     )
     _write_image_record(outcome, mirror_dir, source.stem)
     return outcome
@@ -486,6 +691,10 @@ def _write_image_record(
         The path written.
 
     """
+    # The two facts about the resolution travel beside the legibility reading, and for
+    # the same reason: `legibility` without the threshold it was judged against is a
+    # verdict a reader cannot check, and `source_dpi` without its origin is a number
+    # indistinguishable from a guess.
     record = {
         "source": outcome.source,
         "width": outcome.width,
@@ -494,6 +703,8 @@ def _write_image_record(
         "exif_orientation": outcome.exif_orientation,
         "sharpness": outcome.sharpness,
         "legibility": outcome.legibility,
+        "source_dpi": outcome.source_dpi,
+        "source_dpi_origin": outcome.source_dpi_origin,
         "artifacts": list(outcome.artifacts),
         "note": outcome.note,
     }
@@ -617,9 +828,9 @@ def main(argv: list[str] | None = None) -> int:
         f"({'given' if args.target_dpi is not None else f'registry: {MIN_DPI_KEY}'})"
     )
     assumed = (
-        f"{args.assumed_dpi} (given)"
+        f"{args.assumed_dpi} (given, a fallback for images with no sidecar)"
         if args.assumed_dpi is not None
-        else "not given -> no rescale, because K3 cannot measure a source DPI"
+        else "not given -> only sidecar-recorded resolutions will be used"
     )
     print(f"assumed-dpi = {assumed}")
     print(f"region = {args.region or 'none'}    save = {save}")

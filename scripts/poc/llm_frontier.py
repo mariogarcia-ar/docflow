@@ -288,6 +288,7 @@ RUBRIC: str = (
 
 # --- The cases this bench reads ---------------------------------------------
 
+
 def _probe_suffix(model: str, label: str) -> str:
     """Compose a probe id's suffix from the model and the document.
 
@@ -367,18 +368,14 @@ CASES: tuple[DocumentCase, ...] = (
     ),
     DocumentCase(
         name="casos/dense",
-        source=_lib.FIXTURES
-        / "casos"
-        / "9dfc597f-34c5-41ec-99ae-cf35544c7af8.pdf",
+        source=_lib.FIXTURES / "casos" / "9dfc597f-34c5-41ec-99ae-cf35544c7af8.pdf",
         kind="text",
         pages=(1,),
         note="7 105 characters on one page - the densest text page here",
     ),
     DocumentCase(
         name="casos/third",
-        source=_lib.FIXTURES
-        / "casos"
-        / "af9f596b-bab2-4e69-b82a-c61fcdacdcbd.pdf",
+        source=_lib.FIXTURES / "casos" / "af9f596b-bab2-4e69-b82a-c61fcdacdcbd.pdf",
         kind="text",
         pages=(1,),
         note="3 159 characters; a third independent invoice page",
@@ -446,9 +443,7 @@ CASES: tuple[DocumentCase, ...] = (
     ),
     DocumentCase(
         name="otros/photo",
-        source=_lib.FIXTURES
-        / "otros"
-        / "125cbe9f-dda5-4f99-9fb3-407230294e07.jpeg",
+        source=_lib.FIXTURES / "otros" / "125cbe9f-dda5-4f99-9fb3-407230294e07.jpeg",
         kind="image",
         pages=(1,),
         note="900x1600; a phone photograph, so framing and skew are real",
@@ -864,7 +859,9 @@ def _rendered_pages(engine: PdfEngine, case: DocumentCase) -> tuple[list[Bytes],
         rendered = engine.render(case.source, [page], resolution)
         if rendered.value is None:
             code = rendered.reason.code if rendered.reason else "unknown"
-            raise RuntimeError(f"render refused page {page} at {resolution} DPI: {code}")
+            raise RuntimeError(
+                f"render refused page {page} at {resolution} DPI: {code}"
+            )
         images.append(
             Bytes(data=rendered.value.data, media_type=rendered.value.media_type)
         )
@@ -1282,7 +1279,9 @@ def run_case(
     """
     label = case.name
     print()
-    print(f"  === {label}   kind={case.kind}{'   NEGATIVE CONTROL' if case.negative else ''}")
+    print(
+        f"  === {label}   kind={case.kind}{'   NEGATIVE CONTROL' if case.negative else ''}"
+    )
     if case.negative:
         print(f"      note: {case.note}")
 
@@ -1294,8 +1293,7 @@ def run_case(
 
     print(f"      source = {_lib.shown(case.source)} page(s) {list(case.pages)}")
     print(
-        f"      input  = {inputs.note}   "
-        f"image total {_bytes_total(inputs.image)} bytes"
+        f"      input  = {inputs.note}   image total {_bytes_total(inputs.image)} bytes"
     )
 
     if dry:

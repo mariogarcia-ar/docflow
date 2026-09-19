@@ -56,8 +56,9 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Final
 
+from docflow.adapters import ollama_results
 from docflow.adapters._json_object import load_object
-from docflow.kernels.types import Evidence, KernelResult, Reason
+from docflow.kernels.types import Evidence, KernelResult
 
 __all__: list[str] = ["OllamaEngine"]
 
@@ -237,13 +238,13 @@ class OllamaEngine:
         try:
             catalogue = self._catalogue()
         except (ConnectionError, ValueError) as exc:
-            return _refused(
+            return ollama_results.refused(
                 _CODE_ENGINE_UNAVAILABLE, str(exc), {}, {}, {"model": model}
             )
 
         digest = self._digest_of(model, catalogue)
         if digest is None:
-            return _refused(
+            return ollama_results.refused(
                 _CODE_MODEL_NOT_PULLED,
                 (
                     f"the model {model!r} is not present in this Ollama runtime. "
@@ -267,8 +268,8 @@ class OllamaEngine:
         first = self._seen_digests.setdefault(bare, digest)
         changed = first != digest
 
-        return _observed(
-            _terms(model, digest),
+        return ollama_results.observed(
+            ollama_results.terms(model, digest),
             {},
             {
                 "model": model,
@@ -472,12 +473,12 @@ class OllamaEngine:
         try:
             response = self._post(_PATH_CHAT, payload)
         except ConnectionError as exc:
-            return _refused(
+            return ollama_results.refused(
                 _CODE_ENGINE_UNAVAILABLE, str(exc), {}, {}, {"model": model}
             )
 
         if response.status_code != 200:
-            return _refused(
+            return ollama_results.refused(
                 _CODE_MODEL_NOT_PULLED,
                 (
                     f"warming {model!r} failed with HTTP {response.status_code}: "
@@ -492,8 +493,8 @@ class OllamaEngine:
         digest = str(spec.value.observed["model_revision"])
         revision = self._runtime_revision()
 
-        return _observed(
-            _terms(model, digest, revision),
+        return ollama_results.observed(
+            ollama_results.terms(model, digest, revision),
             {"warm_latency_ms": _ms(response.json().get("total_duration"))},
             {
                 "model": model,
@@ -572,8 +573,8 @@ class OllamaEngine:
             reports ``role_conflict``.
 
         """
-        if produced_by and _same_model(model, produced_by):
-            return _refused(
+        if produced_by and ollama_results.same_model(model, produced_by):
+            return ollama_results.refused(
                 _CODE_ROLE_CONFLICT,
                 (
                     f"{model!r} is asked to grade samples it produced itself. The "
@@ -619,7 +620,7 @@ class OllamaEngine:
         """
         spec = self._resolve_identity(model)
         if spec.value is None:
-            return _refused(
+            return ollama_results.refused(
                 spec.reason.code if spec.reason else _CODE_MODEL_UNKNOWN,
                 spec.reason.message if spec.reason else "",
                 {},
@@ -644,22 +645,56 @@ class OllamaEngine:
         try:
             response = self._post(_PATH_CHAT, payload)
         except ConnectionError as exc:
-            return _refused(
+            return ollama_results.refused(
                 _CODE_ENGINE_UNAVAILABLE,
                 str(exc),
-                _terms(model, digest, revision),
+                ollama_results.terms(model, digest, revision),
                 {},
                 {"model": model, "vision": vision},
             )
 
         if response.status_code != 200:
-            return _refused(
+            # **A 400 is a fact about *this request*, not about the model's name.**
+            # This branch used to answer `model_unknown` for every non-200, which
+            # misattributes the most common failure of all: measured, a 167 035-
+            # character prompt against `num_ctx: 4096` returns HTTP 400 with
+            # `{"type": "exceed_context_size_error", "n_prompt_tokens": 38187,
+            # "n_ctx": 4096}` — and the driver reported *the model is unknown* for a
+            # model whose `capabilities` call had just succeeded. A reader sent
+            # looking for a model cannot find the oversized prompt that is there.
+            #
+            # The runtime's own words are quoted rather than interpreted: the error
+            # body is a string inside a JSON document, its shape is not a contract,
+            # and parsing it here would be a second thing to keep in step with a
+            # runtime that changes. What *is* decided is the code: a request the
+            # runtime refuses is a usage answer, and `truncated_output` is reserved
+            # for a generation the window actually cut.
+            detail = ollama_results.runtime_complaint(response)
+            if response.status_code == 400:
+                return ollama_results.refused(
+                    _CODE_UNSUPPORTED_FORMAT,
+                    (
+                        f"{model!r} refused the request: {detail} This is a fact "
+                        "about the request — usually a prompt the context window "
+                        "cannot hold — rather than about the model's name, whose "
+                        "resolution succeeded."
+                    ),
+                    ollama_results.terms(model, digest, revision),
+                    {},
+                    {
+                        "model": model,
+                        "vision": vision,
+                        "http_status": 400,
+                    },
+                )
+
+            return ollama_results.refused(
                 _CODE_MODEL_UNKNOWN,
                 (
                     f"{model!r} failed with HTTP {response.status_code}: "
                     f"{response.text[:200]}"
                 ),
-                _terms(model, digest, revision),
+                ollama_results.terms(model, digest, revision),
                 {},
                 {"model": model, "vision": vision},
             )
@@ -707,7 +742,7 @@ class OllamaEngine:
         }
 
         if done_reason == _DONE_REASON_LENGTH:
-            return _refused(
+            return ollama_results.refused(
                 _CODE_TRUNCATED_OUTPUT,
                 (
                     "the generation was cut by the context window or the token "
@@ -716,7 +751,7 @@ class OllamaEngine:
                     "cut that lands after the last complete field parses cleanly, "
                     "which is how a partial answer is mistaken for a whole one."
                 ),
-                _terms(model, digest, revision),
+                ollama_results.terms(model, digest, revision),
                 measurements,
                 observed,
             )
@@ -725,17 +760,19 @@ class OllamaEngine:
         # the codes, the terms, the measurements — stays here.
         parsed, problem = load_object(raw)
         if problem is not None:
-            return _refused(
+            return ollama_results.refused(
                 _CODE_UNSUPPORTED_FORMAT,
                 f"{problem} The raw completion was {raw[:200]!r}.",
-                _terms(model, digest, revision),
+                ollama_results.terms(model, digest, revision),
                 measurements,
                 observed,
             )
 
         return KernelResult(
             value=MappingProxyType(parsed or {}),
-            evidence=_evidence(_terms(model, digest, revision), measurements, observed),
+            evidence=ollama_results.evidence(
+                ollama_results.terms(model, digest, revision), measurements, observed
+            ),
             reason=None,
         )
 
@@ -772,23 +809,6 @@ def _options_from_environment() -> dict[str, Any]:
     return options
 
 
-def _same_model(left: str, right: str) -> bool:
-    """Report whether two model names denote the same model.
-
-    Tags are ignored: ``qwen2.5`` and ``qwen2.5:latest`` are the same model to the
-    runtime, and a self-grading guard that missed that would be defeated by a tag.
-
-    Args:
-        left: One model name.
-        right: The other.
-
-    Returns:
-        ``True`` when the bare names match.
-
-    """
-    return left.split(":")[0].strip() == right.split(":")[0].strip()
-
-
 def _encode_image(image: Any) -> str:
     """Encode an image into the base64 string the API expects.
 
@@ -804,28 +824,6 @@ def _encode_image(image: Any) -> str:
         payload = image if isinstance(image, bytes) else bytes(image)
 
     return base64.b64encode(payload).decode("ascii")
-
-
-def _terms(model: str, digest: str, adapter_revision: str = "") -> Mapping[str, str]:
-    """Report the cache-key terms for one model.
-
-    Args:
-        model: The name the caller used.
-        digest: The resolved digest.
-        adapter_revision: The runtime's build, e.g. ``"ollama 0.31.1"``. Empty
-            omits the term, which the paths that fire before the runtime is known
-            (a typed refusal) rely on.
-
-    Returns:
-        The terms. The **digest** is the model's identity, and the tag is recorded
-        beside it so an operator can see which name produced the run.
-
-    """
-    terms = {"model": model, "model_revision": digest}
-    if adapter_revision:
-        terms["adapter_revision"] = adapter_revision
-
-    return MappingProxyType(terms)
 
 
 def _ms(nanoseconds: Any) -> float:
@@ -844,74 +842,3 @@ def _ms(nanoseconds: Any) -> float:
         return round(float(nanoseconds) / 1_000_000, 3)
     except (TypeError, ValueError):
         return 0.0
-
-
-def _evidence(
-    terms: Mapping[str, str],
-    measurements: Mapping[str, float],
-    observed: Mapping[str, object],
-) -> Evidence:
-    """Build an evidence record.
-
-    Args:
-        terms: The cache-key terms.
-        measurements: The numeric measurements.
-        observed: The remaining observations.
-
-    Returns:
-        The assembled ``Evidence``.
-
-    """
-    return Evidence(
-        terms=MappingProxyType(dict(terms)),
-        measurements=MappingProxyType(dict(measurements)),
-        observed=MappingProxyType(dict(observed)),
-    )
-
-
-def _observed(
-    terms: Mapping[str, str],
-    measurements: Mapping[str, float],
-    observed: Mapping[str, object],
-) -> KernelResult[Evidence]:
-    """Build a successful result whose value is the observation record.
-
-    Args:
-        terms: The cache-key terms.
-        measurements: The numeric measurements.
-        observed: The remaining observations.
-
-    Returns:
-        A ``KernelResult`` carrying the evidence as its value.
-
-    """
-    evidence = _evidence(terms, measurements, observed)
-
-    return KernelResult(value=evidence, evidence=evidence, reason=None)
-
-
-def _refused(
-    code: str,
-    message: str,
-    terms: Mapping[str, str],
-    measurements: Mapping[str, float],
-    observed: Mapping[str, object],
-) -> KernelResult[Any]:
-    """Build a failed result that still carries what was observed.
-
-    Args:
-        code: The reason code.
-        message: The human-readable explanation.
-        terms: The cache-key terms.
-        measurements: The measurements taken.
-        observed: The remaining observations.
-
-    Returns:
-        A ``KernelResult`` with no value and the evidence attached.
-
-    """
-    return KernelResult(
-        value=None,
-        evidence=_evidence(terms, measurements, observed),
-        reason=Reason(code=code, message=message),
-    )

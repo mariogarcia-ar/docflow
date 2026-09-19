@@ -80,6 +80,7 @@ _lib.bootstrap()
 # model chain, so sharing them through a module keeps each driver's dependencies
 # proportional to what it actually does.
 import _mirror  # noqa: E402 - see the note above
+import decide  # noqa: E402 - see the note above
 import image as image_driver  # noqa: E402 - see the note above
 import llm_local  # noqa: E402 - see the note above
 import ocr as ocr_driver  # noqa: E402 - see the note above
@@ -89,6 +90,7 @@ from docflow.adapters.docling import DoclingEngine  # noqa: E402 - see above
 from docflow.adapters.image import RasterEngine  # noqa: E402 - see above
 from docflow.adapters.ollama import OllamaEngine  # noqa: E402 - see above
 from docflow.adapters.pdf import PdfEngine  # noqa: E402 - see above
+from docflow.kernel_cli.commands.pages import parse_pages  # noqa: E402
 
 __all__: list[str] = []
 
@@ -300,21 +302,70 @@ def _validate_pdf(
     return None, f"{int(pages)} page(s)" if pages else ""
 
 
+def _legibility_of(
+    raster_engine: RasterEngine, path: pathlib.Path
+) -> tuple[str, float | None, float]:
+    """Measure an image's sharpness and turn it into the decisor's vocabulary.
+
+    One call, in one place, so the two branches that need it — a file that *is* an
+    image, and a page that *rendered* one — cannot disagree about what it means. The
+    threshold comes from the registry (`ADR-009`), never from a constant here.
+
+    Args:
+        raster_engine: The K3 adapter.
+        path: The image to measure.
+
+    Returns:
+        The verdict (``"ok"``, ``"illegible"`` or the reason code), the sharpness
+        when one was measured, and the threshold it was compared against.
+
+    """
+    threshold = float(_lib.policy("image.legibility_threshold"))
+    measured = raster_engine.legibility(path, threshold)
+    sharpness = (
+        measured.evidence.measurements.get("laplacian_variance")
+        if measured.evidence is not None
+        else None
+    )
+
+    if measured.value is not None:
+        return "ok", sharpness, threshold
+
+    return (
+        (measured.reason.code if measured.reason else "unknown"),
+        sharpness,
+        threshold,
+    )
+
+
 def _extract_text(
     pdf_engine: PdfEngine,
     ocr_engine: DoclingEngine,
+    raster_engine: RasterEngine,
     path: pathlib.Path,
     kind: str,
 ) -> tuple[str | None, str | None, str]:
-    """Produce a document's text, by whichever route the file's kind calls for.
+    """Produce a document's text, by whichever route the decisor names.
 
-    §6 gives the two routes, and the decision belongs **here** rather than inside a
-    kernel: `classify` measures a shape and the caller chooses what to do about it
-    (`kernel-cli.md` §3 guardrail 2).
+    **The rule lives in `decide`, not here.** This function measures what the
+    decision needs, asks for it, and executes the answer — which is the split that
+    makes the rule testable without paying for the route, and the reason the
+    duplication below is gone.
+
+    It used to hold `if shape in {"text", "mixed"}` — a second copy of the mapping
+    `pdf.route_page` owns, and a copy `batch_pdf.py`'s own comment warns against.
+    More importantly it held no legibility gate at all on the PDF branch, so a page
+    whose pixels were measurably unreadable went to OCR anyway: measured, **9.2 s**
+    for an answer of nothing.
+
+    A **PDF is read page by page**, and the pages are concatenated in order. See
+    `_extract_pdf_text` for why the decision is taken per page rather than once for
+    the document.
 
     Args:
         pdf_engine: The K2 adapter.
         ocr_engine: The K4 adapter.
+        raster_engine: The K3 adapter.
         path: The source file.
         kind: ``"pdf"`` or ``"image"``.
 
@@ -322,45 +373,226 @@ def _extract_text(
         The text, the route that produced it, and a note when it was refused.
 
     """
+    min_chars = _lib.policy("reader.min_chars")
+
     if kind == "image":
+        # A file that is already pixels. Its shape is not measured because it is not
+        # in question: `kind_of` answered it, and asking K2 to classify a JPEG would
+        # be a second opinion about a fact `_mirror` already established.
+        legibility, sharpness, threshold = _legibility_of(raster_engine, path)
+        verdict = decide.decide(
+            shape="image",
+            text_shapes=pdf_driver.TEXT_SHAPES,
+            legibility=legibility,
+            sharpness=sharpness,
+            threshold=threshold,
+            min_chars=min_chars,
+        )
+        if not verdict.proceeds:
+            return None, None, verdict.reason
         return _ocr_text(ocr_engine, path)
 
-    measured = pdf_engine.classify(path, 1)
-    if measured.value is None:
+    return _extract_pdf_text(pdf_engine, ocr_engine, raster_engine, path)
+
+
+def _extract_pdf_text(
+    pdf_engine: PdfEngine,
+    ocr_engine: DoclingEngine,
+    raster_engine: RasterEngine,
+    path: pathlib.Path,
+) -> tuple[str | None, str | None, str]:
+    """Read every page of a PDF, deciding per page, and join what came back.
+
+    **The decision is per page, and that is forced rather than chosen.** A PDF is a
+    container whose pages are independent: the 59-page fixture has text pages, image
+    pages and `blank` ones in the same file, and the 3-page one mixes both too.
+    Reading only page 1 — which this driver used to do — answered a question about
+    the document's *first* page and reported it as the document's text. On the large
+    fixture that is 1 page of 59, and the fields extracted from it describe a cover.
+
+    The pages are joined in **document order**, separated by a form feed (`\\f`),
+    which is what a page break has meant in plain text for decades and what
+    `pdftotext` itself emits. A reader that wants page boundaries can split on it
+    without a second convention; a reader that does not can ignore it. The separator
+    is deliberately **not** something the OCR driver uses: `ocr.SEPARATOR` is the
+    *row* separator, and reusing it here would make a page break and a row break the
+    same character.
+
+    Pages go aside **individually**. A blank page, an illegible scan or an
+    unmeasurable one is skipped with its own reason, and the document still produces
+    the text of the pages that could be read — which is `FR-24`'s rule (*failure is
+    partial*) applied one stage early. The alternative, refusing the whole document,
+    would throw away 58 readable pages because the 59th is blank.
+
+    Args:
+        pdf_engine: The K2 adapter.
+        ocr_engine: The K4 adapter.
+        raster_engine: The K3 adapter.
+        path: The PDF to read.
+
+    Returns:
+        The joined text, a route summary, and a note when **no** page produced text.
+        The route names the operations that ran, e.g. ``"layout_text"`` or
+        ``"layout_text+render+ocr"``, so a reader can see which pages took which
+        branch without opening the sidecar.
+
+    """
+    probed = _silently(pdf_engine.probe, path)
+    total: int | None = None
+    if probed.value is not None:
+        counted = probed.value.measurements.get("page_count")
+        total = int(counted) if counted else None
+
+    pages = parse_pages(None, total)
+    if not pages:
+        return None, None, "the document reports no pages"
+
+    min_chars = _lib.policy("reader.min_chars")
+    scratch = pathlib.Path(tempfile.mkdtemp(prefix="docflow-batch-"))
+    try:
+        texts: list[str] = []
+        routes: list[str] = []
+        refusals: list[str] = []
+
+        for page in pages:
+            text, route, note = _read_page(
+                pdf_engine, ocr_engine, raster_engine, path, page, scratch, min_chars
+            )
+            if text is None:
+                refusals.append(f"p{page}: {note}")
+                continue
+            texts.append(text)
+            if route not in routes:
+                routes.append(route)
+
+        if not texts:
+            return None, None, "; ".join(refusals) or "no page produced text"
+
+        return _join_pages(texts), "+".join(routes), ""
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+#: What one page's text is separated by when the pages are joined. A form feed —
+#: what `pdftotext` emits between pages and what a page break has meant in plain text
+#: for decades. Deliberately **not** `ocr.SEPARATOR`, which separates *rows*: reusing
+#: it would make a page break and a row break the same character.
+PAGE_BREAK: Final[str] = "\f"
+
+
+def _join_pages(texts: list[str]) -> str:
+    """Join per-page readings into one document, with exactly one break between them.
+
+    **The reader already ends every page with a form feed, and that is why this is
+    not a plain `PAGE_BREAK.join`.** Measured: `layout_text` on a single page returns
+    its text ending in `'\\n\\x0c'` — `pdftotext` terminates each page that way. So
+    joining with a separator produced **two** form feeds between pages (6 blocks for a
+    3-page document), and a consumer splitting on the page break would have seen an
+    empty page between every real one.
+
+    Each page is stripped of its trailing break and the breaks are then inserted once,
+    so the invariant is *exactly one break between pages* rather than *at least one*.
+    A page whose text is entirely a break contributes nothing and is dropped — which
+    is correct: it had no text to contribute.
+
+    Args:
+        texts: The per-page readings, in document order.
+
+    Returns:
+        The joined text, with one form feed between pages and none at the end.
+
+    """
+    cleaned = [text.rstrip(PAGE_BREAK).rstrip() for text in texts]
+    return PAGE_BREAK.join(part for part in cleaned if part)
+
+
+def _read_page(
+    pdf_engine: PdfEngine,
+    ocr_engine: DoclingEngine,
+    raster_engine: RasterEngine,
+    path: pathlib.Path,
+    page: int,
+    scratch: pathlib.Path,
+    min_chars: object,
+) -> tuple[str | None, str | None, str]:
+    """Read one page of a PDF, taking the route the decisor names for it.
+
+    Args:
+        pdf_engine: The K2 adapter.
+        ocr_engine: The K4 adapter.
+        raster_engine: The K3 adapter.
+        path: The PDF.
+        page: One-based page number.
+        scratch: A directory for the rendered page, removed by the caller.
+        min_chars: The registry's character floor.
+
+    Returns:
+        The page's text, the route that produced it, and a note when the page went
+        aside.
+
+    """
+    measured = pdf_engine.classify(path, page)
+    if measured.value is None and measured.evidence is None:
         reason = measured.reason
         code = reason.code if reason is not None else "unknown"
         return None, None, f"classify refused: {code}"
 
-    shape = str(measured.evidence.observed.get("shape", "?"))
+    # The shape is read from the evidence **whenever a shape was measured**, value or
+    # no value: `classify` answers a blank page with `value=None` while still
+    # reporting `shape='blank'`, and reading the shape only alongside a value
+    # collapses *blank* into *unmeasurable*. That is `pdf.shape_of`'s documented
+    # rule, and it is why this reads the evidence rather than the value.
+    shape = ""
+    if measured.evidence is not None:
+        shape = str(measured.evidence.observed.get("shape", ""))
 
-    if shape in {"text", "mixed"}:
+    resolution = _render_dpi(pdf_engine, path, page)
+
+    # The page is rendered **before** the route is chosen, so the legibility reading
+    # exists in time to decide whether reading the pixels is worth it. A text page
+    # pays a render it does not need — which is the price of asking the question
+    # first, and it is milliseconds against the OCR it can save. Rendering only for
+    # image shapes would put the shape→pixels mapping back in this function.
+    rendered = _silently(
+        pdf_driver.render_page,
+        pdf_engine,
+        path,
+        str(page),
+        resolution,
+        "ok",
+        save=False,
+    )
+    legibility, sharpness, threshold = "", None, None
+    image = scratch / f"{path.stem}-p{page}-dpi{resolution}.png"
+
+    if rendered.succeeded:
+        image.write_bytes(rendered.result.value.data)
+        legibility, sharpness, threshold = _legibility_of(raster_engine, image)
+
+    verdict = decide.decide(
+        shape=shape,
+        text_shapes=pdf_driver.TEXT_SHAPES,
+        legibility=legibility,
+        sharpness=sharpness,
+        threshold=threshold,
+        measured_dpi=resolution,
+        min_chars=min_chars,
+    )
+
+    if not verdict.proceeds:
+        return None, None, verdict.reason
+
+    if verdict.route == decide.TEXT:
         attempt = _silently(
-            pdf_driver.layout_text, pdf_engine, path, "1", "ok", save=False
+            pdf_driver.layout_text, pdf_engine, path, str(page), "ok", save=False
         )
         if not attempt.succeeded:
             return None, None, f"layout_text refused ({attempt.outcome.detail})"
         return attempt.result.value, "layout_text", ""
 
-    # An image page: render it, then read the pixels. §1's second branch. The
-    # selection is written the way a caller writes it, because that is the text
-    # `--pages` accepts and what this driver would receive.
-    resolution = _render_dpi(pdf_engine, path, 1)
-    rendered = _silently(
-        pdf_driver.render_page, pdf_engine, path, "1", resolution, "ok", save=False
-    )
     if not rendered.succeeded:
         return None, None, f"render refused ({rendered.outcome.detail})"
-
-    # The rendered page is **scratch**: it is K4's input and nothing a consumer
-    # reads. It goes to a temp directory, not the output root (where it would pair
-    # with no document) and not the input tree (which this walk must not touch).
-    scratch = pathlib.Path(tempfile.mkdtemp(prefix="docflow-batch-"))
-    page = scratch / f"{path.stem}-p1-dpi{resolution}.png"
-    try:
-        page.write_bytes(rendered.result.value.data)
-        return _ocr_text(ocr_engine, page)
-    finally:
-        shutil.rmtree(scratch, ignore_errors=True)
+    return _ocr_text(ocr_engine, image)
 
 
 def _ocr_text(
@@ -461,26 +693,23 @@ def process_file(
         _write_skipped(mirror_dir, source.stem, kind, note)
         return FileOutcome(relative, kind, None, None, None, note)
 
-    if kind == "image":
-        # K3 first, because a legibility reading is what decides whether the pixels
-        # are worth sending. Refusing here is cheaper than a bad extraction.
-        threshold = _lib.policy("image.legibility_threshold")
-        measured = raster_engine.legibility(source, threshold)
-        if measured.value is None:
-            code = measured.reason.code if measured.reason else "unknown"
-            note = f"legibility refused: {code}"
-            _write_skipped(mirror_dir, source.stem, kind, note)
-            return FileOutcome(relative, kind, None, None, None, note)
-    else:
+    # The legibility gate is **inside `_extract_text`** now, for every kind — not a
+    # block here that only an image file reaches. A PDF whose page renders to
+    # unreadable pixels needs the same gate as a blurred JPEG, and the two used to
+    # disagree: measured, an `illegible` page of the committed scan fixture cost
+    # **9.2 s** of OCR on this branch.
+    if kind == "pdf":
         # §6's other validation: can this PDF be read at all? A password-protected
         # document is reported and skipped *before* anything is extracted from it,
         # which is the whole point of validating ahead of the work.
-        refusal, note = _validate_pdf(pdf_engine, source)
+        refusal, _note = _validate_pdf(pdf_engine, source)
         if refusal is not None:
             _write_skipped(mirror_dir, source.stem, kind, refusal)
             return FileOutcome(relative, kind, None, None, None, refusal)
 
-    text, route, note = _extract_text(pdf_engine, ocr_engine, source, kind)
+    text, route, note = _extract_text(
+        pdf_engine, ocr_engine, raster_engine, source, kind
+    )
     if text is None:
         _write_skipped(mirror_dir, source.stem, kind, note)
         return FileOutcome(relative, kind, None, None, None, note)
@@ -603,11 +832,21 @@ def main(argv: list[str] | None = None) -> int:
 
         if outcome.text_path is None:
             print(f" -- {outcome.source:52} {outcome.kind:7} {outcome.note}")
+        elif outcome.fields_path is None:
+            # **A `.txt` with no fields is not the same as a `.txt` with fields**, and
+            # this used to print the two the same way — `(no fields)` with the note
+            # dropped. Measured on the 59-page fixture: 167 035 characters of text,
+            # no extraction, and the run reported success because the *text* step had
+            # worked. The note is what says why, so it is printed and counted.
+            print(
+                f" .. {outcome.source:52} {outcome.kind:7} "
+                f"{outcome.route or '-':12} -> {outcome.text_path} + NO FIELDS: "
+                f"{outcome.note}"
+            )
         else:
-            fields = outcome.fields_path or "(no fields)"
             print(
                 f" ok {outcome.source:52} {outcome.kind:7} "
-                f"{outcome.route:12} -> {outcome.text_path} + {fields}"
+                f"{outcome.route:12} -> {outcome.text_path} + {outcome.fields_path}"
             )
 
     print()
@@ -644,14 +883,27 @@ def main(argv: list[str] | None = None) -> int:
     failed = sum(
         1 for outcome in OUTCOMES if outcome.text_path is None and not outcome.note
     )
+    # **A document whose text was produced but whose fields were not is counted too.**
+    # It is the failure this driver is most likely to hide: the expensive steps all
+    # succeeded, so every other line says `ok`, and the consumer downstream gets an
+    # empty answer from a run that reported no problems. The 59-page fixture did
+    # exactly that — 167 035 characters read, no fields, exit code 0.
+    unextracted = sum(
+        1
+        for outcome in OUTCOMES
+        if outcome.text_path is not None and outcome.fields_path is None
+    )
     print(f"{'skipped':<10}{skipped:>6}   (refused on purpose, each with its reason)")
     print(f"{'failed':<10}{failed:>6}   (in scope and produced nothing)")
+    print(
+        f"{'no fields':<10}{unextracted:>6}   (text read, but the model produced none)"
+    )
     print()
 
-    if not problems and not failed:
+    if not problems and not failed and not unextracted:
         print("every file was answered and the tree mirrors exactly.")
         return 0
-    return len(problems) + failed
+    return len(problems) + failed + unextracted
 
 
 if __name__ == "__main__":

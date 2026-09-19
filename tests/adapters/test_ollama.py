@@ -65,12 +65,24 @@ CATALOGUE = {
 
 
 class _Response:
-    """A minimal response, carrying only what the adapter reads."""
+    """A minimal response, carrying only what the adapter reads.
 
-    def __init__(self, status_code: int, body: dict, text: str = "") -> None:
+    ``raw`` exists so a test can put **bytes** on the wire instead of a body that
+    gets re-serialised. That matters for one shape in particular: Ollama answers a
+    refused request with an ``error`` key whose value is *JSON encoded as a string*,
+    and a stub handed the parsed dict would re-emit it as a dict — losing the nesting
+    the adapter has to unpeel. Measured: a test written with a dict let a mutation
+    that disabled the unpeeling **survive**.
+    """
+
+    def __init__(
+        self, status_code: int, body: dict, text: str = "", raw: bytes | None = None
+    ) -> None:
         self.status_code = status_code
         self._body = body
-        self.text = text or json.dumps(body)
+        self.text = (
+            raw.decode("utf-8") if raw is not None else (text or json.dumps(body))
+        )
 
     def json(self) -> dict:
         """Return the decoded body."""
@@ -80,9 +92,16 @@ class _Response:
 class _StubClient:
     """An HTTP client that answers from prepared responses instead of a socket."""
 
-    def __init__(self, *, chat: dict | None = None, status: int = 200) -> None:
+    def __init__(
+        self,
+        *,
+        chat: dict | None = None,
+        status: int = 200,
+        raw: bytes | None = None,
+    ) -> None:
         self._chat = chat
         self._status = status
+        self._raw = raw
         self.calls: list[tuple[str, dict]] = []
         self.loaded_context_length: int | None = None
         self.version_unavailable = False
@@ -145,6 +164,8 @@ class _StubClient:
         asked = (json or {}).get("options", {}).get("num_ctx")
         if isinstance(asked, int):
             self.loaded_context_length = asked
+        if self._raw is not None:
+            return _Response(self._status, {}, raw=self._raw)
         if self._chat is None:
             return _Response(self._status, {}, text="not found")
 
@@ -326,6 +347,67 @@ def test_capabilities_reports_whether_the_model_sees_images() -> None:
 
 
 # --- Criterion: no fallback model -------------------------------------------
+
+
+def test_a_request_the_runtime_refuses_is_not_reported_as_an_unknown_model() -> None:
+    """A 400 is a fact about *this request*, and it says so.
+
+    **This was a real defect and it misattributed the most common failure there is.**
+    Measured: a 167 035-character prompt against `num_ctx: 4096` answers HTTP 400
+    with `{"type": "exceed_context_size_error", "n_prompt_tokens": 38187,
+    "n_ctx": 4096}` — and the adapter reported `model_unknown`, for a model whose
+    `capabilities` call had *succeeded* moments earlier. A reader sent to look for a
+    missing model cannot find the oversized prompt sitting in front of them.
+
+    The body below is the real one, nested exactly as Ollama sends it: an `error` key
+    whose value is **JSON encoded as a string**. A stub that sent a flat
+    `{"error": "..."}` — or a dict, which `_Response` would re-serialise — would let a
+    simpler parser pass while the runtime's actual shape went unread, and the message
+    would come out as an opaque blob.
+
+    **That is not hypothetical: the first version of this test did exactly that.** It
+    built the body with `json.dumps` and handed the *parsed dict* to `_Response`,
+    which re-serialises, so `error` reached the adapter as a dict and the unpeeling
+    branch was never exercised — a mutation that disabled that branch **survived**.
+    The body is therefore passed as **raw bytes** (`raw=`), which is the only way to
+    put the runtime's real nesting on the wire.
+
+    """
+    inner = json.dumps(
+        {
+            "error": {
+                "code": 400,
+                "message": (
+                    "request (38187 tokens) exceeds the available context size "
+                    "(4096 tokens), try increasing it"
+                ),
+                "type": "exceed_context_size_error",
+                "n_prompt_tokens": 38187,
+                "n_ctx": 4096,
+            }
+        }
+    )
+    raw = json.dumps({"error": inner}).encode("utf-8")
+    engine = _engine(status=400, raw=raw)
+
+    result = engine.structured("smollm2:latest", "x" * 2000, {"type": "object"})
+
+    assert result.value is None
+    assert result.reason is not None
+    # Not `model_unknown`: the name resolved, and the runtime said why it refused.
+    assert result.reason.code == "unsupported_format"
+    assert "exceeds the available context size" in result.reason.message
+    assert result.evidence.observed["http_status"] == 400
+
+    # **The unpeeling is asserted by what it *removes*, not by what it contains.**
+    # The first version of this test only checked that the sentence was *present* —
+    # and it is present either way, because the raw nested blob has the message
+    # inside it too. A mutation that disabled the unpeeling therefore **survived**:
+    # the refusal still read well enough to satisfy `in`. What separates the two
+    # routes is the JSON scaffolding around the sentence, so that is what is checked.
+    assert '"code"' not in result.reason.message
+    assert "\\" not in result.reason.message
+    assert result.reason.message.count("exceeds the available context size") == 1
 
 
 def test_an_absent_model_is_a_typed_reason_naming_the_remedy() -> None:
