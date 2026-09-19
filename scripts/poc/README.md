@@ -69,20 +69,68 @@ Each probe declares the bucket it expects (`expect=`), so `run_all.py` can tell
 | `llm_frontier.py` | §5 | `vision` and `judge`; reports the gate chain when there is no credential |
 | `batch.py` | §6 | folder in, **mirrored tree out**; reuses the drivers' methods rather than re-implementing them |
 | `batch_pdf.py` | §1 | **PDF-only** batch: per page, `.txt` for text and `.png` for scans, plus a page census |
+| `batch_image.py` | §2 | **image-only** batch: size, `legibility`, the rescale to the floor, and any `--region` crop |
 | `hitl.py` | §7 | finds the extractions, pairs them by relative path, contrasts them, writes `review.json` |
 
 `_lib.py` is the reporting contract and `_mirror.py` is the folder-in/mirrored-tree-out
-plumbing the two batch drivers share (the walk, the skip records, the mirror check).
-Neither is a driver, and neither is probed by `run_all.py`.
+plumbing the three batch drivers share (the walk, the skip records, `verify_mirror` for
+a whole tree and `verify_mirror_for` for a scope-limited one). Neither is a driver, and
+neither is probed by `run_all.py`.
 
-`run_all.py` aggregates the five **probe** drivers. `batch.py`, `batch_pdf.py` and
-`hitl.py` are run explicitly, because they take a folder rather than probing fixtures:
+`run_all.py` aggregates the five **probe** drivers. `batch.py`, `batch_pdf.py`,
+`batch_image.py` and `hitl.py` are run explicitly, because they take a folder rather
+than probing fixtures:
 
 ```bash
-python scripts/poc/batch.py     <input-dir> --out <out-dir>
-python scripts/poc/batch_pdf.py <input-dir> --out <out-dir> [--pages 1-3] [--no-save]
-python scripts/poc/hitl.py      <input-dir> --out <out-dir>
+python scripts/poc/batch.py       <input-dir> --out <out-dir>
+python scripts/poc/batch_pdf.py   <input-dir> --out <out-dir> [--pages 1-3] [--no-save]
+python scripts/poc/batch_image.py <input-dir> --out <out-dir> [--assumed-dpi 96] [--region x,y,w,h]
+python scripts/poc/hitl.py        <input-dir> --out <out-dir>
 ```
+
+### `batch_image.py` runs §2 over a folder
+
+`batch.py` runs the legibility gate and goes straight to OCR; `batch_pdf.py` never
+touches K3. Neither answers *what does this folder of images look like* — how many are
+legible, what resolution they hold, which ones an OCR pass would be wasting its time
+on. That answer costs one `info` and one `legibility` per image and needs no engine
+downstream of K3, which is what makes it usable where `batch.py` is not.
+
+The unit is the **file**: an image has no sub-units, so there is no equivalent of
+`batch_pdf.py`'s per-page routing.
+
+| Step | Operation | Output at the mirrored path |
+|---|---|---|
+| measured | `info` | nothing; size, format and orientation are recorded |
+| gated | `legibility` | nothing; the reading and the verdict are recorded |
+| brought to the floor | `rescale` | `<stem>-dpiN.png`, when the floor is reachable |
+| cropped | `crop` | `<stem>-crop-rX-Y-W-H.png`, when `--region` is given |
+
+**`illegible` is a report, not a filter.** It is a legitimate answer about a document
+(matrix row 7), so the driver records it and still measures everything else. A batch
+that silently dropped every blurred image would answer its cut of the corpus without
+saying what it had thrown away.
+
+**The resolution is the one thing that cannot be measured.** `rescale` requires
+`source_dpi` and `K3` reports no DPI at all (`info` gives `width`, `height`, `mode`,
+`format`, EXIF orientation — nothing else), so `--assumed-dpi` supplies it and there is
+**no default**: an invented source resolution decides whether the target is reachable.
+Without it the rescale is **skipped and the skip is printed**, never silent.
+
+Two skips are worth telling apart, and the driver names each:
+
+```
+not rescaled: no --assumed-dpi, and K3 cannot measure the DPI
+below the floor: 96 < 150 declared readable, and upscaling is refused
+```
+
+The second is the interesting one. `diagnosis.min_dpi` is a **minimum readable**
+resolution, so a 96-DPI image against a 150 floor cannot be brought *up* to it: the
+adapter refuses to upscale, and that refusal is right — resampling cannot put
+information into pixels that were never sampled. That is a finding about the corpus,
+not a failure, and reporting it as a bare absence of a file is the silent failure this
+bench exists to catch. (It is also why `image rescale` cannot succeed from the CLI —
+see `image.py` FINDING D in `/memories/repo/build-and-test.md`.)
 
 ### `batch_pdf.py` is `batch.py` with K3 onward taken out
 

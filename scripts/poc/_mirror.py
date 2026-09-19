@@ -37,17 +37,19 @@ import contextlib
 import io
 import json
 import pathlib
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Final
 
 __all__: list[str] = [
     "IMAGE_SUFFIXES",
     "PDF_SUFFIXES",
+    "directory_problems",
     "kind_of",
     "mirror_directories",
     "relative_to",
     "silently",
     "verify_mirror",
+    "verify_mirror_for",
     "walk",
     "write_skipped",
 ]
@@ -208,6 +210,10 @@ def verify_mirror(root: pathlib.Path, out_root: pathlib.Path) -> list[str]:
     relative path, and **every input directory exists in the output**, including
     the ones that held no file (`S3-T06`).
 
+    This is the whole-tree check, which is what `batch.py` wants: §6 takes any file
+    and decides what it is. A driver scoped to one kind of file wants
+    `verify_mirror_for` instead.
+
     Args:
         root: The input root.
         out_root: The output root.
@@ -216,14 +222,62 @@ def verify_mirror(root: pathlib.Path, out_root: pathlib.Path) -> list[str]:
         One message per violation; empty when the mirror is exact.
 
     """
-    problems: list[str] = []
-
-    for directory in sorted(path for path in root.rglob("*") if path.is_dir()):
-        mirrored = out_root / directory.relative_to(root)
-        if not mirrored.is_dir():
-            problems.append(f"missing directory: {relative_to(directory, root)}/")
+    problems = directory_problems(root, out_root)
 
     for source in walk(root):
+        relative = pathlib.Path(relative_to(source, root))
+        children = list((out_root / relative.parent).glob(f"{relative.stem}.*"))
+        if not children:
+            problems.append(f"no output for: {relative.as_posix()}")
+
+    return problems
+
+
+def directory_problems(root: pathlib.Path, out_root: pathlib.Path) -> list[str]:
+    """Check that every input directory exists in the output.
+
+    Directories are checked whole even by a scope-limited driver: an input
+    directory absent from the output is a real violation regardless of what it held
+    (`S3-T06`).
+
+    Args:
+        root: The input root.
+        out_root: The output root.
+
+    Returns:
+        One message per missing directory; empty when every one is present.
+
+    """
+    return [
+        f"missing directory: {relative_to(directory, root)}/"
+        for directory in sorted(path for path in root.rglob("*") if path.is_dir())
+        if not (out_root / directory.relative_to(root)).is_dir()
+    ]
+
+
+def verify_mirror_for(
+    root: pathlib.Path, out_root: pathlib.Path, sources: Sequence[pathlib.Path]
+) -> list[str]:
+    """Check the mirror over the files a scope-limited driver was asked to walk.
+
+    `verify_mirror` asserts over *every* file under the root, which is right for
+    `batch.py`. A driver named for one kind of file - `batch_pdf.py`, `batch_image.py`
+    - was never asked about the others, and reporting a `.md` beside its inputs as a
+    violation is how a check stops being read: it blames the run for something no one
+    requested.
+
+    Args:
+        root: The input root.
+        out_root: The output root.
+        sources: The files this walk took responsibility for.
+
+    Returns:
+        One message per violation; empty when the mirror is exact for this scope.
+
+    """
+    problems = directory_problems(root, out_root)
+
+    for source in sources:
         relative = pathlib.Path(relative_to(source, root))
         children = list((out_root / relative.parent).glob(f"{relative.stem}.*"))
         if not children:

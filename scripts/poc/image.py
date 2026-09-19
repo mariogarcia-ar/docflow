@@ -32,8 +32,9 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import re
 import sys
-from typing import Any
+from typing import Any, Final
 
 import _lib
 
@@ -55,12 +56,82 @@ TARGET_DPI: int = 72
 #: which is D4's whole point.
 ASSERTED_SOURCE_DPI: int = 96
 
-#: A region inside the 1564x1920 fixture, in **source page coordinates**.
-REGION: Box = Box(x=100.0, y=120.0, width=400.0, height=300.0)
+#: The DPI above what the pixels hold. The adapter refuses rather than resampling
+#: upwards and reporting the request as satisfied.
+OVER_THE_CEILING_DPI: int = 400
+
+#: A region inside the 1564x1920 fixture, in **source page coordinates**. Held as
+#: the text a caller writes and expanded by `parse_region`, exactly as `pdf.py`
+#: holds `PAGES_AS_WRITTEN`: both spellings are digits and commas, so a bench that
+#: kept both forms would eventually hand the wrong one to the adapter.
+REGION_AS_WRITTEN: str = "100,120,400,300"
 
 #: The keys the CLI's `_measured_dpi` looks for, in its own order. Kept here so the
 #: reproduction of that lookup is a transcription of the command, not a guess.
 _DPI_KEYS: tuple[str, ...] = ("dpi", "effective_dpi", "source_dpi")
+
+
+#: ``x,y,w,h`` - the same grammar `--region` accepts. It lives here because this
+#: bench needs it, and `commands/image.py::_box` is **private and owned by another
+#: layer**: importing a private name from a command module would make a refactor
+#: there a silent breakage here, and the CLI's copy raises `UsageError`, a surface
+#: type this driver has no business catching.
+#:
+#: TODO: [MVP] When this grammar grows a second production caller - a batch driver
+#: taking `--region` - the two copies must be reconciled into one shared module, the
+#: way `commands/pages.py` owns `--pages`. Today the CLI is the only production
+#: caller, so a public module would exist for a bench alone. Recorded rather than
+#: done, and recorded here so the next person meets the decision instead of the
+#: duplication.
+_REGION: Final = re.compile(r"^\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*$")
+
+
+def parse_region(text: str) -> Box:
+    """Parse an ``x,y,w,h`` region into the box the adapter takes.
+
+    Strict on purpose: four non-negative integers, nothing else. A defaulted or
+    partially-parsed region crops pixels nobody asked for and reports success,
+    which is the failure this bench exists to make visible - so a malformed region
+    raises rather than being widened.
+
+    Args:
+        text: The region as a caller writes it, e.g. ``"100,120,400,300"``.
+
+    Returns:
+        The box in source page coordinates.
+
+    Raises:
+        ValueError: If the text is not four non-negative integers. `_lib.run`
+            buckets a `ValueError` as a *usage* answer, which is what a malformed
+            region is.
+
+    """
+    matched = _REGION.match(text)
+    if matched is None:
+        raise ValueError(
+            f"region {text!r} must be 'x,y,w,h' with four non-negative integers"
+        )
+    x, y, width, height = (int(piece) for piece in matched.groups())
+    return Box(x=float(x), y=float(y), width=float(width), height=float(height))
+
+
+def region_token(text: str) -> str:
+    """Render a region as a filename-safe token.
+
+    The same discipline as `pdf.py`'s `page_token`: the token keeps the *shape* of
+    the request rather than its expansion, so two regions of one image cannot land
+    on one name - measured, two crops of the same fixture differ in both size and
+    offsets, and a name carrying only the document would overwrite one with the
+    other.
+
+    Args:
+        text: The region as the caller wrote it.
+
+    Returns:
+        The region with its separators collapsed to ``-``.
+
+    """
+    return "r" + re.sub(r"[,\s]+", "-", text.strip())
 
 
 def _engine() -> RasterEngine:
@@ -125,8 +196,11 @@ def load_bitmap(engine: RasterEngine, path: pathlib.Path, expect: str) -> None:
 
 
 def measure_legibility(
-    engine: RasterEngine, path: pathlib.Path, threshold: float | None, expect: str
-) -> None:
+    engine: RasterEngine,
+    path: pathlib.Path,
+    threshold: float | None,
+    expect: str = "ok",
+) -> _lib.Attempt:
     """Measure sharpness against the caller's threshold.
 
     The threshold is corpus policy (`image.legibility_threshold`, `ADR-009`), read
@@ -134,18 +208,38 @@ def measure_legibility(
     value; passing a number uses that instead, which is how the *control* probe
     below shows that `illegible` is a comparison rather than a property of the file.
 
+    Returns the attempt rather than nothing, so a batch driver asks *is this worth
+    reading* and then acts on the answer, instead of measuring twice and risking two
+    answers.
+
     Args:
         engine: The K3 adapter.
         path: The image to measure.
         threshold: The threshold to compare against, or ``None`` for the policy one.
         expect: The bucket this probe is declared to land in.
 
+    Returns:
+        The attempt, carrying the measurement or the refusal.
+
     """
     applied = (
         _lib.policy("image.legibility_threshold") if threshold is None else threshold
     )
     label = f"image.legibility[{path.parent.name}]@{applied:g}"
-    _lib.run(label, engine.legibility, path, applied, expect=expect)
+    return _lib.run(label, engine.legibility, path, applied, expect=expect)
+
+
+def policy_threshold() -> float:
+    """Read the legibility threshold from the registry.
+
+    One reader, so a probe and a batch cannot disagree about what *blurry* means -
+    and neither of them can supply its own default (`ADR-009`).
+
+    Returns:
+        The declared threshold.
+
+    """
+    return float(_lib.policy("image.legibility_threshold"))
 
 
 # --- Requirement 1: resize --------------------------------------------------
@@ -157,12 +251,18 @@ def resize_by_dpi(
     target_dpi: int,
     source_dpi: int,
     expect: str,
-) -> None:
+    *,
+    save: bool = True,
+) -> _lib.Attempt:
     """Rescale to a target DPI, with the source resolution supplied by the caller.
 
     `source_dpi` is a required parameter of the adapter and has no default: an
     invented source resolution is a number nobody measured, and it is what decides
     whether the target is reachable at all.
+
+    Returns the attempt rather than nothing, so a batch driver writes its own
+    mirrored name instead of the flat one this probe uses - the same `save=`
+    contract `pdf.render_page` has.
 
     Args:
         engine: The K3 adapter.
@@ -170,19 +270,25 @@ def resize_by_dpi(
         target_dpi: The resolution requested.
         source_dpi: The resolution the caller asserts the pixels hold.
         expect: The bucket this probe is declared to land in.
+        save: Whether to write the bitmap under the driver's own output root. A
+            batch caller passes ``False``.
+
+    Returns:
+        The attempt, carrying the rescaled bytes or the refusal.
 
     """
     label = f"image.rescale[{target_dpi}<-{source_dpi}]"
     attempt = _lib.run(
         label, engine.rescale, path, target_dpi, source_dpi, expect=expect
     )
-    if not attempt.succeeded:
-        return
+    if not attempt.succeeded or not save:
+        return attempt
 
     written = _lib.save_bytes(
         f"{path.stem}-dpi{target_dpi}.png", attempt.result.value.data
     )
     print(f"         wrote {_lib.shown(written)}")
+    return attempt
 
 
 def resize_by_dpi_like_the_cli(engine: RasterEngine, path: pathlib.Path) -> None:
@@ -258,43 +364,71 @@ def resize_by_size(engine: RasterEngine, path: pathlib.Path) -> None:
 
 
 def crop_region(
-    engine: RasterEngine, path: pathlib.Path, region: Box, expect: str
-) -> None:
+    engine: RasterEngine,
+    path: pathlib.Path,
+    region: str,
+    expect: str,
+    *,
+    save: bool = True,
+) -> _lib.Attempt:
     """Cut a region out and map its coordinates back to the source.
+
+    The region arrives **as a caller writes it** and is expanded here, for the same
+    reason `pdf.py` takes `--pages` as text: the adapter wants a `Box`, the caller
+    has ``x,y,w,h``, and a bench that kept both forms would eventually hand the wrong
+    one over.
 
     The inverse map is not decoration: a crop whose local coordinates are reported
     as a page region points the next stage at the wrong area, and **both boxes are
-    valid JSON** - so the error is invisible unless something checks the map.
+    valid JSON** - so the error is invisible unless something checks the map. That
+    check is this method's own `agrees` line, reported rather than asserted, because
+    a batch driver cannot act on it and a reader can.
+
+    Returns the attempt rather than nothing, so a batch driver writes its own
+    mirrored name - the same `save=` contract `pdf.render_page` has.
 
     Args:
         engine: The K3 adapter.
         path: The image to crop.
-        region: The region in source page coordinates.
+        region: The region as a caller writes it, ``x,y,w,h`` in source page
+            coordinates.
         expect: The bucket this probe is declared to land in.
+        save: Whether to write the crop under the driver's own output root. A
+            batch caller passes ``False``.
+
+    Returns:
+        The attempt, carrying the crop **and** its inverse map inside the value's
+        observations.
 
     """
-    label = f"image.crop[{region.x:g},{region.y:g},{region.width:g},{region.height:g}]"
-    attempt = _lib.run(label, engine.crop, path, region, expect=expect)
+    box = parse_region(region)
+    attempt = _lib.run(f"image.crop[{region}]", engine.crop, path, box, expect=expect)
     if not attempt.succeeded:
-        return
+        return attempt
 
     observed = attempt.result.value.observed
-    written = _lib.save_bytes(f"{path.stem}-crop.png", observed["image"].data)
-
-    inverse = observed.get("inverse_map")
     local = observed.get("local_size")
-    expected_local = [int(region.width), int(region.height)]
+    expected_local = [int(box.width), int(box.height)]
     agrees = list(local or []) == expected_local
 
+    where = ""
+    if save:
+        written = _lib.save_bytes(
+            f"{path.stem}-crop-{region_token(region)}.png", observed["image"].data
+        )
+        where = f"wrote {_lib.shown(written)}  "
+
+    inverse = observed.get("inverse_map")
     print(
-        f"         wrote {_lib.shown(written)}  "
-        f"space={observed.get('coordinate_space')!r} local_size={local} "
+        f"         {where}space={observed.get('coordinate_space')!r} "
+        f"local_size={local} "
         f"inverse=({inverse.offset_x:g},{inverse.offset_y:g} scale={inverse.scale:g})"
     )
     print(
         f"         the crop's own frame matches the region asked for: "
         f"{'yes' if agrees else 'NO'}"
     )
+    return attempt
 
 
 # --- The run ----------------------------------------------------------------
@@ -336,16 +470,18 @@ def main(argv: list[str] | None = None) -> int:
     print()
     # Requirement 3. Three probes, and the third is the control that proves the
     # first two are a *comparison* rather than a fixed verdict on the file.
-    measure_legibility(engine, _lib.CASE_IMAGE, None, "ok")
+    measure_legibility(engine, _lib.CASE_IMAGE, None)
     measure_legibility(engine, _lib.BLUR_IMAGE, None, "reason")
-    measure_legibility(engine, _lib.BLUR_IMAGE, 0.0, "ok")
+    measure_legibility(engine, _lib.BLUR_IMAGE, 0.0)
 
     print()
     # Requirement 1, the DPI half.
     resize_by_dpi(engine, _lib.CASE_IMAGE, TARGET_DPI, ASSERTED_SOURCE_DPI, "ok")
     # The target above what the pixels hold. The adapter refuses rather than
     # resampling upwards and reporting the request as satisfied.
-    resize_by_dpi(engine, _lib.CASE_IMAGE, 400, ASSERTED_SOURCE_DPI, "reason")
+    resize_by_dpi(
+        engine, _lib.CASE_IMAGE, OVER_THE_CEILING_DPI, ASSERTED_SOURCE_DPI, "reason"
+    )
     resize_by_dpi_like_the_cli(engine, _lib.CASE_IMAGE)
 
     print()
@@ -353,8 +489,15 @@ def main(argv: list[str] | None = None) -> int:
     resize_by_size(engine, _lib.CASE_IMAGE)
 
     print()
-    # Requirement 2.
-    crop_region(engine, _lib.CASE_IMAGE, REGION, "ok")
+    # Requirement 2. The region is written the way a caller writes it; a malformed
+    # one is what the grammar refuses, and that refusal is its own probe.
+    crop_region(engine, _lib.CASE_IMAGE, REGION_AS_WRITTEN, "ok")
+    _lib.run(
+        "image.crop[malformed]",
+        parse_region,
+        "100,120,400",
+        expect="usage",
+    )
 
     print()
     return _lib.summary()

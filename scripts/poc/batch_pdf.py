@@ -349,7 +349,7 @@ def process_document(
     outcome = DocumentOutcome(relative, pages)
 
     if save:
-        _write_pages_record(outcome, mirror_dir, source.stem, out_root)
+        _write_pages_record(outcome, mirror_dir, source.stem)
     return outcome
 
 
@@ -357,7 +357,6 @@ def _write_pages_record(
     outcome: DocumentOutcome,
     mirror_dir: pathlib.Path,
     stem: str,
-    out_root: pathlib.Path,
 ) -> pathlib.Path:
     """Record what each page of a document turned out to be.
 
@@ -375,7 +374,6 @@ def _write_pages_record(
         outcome: The document's outcome.
         mirror_dir: The directory the document mirrors into.
         stem: The document's stem.
-        out_root: The output root, for reporting relative paths.
 
     Returns:
         The path written.
@@ -440,14 +438,9 @@ def _mirror_scope(
 ) -> list[str]:
     """Check the mirror over the files this driver was asked to walk.
 
-    `_mirror.verify_mirror` checks *every* file under the root, which is right for
-    `batch.py`: §6 takes any file and decides what it is. This driver is PDF-only by
-    name, so a `.md` beside the PDFs is not a violation - it was never in scope.
-    Asserting over the whole tree would report a problem for a file no one asked
-    about, which is how a check stops being read.
-
-    Directories are still checked whole: an input directory that is absent from the
-    output is a real violation regardless of what it held (`S3-T06`).
+    Kept as this driver's name for `_mirror.verify_mirror_for`, which explains why
+    a scope-limited driver checks only its own files. `batch_image.py` reaches that
+    helper directly - it has no reason to wrap it too.
 
     Args:
         root: The input root.
@@ -458,32 +451,7 @@ def _mirror_scope(
         One message per violation; empty when the mirror is exact for this scope.
 
     """
-    problems = list(_mirror_scope_directories(root, out_root))
-
-    for source in pdfs:
-        relative = pathlib.Path(_mirror.relative_to(source, root))
-        children = list((out_root / relative.parent).glob(f"{relative.stem}.*"))
-        if not children:
-            problems.append(f"no output for: {relative.as_posix()}")
-    return problems
-
-
-def _mirror_scope_directories(root: pathlib.Path, out_root: pathlib.Path) -> list[str]:
-    """Check that every input directory exists in the output.
-
-    Args:
-        root: The input root.
-        out_root: The output root.
-
-    Returns:
-        One message per missing directory; empty when every one is present.
-
-    """
-    return [
-        f"missing directory: {_mirror.relative_to(directory, root)}/"
-        for directory in sorted(path for path in root.rglob("*") if path.is_dir())
-        if not (out_root / directory.relative_to(root)).is_dir()
-    ]
+    return _mirror.verify_mirror_for(root, out_root, pdfs)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -611,12 +579,6 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(pdfs)} PDF(s) walked, {written} artifact(s) written.")
     if blank:
         print(f"{len(blank)} document(s) held nothing to export.")
-    if refused:
-        print(f"{len(refused)} document(s) produced nothing; see the notes above.")
-    if not problems and not refused:
-        print("every PDF was walked and the tree mirrors exactly.")
-        return 0
-    return len(problems) + len(refused)
     if refused:
         print(f"{len(refused)} document(s) produced nothing; see the notes above.")
     if not problems and not refused:
