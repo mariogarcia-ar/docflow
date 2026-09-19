@@ -10,10 +10,9 @@ detail lives. That is
 the intended shape: `sad.md` ADR-008 makes the library first and the CLI one caller
 of it.
 
-**No frontier call is made on this page.** No provider key exists in this workspace,
-and the adapter is designed so that is a *typed outcome* rather than an obstacle —
-see the last section. The outputs below are the ones a stubbed transport produces,
-which is also how row 14 of the silent-failure matrix is satisfied without a fixture.
+**This page made live calls, and they changed it.** An earlier version said *no
+frontier call is made on this page* because the workspace had no credential. It has
+one now and the calls above were run — three facts below exist only because of that.
 
 ---
 
@@ -22,32 +21,77 @@ which is also how row 14 of the silent-failure matrix is satisfied without a fix
 ```bash
 pip install -e ".[dev]"      # pytest, ruff, pylint
 pip install httpx            # the transport
-export DOCFLOW_FRONTIER_KEY=…        # from the provider's console
-export DOCFLOW_FRONTIER_MAX_TOKENS=4096
+export DOCFLOW_FRONTIER_MAX_TOKENS=16384
+export DOCFLOW_FRONTIER_DEEPSEEK_KEY=…   # or ANTHROPIC_KEY / OPENAI_KEY, or the shared KEY
 ```
 
-Two settings, both from the environment, and neither is a model:
+Settings come from the environment, and none of them is a model:
 
 | Setting | Why it is a setting |
 |---|---|
-| `DOCFLOW_FRONTIER_KEY` | a credential — and it is never a parameter, so no call can take one from a command line or a descriptor |
+| `DOCFLOW_FRONTIER_<PROVIDER>_KEY` | a credential — and it is never a parameter, so no call can take one from a command line or a descriptor |
+| `DOCFLOW_FRONTIER_KEY` | the **shared** credential, consulted when the provider's own is absent. One name covers the ordinary single-provider setup; the per-provider names exist so two frontier keys can be held at once, which `judge` needs — the grader must not be the producer |
 | `DOCFLOW_FRONTIER_MAX_TOKENS` | how much answer the caller is buying — a policy value this kernel refuses to default |
-| `DOCFLOW_FRONTIER_HOST` | the provider's address; defaults to `https://api.anthropic.com` |
-| `DOCFLOW_FRONTIER_TEMPERATURE`, `TOP_P`, `TOP_K` | sampling parameters, forwarded verbatim |
+| `DOCFLOW_FRONTIER_<PROVIDER>_HOST` | the provider's address; each provider has a correct default |
+| `DOCFLOW_FRONTIER_TEMPERATURE`, `TOP_P`, `TOP_K`, `SEED`, `NUM_PREDICT` | sampling parameters, forwarded verbatim |
 
-`DOCFLOW_FRONTIER_MAX_TOKENS` has **no default on purpose**. A default would be this
-kernel deciding how much answer to buy, which is a threshold — and thresholds belong
-to the caller (`prd.md` FR-15). Leaving it unset is reported, not guessed.
+Precedence is `provider-specific → shared → no key`. `DOCFLOW_FRONTIER_MAX_TOKENS`
+has **no default on purpose**: a default would be this kernel deciding how much answer
+to buy, which is a threshold, and thresholds belong to the caller (`prd.md` FR-15).
+
+**Size the ceiling for the provider's reasoning, not for the answer.** Measured:
+`deepseek-v4-pro` spent **7 743 completion tokens** emitting a two-field object from
+one invoice page, because it reasons before it answers. A ceiling of 2 048 truncates
+that call — reported as `truncated_output`, never parsed — and 8 192 is marginal.
+
+## The providers, and what each one actually does
+
+The model name carries its provider: `<provider>:<model>`, with a colon. Adding a
+provider is one entry in `frontier_providers.PROVIDERS`.
+
+| Provider | Dialect | Vision | Can pin the tool choice |
+|---|---|---|---|
+| `anthropic` | Anthropic Messages | yes | yes |
+| `deepseek` | Anthropic Messages, at `/anthropic` | **no** | **no** |
+| `openai` | OpenAI chat-completions | yes | yes |
+
+Three of those cells are **measured** rather than read off a vendor's page, and each
+one is a trap:
+
+**DeepSeek speaks the Anthropic dialect, but only at `/anthropic`.** Its own API root
+serves the OpenAI dialect; `api.deepseek.com/v1/messages` is a **404** while
+`api.deepseek.com/anthropic/v1/messages` answers 200 with a Messages-shaped body. The
+suffix in its default host is load-bearing, not decoration.
+
+**A pinned tool choice is refused by DeepSeek — on both endpoints it exposes.**
+`{"type": "tool", …}`, `{"type": "function", …}` and `"required"` all return **HTTP
+400**: *"Thinking mode does not support this tool_choice"*. `{"type": "any"}`,
+`"auto"` and omitting the field all answer 200 with a correct `tool_use`. So a provider
+declares `pins_tool_choice`, the dialect sends the **weakest** form the provider
+accepts, and `observed["pins_tool_choice"]` records what was actually sent —
+*enforced* and *requested* are different facts, and only one of them is a guarantee.
+
+**DeepSeek cannot see images, and it does not say so.** Handed the invoice fixture it
+answered `"NO IMAGE"` as a **value**, with `stop_reason: end_turn` — no error, no
+refusal, and nothing downstream able to tell it from a real reading. That is exactly
+the failure this project exists to catch, so the adapter refuses **before the call**:
+
+```python
+engine.vision("deepseek:deepseek-v4-pro", "Read the total.", [invoice], schema)
+# reason.code: unsupported_format
+# "'deepseek' cannot be asked about images. Sending one would not fail: …"
+```
 
 ## Where K6's code lives
 
 K6 is a **kernel** — its own row in `sad.md` §3, determinism class `external`, a cost
-it incurs per call. Its code sits in two files rather than in `kernels/`:
+it incurs per call. Its code sits in three files rather than in `kernels/`:
 
 | File | What it holds | Landed by |
 |---|---|---|
 | `docflow/ports/llm.py` | the `LlmEngine` interface | `E04-01` (`S1-T11`) |
-| `docflow/adapters/frontier.py` | the provider adapter, behind the port | `E04-06` (`S1-T16`) |
+| `docflow/adapters/frontier.py` | the adapter, behind the port | `E04-06` (`S1-T16`) |
+| `docflow/adapters/frontier_providers.py` | the provider table and the two wire dialects it delegates to | multi-provider work |
 
 K5 and K6 share the port and not the transport: `ollama.py` speaks `/api/chat`,
 `frontier.py` speaks `/v1/messages`. That is the whole reason `ADR-004` keeps them as

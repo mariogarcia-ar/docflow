@@ -26,9 +26,15 @@
 
 ## 6. `orquestado`
 - Toma una carpeta como entrada.
-- Por cada archivo, determina si es imagen / PDF / no válido.
-- Si es PDF → extrae texto a `.txt` o exporta a imagen (según corresponda).
-- Si es imagen → aplica `ocr` y guarda la extracción en `.txt`.
+- Por cada archivo, determina el tipo: imagen / PDF / no válido.
+  - Si es no válido → **TODO:** convertirlo a PDF.
+- Valida el archivo según su tipo:
+  - Si es imagen → determinar legibilidad.
+  - Si es PDF → determinar si está protegido por password (y si es legible).
+- Procesa según tipo:
+  - Si es PDF → extrae texto a `.txt` o exporta a imagen (según corresponda).
+  - Si es imagen → aplica `ocr` y guarda la extracción en `.txt`.
+- Realiza una validación de contenido (texto/imagen) para determinar si el documento es procesable — por ejemplo, si el texto extraído no corresponde al tipo de documento esperado, se salta el proceso.
 - Con el resultado, llama a `llm.local` para extraer los campos.
 - **Replica la estructura de carpetas de entrada en la salida**, generando los `.txt`/`.json` resultantes en la ruta espejo correspondiente, para permitir comparación directa (input vs. output, y output entre distintas corridas).
 

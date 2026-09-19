@@ -199,14 +199,21 @@ def test_the_adapter_exposes_the_ports_five_operations_and_no_more() -> None:
 
 
 def test_an_unknown_provider_prefix_is_refused() -> None:
-    """A prefix naming no configured provider reports ``provider_unknown``."""
-    result = _engine().capabilities("openai:gpt-4o")
+    """A prefix naming no configured provider reports ``provider_unknown``.
+
+    ``openai`` used to be the example of an *unknown* provider; it is now a
+    configured one, which is why this test names a provider no build should ever
+    speak to. The property under test never was *openai is refused* — it is **the
+    refusal happens for a name nothing claims**, and the evidence lists what is
+    claimable so a reader can see the difference.
+    """
+    result = _engine().capabilities("acme:some-model")
 
     assert result.value is None
     assert result.reason is not None
     assert result.reason.code == "provider_unknown"
-    assert "openai" in result.reason.message
-    assert result.evidence.observed["known_providers"] == ["anthropic"]
+    assert "acme" in result.reason.message
+    assert "openai" in result.evidence.observed["known_providers"]
 
 
 def test_a_name_with_no_prefix_is_refused_as_an_unknown_model() -> None:
@@ -222,9 +229,12 @@ def test_no_default_provider_is_substituted() -> None:
     """Neither refusal produces a value, so nothing resolved to a working model.
 
     The pair with the two tests above: the criterion is not merely that an error is
-    raised but that **no default exists to fall back to**.
+    raised but that **no default exists to fall back to**. A name whose provider is
+    *unknown* and a name with *no* provider must both come back empty — a build that
+    answered either from a default would make "there is no fallback" a sentence
+    rather than a property.
     """
-    for name in ("openai:gpt-4o", "claude-sonnet-4-6", "azure:gpt-4", ":"):
+    for name in ("acme:some-model", "claude-sonnet-4-6", ":", ""):
         result = _engine().capabilities(name)
         assert result.value is None, name
 
@@ -722,10 +732,22 @@ def test_the_credential_is_read_from_the_environment(
 
 
 def test_the_constructor_defaults_the_address_but_never_a_model() -> None:
-    """The provider's *address* is defaulted; no model ever is."""
+    """Each provider's *address* is defaulted; no model ever is.
+
+    The address is now resolved **per provider** rather than stored once, because
+    one adapter speaks to several and a single cached URL would send the second
+    provider's call to the first one's host.
+    """
+    # pylint: disable=import-outside-toplevel
+    from docflow.adapters.frontier_providers import PROVIDERS
+
     engine = FrontierEngine()
 
-    assert engine._base_url.startswith("http")  # pylint: disable=protected-access
+    for name, provider in PROVIDERS.items():
+        url = engine._base_url_for(provider)  # pylint: disable=protected-access
+        assert url.startswith("http"), name
+        assert not url.endswith("/"), name
+
     assert not hasattr(engine, "model")
     assert not hasattr(engine, "default_model")
 

@@ -88,24 +88,92 @@ import llm_local  # noqa: E402 - see above
 import pdf as pdf_driver  # noqa: E402 - see above
 
 from docflow.adapters.frontier import FrontierEngine  # noqa: E402 - see above
+from docflow.adapters.frontier_providers import (  # noqa: E402 - see above
+    PROVIDERS,
+    provider_named,
+)
 from docflow.adapters.pdf import PdfEngine  # noqa: E402 - see above
 from docflow.kernels.types import Bytes  # noqa: E402 - see above
 
 __all__: list[str] = []
 
-#: The model, named as the caller names it: `<provider>:<model>`, with a **colon**.
-#: A slash is refused as `model_unknown` - measured, and probed below.
-MODEL: str = "anthropic:claude-sonnet-4-6"
 
-#: The environment variables the chain reads, in the order it reads them. Recorded
-#: here because *which one is missing* is this driver's whole output on a machine
-#: with no credential. Public rather than private because `batch_llm_frontier.py`
-#: reports the same chain per run, and a second copy of the list would drift from
-#: the one the adapter actually reads.
-GATES: tuple[str, ...] = (
-    "DOCFLOW_FRONTIER_MAX_TOKENS",
-    "DOCFLOW_FRONTIER_KEY",
-    "DOCFLOW_FRONTIER_HOST",
+#: The model, named as the caller names it: ``<provider>:<model>``, with a **colon**.
+#: A slash is refused as `model_unknown` - measured, and probed below.
+#:
+#: **A function rather than a constant, because a constant can only name one
+#: provider.** It used to be the literal ``anthropic:claude-sonnet-4-6``, which made
+#: every probe below refuse with `provider_unavailable` on a machine whose only key
+#: was DeepSeek's - the driver was correct and simply asking the wrong vendor. The
+#: default is the first **configured** provider in the table, so the run follows the
+#: credential that exists rather than one this file happened to hardcode.
+#:
+#: ``DOCFLOW_FRONTIER_MODEL`` overrides it, and the refusal below is reached when no
+#: provider has a key: the driver then reports the gate chain rather than inventing a
+#: vendor it cannot call.
+ENV_MODEL: str = "DOCFLOW_FRONTIER_MODEL"
+
+#: The model each provider is probed with when nothing overrides it. One entry per
+#: provider, because *the model* is a vendor fact: `claude-sonnet-4-6` means nothing
+#: to DeepSeek, and a shared default would be a name one of them rejects.
+DEFAULT_MODELS: dict[str, str] = {
+    "anthropic": "claude-sonnet-4-6",
+    "deepseek": "deepseek-v4-pro",
+    "openai": "gpt-4o",
+}
+
+
+def default_model() -> str:
+    """Report the model this run should call, from the environment.
+
+    Returns:
+        The model as a ``provider:model`` name. ``DOCFLOW_FRONTIER_MODEL`` wins;
+        otherwise the first provider in the table that has a credential, paired with
+        its own default model; otherwise ``anthropic:claude-sonnet-4-6``, which is a
+        name that will refuse and say why rather than a call that cannot be made.
+
+    """
+    override = os.environ.get(ENV_MODEL)
+    if override:
+        return override
+
+    for name, provider in PROVIDERS.items():
+        if provider.key_variable(os.environ) is not None:
+            return f"{name}:{DEFAULT_MODELS.get(name, name)}"
+
+    return "anthropic:claude-sonnet-4-6"
+
+
+#: The provider the current run targets, derived from :func:`default_model`.
+#: Reported in the header so a reader can see which vendor is being asked, because
+#: *which provider answered* is the first fact a frontier run has to state.
+MODEL: str = default_model()
+
+#: The same name, as the :class:`Provider` it resolved to, or ``None`` when the
+#: default names no configured provider.
+PROVIDER = provider_named(MODEL.split(":", 1)[0])
+
+#: The environment variables the chain reads, in the order the adapter reads them:
+#: the ceiling, then **whichever credential the selected provider accepts**, then the
+#: address override. Recorded here because *which one is missing* is this driver's
+#: whole output on a machine with no credential. Public rather than private because
+#: `batch_llm_frontier.py` reports the same chain per run, and a second copy of the
+#: list would drift from the one the adapter actually reads.
+#:
+#: **The credential names come from the provider, not from a list here.** They used to
+#: be the literals `DOCFLOW_FRONTIER_KEY` / `DOCFLOW_FRONTIER_HOST`, which stopped
+#: being the whole truth the moment a provider got its own names: the header then
+#: reported *unset* for a variable the adapter was happily reading through.
+GATES: tuple[str, ...] = ("DOCFLOW_FRONTIER_MAX_TOKENS",) + (
+    (
+        PROVIDER.env_key,
+        # The shared fallback, listed because the provider consults it too. Naming
+        # only the specific one would report *unset* for a setup that works.
+        "DOCFLOW_FRONTIER_KEY",
+        PROVIDER.env_host,
+    )
+    if PROVIDER
+    else ("DOCFLOW_FRONTIER_KEY", "DOCFLOW_FRONTIER_HOST")
 )
 
 #: The schema the fixture's generation is constrained by. Public because
@@ -199,27 +267,52 @@ def _image(path: pathlib.Path) -> Bytes:
 def report_gates() -> bool:
     """Report which environment variables the chain reads, and whether they are set.
 
+    **Configured is not the same as *every name present*.** The credential names in
+    :data:`GATES` are **alternatives**, not a conjunction: a provider's own variable
+    or the shared fallback satisfies the same precondition, and requiring both would
+    report a working setup as unmeasurable — which is exactly what this function
+    used to do the moment a provider got its own name.
+
+    So each name is reported with its state, and the verdict is *at least one
+    credential is set*. That is the same reading the adapter takes, and the two have
+    to agree or the header is a second opinion about a fact the adapter owns.
+
     Returns:
-        ``True`` when every gate is satisfied and a call can be attempted.
+        ``True`` when a call can be attempted.
 
     """
     print("the gate chain, in the order the adapter reads it:")
-    ready = True
     for name in GATES:
         present = bool(os.environ.get(name))
-        # `HOST` has a documented default address, so it is reported but does not
-        # gate; the other two do.
         marker = "set" if present else "unset"
-        note = "" if present or name.endswith("HOST") else "  <- blocks the call"
-        print(f"  {name:30} {marker}{note}")
-        if not present and not name.endswith("HOST"):
-            ready = False
+        # The ceiling blocks a call, and the host has a documented default. A
+        # credential name is *one way* to satisfy the credential, and the verdict
+        # below counts them rather than marking each.
+        note = ""
+        if name == "DOCFLOW_FRONTIER_MAX_TOKENS" and not present:
+            note = "  <- blocks the call"
+        print(f"  {name:32} {marker}{note}")
+
+    credential = bool(PROVIDER and PROVIDER.key_variable(os.environ))
+    ceiling = bool(os.environ.get("DOCFLOW_FRONTIER_MAX_TOKENS"))
+    ready = credential and ceiling
+
     print()
     if not ready:
+        missing = (
+            "a credential"
+            if not credential
+            else "the response ceiling (DOCFLOW_FRONTIER_MAX_TOKENS)"
+        )
         print(
-            "No credential, so the two requirements are reported as UNMEASURED\n"
+            f"No {missing}, so the two requirements are reported as UNMEASURED\n"
             "rather than as working or broken. `capabilities` still answers, and\n"
             "every refusal below names its own remedy.\n"
+        )
+    else:
+        print(
+            f"Configured: {MODEL} via "
+            f"{PROVIDER.key_variable(os.environ) if PROVIDER else '?'}.\n"
         )
     return ready
 
@@ -694,11 +787,37 @@ def main(argv: list[str] | None = None) -> int:
     # this machine rather than a hole in the run.
     reachable = "ok" if ready else "precondition"
 
+    # **A provider without vision makes every picture probe an expected refusal.**
+    # `unsupported_format` is the adapter declining a request whose answer would have
+    # been plausible and wrong — measured, DeepSeek accepts the image, ignores the
+    # pixels and answers `"NO IMAGE"` as a value. Counting that refusal as a probe
+    # that failed would report a correct decision as a defect.
+    picturable = (
+        "ok"
+        if (ready and PROVIDER and PROVIDER.supports_vision)
+        else ("precondition" if not ready else "reason")
+    )
+    vision_note = (
+        f"   (expected refusal: {PROVIDER.name} has no vision)"
+        if picturable != "ok"
+        else ""
+    )
+
     capabilities(engine, MODEL, "ok")
-    extract_from_image(engine, MODEL, reachable)
+    print(f"\n=== requirement 1: image + high-level prompt{vision_note}")
+    extract_from_image(engine, MODEL, picturable, images=[_image(_lib.CASE_IMAGE)])
 
     print()
     print("=== the same fields, asked for three ways")
+    # Which vendor is being asked is the first fact a frontier run states, because a
+    # model name means nothing without it and the two providers disagree about vision.
+    print(f"  model  = {MODEL}")
+    print(
+        f"  dialect= {PROVIDER.dialect.name if PROVIDER else '?'}"
+        f"   vision={PROVIDER.supports_vision if PROVIDER else '?'}"
+        f"   pin={PROVIDER.pins_tool_choice if PROVIDER else '?'}"
+    )
+
     # The schema comes from the pipeline's own file, so these probes answer about the
     # caller's fields rather than about a fixture this driver carries.
     try:
@@ -728,15 +847,21 @@ def main(argv: list[str] | None = None) -> int:
             print("  -- text only")
             extract_from_text(engine, MODEL, reachable, schema=schema, text=text)
             print()
-            print("  -- image only")
-            extract_from_image(engine, MODEL, reachable, images=[image], schema=schema)
+            print(f"  -- image only{vision_note}")
+            extract_from_image(engine, MODEL, picturable, images=[image], schema=schema)
             print()
-            print("  -- text and image together")
+            print(f"  -- text and image together{vision_note}")
+            # `picturable`, not `reachable`: this probe sends pixels too, so it
+            # inherits whatever the image branch expects. Passing `reachable` here
+            # was a real slip — it made the *both* probe demand a value from a
+            # provider that had just been correctly refused one.
             extract_from_text_and_image(
-                engine, MODEL, reachable, schema=schema, text=text, images=[image]
+                engine, MODEL, picturable, schema=schema, text=text, images=[image]
             )
 
     print()
+    # `judge` grades a **transcript** — the port gives it no `images` parameter — so
+    # it is a text call and does not inherit the vision expectation.
     judge_local(engine, MODEL, reachable)
 
     print()

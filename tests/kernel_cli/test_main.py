@@ -1726,26 +1726,41 @@ def test_the_frontier_probe_reads_the_name_the_adapter_reads(
     """
     from docflow.adapters import (  # pylint: disable=import-outside-toplevel
         frontier,
+        frontier_providers,
     )
 
-    assert set(cli.FRONTIER_KEY_NAMES) == {frontier.ENV_KEY}
+    # **Set comparison against the adapter's own table**, not a substring check: a
+    # substring check stays green when a provider is added to one side and not the
+    # other, and an unlisted provider makes the probe under-report — the direction
+    # that reads as *the provider is unreachable*.
+    expected = {frontier_providers.FALLBACK_ENV_KEY} | {
+        provider.env_key for provider in frontier_providers.PROVIDERS.values()
+    }
+    assert set(cli.FRONTIER_KEY_NAMES) == expected
 
     # And the probe is wired to that literal rather than to its own copy of it: with
-    # the adapter's variable set, the probe finds a key.
-    with monkeypatch.context() as patch:
-        patch.delenv("ANTHROPIC_API_KEY", raising=False)
-        patch.delenv("OPENAI_API_KEY", raising=False)
-        patch.delenv("DOCFLOW_FRONTIER_KEY", raising=False)
-        assert cli._provider_key_absent() == "no provider key in the environment"
-        patch.setenv(frontier.ENV_KEY, "a-key")
-        assert cli._provider_key_absent() is None
+    # each provider's variable set in turn, the probe finds a key.
+    for name in sorted(expected):
+        with monkeypatch.context() as patch:
+            for candidate in expected:
+                patch.delenv(candidate, raising=False)
+            patch.delenv("ANTHROPIC_API_KEY", raising=False)
+            patch.delenv("OPENAI_API_KEY", raising=False)
+            assert cli._provider_key_absent() == "no provider key in the environment"
+            patch.setenv(name, "a-key")
+            assert cli._provider_key_absent() is None, name
 
     # The old names are *not* enough, which is the half that made the defect. Asserted
     # explicitly so a future "let us accept both" edit has to argue with a failing test.
     with monkeypatch.context() as patch:
-        patch.delenv("DOCFLOW_FRONTIER_KEY", raising=False)
+        for candidate in expected:
+            patch.delenv(candidate, raising=False)
         patch.setenv("ANTHROPIC_API_KEY", "a-key-nothing-reads")
         assert cli._provider_key_absent() == "no provider key in the environment"
+
+    # `frontier.ENV_KEY` is the shared fallback and has to be one of the names, or the
+    # two sides disagree about what a single-provider setup looks like.
+    assert frontier.ENV_KEY in expected
 
     assert cli._environment_has("PATH") is True
     assert cli._environment_has("DOCFLOW_NEVER_SET") is False

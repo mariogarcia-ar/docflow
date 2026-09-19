@@ -80,6 +80,13 @@ from types import MappingProxyType
 from typing import Any, Final
 
 from docflow.adapters._json_object import load_object
+from docflow.adapters.frontier_providers import (
+    FORWARDED_PARAMETERS,
+    PROVIDERS,
+    Answer,
+    Provider,
+    provider_named,
+)
 from docflow.kernels.types import CallRecord, Evidence, KernelResult, Reason
 
 __all__: list[str] = ["ENV_HOST", "ENV_KEY", "FrontierEngine"]
@@ -98,60 +105,54 @@ _CODE_UNSUPPORTED_FORMAT: Final[str] = "unsupported_format"
 # A provider's *address* and its *credential* are both operational settings, and both
 # come from the environment. The credential never becomes a parameter: a parameter
 # would put a key on a command line and into a process listing (`kernel-cli.md` §9).
+#
+# Which variable holds them is **per provider**, and the table that says so lives in
+# `frontier_providers.py` — this module asks a :class:`Provider` rather than reading a
+# constant, because a second provider needs a name, a dialect, an address and a key
+# variable of its own and a module-level constant can only hold one of each.
 
-#: The environment variable naming the provider's base URL.
-#: **Public** because the kernel-CLI's availability probe reports *whether this
-#: adapter can be used*, and a probe that guessed the name would disagree with the
-#: adapter that reads it. Measured, before this was shared: `--list` answered
-#: `available: True` with only `ANTHROPIC_API_KEY` set - a name **nothing** in this
-#: build reads - and `available: False` with `DOCFLOW_FRONTIER_KEY` set, the name
-#: this adapter actually uses. Both directions were wrong.
-ENV_HOST: Final[str] = "DOCFLOW_FRONTIER_HOST"
-
-#: The environment variable holding the API key, and the only place a credential is
-#: ever read. Public for the reason `ENV_HOST` is: the probe and the reader must name
-#: the same variable, and one of them has to be the authority.
+#: The shared credential variable, kept as the module-level name because the
+#: kernel-CLI's availability probe imports it to know what to check. Every provider
+#: consults it when its own variable is absent; see
+#: `frontier_providers.FALLBACK_ENV_KEY` for why both names exist.
 ENV_KEY: Final[str] = "DOCFLOW_FRONTIER_KEY"
 
-#: Kept as the private spellings the module body reads, bound to the public names so
-#: there is exactly one string per variable.
-_ENV_HOST: Final[str] = ENV_HOST
+#: The variable that overrides **anthropic's** base URL, likewise kept because the
+#: probe and the docs name it. A second provider's override has a different name, and
+#: the provider resolves it.
+ENV_HOST: Final[str] = "DOCFLOW_FRONTIER_ANTHROPIC_HOST"
+
+#: Kept as the private spellings the module body reads.
 _ENV_KEY: Final[str] = ENV_KEY
+_ENV_HOST: Final[str] = ENV_HOST
 
-#: The provider this adapter speaks to. One provider in Stage 1 (`# TODO: [MVP]`:
-#: a second provider, batch API, token counting).
-_PROVIDER: Final[str] = "anthropic"
-
-#: Where a default install points. It is the *address* that is defaulted, never a
-#: model: a wrong address fails loudly, while a substituted model would not.
+#: Where a default install points when the caller names no provider. Kept because
+#: the constructor's docstring and the docs name it; a provider resolves its own
+#: address from its table entry, and this is the one an unqualified name falls back
+#: to. It is the *address* that is defaulted, never a model.
 _DEFAULT_HOST: Final[str] = "https://api.anthropic.com"
-
-#: The provider's API version header value. It is part of the *request*, so it is a
-#: deliberate constant rather than something discovered at runtime.
-_API_VERSION: Final[str] = "2023-06-01"
-
-#: How long a single call may take. A frontier call is slow, and a timeout that fires
-#: mid-answer would be reported as a failed call rather than as a long one.
-_TIMEOUT_SECONDS: Final[float] = 600.0
-
-#: The endpoints this adapter uses.
-_PATH_MESSAGES: Final[str] = "/v1/messages"
-_PATH_MODELS: Final[str] = "/v1/models"
 
 #: A provider-prefixed model name, e.g. ``anthropic:claude-sonnet-4-6``.
 _MODEL_NAME = re.compile(r"^(?P<provider>[A-Za-z0-9_-]+):(?P<model>.+)$")
 
 #: The provider's stop reason that means the token ceiling cut the answer. Read from
-#: the raw response, never inferred from the text.
+#: the raw response, never inferred from the text. The dialects **translate** their
+#: own spelling into this one (`OpenAIDialect` maps `length` to it), so the ceiling
+#: rule has a single string to compare rather than one per vendor.
 _STOP_REASON_MAX_TOKENS: Final[str] = "max_tokens"
 
-#: The sampling parameters this adapter forwards. Anything else is dropped rather
-#: than refused, because the provider owns its own parameter vocabulary.
-_FORWARDED_PARAMETERS: Final[tuple[str, ...]] = ("temperature", "top_p", "top_k")
+#: The sampling parameters this adapter forwards, read from the shared vocabulary.
+#: Anything else is dropped rather than refused, because the provider owns its own
+#: parameter vocabulary.
+_FORWARDED_PARAMETERS: Final[tuple[str, ...]] = FORWARDED_PARAMETERS
 
 #: The provider's request header carrying the delayed-retry instruction. Recorded
 #: verbatim; never reinterpreted into a different delay.
 _HEADER_RETRY_AFTER: Final[str] = "retry-after"
+
+#: How long a single call may take. A frontier call is slow, and a timeout that fires
+#: mid-answer would be reported as a failed call rather than as a long one.
+_TIMEOUT_SECONDS: Final[float] = 600.0
 
 
 class FrontierEngine:
@@ -165,24 +166,25 @@ class FrontierEngine:
         """Initialise the adapter.
 
         Args:
-            base_url: The provider's base URL. ``None`` reads :data:`_ENV_HOST` and
-                falls back to the default address.
+            base_url: An explicit base URL for **every** provider. ``None`` lets
+                each provider resolve its own address from its environment
+                variable, falling back to its documented default. It is an override
+                for a test or a proxy, not a provider selector: which provider is
+                called is decided by the caller's model name.
             client: An HTTP client to use instead of building one. It exists so the
                 tests can exercise the boundary without a live provider, and so a
                 caller can supply a configured client. ``None`` means *build one*,
                 never *use a default model*.
 
         """
-        self._base_url = (
-            base_url or os.environ.get(_ENV_HOST) or _DEFAULT_HOST
-        ).rstrip("/")
+        self._base_url_override = base_url.rstrip("/") if base_url else None
         self._client = client
         # The identity each model resolved to the first time this adapter saw it,
         # keyed by the full ``provider:model`` name. A hosted model can be updated
         # under a fixed name, so the same comparison the local adapter makes is
         # what makes the change visible rather than surprising.
         self._seen_revisions: dict[str, str] = {}
-        self._adapter_revision: str | None = None
+        self._adapter_revisions: dict[str, str] = {}
         # The record of the last call, and the last raw completion. Both are
         # per-call facts the frozen `KernelResult` cannot carry — E01 fixed its
         # three fields — so they are exposed on the adapter for the caller that
@@ -190,6 +192,45 @@ class FrontierEngine:
         # goes" note.
         self._last_call_record: CallRecord | None = None
         self._last_raw_completion: bytes | None = None
+
+    def _base_url_for(self, provider: Provider) -> str:
+        """Report the address to call for one provider.
+
+        Args:
+            provider: The provider.
+
+        Returns:
+            The explicit override when the caller gave one, otherwise the
+            provider's own resolved address.
+
+        """
+        return self._base_url_override or provider.base_url(os.environ)
+
+    def _key_for(self, provider: Provider) -> str:
+        """Read one provider's credential from the environment.
+
+        Args:
+            provider: The provider.
+
+        Returns:
+            The credential.
+
+        Raises:
+            OSError: When neither this provider's variable nor the shared one is
+                set. The caller turns it into a typed reason, because *no key* and
+                *a rejected key* need different remediation.
+
+        """
+        variable = provider.key_variable(os.environ)
+        if variable is None:
+            raise OSError(
+                f"no key is configured for {provider.name!r}. Set "
+                f"{provider.env_key} (or the shared {ENV_KEY}) in the environment; "
+                "it is deliberately not a parameter, so it cannot arrive on a "
+                "command line or in a descriptor."
+            )
+
+        return str(os.environ[variable])
 
     # --- The two per-call facts the envelope needs --------------------------
 
@@ -225,8 +266,15 @@ class FrontierEngine:
 
     # --- Transport ----------------------------------------------------------
 
-    def _http(self) -> Any:
+    def _http(self, provider: Provider) -> Any:
         """Return the HTTP client, building one if none was supplied.
+
+        Built **per provider**, because the base URL is part of the client: one
+        client pointed at one host cannot serve two providers, and constructing it
+        per call is the shortcut this adapter already carried.
+
+        Args:
+            provider: The provider whose address the client is bound to.
 
         Returns:
             The client.
@@ -237,41 +285,38 @@ class FrontierEngine:
 
         import httpx  # pylint: disable=import-outside-toplevel
 
-        self._client = httpx.Client(base_url=self._base_url, timeout=_TIMEOUT_SECONDS)
+        return httpx.Client(
+            base_url=self._base_url_for(provider), timeout=_TIMEOUT_SECONDS
+        )
 
-        return self._client
+    def _headers(self, provider: Provider) -> dict[str, str]:
+        """Build the request headers for one provider, reading its credential.
 
-    def _headers(self) -> dict[str, str]:
-        """Build the request headers, reading the credential from the environment.
+        The header *names* come from the provider's dialect, which is the whole
+        reason a dialect exists: ``x-api-key`` and ``Authorization: Bearer`` are the
+        same fact written two ways, and the adapter should not be the place where
+        somebody remembers which.
+
+        Args:
+            provider: The provider being called.
 
         Returns:
             The headers.
 
         Raises:
-            OSError: When no key is configured. The caller turns it into a typed
-                reason, because *no key* and *a rejected key* need different
+            OSError: When no key is configured for it. The caller turns it into a
+                typed reason, because *no key* and *a rejected key* need different
                 remediation.
 
         """
-        key = os.environ.get(_ENV_KEY)
-        if not key:
-            raise OSError(
-                f"no provider key is configured. Set {_ENV_KEY} in the environment; "
-                "it is deliberately not a parameter, so it cannot arrive on a "
-                "command line or in a descriptor."
-            )
+        return provider.dialect.headers(self._key_for(provider))
 
-        return {
-            "x-api-key": key,
-            "anthropic-version": _API_VERSION,
-            "content-type": "application/json",
-        }
-
-    def _post(self, path: str, payload: Mapping[str, Any]) -> Any:
+    def _post(self, provider: Provider, payload: Mapping[str, Any]) -> Any:
         """Send one request and return the response.
 
         Args:
-            path: The endpoint path.
+            provider: The provider being called, which decides the address, the
+                endpoint and the header names.
             payload: The JSON body.
 
         Returns:
@@ -283,13 +328,14 @@ class FrontierEngine:
                 and *the model answered badly* need different remediation.
 
         """
-        headers = self._headers()
+        headers = self._headers(provider)
+        path = provider.dialect.path()
         try:
-            return self._http().post(path, json=dict(payload), headers=headers)
+            return self._http(provider).post(path, json=dict(payload), headers=headers)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             raise OSError(
-                f"the provider at {self._base_url} could not be reached: "
-                f"{type(exc).__name__}: {exc}"
+                f"the provider at {self._base_url_for(provider)} could not be "
+                f"reached: {type(exc).__name__}: {exc}"
             ) from exc
 
     # --- Model identity -----------------------------------------------------
@@ -309,20 +355,28 @@ class FrontierEngine:
         """
         return _split_model(model)
 
-    def _runtime_revision(self) -> str:
-        """Report the adapter's revision, so the engine is a cache term.
+    def _runtime_revision(self, provider: Provider) -> str:
+        """Report one provider's adapter revision, so the engine is a cache term.
 
-        The provider's API version is part of every request, so the same call
-        against a different version is different work (`sad.md` §5). Read once.
+        The provider's name and the dialect it speaks are part of every request, so
+        the same call against a different provider or dialect is different work
+        (`sad.md` §5). Cached **per provider**: one adapter now speaks to several, and
+        a single cached string would report the first provider's revision for a call
+        made to the second.
+
+        Args:
+            provider: The provider being called.
 
         Returns:
             The revision string.
 
         """
-        if self._adapter_revision is None:
-            self._adapter_revision = f"{_PROVIDER} {_API_VERSION}"
+        cached = self._adapter_revisions.get(provider.name)
+        if cached is None:
+            cached = f"{provider.name} {provider.dialect.name}"
+            self._adapter_revisions[provider.name] = cached
 
-        return self._adapter_revision
+        return cached
 
     def _resolve_revision(self, name: str, revision: str) -> tuple[str, bool]:
         """Record this model's revision and compare it with the first sighting.
@@ -346,10 +400,11 @@ class FrontierEngine:
     def _record(  # pylint: disable=too-many-arguments
         self,
         *,
+        provider: Provider,
         model: str,
         revision: str,
         latency_ms: float,
-        body: Mapping[str, Any] | None,
+        answer: Answer | None,
         request_id: str | None,
     ) -> CallRecord:
         """Build and store the call record for one call.
@@ -358,30 +413,31 @@ class FrontierEngine:
         report is ``None`` — the type says ``None`` means *unreported* — and never
         ``0``, which would read as *the provider said zero tokens*.
 
+        **The token names are the dialect's business, not this function's.** The two
+        dialects call the same two numbers different things (`input_tokens` versus
+        `prompt_tokens`), and the dialect has already normalised them into an
+        :class:`Answer`. Reading the raw body here is what made this function
+        anthropic-shaped.
+
         Args:
-            name: The full ``provider:model`` name.
-            model: The model part.
+            provider: The provider that answered.
+            model: The model part of the caller's name.
             revision: The resolved revision.
             latency_ms: Wall-clock latency of the call.
-            body: The response body, or ``None`` when there was none.
+            answer: The normalised answer, or ``None`` when there was none.
             request_id: The provider's request identifier, or ``None``.
 
         Returns:
             The record, also stored as :attr:`last_call_record`.
 
         """
-        usage = dict((body or {}).get("usage") or {})
-        prompt = usage.get("input_tokens")
-        completion = usage.get("output_tokens")
-        total = usage.get("total_tokens")
-
         record = CallRecord(
-            provider=_PROVIDER,
+            provider=provider.name,
             model=model,
             model_revision=revision,
-            prompt_tokens=int(prompt) if isinstance(prompt, int) else None,
-            completion_tokens=int(completion) if isinstance(completion, int) else None,
-            total_tokens=int(total) if isinstance(total, int) else None,
+            prompt_tokens=None if answer is None else answer.prompt_tokens,
+            completion_tokens=None if answer is None else answer.completion_tokens,
+            total_tokens=None if answer is None else answer.total_tokens,
             # A frontier provider meters its calls, but the *price* is a billing
             # fact this adapter does not look up: a rate card hardcoded here would
             # be a number that silently goes stale.
@@ -415,35 +471,37 @@ class FrontierEngine:
                 (
                     f"the model name {model!r} carries no provider prefix. A "
                     f"frontier model is named `<provider>:<model>`, e.g. "
-                    f"{_PROVIDER}:claude-sonnet-4-6; no default provider is "
-                    "substituted."
+                    f"{_example_name()}; no default provider is substituted."
                 ),
                 {},
                 {},
-                {"model": model, "known_providers": [_PROVIDER]},
+                {"model": model, "known_providers": sorted(PROVIDERS)},
             )
-        if prefix != _PROVIDER:
+
+        provider = provider_named(prefix)
+        if provider is None:
             return _refused(
                 _CODE_PROVIDER_UNKNOWN,
                 (
                     f"the provider prefix {prefix!r} names no configured provider. "
-                    f"This build speaks to {_PROVIDER!r}; no fallback provider is "
-                    "substituted."
+                    f"This build speaks to {sorted(PROVIDERS)}; no fallback provider "
+                    "is substituted."
                 ),
                 {},
                 {},
-                {"model": model, "known_providers": [_PROVIDER]},
+                {"model": model, "known_providers": sorted(PROVIDERS)},
             )
 
-        revision = self._runtime_revision()
+        revision = self._runtime_revision(provider)
         # The revision of a *hosted* model cannot be known without asking, and
         # asking here would spend a call the caller did not request. What is known
         # is the name the caller will use and the adapter revision, and those are
         # what is reported — never an invented revision.
+        capabilities = ["completion"] + (["vision"] if provider.supports_vision else [])
         return _observed(
             MappingProxyType(
                 {
-                    "provider": _PROVIDER,
+                    "provider": provider.name,
                     "model": name,
                     "adapter_revision": revision,
                     "model_revision": name,
@@ -452,11 +510,17 @@ class FrontierEngine:
             {},
             {
                 "model": model,
-                "provider": _PROVIDER,
+                "provider": provider.name,
+                "dialect": provider.dialect.name,
                 "adapter_revision": revision,
                 "revision_is_resolved_on_call": True,
-                "supports_vision": True,
-                "capabilities": ["completion", "vision"],
+                "supports_vision": provider.supports_vision,
+                # Whether the schema can be **pinned**, or merely requested. A
+                # caller that needs the constraint to be a guarantee has to know
+                # which it got, and this is the only place that says so before a
+                # call is paid for.
+                "pins_tool_choice": provider.pins_tool_choice,
+                "capabilities": capabilities,
             },
         )
 
@@ -479,27 +543,48 @@ class FrontierEngine:
         if resolved.value is None:
             return resolved
 
-        if not os.environ.get(_ENV_KEY):
+        # The provider is re-resolved from the name rather than carried in the
+        # evidence: `capabilities` answers for *several* providers now, and reaching
+        # into its observed mapping for the name would be this method trusting a
+        # field it did not check.
+        prefix, _name = self._split(model)
+        provider = provider_named(prefix or "")
+        if provider is None:
+            return resolved
+
+        variable = provider.key_variable(os.environ)
+        if variable is None:
             return _refused(
                 _CODE_PROVIDER_UNAVAILABLE,
                 (
-                    f"no provider key is configured, so {model!r} cannot be called. "
-                    f"Set {_ENV_KEY} in the environment; it is deliberately not a "
+                    f"no key is configured for {provider.name!r}, so {model!r} "
+                    f"cannot be called. Set {provider.env_key} (or the shared "
+                    f"{ENV_KEY}) in the environment; it is deliberately not a "
                     "parameter."
                 ),
                 {},
                 {},
-                {"model": model, "warm": False},
+                {"model": model, "provider": provider.name, "warm": False},
             )
 
-        revision = self._runtime_revision()
+        revision = self._runtime_revision(provider)
 
         return _observed(
             MappingProxyType(
-                {"provider": _PROVIDER, "model": model, "adapter_revision": revision}
+                {
+                    "provider": provider.name,
+                    "model": model,
+                    "adapter_revision": revision,
+                }
             ),
             {},
-            {"model": model, "provider": _PROVIDER, "warm": True, "generation": False},
+            {
+                "model": model,
+                "provider": provider.name,
+                "key_variable": variable,
+                "warm": True,
+                "generation": False,
+            },
         )
 
     def structured(
@@ -630,8 +715,48 @@ class FrontierEngine:
                 {"model": model},
             )
 
-        _prefix, name = self._split(model)
-        revision = self._runtime_revision()
+        prefix, name = self._split(model)
+        provider = provider_named(prefix or "")
+        if provider is None:
+            # Unreachable through `capabilities`, which refused above — but the
+            # provider is *dereferenced* below, so the guard is here rather than
+            # relying on a caller having run first.
+            return _refused(
+                _CODE_PROVIDER_UNKNOWN,
+                f"the provider prefix {prefix!r} names no configured provider.",
+                {},
+                {},
+                {"model": model, "known_providers": sorted(PROVIDERS)},
+            )
+
+        # **A provider that cannot read pixels is refused, not tried.** This is the
+        # difference between a typed answer and a plausible one: measured, DeepSeek
+        # accepts the image, ignores it, and answers `"NO IMAGE"` as a **value** with
+        # `stop_reason: end_turn`. Nothing downstream could tell that from a real
+        # reading, which is exactly the silent failure this project exists to catch —
+        # so the refusal lives here, where the fact is known before the call is paid
+        # for.
+        if images and not provider.supports_vision:
+            return _refused(
+                _CODE_UNSUPPORTED_FORMAT,
+                (
+                    f"{provider.name!r} cannot be asked about images. Sending one "
+                    "would not fail: measured, it accepts the request, ignores the "
+                    "pixels and answers as if the document were blank, which is a "
+                    "plausible-looking wrong answer rather than an error. Use a "
+                    "provider that declares vision, or send the text instead."
+                ),
+                {},
+                {},
+                {
+                    "model": model,
+                    "provider": provider.name,
+                    "image_count": len(images),
+                    "supports_vision": False,
+                },
+            )
+
+        revision = self._runtime_revision(provider)
 
         # The ceiling is a policy decision this kernel refuses to supply, so a
         # missing one is a precondition failure rather than a crash. It is a typed
@@ -644,64 +769,46 @@ class FrontierEngine:
                 _CODE_PROVIDER_UNAVAILABLE, str(exc), {}, {}, {"model": model}
             )
 
-        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-        content.extend(
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": getattr(image, "media_type", "image/png"),
-                    "data": _encode_image(image),
-                },
-            }
-            for image in images
+        # The dialect builds the body, and that is what makes the schema a
+        # *constraint* rather than a hope in both wire formats. The long note below
+        # is kept because it records why the schema is sent for **both** entry
+        # points, which was a real defect:
+        #
+        # this block used to sit behind `if not vision`, so a `vision` call accepted
+        # a schema, echoed it back in `observed.declared_schema`, and **never sent
+        # it**. The constraint silently degraded into a hope that the model would
+        # format its own answer as JSON. Measured with the schema withheld, against
+        # `{total: integer}`: a `tool_use` block parsed and a text block that
+        # happened to contain JSON also parsed — so the defect is invisible whenever
+        # the model cooperates — while prose (*"El total es 7 pesos."*) and a JSON
+        # code fence both returned `unsupported_format`. That is a failure of **this
+        # adapter's parsing** reported against the provider.
+        #
+        # Whether the choice can be *pinned* is the provider's answer, not this
+        # function's: DeepSeek refuses every pinning form with HTTP 400 on both
+        # endpoints it exposes ("Thinking mode does not support this tool_choice"),
+        # so it is sent the weakest form it accepts. What was actually sent is
+        # recorded below, because *enforced* and *requested* are different facts.
+        body = provider.dialect.payload(
+            model=name,
+            prompt=prompt,
+            schema=schema,
+            images=images,
+            ceiling=ceiling,
+            sampling=_sampling_parameters(),
+            pin=provider.pins_tool_choice,
         )
-
-        body: dict[str, Any] = {
-            "model": name,
-            "max_tokens": ceiling,
-            "messages": [{"role": "user", "content": content}],
-        }
-        body.update(_sampling_parameters())
-
-        # The schema is sent as a tool the model *must* call, which is how this API
-        # constrains a structured answer rather than merely describing one. It is
-        # sent for **both** entry points, and that is the correction of a real defect:
-        # this block used to sit behind `if not vision`, so a `vision` call accepted a
-        # schema, echoed it back in `observed.declared_schema`, and **never sent it**.
-        # The constraint silently degraded into a hope that the model would format its
-        # own answer as JSON.
-        #
-        # Measured with the schema withheld, against `{total: integer}`: a `tool_use`
-        # block parsed and a text block that happened to contain JSON also parsed —
-        # so the defect is invisible whenever the model cooperates — while prose
-        # (*"El total es 7 pesos."*) and a JSON code fence both returned
-        # `unsupported_format`. That is a failure of **this adapter's parsing**
-        # reported against the provider, and the honest read of it is that the caller
-        # asked for a constraint and did not get one.
-        #
-        # `OllamaEngine._generate` sends its `format` unconditionally, so the two
-        # adapters agree on this. Nothing about the images changes: they ride on the
-        # message either way, and the tool constrains the shape of the answer about
-        # them, which is exactly what `vision(..., schema)` promises in the port.
-        body["tools"] = [
-            {
-                "name": "emit",
-                "description": "Return the structured answer.",
-                "input_schema": dict(schema),
-            }
-        ]
-        body["tool_choice"] = {"type": "tool", "name": "emit"}
 
         started = time.monotonic()
         try:
-            response = self._post(_PATH_MESSAGES, body)
+            response = self._post(provider, body)
         except OSError as exc:
             self._record(
+                provider=provider,
                 model=name,
                 revision=revision,
                 latency_ms=(time.monotonic() - started) * 1000,
-                body=None,
+                answer=None,
                 request_id=None,
             )
             self._last_raw_completion = None
@@ -711,22 +818,23 @@ class FrontierEngine:
                 str(exc),
                 _unresolved_terms(model, name, revision),
                 {},
-                {"model": model, "provider": _PROVIDER, "vision": vision},
+                {"model": model, "provider": provider.name, "vision": vision},
             )
 
         latency = (time.monotonic() - started) * 1000
         headers = getattr(response, "headers", {}) or {}
-        request_id = headers.get("request-id") or headers.get("x-request-id")
+        request_id = _header_from(headers)
 
         # --- The rate limit and the outage are facts about the provider --------
         if response.status_code == 429:
             retry_after = headers.get(_HEADER_RETRY_AFTER)
             self._record(
+                provider=provider,
                 model=name,
                 revision=revision,
                 latency_ms=latency,
-                body=None,
-                request_id=str(request_id) if request_id else None,
+                answer=None,
+                request_id=request_id,
             )
             self._last_raw_completion = _raw_bytes(response)
 
@@ -742,7 +850,7 @@ class FrontierEngine:
                 {},
                 {
                     "model": model,
-                    "provider": _PROVIDER,
+                    "provider": provider.name,
                     "http_status": 429,
                     "retry_after": retry_after,
                     "vision": vision,
@@ -751,11 +859,12 @@ class FrontierEngine:
 
         if response.status_code == 404:
             self._record(
+                provider=provider,
                 model=name,
                 revision=revision,
                 latency_ms=latency,
-                body=None,
-                request_id=str(request_id) if request_id else None,
+                answer=None,
+                request_id=request_id,
             )
             self._last_raw_completion = _raw_bytes(response)
 
@@ -768,32 +877,44 @@ class FrontierEngine:
                 ),
                 _unresolved_terms(model, name, revision),
                 {},
-                {"model": model, "provider": _PROVIDER, "http_status": 404},
+                {
+                    "model": model,
+                    "provider": provider.name,
+                    "http_status": 404,
+                },
             )
 
         if response.status_code != 200:
             self._record(
+                provider=provider,
                 model=name,
                 revision=revision,
                 latency_ms=latency,
-                body=None,
-                request_id=str(request_id) if request_id else None,
+                answer=None,
+                request_id=request_id,
             )
             self._last_raw_completion = _raw_bytes(response)
 
+            # The provider's own words are quoted, because a 400 is almost always a
+            # fact about **this request** rather than about the provider's health —
+            # and the generic sentence used to say the opposite. Measured on
+            # DeepSeek: the pinned tool choice is a 400 whose body explains itself
+            # ("Thinking mode does not support this tool_choice"), and reporting
+            # that as *the provider is unavailable* sends a reader to check a status
+            # page for a bug in the request.
+            detail = _provider_complaint(response)
             return _refused(
                 _CODE_PROVIDER_UNAVAILABLE,
                 (
                     f"the provider answered HTTP {response.status_code} for "
-                    f"{name!r}. The provider is unavailable rather than the answer "
-                    "being wrong; this is never reported as a rejection of the "
-                    "document."
+                    f"{name!r}: {detail} A 4xx is a fact about this request rather "
+                    "than about the provider's health; a 5xx is the provider's."
                 ),
                 _unresolved_terms(model, name, revision),
                 {},
                 {
                     "model": model,
-                    "provider": _PROVIDER,
+                    "provider": provider.name,
                     "http_status": response.status_code,
                 },
             )
@@ -814,11 +935,12 @@ class FrontierEngine:
             parsed_body = response.json()
         except ValueError:
             self._record(
+                provider=provider,
                 model=name,
                 revision=revision,
                 latency_ms=latency,
-                body=None,
-                request_id=str(request_id) if request_id else None,
+                answer=None,
+                request_id=request_id,
             )
 
             return _refused(
@@ -833,24 +955,32 @@ class FrontierEngine:
                 {},
                 {
                     "model": model,
-                    "provider": _PROVIDER,
+                    "provider": provider.name,
                     "http_status": 200,
                     "body_is_json": False,
                 },
             )
 
-        resolved_revision = str(parsed_body.get("model") or name)
+        # The dialect normalises the response — including the request id header,
+        # whose name the two formats disagree about — and the rest of this method
+        # reads one shape.
+        answer = provider.dialect.read(
+            parsed_body if isinstance(parsed_body, Mapping) else {},
+            headers,
+        )
+        resolved_revision = answer.model or name
         first, changed = self._resolve_revision(model, resolved_revision)
 
         record = self._record(
+            provider=provider,
             model=name,
             revision=resolved_revision,
             latency_ms=latency,
-            body=parsed_body,
-            request_id=str(request_id) if request_id else None,
+            answer=answer,
+            request_id=answer.request_id,
         )
 
-        stop_reason = str(parsed_body.get("stop_reason") or "")
+        stop_reason = answer.stop_reason
         measurements = {
             "prompt_tokens": float(record.prompt_tokens or 0),
             "completion_tokens": float(record.completion_tokens or 0),
@@ -858,7 +988,8 @@ class FrontierEngine:
         }
         observed: dict[str, object] = {
             "model": model,
-            "provider": _PROVIDER,
+            "provider": provider.name,
+            "dialect": provider.dialect.name,
             "model_revision": resolved_revision,
             "adapter_revision": revision,
             "first_seen_revision": first,
@@ -866,9 +997,13 @@ class FrontierEngine:
             "stop_reason": stop_reason,
             "http_status": 200,
             "request_id": record.request_id,
-            "raw_completion_bytes": float(len(self._last_raw_completion)),
+            "raw_completion_bytes": float(len(self._last_raw_completion or b"")),
             "vision": vision,
             "attempts": 1,
+            # Whether the schema could be pinned on this provider. *Enforced* and
+            # *requested* are different facts, and a caller comparing two runs has
+            # to be able to tell which one it got.
+            "pins_tool_choice": provider.pins_tool_choice,
         }
 
         if stop_reason == _STOP_REASON_MAX_TOKENS:
@@ -887,7 +1022,18 @@ class FrontierEngine:
             )
 
         # --- Absence, `null` and a value are three outcomes -------------------
-        answer, outcome = _extract_answer(parsed_body)
+        #
+        # **The normalised blocks are what is parsed, never the raw body.** The two
+        # dialects disagree about where the answer lives and what shape it is in
+        # (Anthropic's `tool_use.input` is an object, OpenAI's
+        # `tool_calls[0].function.arguments` is a JSON *string*), and the dialect has
+        # already reduced both to the block vocabulary this function reads. Parsing
+        # `parsed_body` here is what kept this parser anthropic-shaped.
+        #
+        # The local name is `payload` because `answer` is the :class:`Answer` above,
+        # and shadowing it would make the line below read as if the same object were
+        # being parsed twice.
+        payload, outcome = _extract_answer({"content": list(answer.blocks)})
         observed["outcome"] = outcome
         observed["declared_schema"] = dict(schema)
         # Whether the text was ever handed to a parser. This is row 14's invariant in
@@ -922,7 +1068,7 @@ class FrontierEngine:
         # The object check is shared with K5: two vendors, one rule. What differs —
         # the codes, the terms, the measurements — stays here.
         observed["parse_attempted"] = True
-        parsed, problem = load_object(answer)
+        parsed, problem = load_object(payload)
         if problem is not None:
             return _refused(
                 _CODE_UNSUPPORTED_FORMAT,
@@ -976,6 +1122,12 @@ def _max_tokens() -> int:
 def _sampling_parameters() -> dict[str, Any]:
     """Read the sampling parameters the environment declares.
 
+    The names come from the **shared vocabulary** in `frontier_providers.py`, which
+    every dialect forwards verbatim. The two wire formats agree on `temperature`,
+    `top_p` and `seed`; a name only one of them understands would be dropped by the
+    other rather than renamed, because renaming it here would be this adapter
+    inventing a parameter for a vendor that never declared one.
+
     Returns:
         The parameters to forward, possibly empty. The provider's own defaults apply
         to everything else, because inventing a parameter would be this adapter
@@ -1000,6 +1152,76 @@ def _sampling_parameters() -> dict[str, Any]:
 
 
 # --- Response reading --------------------------------------------------------
+
+
+def _example_name() -> str:
+    """Report a model name that would be accepted, for a refusal's message.
+
+    Built from the table rather than written as a literal, so the example cannot go
+    stale when the providers change. A refusal that names a provider this build no
+    longer speaks to is worse than no example.
+
+    Returns:
+        A ``<provider>:<model>`` name using the first provider in the table.
+
+    """
+    first = next(iter(PROVIDERS.values()))
+
+    return f"{first.name}:claude-sonnet-4-6"
+
+
+def _header_from(headers: Mapping[str, Any]) -> str | None:
+    """Read the request id out of a response, trying both dialects' names.
+
+    Two names because the formats disagree and a provider imitating one may copy the
+    other's spelling; asking for both is cheaper than discovering a missing id. The
+    value is *not* recorded through the dialect, because a failure branch reads it
+    before a dialect has had the body to normalise.
+
+    Args:
+        headers: The response headers.
+
+    Returns:
+        The id, or ``None`` when neither name is present.
+
+    """
+    for name in ("request-id", "x-request-id"):
+        value = headers.get(name)
+        if value:
+            return str(value)
+
+    return None
+
+
+def _provider_complaint(response: Any) -> str:
+    """Quote what a provider said about a request it refused.
+
+    A 4xx is a fact about **this request**, and the provider almost always says
+    which — measured on DeepSeek, a pinned tool choice is a 400 whose body reads
+    *"Thinking mode does not support this tool_choice"*. Reporting that as *the
+    provider is unavailable* sends a reader to check a status page for a bug in the
+    request, which is the attribution failure this function exists to prevent.
+
+    The text is quoted, **never parsed**: it is a provider's prose, its shape is not
+    a contract, and a parser here would be one more thing to keep in step with four
+    vendors.
+
+    Args:
+        response: The response object.
+
+    Returns:
+        The provider's own words, truncated, or a note that it said nothing
+        readable. Never an empty string: a caller must be able to tell *it explained
+        itself* from *it did not*.
+
+    """
+    raw = _raw_bytes(response)
+    if not raw:
+        return "(the provider sent no readable body)"
+
+    text = " ".join(raw.decode("utf-8", errors="replace").split())
+
+    return f"{text[:300]}" if text else "(the provider sent an empty body)"
 
 
 def _raw_bytes(response: Any) -> bytes | None:
@@ -1160,7 +1382,7 @@ def _terms(model: str, revision: str, adapter_revision: str) -> Mapping[str, str
     """
     return MappingProxyType(
         {
-            "provider": _PROVIDER,
+            "provider": _provider_of(model),
             "model": model,
             "model_revision": revision,
             "adapter_revision": adapter_revision,
@@ -1192,13 +1414,34 @@ def _unresolved_terms(
     """
     return MappingProxyType(
         {
-            "provider": _PROVIDER,
+            "provider": _provider_of(model),
             "model": model,
             "model_name": name,
             "model_revision": "unresolved",
             "adapter_revision": adapter_revision,
         }
     )
+
+
+def _provider_of(model: str) -> str:
+    """Report the provider a caller's model name names.
+
+    Read from the prefix rather than threaded through every caller: the terms are
+    built on paths that never resolved a provider (a transport failure, a refused
+    credential) and the prefix is the only fact available there. An unprefixed name
+    reports an empty string, which is honest — *no provider was named* — rather than
+    a guessed one.
+
+    Args:
+        model: The name the caller used.
+
+    Returns:
+        The provider name, or ``""`` when the name carries no prefix.
+
+    """
+    prefix, _name = _split_model(model)
+
+    return prefix or ""
 
 
 def _evidence(

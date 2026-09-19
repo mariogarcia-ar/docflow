@@ -465,13 +465,21 @@ def _binary_absent(binary: str) -> str | None:
 #: A literal rather than an import, and that is the layering rule rather than a
 #: preference: this dispatcher may not reach an adapter, and
 #: `test_the_dispatcher_reaches_nothing_above_the_kernel_layer` asserts it. So the
-#: name is declared as **data** here and **pinned to the adapter's own constant by a
+#: names are declared as **data** here and **pinned to the adapter's own table by a
 #: test** (`test_the_frontier_probe_reads_the_name_the_adapter_reads`), which is the
 #: same shape this surface already uses for the flag vocabulary: two lists, one test,
 #: so they cannot drift in silence. A comment asking them to agree would not.
 #:
-#: A tuple because a second provider would add a name, not a branch.
-FRONTIER_KEY_NAMES: Final[tuple[str, ...]] = ("DOCFLOW_FRONTIER_KEY",)
+#: Every provider's variable plus the shared fallback, because the probe answers
+#: *could a frontier call be made at all* and any of them is enough for one. A
+#: provider added to the adapter without a name here would make the probe under-report,
+#: which is the direction that reads as *the provider is unreachable*.
+FRONTIER_KEY_NAMES: Final[tuple[str, ...]] = (
+    "DOCFLOW_FRONTIER_KEY",
+    "DOCFLOW_FRONTIER_ANTHROPIC_KEY",
+    "DOCFLOW_FRONTIER_DEEPSEEK_KEY",
+    "DOCFLOW_FRONTIER_OPENAI_KEY",
+)
 
 
 def _provider_key_absent() -> str | None:
