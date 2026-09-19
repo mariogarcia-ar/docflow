@@ -271,6 +271,8 @@ VALUE_FLAGS: Final[tuple[str, ...]] = (
     "--target-dpi",
     "--text-file",
     "--timeout",
+    "--tolerance",
+    "--orientation",
 )
 
 #: Flags that are present or absent, never given a value.

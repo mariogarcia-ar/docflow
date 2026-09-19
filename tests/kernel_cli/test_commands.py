@@ -90,6 +90,7 @@ NOW_COMMANDS: Final[tuple[tuple[str, str, tuple[str, ...]], ...]] = (
     ("ocr", "capabilities", ()),
     ("ocr", "engine-info", ()),
     ("ocr", "read", ("--pages", "--dpi", "--lang", "--correct")),
+    ("ocr", "layout", ("--pages", "--dpi", "--lang", "--tolerance", "--orientation")),
     ("llm.local", "capabilities", ("--model",)),
     ("llm.local", "warm", ("--model",)),
     ("llm.local", "structured", ("--model", "--prompt-file", "--schema-file")),
@@ -273,6 +274,15 @@ def _port_method(kernel: str, operation: str) -> callable | None:
     # Declared rather than discovered, so this check reports *no port method* on
     # purpose instead of silently skipping a flag set nobody compared.
     if (kernel, operation) == ("pdf", "layout"):
+        return None
+
+    # And K4's, for the same reason and one more. `layout` is kernel-only by
+    # `E04-04` - `OcrEngine`'s three operations are frozen by `plans/README.md` §3 -
+    # and it is *also* not the same thing as `layout_text`: a recogniser reports
+    # blocks, so the rows are rebuilt from the token boxes rather than read as a
+    # grid. Declaring it here keeps the direction check total rather than skipping
+    # a flag set nobody compared.
+    if (kernel, operation) == ("ocr", "layout"):
         return None
 
     name = PORTS.get(kernel)
@@ -788,6 +798,69 @@ def test_read_describes_its_result_rather_than_returning_it() -> None:
     # The positive control: the helper exists and is callable, so a rename that
     # broke the call above cannot pass by matching nothing.
     assert callable(module._described)  # pylint: disable=protected-access
+
+
+def test_ocr_layout_scales_the_legacy_tolerance_to_the_requested_dpi() -> None:
+    """The legacy's constant is in PDF points, and the flag is a DPI.
+
+    `TOLERANCIA_LINEA = 25.0` could be a constant in the previous system because
+    nothing in it read at another resolution. Here `--dpi` is a flag, so the
+    tolerance is `25.0 * dpi / 72` — a **conversion**, not a copied number. A
+    literal 25.0 at 300 DPI is a fifth of the row height and splits every row.
+
+    This test is the falsifier for that conversion, and it is not vacuous: mutating
+    the body to return the bare constant fails it. Measured on
+    `casos/66e6e0ea` at 300 DPI, the literal gives 27 rows with 4 paired and the
+    conversion gives 23 with 8 — so the defect is visible in the output rather than
+    only in a number.
+    """
+    module = importlib.import_module("docflow.kernel_cli.commands.ocr")
+
+    assert module._tolerance(None, 72) == 25.0, (  # pylint: disable=protected-access
+        "at 72 DPI the legacy's points are already the boxes' own units"
+    )
+    assert module._tolerance(None, 300) == pytest.approx(  # pylint: disable=protected-access
+        25.0 * 300 / 72
+    ), (
+        "the absent --tolerance must convert the legacy's points to the requested "
+        "DPI; returning 25.0 there is a fifth of the row height and splits rows"
+    )
+    # An explicit flag wins, and is passed through unscaled: the caller naming a
+    # number means that number in the boxes' own units.
+    assert module._tolerance(40, 300) == 40.0  # pylint: disable=protected-access
+
+
+def test_ocr_layout_reports_the_orientation_it_measured() -> None:
+    """The orientation is the tokens' measurement, so it travels in the evidence.
+
+    A caller who forces `--orientation vertical` on a horizontal document should be
+    able to see the disagreement from the envelope rather than only from a reading
+    that looks wrong.
+    """
+    module = importlib.import_module("docflow.kernel_cli.commands.ocr")
+    source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    layout_function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "layout"
+    )
+    called = {
+        node.func.attr if isinstance(node.func, ast.Attribute) else node.func.id
+        for node in ast.walk(layout_function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Attribute, ast.Name))
+    }
+
+    assert "dominant_orientation" in called, (
+        "the absent --orientation must be measured from the tokens, not defaulted: "
+        "a default is this surface deciding how a document is laid out"
+    )
+    assert "_laid_out" in called, (
+        "the measurement must reach the evidence even when the caller forced the "
+        "orientation, which is the only way a forced-wrong reading is detectable"
+    )
 
 
 # --- A command's value must survive the encoder — exercised, not assumed ----

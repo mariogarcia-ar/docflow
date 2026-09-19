@@ -413,8 +413,15 @@ declaration, it does not widen the vocabulary.
 | `now` | `ocr capabilities` | `capabilities()` | — |
 | `now` | `ocr engine-info` | `engine_info()` | — |
 | `now` | `ocr read <file…>` | `read(pages, options)` | `--pages`, `--dpi`, `--lang`, `--correct` |
+| `now` | `ocr layout <file…>` | — (`layout`, kernel-only) | `--pages`, `--dpi`, `--lang`, `--tolerance`, `--orientation` |
 
 Returns positioned tokens with **no reading order resolved**, plus per-page status (`read` with zero tokens vs `blank` vs `unreadable`). Docling's layout and table output is **dropped at the boundary** — the tokens are the contract. Confidence is `float | null`, and `null` is never reported as `1.0`.
+
+**`ocr layout` is the second command on this surface whose operation is not a port method**, and it is the OCR counterpart of `pdf layout` with one difference that is the reason both exist. `pdf layout` delegates to `pdftotext -layout`, which returns the reader's own **character grid** because a text reader has the font metrics. A recogniser has none: it reports *blocks*, so the rows are rebuilt from the token boxes. The output pairs a value with its label — a ticket's `ALICUOTA 21,00% | 10196,06` — and it does **not** reproduce column widths, because an engine that reports blocks does not measure them; padding them into a grid would synthesise whitespace no measurement supports. `E04-04` freezes `OcrEngine`'s three operations, so a fourth would re-open it; the adapter exposes `layout` and the command reaches it there.
+
+**The row tolerance is the caller's, and the legacy's constant does not transfer.** The previous system's `TOLERANCIA_LINEA = 25.0` was in PDF points at 72 DPI and could be a constant because nothing in it read at another resolution. Here `--dpi` is a flag, so `--tolerance` is explicit and its absence means `25.0 * dpi / 72` — a conversion rather than a copied number, because a literal `25.0` at 300 DPI is a fifth of the row height and would split every row. `--orientation` is likewise explicit; its absence means the dominant orientation the token boxes support, which is reported as a measurement in the evidence either way.
+
+**The row test anchors on the row's first member, not on a running mean.** The legacy compared each box against its row's mean, so three boxes at 0, 24 and 30 units formed one row whose spread was 30 while the tolerance that formed it was 25 — a row wider than the tolerance that admits it. Anchoring bounds every row's spread by the tolerance, which is the property the tolerance is read as promising, and a test asserts it.
 
 There is **no `--engine` flag**. The engine is Docling and only Docling; a per-corpus choice would make the OCR path a matrix of behaviours.
 

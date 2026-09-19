@@ -45,6 +45,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Final
 
+from docflow.kernels import ocr as ocr_layout
 from docflow.kernels.types import Box, Evidence, KernelResult, Reason, Token
 from docflow.ports.ocr import PageStatus, ReadResult
 
@@ -345,6 +346,78 @@ class DoclingEngine:
             ),
             reason=None,
         )
+
+    def layout(  # pylint: disable=too-many-arguments
+        # Six parameters, and each names a different thing the caller decides:
+        # what to read, which pages, at what resolution, in which language, how
+        # close two tokens may be and still share a row, and which axis is the
+        # reading. `read` already takes four of them; the layout adds the two the
+        # ordering needs. Grouping them into a value object would move the same
+        # count one frame away and would invent a boundary type, which
+        # `E01-01` forbids.
+        self,
+        path: Path,
+        pages: Sequence[int],
+        dpi: int,
+        lang: str,
+        *,
+        line_tolerance: float,
+        orientation: str = "horizontal",
+    ) -> KernelResult[str]:
+        """Read a selection and order it into rows.
+
+        The OCR counterpart of ``PdfEngine.layout_text``, and it is **not** on
+        :class:`~docflow.ports.ocr.OcrEngine` for the same reason: ``plans/README.md``
+        §3 freezes the port's three operations, so a fourth would re-open `E04-04`'s
+        gate. The adapter exposes it and the command reaches it here.
+
+        The two operations are not interchangeable, and the difference is worth
+        stating because the names invite the comparison. ``pdftotext -layout``
+        returns the reader's own **character grid**; this returns **rows of blocks**,
+        because a recogniser reports where each block starts and not how wide its
+        column is. Padding that into a grid would synthesise whitespace no
+        measurement supports.
+
+        Args:
+            path: The document to read.
+            pages: The one-based page numbers to read.
+            dpi: The resolution the boxes are expressed in.
+            lang: The language hint.
+            line_tolerance: How far apart two tokens may sit and still share a row,
+                in the boxes' units at ``dpi``. Required: the legacy's ``25.0`` was
+                in PDF points, so ``25.0 * dpi / 72`` reproduces it and a constant
+                here could not.
+            orientation: ``horizontal`` or ``vertical``.
+
+        Returns:
+            The ordered text, or the read's own typed ``Reason`` — a selection the
+            engine cannot read refuses here exactly as it refuses in ``read``.
+
+        """
+        outcome = self.read(path, pages, dpi, lang)
+        if outcome.reason is not None or outcome.value is None:
+            return KernelResult(
+                value=None,
+                evidence=outcome.evidence,
+                reason=outcome.reason,
+            )
+
+        laid_out = ocr_layout.layout(
+            outcome.value.tokens,
+            line_tolerance=line_tolerance,
+            orientation=orientation,
+        )
+        if laid_out.reason is not None:
+            # The read succeeded and produced no text. That is the layout's own
+            # blank, and reporting it from here keeps the two operations'
+            # vocabularies the same word for the same fact.
+            return KernelResult(
+                value=None,
+                evidence=laid_out.evidence,
+                reason=laid_out.reason,
+            )
+
+        return laid_out
 
 
 # --- Module helpers ----------------------------------------------------------

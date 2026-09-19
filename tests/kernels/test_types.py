@@ -1157,6 +1157,19 @@ def test_boundary_package_contains_only_the_expected_modules() -> None:
         # injected engine mapping, which is what keeps this file free of an adapter
         # import.
         "resolution.py",
+        # `ocr.py` is K4's analysis, added by the OCR layout path. It is the
+        # counterpart of the row-order half of K2 rather than a second K4: it turns
+        # the positioned tokens `adapters/docling.py` already returns into rows, and
+        # it names no vendor and no adapter - the engine arrives as tokens, so this
+        # module is testable with none installed.
+        #
+        # `ports/ocr.py` holds the *contract* (`OcrEngine`, `ReadResult`,
+        # `PageStatus`); this holds the *reading*, which the port deliberately does
+        # not carry (`prd.md` FR-17: reading order belongs to the Reconstructor).
+        # The two share a name because they are the same capability seen from the
+        # two sides of the boundary, exactly as `kernels/pdf.py` and `ports/pdf.py`
+        # do.
+        "ocr.py",
     }
     actual = {path.name for path in PACKAGE_ROOT.glob("*.py")}
 
