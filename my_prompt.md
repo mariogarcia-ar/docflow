@@ -12,35 +12,37 @@ entrada > proceso > salida
 
 ---
 
-imagen
-arreglar 
-- docflow-kernel image rescale tests/fixtures/otros/4c261bc8-3b30-4493-b5d4-6f499cde014e.jpeg --target-dpi 72
-- y el save 
+
+**Kernels and methods (from `quickstart`)**
+
+- **K1 `orchestrator`** — `plan`, `run`, `status`, `jobs`, `pause`, `resume`, `stop`, `ledger-read`, `manifest-rebuild`
+- **K2 `pdf`** — `probe`, `classify`, `tokens`, `render`, `split` · adapter-only: `effective_dpi`, `layout_text`
+- **K3 `image`** — `info`, `load`, `legibility`, `rescale`, `crop`
+- **K4 `ocr`** — `capabilities`, `engine_info`, `read` · adapter-only: `layout`
+- **K5 `llm.local`** — `capabilities`, `warm`, `structured`, `vision`, `judge`
+- **K6 `llm.frontier`** — `capabilities`, `warm`, `structured`, `vision`, `judge`
+- **K7 `store`** — `put`, `get`, `verify`, `ls`, `ledger-read`, `manifest-rebuild`
+- **K8 `registry`** — `validate`, `hash`, `show`, `ls`
+- **Bench (`docflow-kernel`)** — `--list`, `<kernel> <operation> [flags]`, `--repeat N`
+- **Declared but not implemented (exit `4`)** — `pdf facts`, `pdf images`, `image deskew`, `image phash`, `image tile`, `llm.local ps`, `llm.local pull`, `llm.local generate`, `llm.frontier judge`, `llm.frontier count-tokens`
 
 
-en pdf 
-- probe 
-- clasiffy : ver el tema de mixed
-- tokens : tenemos que tener uno que sea el texto como pdftotext --layout 
 
-```bash
-docflow-kernel pdf probe tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf
+La idea de los kernels es tener una primitivas que luego seran usadas por componentes y pipelines.
+Los mismos deben de ser usable desde linea de comandos para realizar pruebas antes de avanzar.
+Los kernels son necesario:
+- pdf: cortar en paginas los pdf, determinar si son mas texto que imagenes, si son mas textos que imagenes usar pdftotext --layout para obtener el texto y guardarlo en un archivo, si es una imagen poder exportarla a imagen para su posterior tratamiento con ocr de imagenes
 
-docflow-kernel pdf classify tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1
+- imagenes: redimensionarlas por dpi y size, recortarlas, validar su legibilidad
 
-docflow-kernel pdf tokens tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf
+- ocr: tomar una imagen y extraer su texto en un archivo respetando lo mas posible el layout del mismo
 
+- llm.local: modelos no de vison le envio un prompt con el texto extraido del ocr para extraer campos , para modelos de vision le envio la imagen adecuada con prompts para que extraingan los valores de los campos 
 
-docflow-kernel pdf render tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --page 1 --dpi 72 --save /tmp/out
-
-docflow-kernel pdf layout tests/fixtures/pdf_aptos_layout/242823d2-afd3-4107-a49c-ce382592c6a5.pdf --pages 1
+- llm.frontier: envio la imagen adecuada con prompts de mas alto nivel para extrear los campos, puedo tambien enviarle el resultado del llm.local en conjunto a la imagen original para que analizce la eficacia 
 
 
-docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 1,2
-docflow-kernel pdf split tests/fixtures/pdf_aptos_layout/9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf --pages 11-22
 
-s
-```
 ---
 
 add cli examples to 
