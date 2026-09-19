@@ -1698,12 +1698,54 @@ def test_probe_helpers_answer_none_when_nothing_is_missing(
     monkeypatch.setattr(cli.shutil, "which", lambda binary: None)
     assert cli._binary_absent("pdftotext") == "pdftotext not on PATH"
 
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-    assert cli._provider_key_absent() is None
 
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    assert cli._provider_key_absent() == "no provider key in the environment"
+def test_the_frontier_probe_reads_the_name_the_adapter_reads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """K6's availability probe names the variable the adapter actually reads.
+
+    **This was a real defect, and it lied in both directions.** The probe read the
+    providers' own SDK conventions (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``), which
+    **nothing in this build reads** — K6 takes the key off the environment itself and
+    never through a provider SDK. Measured: with only ``ANTHROPIC_API_KEY`` set,
+    ``--list`` answered ``available: True`` while ``FrontierEngine`` could not make a
+    call; with only ``DOCFLOW_FRONTIER_KEY`` set — the credential that *works* — it
+    answered ``available: False``.
+
+    An availability answer that disagrees with the thing whose availability it
+    reports is worse than no answer, because a caller routes on it.
+
+    **The assertion is a set comparison against the adapter's own constant, not a
+    substring check.** A substring check on the string ``"DOCFLOW_FRONTIER_KEY"``
+    would stay green if the tuple gained a second, useless name; comparing the *sets*
+    is what pins the probe to exactly what the adapter reads. The dispatcher cannot
+    import the adapter (that is a layering rule with its own test), so the constant is
+    declared as data in both places and **this test is the thing that keeps them
+    equal** — the same shape the flag vocabulary uses.
+
+    """
+    from docflow.adapters import (  # pylint: disable=import-outside-toplevel
+        frontier,
+    )
+
+    assert set(cli.FRONTIER_KEY_NAMES) == {frontier.ENV_KEY}
+
+    # And the probe is wired to that literal rather than to its own copy of it: with
+    # the adapter's variable set, the probe finds a key.
+    with monkeypatch.context() as patch:
+        patch.delenv("ANTHROPIC_API_KEY", raising=False)
+        patch.delenv("OPENAI_API_KEY", raising=False)
+        patch.delenv("DOCFLOW_FRONTIER_KEY", raising=False)
+        assert cli._provider_key_absent() == "no provider key in the environment"
+        patch.setenv(frontier.ENV_KEY, "a-key")
+        assert cli._provider_key_absent() is None
+
+    # The old names are *not* enough, which is the half that made the defect. Asserted
+    # explicitly so a future "let us accept both" edit has to argue with a failing test.
+    with monkeypatch.context() as patch:
+        patch.delenv("DOCFLOW_FRONTIER_KEY", raising=False)
+        patch.setenv("ANTHROPIC_API_KEY", "a-key-nothing-reads")
+        assert cli._provider_key_absent() == "no provider key in the environment"
 
     assert cli._environment_has("PATH") is True
     assert cli._environment_has("DOCFLOW_NEVER_SET") is False

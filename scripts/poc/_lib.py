@@ -26,16 +26,22 @@ Two differences from the shell drivers, both forced rather than chosen:
   probe that invented its own encoder would be a second source of truth. So the
   reporter *describes* a value and never dumps it.
 
-This module imports **standard library only**, and that is a constraint rather
-than a coincidence: it has to be importable before `docflow` is on `sys.path`, so
-it cannot import `docflow`. Values are therefore recognised structurally - by the
-members they carry - not by `isinstance` against a boundary type.
+This module imports **standard library only at module level**, and that is a
+constraint rather than a coincidence: it has to be importable before `docflow` is on
+`sys.path`, so it cannot import `docflow` at the top. Values are therefore recognised
+structurally - by the members they carry - not by `isinstance` against a boundary
+type.
+
+`bootstrap()` then loads `.env` and, to parse it, imports `docflow.cli.read_dotenv`
+**inside the function** — by which point `src/` is on the path, so the constraint holds
+and the `.env` format keeps its single owner.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import pathlib
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -47,6 +53,7 @@ __all__: list[str] = [
     "OUTCOMES",
     "Outcome",
     "bootstrap",
+    "load_env",
     "note",
     "out_dir",
     "policy",
@@ -67,6 +74,10 @@ ROOT: Final[pathlib.Path] = pathlib.Path(__file__).resolve().parents[2]
 
 #: The physical package root. The import is `docflow.…`; this is where it lives.
 SRC: Final[pathlib.Path] = ROOT / "src"
+
+#: The `.env` file, at the repository root. It is git-ignored (`.gitignore`), and
+#: a checkout without one is the normal case rather than an error.
+DOTENV_PATH: Final[pathlib.Path] = ROOT / ".env"
 
 #: The corpus policy asset. A threshold is never a constant in a probe: `ADR-009`
 #: puts it in the registry with no override, and a hardcoded one here would make
@@ -99,16 +110,85 @@ DEFAULT_OUT: Final[pathlib.Path] = ROOT / "var" / "poc"
 _OUT: pathlib.Path = DEFAULT_OUT
 
 
-def bootstrap() -> None:
-    """Put `src/` on `sys.path` so `import docflow` resolves.
+def bootstrap() -> int:
+    """Put `src/` on `sys.path` so `import docflow` resolves, and load `.env`.
 
     Called explicitly by each driver **before** it imports `docflow`, because
     `pyproject.toml`'s `pythonpath = ["src"]` applies to `pytest` and to nothing
     else. Idempotent, so calling it twice is harmless.
+
+    **The `.env` load is here because a probe drove a live adapter and found
+    nothing.** Measured: with `DOCFLOW_FRONTIER_KEY` written into `.env` and
+    nothing exported, `llm_frontier.py` reported `DOCFLOW_FRONTIER_KEY unset` —
+    the file existed, held the credential, and the adapter could not see it.
+
+    The mechanism is worth stating, because neither layer is wrong on its own:
+
+    - **The adapters read `os.environ` and only `os.environ`** —
+      `frontier.py` reads its key that way deliberately, and it is right to. A
+      kernel must not choose *where* an operational setting comes from; that
+      decision belongs above it (`prd.md` FR-15, `NFR-05`).
+    - **`os.environ.get` cannot see a file.** Nothing in the repository was
+      parsing `.env` into the environment, so the file was inert for every caller
+      that is not the product CLI.
+
+    **The bench is the layer that decides, so the bench loads it.** The product
+    CLI already resolves `CLI flag → environment → .env → built-in default`
+    (`NFR-06`); a probe has no CLI layer, so its chain is `environment → .env`,
+    which is what `os.environ.setdefault` gives: a variable already exported wins,
+    exactly as `NFR-06` orders it.
+
+    The **parser is not reimplemented here.** `docflow.cli.read_dotenv` is the one
+    owner of the `.env` format in this repository, and a second reader would be a
+    second answer to *what does this file mean* — the two drift on the first
+    quoted value and nobody finds out. Importing it is not the bench going
+    *through* the CLI: it is a probe reusing a parser, and no command, dispatcher
+    or envelope is involved.
+
+    The import is **function-local**, which is what keeps this module importable
+    before `docflow` is on the path — the constraint the module docstring states.
+    It runs *after* the `sys.path` insert below, so `docflow` resolves by then.
+
+    Returns:
+        How many variables the `.env` contributed. Reported rather than printed,
+        so a driver can say so and a probe that does not care stays quiet.
+
     """
     text = str(SRC)
     if text not in sys.path:
         sys.path.insert(0, text)
+
+    return load_env()
+
+
+def load_env(path: pathlib.Path | None = None) -> int:
+    """Load a `.env` into the process environment, without overriding it.
+
+    Args:
+        path: The file to read, defaulting to :data:`DOTENV_PATH`. An absent file
+            loads nothing, because a checkout without a `.env` is the normal case.
+
+    Returns:
+        How many variables were set. Reported rather than printed: a driver that
+        wants to say so can, and one that does not is not made noisy.
+
+    """
+    from docflow.cli import read_dotenv  # pylint: disable=import-outside-toplevel
+
+    values = read_dotenv(DOTENV_PATH if path is None else path)
+    set_count = 0
+    for name, value in values.items():
+        # `setdefault`, never assignment: a variable already exported outranks the
+        # file, which is the order `NFR-06` declares. Assignment would silently
+        # invert it, and `DOCFLOW_FRONTIER_KEY=x python driver.py` would appear to
+        # be ignored. An empty value is skipped for the same reason the CLI's own
+        # resolver skips it: a commented-out `KEY=` in a template is not a setting.
+        if value == "" or os.environ.get(name) is not None:
+            continue
+        os.environ[name] = value
+        set_count += 1
+
+    return set_count
 
 
 def out_dir() -> pathlib.Path:

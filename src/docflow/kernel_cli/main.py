@@ -459,25 +459,49 @@ def _binary_absent(binary: str) -> str | None:
     return f"{binary} not on PATH"
 
 
+#: The environment variables that satisfy K6's credential precondition, **in the
+#: names the adapter reads**.
+#:
+#: A literal rather than an import, and that is the layering rule rather than a
+#: preference: this dispatcher may not reach an adapter, and
+#: `test_the_dispatcher_reaches_nothing_above_the_kernel_layer` asserts it. So the
+#: name is declared as **data** here and **pinned to the adapter's own constant by a
+#: test** (`test_the_frontier_probe_reads_the_name_the_adapter_reads`), which is the
+#: same shape this surface already uses for the flag vocabulary: two lists, one test,
+#: so they cannot drift in silence. A comment asking them to agree would not.
+#:
+#: A tuple because a second provider would add a name, not a branch.
+FRONTIER_KEY_NAMES: Final[tuple[str, ...]] = ("DOCFLOW_FRONTIER_KEY",)
+
+
 def _provider_key_absent() -> str | None:
     """Report the reason no frontier provider key is present, or ``None``.
 
     Secrets arrive from the environment only - there is no ``--api-key`` flag and
-    never will be - so the presence of the SDK's own variable is the precondition
-    this probe can check without an adapter.
+    never will be - so the presence of the variable the **adapter itself reads** is
+    the precondition this probe checks.
+
+    **The name is the fix for a real defect.** This probe used to read the providers'
+    own SDK conventions - ``ANTHROPIC_API_KEY`` and ``OPENAI_API_KEY`` - which
+    **nothing in this build reads**: K6 takes the key off the environment itself and
+    never through a provider SDK. Measured, and wrong in both directions:
+
+    - with only ``ANTHROPIC_API_KEY`` set, ``--list`` reported `available: True`
+      while ``FrontierEngine`` could not make a call at all;
+    - with only the credential that *works* set, it reported `available: False` with
+      `detail: "no provider key in the environment"`.
+
+    An availability answer that disagrees with the thing whose availability it
+    reports is worse than no answer, because a caller routes on it.
 
     Returns:
         The reason, or ``None``.
 
     """
-    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
+    for name in FRONTIER_KEY_NAMES:
         if _environment_has(name):
             return None
     return "no provider key in the environment"
-    # TODO: [MVP] The variable's canonical name belongs to `S3-T12`, which owns
-    # `.env.example` and the operational-settings vocabulary. Until then the
-    # probe reads the two provider SDKs' own conventions, so it cannot invent a
-    # name that a later task would have to contradict.
 
 
 def _environment_has(name: str) -> bool:

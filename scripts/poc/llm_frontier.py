@@ -287,7 +287,13 @@ def extract_from_image(
         engine.vision,
         model,
         FIELD_PROMPT if prompt is None else prompt,
-        _image(_lib.CASE_IMAGE) if images is None else images,
+        # **A list, because the port declares `Sequence[Bytes]`.** This was a bare
+        # `Bytes` and it was a real defect: `_generate` iterates the images to build
+        # the message, so a single `Bytes` raised `TypeError: 'Bytes' object is not
+        # iterable`. It stayed invisible while no credential was configured, because
+        # every call refused at `provider_unavailable` **before** anything reached
+        # the images - the defect was in the first line that ran once a key existed.
+        [_image(_lib.CASE_IMAGE)] if images is None else images,
         FIELD_SCHEMA if schema is None else schema,
         expect=expect,
     )

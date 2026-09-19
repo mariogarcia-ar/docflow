@@ -82,7 +82,7 @@ from typing import Any, Final
 from docflow.adapters._json_object import load_object
 from docflow.kernels.types import CallRecord, Evidence, KernelResult, Reason
 
-__all__: list[str] = ["FrontierEngine"]
+__all__: list[str] = ["ENV_HOST", "ENV_KEY", "FrontierEngine"]
 
 # --- Reason codes, from the closed set of `kernel-cli.md` §5 -----------------
 
@@ -100,10 +100,23 @@ _CODE_UNSUPPORTED_FORMAT: Final[str] = "unsupported_format"
 # would put a key on a command line and into a process listing (`kernel-cli.md` §9).
 
 #: The environment variable naming the provider's base URL.
-_ENV_HOST: Final[str] = "DOCFLOW_FRONTIER_HOST"
+#: **Public** because the kernel-CLI's availability probe reports *whether this
+#: adapter can be used*, and a probe that guessed the name would disagree with the
+#: adapter that reads it. Measured, before this was shared: `--list` answered
+#: `available: True` with only `ANTHROPIC_API_KEY` set - a name **nothing** in this
+#: build reads - and `available: False` with `DOCFLOW_FRONTIER_KEY` set, the name
+#: this adapter actually uses. Both directions were wrong.
+ENV_HOST: Final[str] = "DOCFLOW_FRONTIER_HOST"
 
-#: The environment variable holding the API key. Read here and nowhere else.
-_ENV_KEY: Final[str] = "DOCFLOW_FRONTIER_KEY"
+#: The environment variable holding the API key, and the only place a credential is
+#: ever read. Public for the reason `ENV_HOST` is: the probe and the reader must name
+#: the same variable, and one of them has to be the authority.
+ENV_KEY: Final[str] = "DOCFLOW_FRONTIER_KEY"
+
+#: Kept as the private spellings the module body reads, bound to the public names so
+#: there is exactly one string per variable.
+_ENV_HOST: Final[str] = ENV_HOST
+_ENV_KEY: Final[str] = ENV_KEY
 
 #: The provider this adapter speaks to. One provider in Stage 1 (`# TODO: [MVP]`:
 #: a second provider, batch API, token counting).
