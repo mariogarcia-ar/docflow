@@ -1,6 +1,6 @@
 revisar que introducimos y rompimos ocn el modelo 
 
-cli > kernel > port > adapter 
+script.sh > cli > kernel > port > adapter 
 
 revisar sobreingenieria, usar tavily para identificar si una funcionalidad ya existe: 
 hay muchas cosas que lo resuelven utilitarios de linux , python, u otras librerias
