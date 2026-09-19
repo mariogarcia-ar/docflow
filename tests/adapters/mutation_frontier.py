@@ -126,6 +126,35 @@ MUTATIONS: list[tuple[str, str, str, set[str]]] = [
         "    if raw is None:",
         {"test_a_missing_ceiling_is_a_typed_reason_not_a_crash"},
     ),
+    (
+        # The regression this harness exists for: the schema was withheld from
+        # `vision` by wrapping this block in `if not vision:`, and the suite stayed
+        # green because its only vision test asserted the image block. The mutation
+        # restores that exact defect, both statements, so the two entry points
+        # diverge by the constraint as well as by the images.
+        "M15: withhold the schema constraint from a vision call",
+        '        body["tools"] = [\n'
+        "            {\n"
+        '                "name": "emit",\n'
+        '                "description": "Return the structured answer.",\n'
+        '                "input_schema": dict(schema),\n'
+        "            }\n"
+        "        ]\n"
+        '        body["tool_choice"] = {"type": "tool", "name": "emit"}',
+        "        if not vision:\n"
+        '            body["tools"] = [\n'
+        "                {\n"
+        '                    "name": "emit",\n'
+        '                    "description": "Return the structured answer.",\n'
+        '                    "input_schema": dict(schema),\n'
+        "                }\n"
+        "            ]\n"
+        '            body["tool_choice"] = {"type": "tool", "name": "emit"}',
+        {
+            "test_a_vision_call_sends_the_schema_it_was_given",
+            "test_both_entry_points_send_the_same_schema_constraint",
+        },
+    ),
 ]
 
 

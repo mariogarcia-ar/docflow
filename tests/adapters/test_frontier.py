@@ -883,3 +883,97 @@ def test_an_image_is_encoded_onto_the_message() -> None:
     image = next(block for block in blocks if block["type"] == "image")
     assert image["source"]["media_type"] == "image/png"
     assert image["source"]["data"] == "cG5n"
+
+
+def test_a_vision_call_sends_the_schema_it_was_given() -> None:
+    """A vision call constrains the answer, and does not merely hope for one.
+
+    **This was a real defect, and it is the reason the test exists.** The schema was
+    sent behind `if not vision:`, so `vision` accepted a schema, echoed it back in
+    `observed.declared_schema`, and never put it on the wire. Measured with the
+    schema withheld: a `tool_use` block and a text block containing JSON both
+    parsed — the defect is invisible whenever the model cooperates — while prose
+    (*"El total es 7 pesos."*) and a JSON code fence returned `unsupported_format`,
+    a failure of *this adapter's parsing* reported against the provider.
+
+    The assertion is deliberately about the **request body** and not about the
+    parsed value: asserting that a cooperative stub's JSON parsed says nothing about
+    whether a constraint was sent, which is exactly how the defect survived the
+    neighbouring image test. The image is asserted present in the same call, so a
+    fix that constrained the schema by dropping the pixels cannot pass.
+
+    """
+    from docflow.kernels.types import Bytes  # pylint: disable=import-outside-toplevel
+
+    schema = {
+        "type": "object",
+        "properties": {"total": {"type": "integer"}},
+        "required": ["total"],
+        "additionalProperties": False,
+    }
+    client = _StubClient(_Response(200, PROVIDER_BODY))
+    engine = FrontierEngine(base_url="http://stub", client=client)
+
+    engine.vision(
+        "anthropic:m",
+        "describe",
+        [Bytes(data=b"png", media_type="image/png")],
+        schema,
+    )
+
+    _path, sent = client.calls[0]
+    tools = sent["tools"]
+    assert [tool["name"] for tool in tools] == ["emit"]
+    assert tools[0]["input_schema"] == schema
+    assert sent["tool_choice"] == {"type": "tool", "name": "emit"}
+    # The pixels and the constraint travel together: this is still a vision call.
+    assert [b["type"] for b in sent["messages"][0]["content"]] == ["text", "image"]
+
+
+def test_both_entry_points_send_the_same_schema_constraint() -> None:
+    """`structured` and `vision` differ by the images alone, never by the schema.
+
+    The two entry points share one generation path, and the property that makes them
+    one operation rather than two is that the constraint is identical. Comparing the
+    whole bodies catches a divergence *anywhere* in them, not only the key this suite
+    happened to name — the defect this guards against was one `if` around one key.
+
+    """
+    from docflow.kernels.types import Bytes  # pylint: disable=import-outside-toplevel
+
+    schema = {"type": "object", "properties": {"total": {"type": "integer"}}}
+
+    def body_of(call: str) -> dict:
+        """Return the request body one entry point sends.
+
+        Args:
+            call: ``"structured"`` or ``"vision"``.
+
+        Returns:
+            The body the adapter posted.
+
+        """
+        client = _StubClient(_Response(200, PROVIDER_BODY))
+        engine = FrontierEngine(base_url="http://stub", client=client)
+        if call == "vision":
+            engine.vision(
+                "anthropic:m",
+                "p",
+                [Bytes(data=b"png", media_type="image/png")],
+                schema,
+            )
+        else:
+            engine.structured("anthropic:m", "p", schema)
+        return client.calls[0][1]
+
+    text_call = body_of("structured")
+    image_call = body_of("vision")
+
+    assert text_call["tools"] == image_call["tools"]
+    assert text_call["tool_choice"] == image_call["tool_choice"]
+    # The one intended difference: the image block rides on the message.
+    assert [b["type"] for b in text_call["messages"][0]["content"]] == ["text"]
+    assert [b["type"] for b in image_call["messages"][0]["content"]] == [
+        "text",
+        "image",
+    ]

@@ -33,6 +33,13 @@ What this adapter never does
   provider fails with ``provider_unknown``; a name that resolves to nothing fails with
   ``model_unknown``. Nothing resolves to a working model by accident
   (`kernel-cli.md` §8, §14).
+- **No schema accepted and then not sent.** The frozen port declares
+  ``vision(model, prompt, images, schema)`` — *"the same, about images"* — and
+  ``kernel-cli.md`` §9 requires ``--schema-file`` on ``llm.frontier vision``. Both entry
+  points therefore put the schema in the request as a forced tool call, so the answer is
+  **constrained during generation** rather than parsed afterwards and hoped for. This
+  was a real defect: the constraint sat behind an ``if not vision``, which made a
+  `vision` call report a schema it never sent.
 - **No secret in a parameter.** There is no API key on any signature. The key is read
   from the environment, so no call path can take one from a command line or a
   descriptor (`kernel-cli.md` §9, K6).
@@ -644,18 +651,34 @@ class FrontierEngine:
         }
         body.update(_sampling_parameters())
 
-        if not vision:
-            # The schema is sent as a tool the model must call, which is how this
-            # API constrains a structured answer. A vision call keeps the same
-            # mechanism; the images ride on the message.
-            body["tools"] = [
-                {
-                    "name": "emit",
-                    "description": "Return the structured answer.",
-                    "input_schema": dict(schema),
-                }
-            ]
-            body["tool_choice"] = {"type": "tool", "name": "emit"}
+        # The schema is sent as a tool the model *must* call, which is how this API
+        # constrains a structured answer rather than merely describing one. It is
+        # sent for **both** entry points, and that is the correction of a real defect:
+        # this block used to sit behind `if not vision`, so a `vision` call accepted a
+        # schema, echoed it back in `observed.declared_schema`, and **never sent it**.
+        # The constraint silently degraded into a hope that the model would format its
+        # own answer as JSON.
+        #
+        # Measured with the schema withheld, against `{total: integer}`: a `tool_use`
+        # block parsed and a text block that happened to contain JSON also parsed —
+        # so the defect is invisible whenever the model cooperates — while prose
+        # (*"El total es 7 pesos."*) and a JSON code fence both returned
+        # `unsupported_format`. That is a failure of **this adapter's parsing**
+        # reported against the provider, and the honest read of it is that the caller
+        # asked for a constraint and did not get one.
+        #
+        # `OllamaEngine._generate` sends its `format` unconditionally, so the two
+        # adapters agree on this. Nothing about the images changes: they ride on the
+        # message either way, and the tool constrains the shape of the answer about
+        # them, which is exactly what `vision(..., schema)` promises in the port.
+        body["tools"] = [
+            {
+                "name": "emit",
+                "description": "Return the structured answer.",
+                "input_schema": dict(schema),
+            }
+        ]
+        body["tool_choice"] = {"type": "tool", "name": "emit"}
 
         started = time.monotonic()
         try:
