@@ -305,6 +305,47 @@ refused or invalid gets `<stem>.skipped.json` — never `<stem>.json`, because t
 name means *these are the extracted fields*, and reading a skip record as an empty
 extraction is the collapse this project exists to prevent.
 
+#### The §6 steps, and the two that are deliberately not here
+
+§6 reads: classify → **validate by kind** (legibility for an image, password for a
+PDF) → produce text → **validate the content** → extract fields → mirror. The two
+validation steps used to be missing; what they became is worth stating because one of
+them is *half* the flow's sentence:
+
+- **a PDF is probed before anything is extracted from it.** K2 answers a protected
+  document with a **typed refusal** — measured on a real AES-256 file, `probe`
+  returns `value: None` and `reason.code: 'encrypted'` — so the guard is the refusal
+  branch rather than a flag read. **Nothing is ever decrypted**: a password would
+  have to arrive as an argument, and `NFR-05` keeps credentials out of parameters.
+  The flow asks *is this protected*, so *protected, skipped, said so* is the answer.
+- **the content validation is a refusal, not a judgement.** §6 asks whether the text
+  *"corresponds to the expected document type"*, and deciding that requires knowing
+  the expected type — a **later stage's** question. What runs is the one check that
+  needs no expectation, `reader.min_chars` from the registry, the same floor K2 uses.
+  A richer check would be this driver inventing a rule it cannot ground.
+
+#### Two defects the fixtures found
+
+**The render resolution was fixed at 200 DPI, and the registry says 150.** Measured
+on the committed scan fixture, which holds **120 DPI**: `render @200` returns
+`insufficient_effective_resolution` and produces **no bitmap at all** — for exactly
+the page being rendered *because* it has no text layer. The registry floor is a
+**target**, capped by what the page holds; `_render_dpi` takes the smaller of the two,
+the same shape as `batch_pdf.py::_export_dpi`. Verified after the fix: the scan
+renders at 120 and the file is written.
+
+**The OCR call passed `[1]` where `layout_rows` takes `"1"`.** All three page-taking
+drivers take the selection **as a caller writes it** — the text `--pages` accepts —
+and expand it themselves through `parse_pages`. A list reached that expansion as a
+list, so the batch died with `UsageError: page '[1]' is not a number or a range` on
+the first image it met. This is the same boundary `pdf.py` and `ocr.py` document, and
+it is why the batch is worth running rather than reading.
+
+**`skipped` and `failed` are now counted apart.** They used to be one number, which
+made a clean run over unprocessable inputs — a protected PDF, an illegible scan, a
+`.md` file — report as broken. A skip is the flow working (it asked, the document
+said no, the output says why); a failure is a file in scope that produced nothing.
+
 ### `hitl.py` and the two limits it reports
 
 1. **`judge` cannot see the page.** §7 asks to send *"el resultado de `llm.local`
