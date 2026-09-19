@@ -35,9 +35,7 @@ input directory must exist in the output even when empty (`FR-28`).
 from __future__ import annotations
 
 import argparse
-import contextlib
 import dataclasses
-import io
 import json
 import pathlib
 import shutil
@@ -54,7 +52,11 @@ _lib.bootstrap()
 # Importing the sibling drivers is what makes their methods reusable here. They are
 # imported as **modules**, not re-implemented: a second copy of `render_page` would
 # be a second answer to the same question, which is the drift this repository refuses
-# everywhere else.
+# everywhere else. The same rule is why the mirror, the walk and the skip records
+# live in `_mirror`: `batch_pdf.py` needs those and none of this driver's OCR or
+# model chain, so sharing them through a module keeps each driver's dependencies
+# proportional to what it actually does.
+import _mirror  # noqa: E402 - see the note above
 import image as image_driver  # noqa: E402 - see the note above
 import llm_local  # noqa: E402 - see the note above
 import ocr as ocr_driver  # noqa: E402 - see the note above
@@ -68,17 +70,22 @@ from docflow.adapters.pdf import PdfEngine  # noqa: E402 - see above
 __all__: list[str] = []
 
 #: Suffixes K3 accepts. Anything outside this set and K2's is *not valid* for this
-#: pipeline, and §6 names that as a third outcome rather than an error.
-IMAGE_SUFFIXES: Final[frozenset[str]] = frozenset(
-    {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp"}
-)
+#: pipeline, and §6 names that as a third outcome rather than an error. The sets are
+#: `_mirror`'s now, because `batch_pdf.py` must agree with this driver about what a
+#: PDF is - two definitions would be two answers to *is this file in scope*.
+IMAGE_SUFFIXES: Final[frozenset[str]] = _mirror.IMAGE_SUFFIXES
 
 #: Suffixes K2 accepts.
-PDF_SUFFIXES: Final[frozenset[str]] = frozenset({".pdf"})
+PDF_SUFFIXES: Final[frozenset[str]] = _mirror.PDF_SUFFIXES
 
-#: The resolution a page is rendered at before OCR. 200 DPI is the floor the
-#: registry's `diagnosis.min_dpi` declares, so a render below it would hand K4
-#: pixels the corpus considers too thin to read.
+#: The resolution a page is rendered at before OCR. 200 DPI is the floor
+#: `registry/policies/thresholds.json` declares for `diagnosis.min_dpi`, so a render
+#: below it would hand K4 pixels the corpus considers too thin to read.
+#:
+#: TODO: [MVP] Read it from the registry (`_lib.policy("diagnosis.min_dpi")`) as
+#: `batch_pdf.py` does. It is a literal here only because a `Final[int]` decided at
+#: import time cannot call a loader that needs `_lib` to be on the path first - and
+#: changing that is this file's own refactor, not a one-line edit.
 RENDER_DPI: Final[int] = 200
 
 #: The model that reads the fields. Text-only, because §6's chain hands it text.
@@ -116,11 +123,9 @@ OUTCOMES: list[FileOutcome] = []
 def classify_file(path: pathlib.Path) -> str:
     """Decide whether a file is a PDF, an image, or neither.
 
-    §6 names the third case explicitly, and it is the one the flow does not say what
-    to do about. This driver treats it as a **reported outcome** rather than a
-    failure: the file gets a mirrored entry naming `unsupported_format`, so a
-    consumer sees a document that was considered and skipped rather than one that is
-    missing with no explanation.
+    Kept as this driver's name for `_mirror.kind_of`, so a caller that already
+    reaches for `batch.classify_file` keeps working while there is one definition of
+    what a PDF is.
 
     Args:
         path: The file to classify.
@@ -129,12 +134,7 @@ def classify_file(path: pathlib.Path) -> str:
         ``"pdf"``, ``"image"``, or ``"invalid"``.
 
     """
-    suffix = path.suffix.lower()
-    if suffix in PDF_SUFFIXES:
-        return "pdf"
-    if suffix in IMAGE_SUFFIXES:
-        return "image"
-    return "invalid"
+    return _mirror.kind_of(path)
 
 
 def _relative_to(path: pathlib.Path, root: pathlib.Path) -> str:
@@ -148,20 +148,13 @@ def _relative_to(path: pathlib.Path, root: pathlib.Path) -> str:
         The relative path as a string.
 
     """
-    return path.relative_to(root).as_posix()
+    return _mirror.relative_to(path, root)
 
 
 def _silently(
     call: Callable[..., _lib.Attempt], *args: object, **kwargs: object
 ) -> _lib.Attempt:
     """Call a driver method with its console output suppressed.
-
-    The drivers print one line per probe plus assorted detail, which is right for a
-    console and wrong inside a batch: 49 probe lines per document would bury the one
-    line per file that an operator needs. The outcome is still **recorded** in
-    `_lib.OUTCOMES`, so a nested refusal keeps its bucket even though it is not
-    printed - and the returned `Attempt` carries the result, so the batch never
-    calls the adapter a second time.
 
     Args:
         call: The driver method to call.
@@ -172,9 +165,7 @@ def _silently(
         The attempt the driver returned.
 
     """
-    sink = io.StringIO()
-    with contextlib.redirect_stdout(sink):
-        return call(*args, **kwargs)
+    return _mirror.silently(call, *args, **kwargs)
 
 
 def _extract_text(
@@ -289,9 +280,6 @@ def _extract_fields(text: str) -> tuple[dict[str, object] | None, str]:
 def walk(root: pathlib.Path) -> Iterator[pathlib.Path]:
     """Yield every file under `root`, in a stable order.
 
-    Sorted rather than filesystem order, so two runs of the same tree produce the
-    same report and a diff between them means something.
-
     Args:
         root: The directory to walk.
 
@@ -299,10 +287,7 @@ def walk(root: pathlib.Path) -> Iterator[pathlib.Path]:
         Each file, sorted by its relative path.
 
     """
-    yield from sorted(
-        (path for path in root.rglob("*") if path.is_file()),
-        key=lambda path: path.relative_to(root).as_posix(),
-    )
+    yield from _mirror.walk(root)
 
 
 def process_file(
@@ -379,12 +364,6 @@ def process_file(
 def mirror_directories(root: pathlib.Path, out_root: pathlib.Path) -> int:
     """Create an output directory for every input directory, including empty ones.
 
-    `S3-T06` requires the tree to be *"preserved exactly, including empty
-    directories"*, and the first run of this driver proved why it matters: the
-    mirror check reported `missing directory: vacia/`. An empty directory is not
-    noise - it is a statement about the corpus, and a consumer comparing input to
-    output has to be able to see that it was walked and held nothing.
-
     Args:
         root: The input root.
         out_root: The output root.
@@ -393,27 +372,13 @@ def mirror_directories(root: pathlib.Path, out_root: pathlib.Path) -> int:
         How many directories exist in the output, the root included.
 
     """
-    out_root.mkdir(parents=True, exist_ok=True)
-    created = 1
-    for directory in sorted(path for path in root.rglob("*") if path.is_dir()):
-        (out_root / directory.relative_to(root)).mkdir(parents=True, exist_ok=True)
-        created += 1
-    return created
+    return _mirror.mirror_directories(root, out_root)
 
 
 def _write_skipped(
     mirror_dir: pathlib.Path, stem: str, kind: str, note: str
 ) -> pathlib.Path:
     """Record a file that was considered and deliberately not processed.
-
-    The alternative is an empty directory entry, which reads as *the file was never
-    seen*. A `.skipped.json` naming the reason makes *considered and skipped*
-    distinguishable from *missing* - the same distinction the Contract's
-    `catalog: unverified / not_run` exists to draw.
-
-    It is deliberately **not** named `<stem>.json`: that name means *these are the
-    extracted fields*, and a consumer that globbed for `.json` would read a skip
-    record as an empty extraction. A different suffix cannot be mistaken for one.
 
     Args:
         mirror_dir: The directory the document mirrors into.
@@ -425,22 +390,11 @@ def _write_skipped(
         The path written.
 
     """
-    record = {"skipped": True, "kind": kind, "reason": note}
-    target = mirror_dir / f"{stem}.skipped.json"
-    target.write_text(
-        json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    return target
+    return _mirror.write_skipped(mirror_dir, stem, kind, note)
 
 
 def verify_mirror(root: pathlib.Path, out_root: pathlib.Path) -> list[str]:
     """Check that the output tree mirrors the input tree exactly.
-
-    The mirror is the deliverable, so it is asserted rather than eyeballed
-    (`FR-28`). Two things are checked: every input file has *something* at its
-    relative path - an extracted `.txt`/`.json`, or a `.skipped.json` naming the
-    reason - and **every input directory exists in the output**, including the ones
-    that held no file (`S3-T06`).
 
     Args:
         root: The input root.
@@ -450,20 +404,7 @@ def verify_mirror(root: pathlib.Path, out_root: pathlib.Path) -> list[str]:
         One message per violation; empty when the mirror is exact.
 
     """
-    problems: list[str] = []
-
-    for directory in sorted(path for path in root.rglob("*") if path.is_dir()):
-        mirrored = out_root / directory.relative_to(root)
-        if not mirrored.is_dir():
-            problems.append(f"missing directory: {_relative_to(directory, root)}/")
-
-    for source in walk(root):
-        relative = pathlib.Path(_relative_to(source, root))
-        children = list((out_root / relative.parent).glob(f"{relative.stem}.*"))
-        if not children:
-            problems.append(f"no output for: {relative.as_posix()}")
-
-    return problems
+    return _mirror.verify_mirror(root, out_root)
 
 
 def main(argv: list[str] | None = None) -> int:

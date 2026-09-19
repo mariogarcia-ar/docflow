@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import pathlib
 import sys
+from typing import Final
 
 import _lib
 
@@ -319,10 +320,107 @@ def effective_dpi(engine: PdfEngine, path: pathlib.Path, page: int) -> None:
     _lib.run("pdf.effective_dpi", engine.effective_dpi, path, page)
 
 
+# --- The routing decision, in one place -------------------------------------
+
+
+#: The measured shapes whose content is the text layer. `mixed` is here on the
+#: bench's own call rather than the flow's: `my_kernel_flow.md` §1 names two
+#: outcomes and the kernel measures four, so *a page with both* - the text
+#: fixture, 1060 chars and 2 images - has to land somewhere. Text is read because
+#: it is already there and needs no pixels; whether that is right for a pipeline
+#: is Diagnosis's question, not this bench's.
+TEXT_SHAPES: Final[frozenset[str]] = frozenset({"text", "mixed"})
+
+
+def shape_of(engine: PdfEngine, path: pathlib.Path, page: int) -> tuple[str, str]:
+    """Measure one page's shape, or report why it could not be measured.
+
+    **A refusal can carry a shape, and `blank` is the case.** `classify` answers a
+    page that holds neither usable text nor an image with `value=None` and a
+    `blank_page` reason - while the evidence still reports `shape='blank'`, because
+    *blank* is a shape before it is a reason (`ports/pdf.py`). Reading the shape only
+    when there is a value collapses a blank page into *unmeasurable*, which is a
+    different statement: one is what the document is, the other is a failure to look.
+
+    Args:
+        engine: The K2 adapter.
+        path: The PDF to inspect.
+        page: One-based page number.
+
+    Returns:
+        The shape and the reason code. The shape is read from the evidence whenever
+        the measurement reported one, value or no value; it is the empty string only
+        when nothing measured a shape at all. The code is empty on a value.
+
+    """
+    measured = engine.classify(path, page)
+    evidence = measured.evidence
+    shape = "" if evidence is None else str(evidence.observed.get("shape", ""))
+
+    if measured.value is None:
+        reason = measured.reason
+        return shape, (reason.code if reason is not None else "unknown")
+    return shape, ""
+
+
+def route_page(
+    engine: PdfEngine,
+    path: pathlib.Path,
+    page: int,
+    shape: str,
+    dpi: int = RENDER_DPI,
+) -> tuple[str, _lib.Attempt]:
+    """Ask for the artifact the page's measured shape calls for.
+
+    **This is the one place the shape becomes an operation**, and it is here
+    because the shapes are K2's: a second copy of this mapping - in a batch driver,
+    in the aggregate `run_all.py` - is how the two drift until one of them routes a
+    scan to a text reader. The *decision* still belongs to the caller
+    (`kernel-cli.md` §3 guardrail 2); what lives here is only which operation
+    answers a shape the kernel already measured.
+
+    The **name** of the route is returned with the attempt rather than left to the
+    caller to derive: a caller that inferred it from the shape would hold a second
+    copy of this table, and a caller that inferred it from ``Attempt`` would read it
+    off nothing. A mutation that sends every page to `layout_text` must redden a
+    batch driver's report, and it only can if the name travels with the call.
+
+    A page whose shape could not be measured is treated as an image page, which is
+    the conservative branch: pixels can be read again by OCR, whereas asking a
+    text reader for a page that has no text layer yields nothing at all.
+
+    Args:
+        engine: The K2 adapter.
+        path: The PDF to process.
+        page: One-based page number.
+        shape: The shape `shape_of` measured, or ``""`` when it was refused.
+        dpi: The resolution an exported page is rendered at. A parameter rather
+            than this module's constant, because a caller's purpose decides it: this
+            bench renders at 1:1 with PDF user units to measure the adapter, while a
+            batch exporting material for K4 renders at the corpus's readable floor.
+            Writing the constant from outside would also change this driver's own
+            probes for the rest of the process.
+
+    Returns:
+        The route's name - ``"layout_text"`` or ``"render"`` - and the attempt for
+        whichever operation the shape calls for.
+
+    """
+    if shape in TEXT_SHAPES:
+        return "layout_text", layout_text(engine, path, str(page), "ok", save=False)
+    return "render", render_page(engine, path, str(page), dpi, "ok", save=False)
+
+
 # --- The requirement that spans two operations ------------------------------
 
 
-def extract_page(engine: PdfEngine, path: pathlib.Path, page: int) -> None:
+def extract_page(
+    engine: PdfEngine,
+    path: pathlib.Path,
+    page: int,
+    *,
+    save: bool = True,
+) -> _lib.Attempt:
     """Route one page to the operation its measured shape calls for.
 
     This is the shape of `my_kernel_flow.md` §1 end to end, and the routing is
@@ -339,34 +437,36 @@ def extract_page(engine: PdfEngine, path: pathlib.Path, page: int) -> None:
         engine: The K2 adapter.
         path: The PDF to process.
         page: One-based page number.
+        save: Whether to write the artifact under the driver's own output root.
+            A batch caller passes ``False`` and writes its own mirrored name.
+
+    Returns:
+        The attempt for the operation the page's shape called for.
 
     """
-    attempt = _lib.run(
-        f"pdf.extract_page[{page}]/classify", engine.classify, path, page
-    )
-    if not attempt.succeeded:
-        return
+    shape, refused = shape_of(engine, path, page)
+    if not shape:
+        _lib.note(f"pdf.extract_page[{page}]", f"classify refused: {refused}")
+        return _lib.Attempt(
+            _lib.note(f"pdf.extract_page[{page}]/refused", f"classify: {refused}"), None
+        )
 
-    measured = attempt.result
-    shape = str(measured.evidence.observed.get("shape", "?"))
+    route, routed = route_page(engine, path, page, shape)
 
-    if shape in {"text", "mixed"}:
-        named = layout_text(engine, path, str(page), "ok", save=False)
-        if named.succeeded:
+    if save and routed.succeeded:
+        if route == "layout_text":
             written = _lib.save_text(
-                f"{path.stem}-p{page}.routed.txt", named.result.value
+                f"{path.stem}-p{page}.routed.txt", routed.result.value
             )
-            print(f"         wrote {_lib.shown(written)}")
-    else:
-        rendered = render_page(engine, path, str(page), RENDER_DPI, "ok", save=False)
-        if rendered.succeeded:
+        else:
             written = _lib.save_bytes(
                 f"{path.stem}-p{page}-routed{RENDER_DPI}.png",
-                rendered.result.value.data,
+                routed.result.value.data,
             )
-            print(f"         wrote {_lib.shown(written)} (for K4)")
+        print(f"         wrote {_lib.shown(written)}")
 
-    _lib.note(f"pdf.extract_page[{page}]", f"routed on shape={shape!r}")
+    _lib.note(f"pdf.extract_page[{page}]", f"routed on shape={shape!r} -> {route}")
+    return routed
 
 
 # --- The run ----------------------------------------------------------------

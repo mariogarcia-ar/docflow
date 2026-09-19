@@ -68,15 +68,56 @@ Each probe declares the bucket it expects (`expect=`), so `run_all.py` can tell
 | `llm_local.py` | §4 | `structured` (text) and `vision` (pixels), plus truncation and the payload types |
 | `llm_frontier.py` | §5 | `vision` and `judge`; reports the gate chain when there is no credential |
 | `batch.py` | §6 | folder in, **mirrored tree out**; reuses the drivers' methods rather than re-implementing them |
+| `batch_pdf.py` | §1 | **PDF-only** batch: per page, `.txt` for text and `.png` for scans, plus a page census |
 | `hitl.py` | §7 | finds the extractions, pairs them by relative path, contrasts them, writes `review.json` |
 
-`run_all.py` aggregates the five **probe** drivers. `batch.py` and `hitl.py` are run
-explicitly, because they take a folder rather than probing fixtures:
+`_lib.py` is the reporting contract and `_mirror.py` is the folder-in/mirrored-tree-out
+plumbing the two batch drivers share (the walk, the skip records, the mirror check).
+Neither is a driver, and neither is probed by `run_all.py`.
+
+`run_all.py` aggregates the five **probe** drivers. `batch.py`, `batch_pdf.py` and
+`hitl.py` are run explicitly, because they take a folder rather than probing fixtures:
 
 ```bash
-python scripts/poc/batch.py <input-dir> --out <out-dir>
-python scripts/poc/hitl.py  <input-dir> --out <out-dir>
+python scripts/poc/batch.py     <input-dir> --out <out-dir>
+python scripts/poc/batch_pdf.py <input-dir> --out <out-dir> [--pages 1-3] [--no-save]
+python scripts/poc/hitl.py      <input-dir> --out <out-dir>
 ```
+
+### `batch_pdf.py` is `batch.py` with K3 onward taken out
+
+`batch.py` asks *what fields does this corpus hold*, and its answer costs an ONNX load
+and a generation **per document**. `batch_pdf.py` asks *what is this corpus made of* — how
+many pages are text, how many are scans, how many are blank — and its answer costs one
+`classify` **per page**. Running the first to get the second is minutes of work to obtain
+a page tally, and it is unusable on the 11k-document corpus (`prd.md`) for that reason.
+
+The unit is the **page**, not the document, and that is not cosmetic: the large fixture
+has 59 pages of which 2 report `blank_page` while the rest carry text, so a per-document
+decision would route those two to the renderer and export pageless bitmaps. Measured: a
+range *containing* a blank page is not refused by either operation — `layout_text 1-3`
+returns 1263 characters and `render 1-3` returns 208 761 bytes — so a range operation
+cannot be asked "is this range text or image" and the granularity has to be the page.
+
+| Shape | Route | Output at the mirrored path |
+|---|---|---|
+| `text`, `mixed` | `layout_text` | `<stem>-pN.txt` |
+| `image` | `render` | `<stem>-pN.png`, for K4 |
+| `blank` | none | nothing; recorded in `<stem>.pages.json` |
+| refused | none | nothing; recorded, and the run says so |
+
+A `blank` page is **not** exported: the kernel's own statement that it holds neither
+usable text nor an image, so a render would write a bitmap of nothing and hand it to OCR
+to read nothing. It is *accounted for* rather than silently dropped — `<stem>.pages.json`
+records every page's shape and route, so the census is a file a pipeline can read instead
+of a console line that scrolls away.
+
+**The export resolution is a target, not a demand.** The registry's `diagnosis.min_dpi`
+(150) is capped by each page's own measured resolution, because the adapter refuses to
+upscale and that refusal is correct — an upscaled page is larger and no more legible.
+Measured on the committed scan fixture: `render @120` returns 165 960 bytes and
+`render @150` is refused `insufficient_effective_resolution`. Asking for the floor
+blindly would leave the one page that most needs exporting with no file at all.
 
 ### `batch.py` is not K1
 
