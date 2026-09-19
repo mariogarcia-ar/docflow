@@ -70,6 +70,7 @@ Each probe declares the bucket it expects (`expect=`), so `run_all.py` can tell
 | `batch.py` | §6 | folder in, **mirrored tree out**; reuses the drivers' methods rather than re-implementing them |
 | `batch_pdf.py` | §1 | **PDF-only** batch: per page, `.txt` for text and `.png` for scans, plus a page census |
 | `batch_image.py` | §2 | **image-only** batch: size, `legibility`, the rescale to the floor, and any `--region` crop |
+| `batch_ocr.py` | §3 | **OCR-only** batch: per-page status census plus the ordered text, with the engine's stdout captured |
 | `hitl.py` | §7 | finds the extractions, pairs them by relative path, contrasts them, writes `review.json` |
 
 `_lib.py` is the reporting contract and `_mirror.py` is the folder-in/mirrored-tree-out
@@ -78,15 +79,50 @@ a whole tree and `verify_mirror_for` for a scope-limited one). Neither is a driv
 neither is probed by `run_all.py`.
 
 `run_all.py` aggregates the five **probe** drivers. `batch.py`, `batch_pdf.py`,
-`batch_image.py` and `hitl.py` are run explicitly, because they take a folder rather
-than probing fixtures:
+`batch_image.py`, `batch_ocr.py` and `hitl.py` are run explicitly, because they take
+a folder rather than probing fixtures:
 
 ```bash
 python scripts/poc/batch.py       <input-dir> --out <out-dir>
 python scripts/poc/batch_pdf.py   <input-dir> --out <out-dir> [--pages 1-3] [--no-save]
 python scripts/poc/batch_image.py <input-dir> --out <out-dir> [--assumed-dpi 96] [--region x,y,w,h]
+python scripts/poc/batch_ocr.py   <input-dir> --out <out-dir> [--pages 1-3] [--lang es]
 python scripts/poc/hitl.py        <input-dir> --out <out-dir>
 ```
+
+### `batch_ocr.py` isolates the expensive, non-deterministic step
+
+`batch.py` reaches K4 only for the pages `pdf.route_page` sent it and then goes on to
+a model; `batch_pdf.py` stops before OCR entirely. Neither answers *what does this
+folder of scans read as, page by page* — and OCR is the step whose cost (~1.5 s per
+call warm, ~10 s for the first call in a process) and determinism class make it worth
+inspecting on its own.
+
+**Both `read` and `layout` run, and that is a decision.** `layout` answers §3 — the
+text with its rows — but it **names no page**: measured, `layout 1-3` on the fixture
+whose page 2 is blank returns 680 characters and says nothing about page 2, because
+`blank_page` is raised only when *every* page in the selection is blank. `read`
+reports `page_status` per page and is the only operation that can account for one. A
+census built on `layout` alone would silently drop blank pages — precisely the loss
+this project exists to make visible.
+
+One `.txt` per document, not per page: `layout` returns a single string and names no
+page inside it, so a per-page split would be a guess. (`ocr.SEPARATOR` is the **row**
+separator `" | "`, so splitting on it would cut rows.) The per-page facts live in
+`<stem>.ocr.json`, built from `read`.
+
+A blank page gets **no** `.txt`: an empty file is indistinguishable from a read that
+produced nothing. It gets a record instead, and the run reports the count:
+
+```
+page status    pages
+blank              1
+read               5
+written            5
+```
+
+See `/memories/repo/build-and-test.md` for the measured finding that one committed
+scan fixture reads as `blank` at every DPI despite holding ink.
 
 ### `batch_image.py` runs §2 over a folder
 
