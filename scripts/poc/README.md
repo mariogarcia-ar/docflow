@@ -86,9 +86,18 @@ a folder rather than probing fixtures.
 
 ### `llm_frontier.py` asks for the same fields three ways
 
-`FIELDS.json` is the pipeline's own schema — the file `batch_llm_local.py` takes as
-`--schema` — so the K6 probes answer about the caller's fields and not about a fixture
-the driver carries. All three are handed **one** document, read twice by K2:
+`FIELDS.json` is a **probe contract, not the pipeline's schema.** It is the file
+`batch_llm_local.py` takes as `--schema`, so the K6 probes answer about a *caller's*
+fields rather than about a fixture the driver carries — and a caller's schema is
+deliberately small and therefore comparable across the three input shapes. The pipeline's
+own schema is now `registry/schemas/extraction/invoice.json` (23 fields); the two share no
+property names, on purpose, and neither stands in for the other.
+
+Its `total: {"type": "integer"}` is the very declaration measured wrong on the pipeline
+path (see *the extraction prompt and schema are registry artifacts* below). It is left as
+it stands because the probes are showing what a caller *gets handed*, and a probe that
+quietly substituted a better schema would hide that. All three are handed **one** document,
+read twice by K2:
 
 | Probe | Operation | Sent |
 |---|---|---|
@@ -364,6 +373,54 @@ it is why the batch is worth running rather than reading.
 made a clean run over unprocessable inputs — a protected PDF, an illegible scan, a
 `.md` file — report as broken. A skip is the flow working (it asked, the document
 said no, the output says why); a failure is a file in scope that produced nothing.
+
+#### The extraction prompt and schema are registry artifacts, and the reading rules are the fix
+
+The extraction step used to carry a **one-line prompt** (`"Extract the fields from this
+document's text."`) and a two-field schema with `total` declared as an `integer`. Both
+were the defect. On `casos/66cd35e9-…`, whose text prints `$ 17.898,30`, the same model
+returned `1789830`, `1789830` then `17898` over three runs: the schema told the model the
+answer was a number, so a decimal separator it could plainly read had to go. Nothing
+errored — a wrong number is a valid number.
+
+Both now live in `registry/`, as **two artifacts answering two questions**:
+
+| Artifact | Key | Says |
+|---|---|---|
+| `registry/prompts/extraction/invoice.txt` | `prompts/extraction/invoice.txt` | *what to look for, and how to read it* |
+| `registry/schemas/extraction/invoice.json` | `schemas/extraction/invoice.json` | *what shape the answer must have* |
+
+They are separate files because they change for different reasons and on different
+schedules — a prompt is edited when the reader gets something wrong, a schema when the
+downstream contract moves — and a single file forces the two edits into one diff. The
+cost of that split is drift, paid for by a test: `tests/kernels/test_committed_registry.py`
+compares the schema's `required` against the prompt's own text, in both directions. It
+earned its place immediately, by catching **a defect in the prompt as first written**:
+16 fields were required by the schema and named nowhere in the instructions, so the model
+was constrained to answer with keys it had never been told about.
+
+The prompt's substance comes from `legacy/prompts/11-extraction_key_value_invoice_prompt.yaml`:
+22 fiscal fields, the printed format of each, a `comprobante_valido`/`motivo_rechazo` pair
+so the model can **refuse a non-receipt instead of inventing fields**, and the rule that
+settles the CUIT (cut at the first character that is not a digit or the number's own
+hyphen). Rule 4 is the load-bearing one for the defect above: **an amount is returned as
+printed, as text** — `17.898,30` returns `"17.898,30"`. Verified against the schema too:
+`string` keeps `17898.30`, whereas a `number` gives back `17898.3` and silently loses the
+trailing zero.
+
+Measured with the registry pair, three runs each:
+
+| model | returned as printed |
+|---|---|
+| `deepseek:deepseek-v4-pro` (API) | **3/3** |
+| `deepseek-r1:1.5b` (local — what this driver calls) | **1/3** observed: `17.898,30`, `$17.898,30`, `17,898,30` |
+
+So the prompt fixes the **format** and the model fixes the **reliability** — and that is
+the honest reading of the original defect: it was *prompt **and** model capacity*, not
+prompt alone. A 1.5B model also mis-echoes key names (`improve_total_facturao`,
+`cuit_copiano`), which no prompt can repair. `batch_llm_frontier.py` is the contrast step
+that makes the gap visible, and the artifacts are read through **K8** (`load_registry`)
+rather than by path, so the manifest stays the one authority on what exists.
 
 #### A document is read per page, and capped at three — and the cap is announced
 

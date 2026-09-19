@@ -57,6 +57,7 @@ __all__: list[str] = [
     "note",
     "out_dir",
     "policy",
+    "registry",
     "reset",
     "run",
     "save_bytes",
@@ -271,6 +272,46 @@ def policy(key: str) -> Any:
             "caller while reporting success."
         )
     return values[key]
+
+
+def registry() -> Mapping[str, Any]:
+    """Load the registry's declared assets through **K8**, not by reading files.
+
+    A driver that needs a prompt or a schema asks here rather than opening a path
+    itself. Two reasons, and the second is the one that matters:
+
+    - **The manifest is the authority on what exists** (`FR-10`). `registry()`
+      returns exactly the assets `registry/manifest.json` declares, so a driver
+      cannot reach an undeclared file and cannot miss an asset the manifest adds.
+    - **A second reader is a second answer.** `POLICY_ASSET` above is read directly,
+      which is why policy is the one asset with its own path here; every other asset
+      goes through K8 so that *what the registry holds* has one definition.
+
+    The value is the loaded :class:`~docflow.kernels.registry.Registry`'s own asset
+    mapping — key to `RegistryAsset`, whose `content` is the file's bytes. It is
+    returned rather than decoded because an asset may be text or JSON, and which one
+    it is belongs to the caller that knows what it asked for.
+
+    Returns:
+        Asset key to the loaded asset.
+
+    Raises:
+        OSError: When the registry cannot be loaded at all. The message carries K8's
+            own typed reason, because *which asset is missing or invalid* is exactly
+            what a caller has to act on and a generic failure would hide it.
+
+    """
+    from docflow.kernels.registry import (  # pylint: disable=import-outside-toplevel
+        load_registry,
+    )
+
+    loaded = load_registry(ROOT / "registry")
+    if loaded.value is None:
+        reason = loaded.reason
+        detail = reason.message if reason is not None else "no reason reported"
+        raise OSError(f"the registry could not be loaded: {detail}")
+
+    return loaded.value.assets
 
 
 # --- Buckets ----------------------------------------------------------------

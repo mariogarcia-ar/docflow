@@ -693,6 +693,91 @@ def _ocr_text(
     return attempt.result.value, "render+ocr", ""
 
 
+#: The registry asset keys this driver extracts with. **Two artifacts, one per
+#: concern**: the prompt says what to look for and how to read it, the schema says what
+#: shape the answer must have.
+#:
+#: They live in the registry because a prompt is *content*, not code (`FR-10` names K8
+#: as the home of prompts and schemas), and because the alternative is what this driver
+#: used to do: a one-line prompt and a two-field schema hardcoded here. Measured on
+#: `casos/66cd35e9-\u2026-p1.txt`, same document and same model:
+#:
+#: | | hardcoded | from the registry |
+#: |---|---|---|
+#: | total over 3 runs | `1789830` \u00d7 2, then `17898` | `17.898,30` \u00d7 3 |
+#:
+#: The document prints `$ 17.898,30`. The old schema declared `total` as an **integer**,
+#: which forces the model to drop the decimal separator it can plainly see, and the
+#: one-line prompt gave it no rule to refuse with — no `comprobante_valido`, no
+#: instruction about cut-off characters. Both are now the legacy prompt's own
+#: vocabulary and rules, and the schema declares every amount as a **string** so the
+#: printed form survives: measured, `number` returns `17898.3` where `string` returns
+#: `17898.30`.
+PROMPT_KEY: Final[str] = "prompts/extraction/invoice.txt"
+SCHEMA_KEY: Final[str] = "schemas/extraction/invoice.json"
+
+#: Where the placeholder's text is substituted in the prompt. The prompt marks the
+#: document with delimiters rather than letting it run on, so the model can tell the
+#: instructions from the material they are about.
+TEXT_PLACEHOLDER: Final[str] = "{text}"
+
+
+def _assets() -> tuple[str, dict[str, object]]:
+    """Load the prompt and the schema from the registry.
+
+    Load-or-refuse, exactly as the other drivers read policy: an absent or invalid
+    asset is reported, never defaulted. A prompt that arrived from nowhere would make
+    this run answer a question about a fixture while claiming to answer about the
+    corpus — which is the failure the registry exists to make impossible.
+
+    Returns:
+        The prompt text and the parsed schema.
+
+    Raises:
+        ValueError: When the registry cannot be loaded, names no such asset, or the
+            prompt carries no placeholder. Each is a different mistake and says which.
+
+    """
+    loaded = _lib.registry()
+
+    prompt_bytes = _asset_bytes(loaded, PROMPT_KEY)
+    prompt = prompt_bytes.decode("utf-8")
+    if TEXT_PLACEHOLDER not in prompt:
+        raise ValueError(
+            f"{PROMPT_KEY} carries no {TEXT_PLACEHOLDER} placeholder, so the "
+            "document's own text is never sent and the model would answer about the "
+            "instructions alone."
+        )
+
+    schema = json.loads(_asset_bytes(loaded, SCHEMA_KEY).decode("utf-8"))
+
+    return prompt, schema
+
+
+def _asset_bytes(loaded: object, key: str) -> bytes:
+    """Read one asset's bytes out of a loaded registry, or refuse by name.
+
+    Args:
+        loaded: The loaded registry's asset mapping.
+        key: The asset key.
+
+    Returns:
+        The asset's bytes.
+
+    Raises:
+        ValueError: When the registry does not declare that key, naming it.
+
+    """
+    asset = loaded.get(key)
+    if asset is None:
+        raise ValueError(
+            f"the registry declares no {key!r}; it declares {sorted(loaded)}. The "
+            "prompt and the schema are load-or-refuse and are never defaulted."
+        )
+
+    return bytes(asset.content)
+
+
 def _extract_fields(text: str) -> tuple[dict[str, object] | None, str]:
     """Ask the local model for the fields, out of the text just extracted.
 
@@ -705,9 +790,20 @@ def _extract_fields(text: str) -> tuple[dict[str, object] | None, str]:
         The fields, and a note when the call was refused.
 
     """
+    try:
+        template, schema = _assets()
+    except (OSError, ValueError) as exc:
+        return None, f"the extraction assets could not be loaded: {exc}"
+
     engine = OllamaEngine()
-    prompt = f"Extract the fields from this document's text.\n\n{text}"
-    attempt = _silently(llm_local.extract_from_text, engine, FIELD_MODEL, "ok", prompt)
+    attempt = _silently(
+        llm_local.extract_from_text,
+        engine,
+        FIELD_MODEL,
+        "ok",
+        template.replace(TEXT_PLACEHOLDER, text),
+        schema,
+    )
     if not attempt.succeeded:
         return None, f"llm.local did not answer ({attempt.outcome.detail})"
     if attempt.result.value is None:
