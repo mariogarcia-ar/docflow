@@ -57,7 +57,7 @@ from types import MappingProxyType
 from typing import Any, Final
 
 from docflow.adapters import ollama_results
-from docflow.adapters._json_object import load_object
+from docflow.adapters._json_object import JSON_ANSWER_INSTRUCTION, load_object
 from docflow.kernels.types import Evidence, KernelResult
 
 __all__: list[str] = ["OllamaEngine"]
@@ -587,7 +587,30 @@ class OllamaEngine:
                 {"model": model, "produced_by": produced_by},
             )
 
-        payload = f"{rubric}\n\n" + json.dumps(list(samples), ensure_ascii=False)
+        # The same sentence the frontier path appends, and for the same reason: the
+        # schema below is an empty object, so nothing in this request states that the
+        # grading is to be JSON, and the model is free to answer in prose.
+        #
+        # **It fixes less here than it does there, and the difference is measured.**
+        # With the instruction withheld, this runtime answers by **echoing the samples
+        # back** — a valid object, so `load_object` accepts it and the call reports a
+        # `value`: the grade *is* the thing being graded. Nothing can fail, because all
+        # a parser can check is that the answer is an object.
+        #
+        # Adding the instruction makes the answer an object rather than prose, and it
+        # does **not** stop the echo. Measured, one variable at a time, on the same
+        # model and samples: with `{"type": "object"}` the echo persists, and with a
+        # result-shaped schema the answer becomes
+        # `{"fields": [{"name": "total", "supported": true}, …]}`. So this path needs
+        # the *schema* to say what a grade looks like, and the port gives `judge` no
+        # way to carry one. Supplying a grade schema here would put a domain noun in a
+        # kernel API and invent a default besides — both forbidden — so the gap is
+        # named and left open rather than papered over with a plausible object.
+        payload = (
+            f"{rubric}\n\n"
+            f"{JSON_ANSWER_INSTRUCTION}\n\n"
+            f"{json.dumps(list(samples), ensure_ascii=False)}"
+        )
         return self.structured(model, payload, {"type": "object"})
 
     # --- The shared generation path -----------------------------------------

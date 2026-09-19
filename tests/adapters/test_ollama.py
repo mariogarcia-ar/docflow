@@ -32,6 +32,7 @@ import json
 
 import pytest
 
+from docflow.adapters._json_object import JSON_ANSWER_INSTRUCTION
 from docflow.adapters.ollama import OllamaEngine
 from docflow.ports import LlmEngine
 
@@ -269,6 +270,28 @@ def _engine(**kwargs) -> OllamaEngine:
 
     """
     return OllamaEngine(base_url="http://stub", client=_StubClient(**kwargs))
+
+
+def _posted_prompt(client: _StubClient) -> str:
+    """Return the prompt of the last generation the adapter posted.
+
+    The stub records **every** call, and this adapter reads before it writes: the
+    identity resolution issues GETs, so the last entry is not the generation. Taking
+    `calls[-1]` would inspect a request that carries no prompt at all, and a test
+    written on it would fail for a reason that has nothing to do with what it
+    asserts.
+
+    Args:
+        client: The stub the adapter posted through.
+
+    Returns:
+        The user message's content, as sent.
+
+    """
+    _method, sent = next(
+        (method, body) for method, body in reversed(client.calls) if method == "POST"
+    )
+    return sent["messages"][0]["content"]
 
 
 # --- The port contract -------------------------------------------------------
@@ -815,6 +838,85 @@ def test_a_different_model_may_grade() -> None:
     )
 
     assert result.reason is None, "a different model is a legitimate grader"
+
+
+def test_judge_asks_for_the_answer_in_json_and_not_only_in_the_schema() -> None:
+    """``judge`` states in words that the grade is JSON.
+
+    **This is necessary here, and it is not sufficient — measured, and the limit is
+    worth stating precisely because the fix looks complete without it.**
+
+    ``judge`` passes ``{"type": "object"}``: a schema with no properties, so nothing
+    in the request says what a grade looks like. Measured against the local runtime,
+    the model answers by **echoing the samples back**:
+
+        judge(...) -> {"total": "1789830", "cuit": "20-12345678-9"}
+
+    That is a valid object, so ``load_object`` accepts it and the call reports a
+    **value**. Nothing is raised and nothing is typed: the grade *is* the thing being
+    graded. That is a silent wrong answer, the exact class this project exists to
+    catch, and no parser can reject it — all a parser can check is that the answer is
+    an object.
+
+    The sentence below does not by itself stop that echo. Measured on the same model
+    and the same samples, changing one variable at a time:
+
+    | schema | answer |
+    |---|---|
+    | ``{"type": "object"}`` | ``{"total": "1789830", "cuit": "20-12345678-9"}``
+     — the echo |
+    | a result-shaped object | ``{"fields": [{"name": "total", "supported":
+     true}, …]}`` |
+
+    So the **schema** is what tells this runtime what a grade looks like; the
+    instruction only tells it that the answer is JSON. What the instruction buys here
+    is that the answer is *an object at all* rather than prose — which is what the
+    frontier path fails on loudly. The echo itself cannot be fixed from this side:
+    ``judge``'s signature on the port carries no schema, so the adapter has no way to
+    describe a grade and must not invent one (a grade schema in a kernel would be a
+    domain noun in a kernel API, and a default besides). Closing that gap is a
+    **port change**, and it is not made here.
+
+    The assertion is about the **request body**: the stub answers ``{"grade": "ok"}``
+    whether or not the instruction was sent, so asserting on the parsed value would
+    pass with the defect fully in place.
+
+    """
+    client = _StubClient(chat=_chat_body('{"grade": "ok"}'))
+    engine = OllamaEngine(base_url="http://stub", client=client)
+
+    engine.judge("qwen2.5vl:3b", "rubric", [{"x": 1}], produced_by="smollm2:latest")
+
+    prompt = _posted_prompt(client)
+    assert JSON_ANSWER_INSTRUCTION in prompt
+
+
+def test_the_judge_instruction_does_not_replace_the_rubric_or_the_samples() -> None:
+    """The rubric still leads, and the samples still follow.
+
+    The pair with the test above: a request that named the shape and dropped either
+    the caller's criteria or the thing to grade would be a fix that silently changed
+    what was asked.
+    """
+    client = _StubClient(chat=_chat_body('{"grade": "ok"}'))
+    engine = OllamaEngine(base_url="http://stub", client=client)
+
+    engine.judge("qwen2.5vl:3b", "weigh it", [{"x": 1}], produced_by="smollm2:latest")
+
+    prompt = _posted_prompt(client)
+    assert prompt.startswith("weigh it")
+    assert prompt.endswith('"x": 1}]')
+    assert prompt.index("weigh it") < prompt.index(JSON_ANSWER_INSTRUCTION)
+
+
+def test_judge_does_not_call_the_runtime_to_grade_itself() -> None:
+    """The refusal happens before the wire, so no call is made at all."""
+    client = _StubClient(chat=_chat_body('{"grade": "ok"}'))
+    engine = OllamaEngine(base_url="http://stub", client=client)
+
+    engine.judge("smollm2:latest", "rubric", [{"x": 1}], produced_by="smollm2:latest")
+
+    assert not client.calls
 
 
 # --- No secret, no invented setting -----------------------------------------

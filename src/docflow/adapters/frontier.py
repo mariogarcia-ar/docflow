@@ -79,7 +79,7 @@ from collections.abc import Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Final
 
-from docflow.adapters._json_object import load_object
+from docflow.adapters._json_object import JSON_ANSWER_INSTRUCTION, load_object
 from docflow.adapters.frontier_providers import (
     FORWARDED_PARAMETERS,
     PROVIDERS,
@@ -667,7 +667,27 @@ class FrontierEngine:
                 {"model": model, "produced_by": produced_by},
             )
 
-        payload = f"{rubric}\n\n" + json.dumps(list(samples), ensure_ascii=False)
+        # The answer's shape is asked for in words, not only in the schema, and the
+        # measurement is why. The schema reaches the provider as a tool definition,
+        # and a provider that does not *choose* to call the tool answers in prose
+        # instead — measured against DeepSeek with the empty schema below: 1138
+        # completion tokens of reasoning, a text block explaining that no source
+        # document was supplied, and no `tool_use` block at all. That is reported
+        # `unsupported_format` with 5850 bytes of raw completion preserved, and it
+        # is *this adapter's* request that produced it: a rubric that asks for a
+        # judgement and never says the judgement is JSON leaves the model free to
+        # send it as prose.
+        #
+        # The measurement also shows that the empty schema is **not** the cause, so
+        # it is not the fix: `structured(..., {"type": "object"})` returns a value
+        # when the prompt names the shape, and a 23-property schema returns
+        # `unsupported_format` when the prompt does not. The schema constrains an
+        # answer that is already JSON; only the prompt decides that it is JSON.
+        payload = (
+            f"{rubric}\n\n"
+            f"{JSON_ANSWER_INSTRUCTION}\n\n"
+            f"{json.dumps(list(samples), ensure_ascii=False)}"
+        )
 
         return self.structured(model, payload, {"type": "object"})
 

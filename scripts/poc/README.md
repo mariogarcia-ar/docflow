@@ -457,16 +457,27 @@ and **exit 1**. Muting the field leaves the banner absent *and* the exit code ba
 This is also why the run got fast: 2 m 40 s → **14 s** on the large fixture, with the
 limit stated instead of silently applied.
 
-### `hitl.py` and the two limits it reports
+### `hitl.py` and the three limits it reports
 
 1. **`judge` cannot see the page.** §7 asks to send *"el resultado de `llm.local`
    junto con la imagen original"*, but
    `judge(model, rubric, samples, produced_by)` has **no `images` parameter** — its
-   body builds `f"{rubric}\n\n" + json.dumps(samples)` and calls
-   `self.structured(...)`, which passes `images=()`. So it grades a *transcript*.
-   The comparison that sees the page is **`vision`**, and `hitl.py` runs both so the
-   difference is a measurement rather than a claim.
-2. **`Reviewer` is `S2-T15` and `src/docflow/components/` does not exist.** So there
+   body builds the prompt from the rubric, a sentence asking for a JSON object, and
+   `json.dumps(samples)`, and calls `self.structured(...)`, which passes `images=()`.
+   So it grades a *transcript*. The comparison that sees the page is **`vision`**, and
+   `hitl.py` runs both so the difference is a measurement rather than a claim.
+2. **The grade has no shape, and it shows.** `judge` carries no schema on the port, so
+   the adapter sends `{"type": "object"}` and nothing tells the model what a grade
+   looks like. Measured against the local runtime, it **echoes the samples back** —
+   `{"total": "1789830", "cuit": "20-12345678-9"}` — which parses as an object, so the
+   call reports a *value*: the grade is the thing being graded, and nothing can fail,
+   because all a parser can check is that the answer is an object. Measured one
+   variable at a time on the same model: with a result-shaped schema the answer becomes
+   `{"fields": [{"name": "total", "supported": true}, …]}`. So the schema is the fix,
+   and `judge` cannot be handed one. `GRADE_SCHEMA` in `hitl.py` is that shape, kept
+   beside the call as the *evidence* of the gap because there is nowhere to pass it —
+   the port change is the `TODO`.
+3. **`Reviewer` is `S2-T15` and `src/docflow/components/` does not exist.** So there
    is no queue, no `correct` and no `promote`. What `hitl.py` does is the mechanical
    half: find the extractions, pair them by relative path, contrast them, and write
    `review.json` where a person should look. **The decision is still a human's.**

@@ -11,14 +11,33 @@ measured rather than assumed:
 
 **1. `judge` cannot see the image.** §7's sentence says *"junto con la imagen
 original"*, but `FrontierEngine.judge(model, rubric, samples, produced_by)` takes no
-`images` parameter - its body builds `f"{rubric}\\n\\n" + json.dumps(samples)` and
-calls `self.structured(...)`, which passes `images=()`. So `judge` grades a
-**transcript**, not the page. The image-carrying comparison is `vision`, and this
-driver runs both so the difference is a measurement.
+`images` parameter - its body builds the prompt from the rubric, a sentence asking for
+a JSON object, and `json.dumps(samples)`, and calls `self.structured(...)`, which
+passes `images=()`. So `judge` grades a **transcript**, not the page. The
+image-carrying comparison is `vision`, and this driver runs both so the difference is
+a measurement.
 
 **2. The judge cannot be the same model as the producer.** `role_conflict` is
 enforced before any request leaves, because retrying until two samples agree
 manufactures the contrast the design depends on (`sad.md` §4, §11 row 15).
+
+**2b. The grade has no shape, and one measurement shows why that matters.** `judge`
+carries no schema on the port, so the adapter sends `{"type": "object"}` and nothing in
+the request says what a grade looks like. Measured against the local runtime, the model
+answers by **echoing the samples back**:
+
+    judge(...) -> {"total": "1789830", "cuit": "20-12345678-9"}
+
+That is a valid object, so it parses and the call reports a **value** — the grade *is*
+the thing being graded, and nothing can fail, because all a parser can check is that the
+answer is an object. Measured on the same model and samples, one variable at a time: with
+a result-shaped schema the answer becomes
+`{"fields": [{"name": "total", "supported": true}, …]}`. So the schema is what fixes it.
+`GRADE_SCHEMA` below is that shape, and **it cannot be handed over**: `judge`'s port
+signature has no parameter for it, and an adapter that supplied one would be inventing a
+default and putting a domain noun — *grade*, *supported* — into a kernel API. The schema
+is therefore kept here, beside the call, as the evidence of the gap and not as something
+this driver can use. Closing it is a port change.
 
 **3. `src/docflow/components/` does not exist.** `Reviewer` is `S2-T15`, so there is
 no queue, no `promote`, and no workflow UI. What this driver can do is the
@@ -74,7 +93,14 @@ RUBRIC: Final[str] = (
     "Do not assign an overall score. Report per field."
 )
 
-#: The schema `judge` is asked to answer in.
+#: The shape a grade must have. **It is deliberately not passed to `judge`, and that is
+#: the limitation, not an oversight.** `judge(model, rubric, samples, produced_by)` has
+#: no schema parameter, so the adapter behind it sends `{"type": "object"}` and the model
+#: is told nothing about what a grade looks like. Measured: it echoes the samples back,
+#: the echo parses as an object, and the call reports a *value*. Handing this schema to
+#: the adapter is what fixes that, and there is nowhere to hand it. It is kept here so
+#: the gap has a name and a shape rather than a sentence in a docstring.
+#: TODO: [MVP] `judge` needs a `schema` parameter on the port for this to be usable.
 GRADE_SCHEMA: Final[dict[str, object]] = {
     "type": "object",
     "properties": {

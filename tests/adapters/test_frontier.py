@@ -33,6 +33,7 @@ import json
 
 import pytest
 
+from docflow.adapters._json_object import JSON_ANSWER_INSTRUCTION
 from docflow.adapters.frontier import FrontierEngine
 from docflow.ports import LlmEngine
 
@@ -696,6 +697,75 @@ def test_a_different_model_may_grade() -> None:
     )
 
     assert result.reason is None, "a different model is a legitimate grader"
+
+
+def test_judge_asks_for_the_answer_in_json_and_not_only_in_the_schema() -> None:
+    """``judge`` states in words that the grade is JSON.
+
+    **This was a real defect, and the measurement is why the test exists.** The
+    schema reaches a provider as a *tool definition*, and a provider that does not
+    choose to call the tool answers in prose. Measured against DeepSeek with this
+    function's own payload: 1138 completion tokens, `stop_reason: end_turn`, one
+    `thinking` block and one `text` block explaining that no source document had
+    been supplied — and no `tool_use` block, so the answer was reported
+    `unsupported_format` with 5850 bytes of raw completion preserved. The request
+    was well-formed and the schema was valid; what was missing was a sentence
+    saying the grade is an object.
+
+    **The empty schema is not the cause, so it is not the assertion.** Measured on
+    the same provider: `structured(..., {"type": "object"})` returns a value when
+    the prompt names the shape, and a 23-property schema *fails* when the prompt
+    does not. A test asserting on the schema would therefore have been satisfied by
+    a change that fixed nothing.
+
+    The assertion is about the **request body**, like the vision test above: the
+    stub is cooperative, so asserting that its JSON parsed would pass with the
+    defect fully in place.
+
+    """
+    client = _StubClient(_Response(200, PROVIDER_BODY))
+    engine = FrontierEngine(base_url="http://stub", client=client)
+
+    engine.judge("anthropic:other", "rubric", [{"x": 1}], produced_by="anthropic:m")
+
+    _path, sent = client.calls[0]
+    prompt = sent["messages"][0]["content"][0]["text"]
+    assert JSON_ANSWER_INSTRUCTION in prompt
+    # The instruction must reach the model *and* the samples must still follow it,
+    # or the fix would trade a parseable answer for no samples to grade.
+    assert prompt.endswith('"x": 1}]')
+    assert prompt.index(JSON_ANSWER_INSTRUCTION) < prompt.index('"x": 1')
+
+
+def test_the_judge_instruction_does_not_replace_the_rubric() -> None:
+    """The rubric is still sent, before the instruction and the samples.
+
+    The pair with the test above: a request that named the shape and dropped the
+    caller's criteria would be a fix that silently changed what was asked.
+    """
+    client = _StubClient(_Response(200, PROVIDER_BODY))
+    engine = FrontierEngine(base_url="http://stub", client=client)
+
+    engine.judge("anthropic:other", "weigh it", [{"x": 1}], produced_by="anthropic:m")
+
+    _path, sent = client.calls[0]
+    prompt = sent["messages"][0]["content"][0]["text"]
+    assert prompt.startswith("weigh it")
+    assert prompt.index("weigh it") < prompt.index(JSON_ANSWER_INSTRUCTION)
+
+
+def test_judge_does_not_call_the_model_to_grade_itself() -> None:
+    """The refusal happens before the wire, so no call is made at all.
+
+    A guard that refused *after* posting would spend a request and a provider's
+    tokens on a call whose answer cannot be used.
+    """
+    client = _StubClient(_Response(200, PROVIDER_BODY))
+    engine = FrontierEngine(base_url="http://stub", client=client)
+
+    engine.judge("anthropic:m", "rubric", [{"x": 1}], produced_by="anthropic:m")
+
+    assert not client.calls
 
 
 # --- Secrets -----------------------------------------------------------------
