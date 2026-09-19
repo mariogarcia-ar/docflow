@@ -52,22 +52,27 @@ The failure this driver exists to make visible
 
 The runtime **cuts a prompt that does not fit its window and reports nothing**: the
 answer arrives with `done_reason: 'stop'` and a plausible value. Measured on
-`smollm2` at `num_ctx=4096`: a 6 420-character prompt evaluates 2 050 tokens, a
-32 020-character one evaluates 2 050, and a **128 020-character** one evaluates the
-same 2 050.
+`smollm2` at `num_ctx=4096`: prompts of 34 000, 128 020, 144 020 and 153 000
+characters all evaluate exactly **2 050** tokens - and the last two are repetitive
+text and random noise, byte-for-byte unrelated, so the number is the window's edge
+and not tokenization.
 
-So a document whose text is long is answered **from its beginning**, and nothing says
-so. The signal is that `prompt_tokens` stops growing while `prompt_characters` keeps
-climbing, and it is a **comparison across calls** rather than a property of one:
+The mechanism is the window's **two halves**, and it is visible in the call's own
+evidence: the prompt's share of `num_ctx` is about half (2 048 of 4 096), and
+`prompt + completion` lands at ~2 078 - just inside. So a document whose text is long
+is answered **from its beginning**, and the only thing that says so is that
+`evaluated_tokens` reached the prompt's share while `done_reason` stayed `'stop'`.
 
-- every file's two numbers are printed as it is processed, and recorded;
-- at the end, two files whose character counts differ by a large factor while their
-  token counts are **equal** are reported as a plateau.
+That test is per call, which is what makes it worth having: two runs of this driver
+detected nothing, one because it looked for a typed refusal (`truncated_output` fires
+on `done_reason: 'length'`, which a dropped prompt never produces) and one because it
+compared files against each other and a single cut file has no peer to be equal to.
 
-No threshold is applied to a single call. *Was this prompt cut* is a decision against
-the loaded window, and inventing a constant for it in a bench is the class of error
-`prd.md` FR-15 forbids in a kernel. The pair of numbers is a measurement; the
-plateau between two files is evidence.
+`PROMPT_WINDOW_SHARE` is a **reporting basis, not a policy value**. It names which
+files were answered from a truncated prompt and never changes how one is processed;
+`ADR-009` governs corpus thresholds and this is not one. At the boundary it cannot
+separate *exactly filled its share* from *cut*, and it reports both - a false alarm
+on a prompt that fitted exactly is recoverable, a silent cut is not.
 
 What this driver does **not** count
 -----------------------------------
@@ -132,12 +137,24 @@ DEFAULT_VISION_PROMPT: str = (
     "Read the fields described by the schema off this document's pixels."
 )
 
-#: How much larger one file's text must be than another's before equal evaluated
-#: token counts are treated as a plateau rather than a coincidence. **A declared
-#: reporting tolerance, not a policy value**: it decides which pair of numbers this
-#: driver bothers to print, never how a document is processed, and no artifact
-#: treats it as a threshold. `ADR-009` governs corpus thresholds, and this is not one.
-PLATEAU_FACTOR: float = 2.0
+
+#: How much of the context window is available to the prompt. **Measured, not
+#: chosen.** Ollama splits `num_ctx` between the prompt and the generation, and the
+#: split is what makes a long prompt silent: on `smollm2` at `num_ctx=4096`, a prompt
+#: evaluates at most **2 050** tokens, and `prompt + completion` lands at ~2 078 -
+#: i.e. the prompt half is `num_ctx / 2` (2 048) and everything past it is dropped
+#: without altering `done_reason`.
+#:
+#: It is a **reporting basis, not a policy value**: it decides which files this
+#: driver names as answered from a truncated prompt, and it never changes how a
+#: document is processed. `ADR-009` governs corpus thresholds; this is not one.
+#:
+#: TODO: [MVP] The split is Ollama's and is not in its public API - it was derived by
+#: measurement here (four unrelated prompts of 34 000 / 128 020 / 144 020 / 153 000
+#: characters all evaluating exactly 2 050 tokens, and the value tracking `num_ctx`).
+#: A runtime that reserves a different fraction would make this wrong, so the driver
+#: reports the plateau rather than refusing on it.
+PROMPT_WINDOW_SHARE: float = 0.5
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -150,6 +167,9 @@ class Extraction:
         sent_characters: The prompt's length, as the runtime reported it.
         evaluated_tokens: What the runtime evaluated. It **plateaus** when the
             prompt did not fit, which is the only signal a cut leaves.
+        num_ctx: The loaded context window. The prompt's share of it is the ceiling
+            `evaluated_tokens` stops growing at, which is what makes a cut
+            detectable from the call's own numbers.
         completion_tokens: How many tokens the model spent answering.
         done_reason: The runtime's own word: ``"stop"`` for an answer it considers
             complete, ``"length"`` when the ceiling or the window cut it.
@@ -162,11 +182,32 @@ class Extraction:
     source: str
     sent_characters: float | None
     evaluated_tokens: float | None
+    num_ctx: int | None
     completion_tokens: float | None
     done_reason: str
     value: Mapping[str, object] | None
     artifact: str | None
     note: str = ""
+
+    @property
+    def prompt_was_cut(self) -> bool:
+        """Whether the prompt hit the window's prompt share.
+
+        A cut leaves **no other trace**: the runtime answers `done_reason: 'stop'`
+        with a plausible value, so the only evidence is that the prompt evaluated as
+        many tokens as the window allows for a prompt and no more. At the boundary
+        the test cannot separate *exactly fits* from *cut*, and it reports both - a
+        false alarm on a prompt that filled its share exactly is the recoverable
+        error, and a silent cut is not.
+
+        Returns:
+            ``True`` when the evaluated count reached the prompt's share of the
+            window.
+
+        """
+        if self.evaluated_tokens is None or self.num_ctx is None:
+            return False
+        return self.evaluated_tokens >= self.num_ctx * PROMPT_WINDOW_SHARE
 
 
 #: Every extraction of this walk, in order.
@@ -281,15 +322,25 @@ def extract(
 
     if not attempt.succeeded or attempt.result is None:
         return Extraction(
-            relative, None, None, None, "refused", None, None, attempt.outcome.detail
+            relative,
+            None,
+            None,
+            None,
+            None,
+            "refused",
+            None,
+            None,
+            attempt.outcome.detail,
         )
 
     measured = attempt.result.evidence.measurements
     observed = attempt.result.evidence.observed
+    window = observed.get("num_ctx")
     return Extraction(
         source=relative,
         sent_characters=measured.get("prompt_characters"),
         evaluated_tokens=measured.get("prompt_tokens"),
+        num_ctx=None if window is None else int(str(window)),
         completion_tokens=measured.get("completion_tokens"),
         done_reason=str(observed.get("done_reason")),
         value=attempt.result.value,
@@ -346,41 +397,37 @@ def write_fields(
     )
 
 
-def plateau_pairs(extractions: list[Extraction]) -> list[tuple[Extraction, Extraction]]:
-    """Find pairs whose prompts differ in size but evaluated identically.
+def cut_by_the_window(extractions: list[Extraction]) -> list[Extraction]:
+    """Report the files whose prompt reached the window's prompt share.
 
-    This is the whole detection, and it is a comparison **between two calls** because
-    a single call cannot show it: every prompt that fits evaluates proportionally to
-    its length, and one that does not stops growing. Two prompts that differ by
-    `PLATEAU_FACTOR` or more in characters while evaluating the **same** token count
-    are evidence that the longer one was cut.
+    This is `Extraction.prompt_was_cut` applied per document, so the run names **which
+    files** were answered from a truncated prompt rather than only that a ceiling
+    exists.
 
-    Measured: 6 420 characters and 128 020 characters both evaluate 2 050 tokens on
-    `smollm2` at `num_ctx=4096`.
+    Two earlier attempts at this were wrong in the same direction, and both are worth
+    knowing about because they *looked* like detection:
+
+    1. **An exception check.** `truncated_output` fires on `done_reason: 'length'`,
+       which a dropped prompt does **not** produce - the runtime still says `'stop'`.
+       Measured: it reported no cut file on a corpus containing a 128 071-character
+       prompt.
+    2. **A cross-file plateau.** Two prompts evaluating the *same* token count while
+       differing in size looked like the signal, and it is - but only when the corpus
+       happens to contain two files on the plateau. Measured: on a three-file corpus
+       with one cut file it named none, because the cut file had no peer to be equal
+       to.
+
+    The mechanism is a property of the **call**, not of the run: the prompt's share of
+    `num_ctx`. One call is enough, which is why this takes no view of the corpus.
 
     Args:
         extractions: The run's extractions, in order.
 
     Returns:
-        The pairs that show a plateau, in the order they were found.
+        The extractions whose prompt was cut, in order.
 
     """
-    pairs: list[tuple[Extraction, Extraction]] = []
-    measured = [
-        item
-        for item in extractions
-        if item.sent_characters is not None and item.evaluated_tokens is not None
-    ]
-    for index, short in enumerate(measured):
-        for long in measured[index + 1 :]:
-            same_tokens = short.evaluated_tokens == long.evaluated_tokens
-            if not same_tokens or not short.evaluated_tokens:
-                continue
-            smaller = min(short.sent_characters, long.sent_characters)  # type: ignore[arg-type]
-            bigger = max(short.sent_characters, long.sent_characters)  # type: ignore[arg-type]
-            if smaller and bigger / smaller >= PLATEAU_FACTOR:
-                pairs.append((short, long))
-    return pairs
+    return [item for item in extractions if item.prompt_was_cut]
 
 
 def process_file(
@@ -435,8 +482,9 @@ def main(argv: list[str] | None = None) -> int:
 
     Returns:
         The number of problems: mirrored-ness violations, plus refused documents,
-        plus the plateaus found. A plateau is counted because a run whose answer was
-        cut is not a clean run.
+        plus the documents whose prompt was truncated. A truncated run is counted
+        because its fields describe only the start of each document, and a caller
+        that trusted them would be reading a partial answer.
 
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -557,41 +605,47 @@ def main(argv: list[str] | None = None) -> int:
     written = sum(1 for item in OUTCOMES if item.artifact is not None)
     refused = [item for item in OUTCOMES if item.value is None]
     cut = [item for item in OUTCOMES if item.done_reason == "length"]
-    plateaus = plateau_pairs(OUTCOMES)
+    truncated = cut_by_the_window(OUTCOMES)
+    silent = [item for item in truncated if item.done_reason != "length"]
 
     print(f"{'documents':<14}{len(OUTCOMES):>6}")
     print(f"{'fields':<14}{written:>6}")
     print(f"{'refused':<14}{len(refused):>6}")
     print(f"{'cut':<14}{len(cut):>6}")
-    print(f"{'plateaus':<14}{len(plateaus):>6}")
+    print(f"{'truncated':<14}{len(silent):>6}")
     print()
 
     if cut:
         # `done_reason: 'length'` is the adapter's own typed refusal, so these never
-        # wrote a value - reported separately from the plateaus, which are the ones
-        # that looked successful.
+        # wrote a value - reported separately from the ones below, which DID write a
+        # plausible-looking answer.
         print(
             f"{len(cut)} document(s) were cut by the ceiling or the window; no fields "
             "were written for them."
         )
-    if plateaus:
+    if silent:
+        # The dangerous half, and the reason this driver counts anything at all: the
+        # runtime reported `done_reason: 'stop'` for these, wrote a value, and the
+        # value answers a question about the document's beginning only.
+        window = silent[0].num_ctx
         print(
-            f"{len(plateaus)} prompt pair(s) show a PLATEAU: a longer prompt "
-            "evaluated the same number of tokens, which is a prompt that was cut "
-            "in silence -"
+            f"{len(silent)} document(s) had their prompt TRUNCATED without a word. "
+            f"num_ctx={window}, so the prompt's share is "
+            f"{int((window or 0) * PROMPT_WINDOW_SHARE)} tokens; these reached it, and "
+            "everything past it was dropped while `done_reason` stayed 'stop':"
         )
-        for short, long in plateaus[:5]:
+        for item in silent:
             print(
-                f"  {short.source} ({short.sent_characters} chars) and "
-                f"{long.source} ({long.sent_characters} chars) both evaluated "
-                f"{short.evaluated_tokens} tokens"
+                f"  {item.source} ({item.sent_characters} chars -> "
+                f"{item.evaluated_tokens} tokens) - its fields describe the start of "
+                "the document"
             )
     if refused:
         print(f"{len(refused)} document(s) produced no fields; see the notes above.")
-    if not problems and not refused and not cut and not plateaus:
+    if not problems and not refused and not truncated:
         print("every document was extracted and the tree mirrors exactly.")
         return 0
-    return len(problems) + len(refused) + len(cut) + len(plateaus)
+    return len(problems) + len(refused) + len(truncated)
 
 
 def _walk_for(root: pathlib.Path, wanted: set[str] | None) -> list[pathlib.Path]:

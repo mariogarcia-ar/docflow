@@ -43,6 +43,7 @@ import argparse
 import os
 import pathlib
 import sys
+from collections.abc import Mapping, Sequence
 
 import _lib
 
@@ -61,14 +62,20 @@ MODEL: str = "anthropic:claude-sonnet-4-6"
 
 #: The environment variables the chain reads, in the order it reads them. Recorded
 #: here because *which one is missing* is this driver's whole output on a machine
-#: with no credential.
-_GATES: tuple[str, ...] = (
+#: with no credential. Public rather than private because `batch_llm_frontier.py`
+#: reports the same chain per run, and a second copy of the list would drift from
+#: the one the adapter actually reads.
+GATES: tuple[str, ...] = (
     "DOCFLOW_FRONTIER_MAX_TOKENS",
     "DOCFLOW_FRONTIER_KEY",
     "DOCFLOW_FRONTIER_HOST",
 )
 
-_FIELD_SCHEMA: dict[str, object] = {
+#: The schema the fixture's generation is constrained by. Public because
+#: `batch_llm_frontier.py` uses it as its `vision` mode's default and because
+#: `_image`/`_engine` are the same kind of shared helper - a private name imported
+#: across modules breaks on a rename in one of them.
+FIELD_SCHEMA: dict[str, object] = {
     "type": "object",
     "properties": {"total": {"type": "integer"}, "cuit": {"type": "string"}},
     "required": ["total", "cuit"],
@@ -128,7 +135,7 @@ def report_gates() -> bool:
     """
     print("the gate chain, in the order the adapter reads it:")
     ready = True
-    for name in _GATES:
+    for name in GATES:
         present = bool(os.environ.get(name))
         # `HOST` has a documented default address, so it is reported but does not
         # gate; the other two do.
@@ -174,22 +181,44 @@ def capabilities(engine: FrontierEngine, model: str, expect: str) -> None:
 # --- Requirement 1: image + high-level prompt -> fields ---------------------
 
 
-def extract_from_image(engine: FrontierEngine, model: str, expect: str) -> None:
+def extract_from_image(
+    engine: FrontierEngine,
+    model: str,
+    expect: str,
+    prompt: str | None = None,
+    schema: Mapping[str, object] | None = None,
+    images: list[Bytes] | None = None,
+) -> _lib.Attempt:
     """Ask the frontier model to read the fields off the image.
+
+    Returns the attempt rather than nothing, so a batch caller reuses this call's
+    value instead of paying for a second request - and on this kernel a second
+    request is a second **charge**, not just a second wait.
 
     Args:
         engine: The K6 adapter.
         model: The model as the caller names it.
         expect: The bucket this probe is declared to land in.
+        prompt: The prompt to send, defaulting to this driver's fixture one.
+        schema: The schema the generation is constrained by, defaulting to the
+            fixture's two-field one. A caller with documents of its own must pass
+            its own: a fixture schema would answer a question about this bench while
+            reporting on real documents.
+        images: The images to send, defaulting to the committed case fixture. They
+            must be `Bytes` - the encoder accepts a `Path` and silently encodes the
+            file name, which `llm_local.payload_types` measures.
+
+    Returns:
+        The attempt, carrying the fields the probe described.
 
     """
     attempt = _lib.run(
         f"llm_frontier.vision[{model}]",
         engine.vision,
         model,
-        FIELD_PROMPT,
-        [_image(_lib.CASE_IMAGE)],
-        _FIELD_SCHEMA,
+        FIELD_PROMPT if prompt is None else prompt,
+        _image(_lib.CASE_IMAGE) if images is None else images,
+        FIELD_SCHEMA if schema is None else schema,
         expect=expect,
     )
     if attempt.succeeded:
@@ -198,12 +227,20 @@ def extract_from_image(engine: FrontierEngine, model: str, expect: str) -> None:
     # `KernelResult` at three fields, and a port cannot grow a member (that re-opens
     # `E04-01`'s gate). Reported because it is the artifact of record.
     print(f"         call_record={engine.last_call_record}")
+    return attempt
 
 
 # --- Requirement 2: the local result + the image -> an assessment -----------
 
 
-def judge_local(engine: FrontierEngine, model: str, expect: str) -> None:
+def judge_local(
+    engine: FrontierEngine,
+    model: str,
+    expect: str,
+    samples: Sequence[Mapping[str, object]] | None = None,
+    produced_by: str | None = None,
+    rubric: str | None = None,
+) -> _lib.Attempt:
     """Hand the frontier model the local result *and* the image, and ask it to grade.
 
     This is the flow's second sentence made callable, and it is the mechanism the
@@ -211,25 +248,46 @@ def judge_local(engine: FrontierEngine, model: str, expect: str) -> None:
     disagree - is the only detector of a silent error. A single confident answer is
     not evidence of correctness.
 
+    **`judge` cannot see the image, and the signature says so.** It takes
+    `(model, rubric, samples, produced_by)` and its body builds
+    `f"{rubric}\\n\\n" + json.dumps(samples)` before calling `structured`, which passes
+    `images=()`. So it grades a **transcript**: the `vision` call above is the one
+    that reads pixels. The flow's *"junto con la imagen original"* is therefore
+    satisfied by running both, which is what `hitl.py` does and what this driver
+    reports rather than papers over.
+
+    Returns the attempt rather than nothing, so a batch caller reuses the
+    assessment instead of paying for a second request.
+
     Args:
         engine: The K6 adapter.
         model: The model as the caller names it.
         expect: The bucket this probe is declared to land in.
+        samples: The extractions to grade, defaulting to this driver's fixture. A
+            batch caller passes what `llm.local` produced for the document.
+        produced_by: The model that produced them, so `role_conflict` is mechanical
+            rather than a rule someone has to remember. A batch caller passes the
+            model it ran, because grading one's own output is the prohibition.
+        rubric: The rubric to grade against, defaulting to this driver's.
+
+    Returns:
+        The attempt, carrying the assessment.
 
     """
     attempt = _lib.run(
         f"llm_frontier.judge[{model}]",
         engine.judge,
         model,
-        RUBRIC,
-        [LOCAL_RESULT],
+        RUBRIC if rubric is None else rubric,
+        [LOCAL_RESULT] if samples is None else list(samples),
         # The local model that produced the samples, so `role_conflict` is
         # mechanical rather than a rule someone has to remember.
-        produced_by="ollama:smollm2",
+        produced_by="ollama:smollm2" if produced_by is None else produced_by,
         expect=expect,
     )
     if attempt.succeeded:
         print(f"         value={dict(attempt.result.value)}")
+    return attempt
 
 
 # --- The prohibition, which is enforced before any request leaves -----------
@@ -280,7 +338,7 @@ def naming_rules(engine: FrontierEngine) -> None:
             engine.structured,
             name,
             FIELD_PROMPT,
-            _FIELD_SCHEMA,
+            FIELD_SCHEMA,
             expect=expected,
         )
 

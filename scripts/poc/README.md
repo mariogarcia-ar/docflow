@@ -71,6 +71,8 @@ Each probe declares the bucket it expects (`expect=`), so `run_all.py` can tell
 | `batch_pdf.py` | §1 | **PDF-only** batch: per page, `.txt` for text and `.png` for scans, plus a page census |
 | `batch_image.py` | §2 | **image-only** batch: size, `legibility`, the rescale to the floor, and any `--region` crop |
 | `batch_ocr.py` | §3 | **OCR-only** batch: per-page status census plus the ordered text, with the engine's stdout captured |
+| `batch_llm_local.py` | §4 | **fields from text**: one generation per document, with the prompt window reported |
+| `batch_llm_frontier.py` | §5 | **contrast**: pairs `llm.local`'s fields with the document and asks a different model |
 | `hitl.py` | §7 | finds the extractions, pairs them by relative path, contrasts them, writes `review.json` |
 
 `_lib.py` is the reporting contract and `_mirror.py` is the folder-in/mirrored-tree-out
@@ -87,8 +89,54 @@ python scripts/poc/batch.py       <input-dir> --out <out-dir>
 python scripts/poc/batch_pdf.py   <input-dir> --out <out-dir> [--pages 1-3] [--no-save]
 python scripts/poc/batch_image.py <input-dir> --out <out-dir> [--assumed-dpi 96] [--region x,y,w,h]
 python scripts/poc/batch_ocr.py   <input-dir> --out <out-dir> [--pages 1-3] [--lang es]
+python scripts/poc/batch_llm_local.py <input-dir> --schema FIELDS.json [--out <out-dir>] [--mode structured|vision]
+python scripts/poc/batch_llm_frontier.py <input-dir> --fields <local-out-dir> [--out <out-dir>] [--mode judge|vision]
 python scripts/poc/hitl.py        <input-dir> --out <out-dir>
 ```
+
+### `batch_llm_local.py` extracts fields, and reports a silence
+
+The runtime **cuts a prompt that does not fit its window and reports nothing**: the
+answer arrives with `done_reason: 'stop'` and a plausible value. Measured on
+`smollm2` at `num_ctx=4096`, prompts of 34 000, 128 020, 144 020 and 153 000
+characters all evaluate exactly **2 050** tokens - and the last two are repetitive
+text and *random noise*, so the number is the window's edge and not tokenization.
+
+The prompt's share of `num_ctx` is about half, `prompt + completion` lands just
+inside the window, and everything past that share is dropped. So a document with long
+text is answered **from its beginning** and nothing says so. The driver names every
+file that happened to:
+
+```
+truncated          1
+
+1 document(s) had their prompt TRUNCATED without a word. num_ctx=4096, so the
+prompt's share is 2048 tokens; these reached it, and everything past it was dropped
+while `done_reason` stayed 'stop':
+  largo.txt (128071.0 chars -> 2050.0 tokens) - its fields describe the start of the document
+```
+
+Two earlier attempts at detecting this failed in the same direction and are recorded
+in the code: looking for `truncated_output` (which fires on `done_reason: 'length'`,
+never produced by a dropped prompt), and comparing files against each other (a single
+cut file has no peer, so a three-file run named none). The mechanism is per call.
+
+### `batch_llm_frontier.py` is the contrast step
+
+Two independent reads that disagree are the only detector of a silent error, and a
+single confident answer is not evidence of correctness. This driver pairs each
+document with what `batch_llm_local.py` answered for it and asks a **different**
+model to assess it.
+
+**It runs with no credential, and that is deliberate.** Every request refuses, and
+the driver still does the part that is mechanical - the pairing, the gate chain, the
+mirror - so a credential-less run is a dry run with a real report rather than a
+driver that prints nothing. It exits non-zero, because a run that assessed nothing is
+not a clean run.
+
+`judge` **cannot see the image**: introspected, its signature has no `images`
+parameter and it delegates to `structured`. It grades a transcript. `--mode vision` is
+the branch that reads pixels.
 
 ### `batch_ocr.py` isolates the expensive, non-deterministic step
 
