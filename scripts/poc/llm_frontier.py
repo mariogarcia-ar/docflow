@@ -59,9 +59,55 @@ is that **contrast** - two independent reads that disagree - is the only detecto
 silent error, and one document read three ways is what makes a difference attributable
 to the input rather than to the model or the page.
 
-Run it with no arguments:
+More than one document, and why
+-------------------------------
+
+One document answers *"can K6 read a page"*; it cannot answer *"is the reading any
+good"*, which is the question the field run actually needs answered. A model that
+returns two well-formed fields for one clean page is one sample, and the failure this
+project exists to catch is precisely the one that arrives as a well-formed answer:
+`my_kernel_flow.md` §5 sends a page to a hosted model with no cross-check, so a value
+the pixels do not support looks exactly like a value they do.
+
+So the bench reads **every case in** :data:`CASES` - sixteen committed documents, each
+chosen for a property the others do not have - and the three-way comparison runs per
+document rather than once. The set is deliberately not sixteen invoices: it carries
+scans with no text layer at all, an image the corpus labels illegible, a two-page
+document, and four documents that are **not** invoices (a blackboard, an ID-card back,
+an email body, a quote). Those last four are the negative controls, and they are load
+bearing: without them an answer is only checked for *plausibility*, and plausibility is
+exactly what a hallucination has.
+
+**Nothing in the corpus is a text/image pair, so the pair is derived per case and
+never committed as a pair.** `casos/*.pdf` are born as PDFs and their readings are
+produced on demand; two unrelated fixtures would make a disagreement between the three
+answers unattributable to the input. K2 therefore produces the text (`layout_text`) and
+the pixels (`render`, capped at the page's own measured resolution because the adapter
+refuses to upscale) from the **same** page.
+
+Two consequences of reading a table rather than a constant, both deliberate:
+
+- **`judge` is asked once per run, not once per case.** Its samples are this driver's
+  fixture transcript, not a per-document `llm.local` output, so repeating the call per
+  document would pay N times for the same measurement.
+- **The call count is printed before the first call.** Every call here reaches a
+  **paid** provider, and which subset is worth paying for is the caller's decision
+  (`--case`), not this bench's - the same discipline `prd.md` FR-15 states for a
+  threshold.
+
+Run it with no arguments to read every case:
 
     python scripts/poc/llm_frontier.py
+
+See what would run without calling anything, which still exercises K2's pairing over
+every case:
+
+    python scripts/poc/llm_frontier.py --dry-run
+
+Narrow it, or list the table:
+
+    python scripts/poc/llm_frontier.py --list
+    python scripts/poc/llm_frontier.py --case negativos/pizarra --case escaneados/scan
 
 To measure the calls for real, export a key and re-run - nothing else changes:
 
@@ -72,6 +118,7 @@ To measure the calls for real, export a key and re-run - nothing else changes:
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import pathlib
@@ -239,6 +286,216 @@ RUBRIC: str = (
 )
 
 
+# --- The cases this bench reads ---------------------------------------------
+
+def _probe_suffix(model: str, label: str) -> str:
+    """Compose a probe id's suffix from the model and the document.
+
+    The id is what ties a printed line to a call, and a bench that reads a table of
+    documents needs both halves: the model alone repeats sixteen times, and the
+    document alone would not say which vendor answered.
+
+    Args:
+        model: The model as the caller names it.
+        label: The document's name, or the empty string when the caller is probing
+            a single fixture rather than a case.
+
+    Returns:
+        ``"<model>"``, or ``"<model>|<label>"`` when a label was given.
+
+    """
+    return model if label == "" else f"{model}|{label}"
+
+
+#: The page budget every case must fit inside. **A bench that reads a 300-page
+#: document measures the corpus, not the adapter**: the call is the same call, and
+#: the only thing a longer document adds is a bill and a wait. Checked by
+#: :func:`case_pair` for every case, at run time, so a case that outgrows the budget
+#: is caught rather than merely discouraged in prose.
+MAX_CASE_PAGES: int = 2
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class DocumentCase:
+    """One committed document, and what reading it is worth.
+
+    Attributes:
+        name: The stable identifier, used in probe ids and by ``--case``.
+        source: The committed fixture.
+        kind: ``"text"``, ``"scan"`` or ``"image"`` - which of the three input
+            shapes the document can supply. A ``"scan"`` has no text layer at all,
+            so its text probe is *reported as not probed* rather than sent empty;
+            an ``"image"`` has no K2 reading to derive.
+        pages: The one-based pages read, in order. For an ``"image"`` it is the
+            single frame, and the number is not a PDF page.
+        negative: Whether the corpus labels this a document that is **not** an
+            invoice. Recorded rather than inferred, because it comes from the
+            fixture's own folder (``negativos/``), which is a curated fact - and
+            because an answer that fills a field here is the one shape a
+            hallucination has, so it is the case a reader must be able to find.
+        note: Why the case is in the table.
+
+    """
+
+    name: str
+    source: pathlib.Path
+    kind: str
+    pages: tuple[int, ...]
+    negative: bool = False
+    note: str = ""
+
+
+#: Every document this bench reads. One run reads all of them; ``--case`` narrows.
+#:
+#: **The fixtures are committed and the pages are counted, never generated.** A case
+#: that loses its provoking property - a scan that gains a text layer, an image that
+#: stops being blurred - would otherwise yield a passing probe that measures nothing,
+#: which is the defect `E07-03` records for the matrix fixtures.
+#:
+#: The character counts and resolutions in the notes were **measured** with K2 on
+#: ``2026-09-19``, and they are in the note rather than asserted, because a fixture
+#: being replaced should make a reader re-read the note rather than fail a check that
+#: was never about the pipeline.
+CASES: tuple[DocumentCase, ...] = (
+    # --- Holds a text layer, so all three input shapes are available -------------
+    DocumentCase(
+        name="casos/source",
+        source=_lib.SOURCE_PDF,
+        kind="text",
+        pages=(1,),
+        note="the one-page text PDF the single-document probes already read",
+    ),
+    DocumentCase(
+        name="casos/dense",
+        source=_lib.FIXTURES
+        / "casos"
+        / "9dfc597f-34c5-41ec-99ae-cf35544c7af8.pdf",
+        kind="text",
+        pages=(1,),
+        note="7 105 characters on one page - the densest text page here",
+    ),
+    DocumentCase(
+        name="casos/third",
+        source=_lib.FIXTURES
+        / "casos"
+        / "af9f596b-bab2-4e69-b82a-c61fcdacdcbd.pdf",
+        kind="text",
+        pages=(1,),
+        note="3 159 characters; a third independent invoice page",
+    ),
+    DocumentCase(
+        name="aptos/two-pages",
+        source=_lib.FIXTURES
+        / "pdf_aptos_layout"
+        / "9073693b-f8bf-4f9b-88e0-1008de266c0e.pdf",
+        kind="text",
+        pages=(1, 2),
+        note="the only layout-sound fixture with two pages: 1 300 + 410 chars",
+    ),
+    DocumentCase(
+        name="aptos/dense",
+        source=_lib.FIXTURES
+        / "pdf_aptos_layout"
+        / "5b2e1460-197a-436e-b8cc-df5a99f77a43.pdf",
+        kind="text",
+        pages=(1,),
+        note="7 112 characters; a second dense page from another source",
+    ),
+    # --- No text layer: the only reading available is the pixels --------------
+    DocumentCase(
+        name="escaneados/scan",
+        source=_lib.SCAN_PDF,
+        kind="scan",
+        pages=(1,),
+        note="120.0 DPI and no text layer; `layout_text` refuses `blank_page`",
+    ),
+    DocumentCase(
+        name="escaneados/lower-dpi",
+        source=_lib.FIXTURES
+        / "pdf_escaneados"
+        / "68623f4b-775d-44cc-8f9c-369d441ef315.pdf",
+        kind="scan",
+        pages=(1,),
+        note="100.07 DPI - the lowest-resolution page here, so the floor caps it",
+    ),
+    DocumentCase(
+        name="escaneados/high-dpi",
+        source=_lib.FIXTURES
+        / "pdf_escaneados"
+        / "bddb529d-11ef-4380-92c3-56bdecf2acc2.pdf",
+        kind="scan",
+        pages=(1,),
+        note="294.35 DPI, the highest-resolution scan, capped down to the floor",
+    ),
+    # --- A single frame, with no K2 reading to derive ------------------------
+    DocumentCase(
+        name="casos/image",
+        source=_lib.CASE_IMAGE,
+        kind="image",
+        pages=(1,),
+        note="1564x1920; the image the single-document probes already read",
+    ),
+    DocumentCase(
+        name="expected/image",
+        source=_lib.FIXTURES
+        / "expected-extraction"
+        / "0fc44015-8d00-4bf0-bdac-ce41f695d8c6.jpg",
+        kind="image",
+        pages=(1,),
+        note="476x1036; a tightly cropped invoice photo",
+    ),
+    DocumentCase(
+        name="otros/photo",
+        source=_lib.FIXTURES
+        / "otros"
+        / "125cbe9f-dda5-4f99-9fb3-407230294e07.jpeg",
+        kind="image",
+        pages=(1,),
+        note="900x1600; a phone photograph, so framing and skew are real",
+    ),
+    DocumentCase(
+        name="blur/image",
+        source=_lib.BLUR_IMAGE,
+        kind="image",
+        pages=(1,),
+        note="840x1036 and deliberately blurred - the legibility case",
+    ),
+    # --- Negative controls, so a plausible answer is not mistaken for a read --
+    DocumentCase(
+        name="negativos/pizarra",
+        source=_lib.FIXTURES / "negativos" / "neg_2026-11_foto_pizarra.jpg",
+        kind="image",
+        pages=(1,),
+        negative=True,
+        note="a blackboard: it carries neither a total nor a CUIT",
+    ),
+    DocumentCase(
+        name="negativos/dni",
+        source=_lib.FIXTURES / "negativos" / "neg_2026-03_dni_dorso.jpg",
+        kind="image",
+        pages=(1,),
+        negative=True,
+        note="the back of an ID card: identifiers, but no total to read",
+    ),
+    DocumentCase(
+        name="negativos/correo",
+        source=_lib.FIXTURES / "negativos" / "neg_2026-06_correo_liquidacion.pdf",
+        kind="text",
+        pages=(1,),
+        negative=True,
+        note="143 characters of an email body - text, but not an invoice",
+    ),
+    DocumentCase(
+        name="negativos/presupuesto",
+        source=_lib.FIXTURES / "negativos" / "neg_2026-09_presupuesto.pdf",
+        kind="text",
+        pages=(1,),
+        negative=True,
+        note="113 characters of a quote - the near miss: it does carry an amount",
+    ),
+)
+
+
 def _engine() -> FrontierEngine:
     """Build the K6 adapter.
 
@@ -351,6 +608,7 @@ def extract_from_image(
     prompt: str | None = None,
     schema: Mapping[str, object] | None = None,
     images: list[Bytes] | None = None,
+    label: str = "",
 ) -> _lib.Attempt:
     """Ask the frontier model to read the fields off the image.
 
@@ -370,13 +628,19 @@ def extract_from_image(
         images: The images to send, defaulting to the committed case fixture. They
             must be `Bytes` - the encoder accepts a `Path` and silently encodes the
             file name, which `llm_local.payload_types` measures.
+        label: Which document this call is about, appended to the probe id. It is
+            the last parameter and defaults to the empty string, so the positional
+            callers that predate it - `batch_llm_frontier.py` among them - keep
+            working unchanged. **Reading a table of documents without this is
+            unreadable**: every call would report the same id and a reader could not
+            say which document a value belonged to.
 
     Returns:
         The attempt, carrying the fields the probe described.
 
     """
     attempt = _lib.run(
-        f"llm_frontier.vision[{model}]",
+        f"llm_frontier.vision[{_probe_suffix(model, label)}]",
         engine.vision,
         model,
         FIELD_PROMPT if prompt is None else prompt,
@@ -483,54 +747,202 @@ def _readable_dpi(engine: PdfEngine, source: pathlib.Path, page: int) -> int:
     return max(1, min(floor, int(held)))
 
 
-def document_pair(
-    engine: PdfEngine,
-    source: pathlib.Path,
-    page: int,
-    *,
-    dpi: int | None = None,
-) -> tuple[str, Bytes]:
-    """Derive one page's text **and** its pixels, so the three probes read one document.
+#: What separates two pages' text inside one prompt. A **marker**, not a silent
+#: concatenation: a two-page document joined with nothing would present one run of
+#: text whose length no reader can attribute to a page, and the pages here are read
+#: as one document on purpose. Naming the join is what keeps *"which page said this"*
+#: answerable from the transcript.
+PAGE_MARKER: str = "\n\n--- page {page} ---\n\n"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class CaseInputs:
+    """One case's three input shapes, as far as the case can supply them.
+
+    **A field being ``None`` is a measurement, and it is reported.** A scan has no
+    text layer, so its text probe is *not probed* rather than sent an empty string -
+    and an empty prompt would look like a reading that found nothing, which is the
+    collapse this project exists to prevent (`Never, at any stage`).
+
+    Attributes:
+        case: The case these inputs belong to.
+        text: The document's text, or ``None`` when it has none to give.
+        text_reason: The code that refused the text, or the empty string.
+        image: The pages as `Bytes`, in page order, or ``None`` when no page could
+            be rendered.
+        image_reason: The code that refused the render, or the empty string.
+        dpi: The resolution each page was rendered at.
+        note: The one-line description printed for the run.
+
+    """
+
+    case: DocumentCase
+    text: str | None
+    text_reason: str
+    image: tuple[Bytes, ...] | None
+    image_reason: str
+    dpi: int | None
+    note: str
+
+    @property
+    def textable(self) -> bool:
+        """Whether this document has text to send.
+
+        Returns:
+            ``True`` when a text read produced characters.
+
+        """
+        return self.text is not None
+
+    @property
+    def picturable(self) -> bool:
+        """Whether this document has pixels to send.
+
+        Returns:
+            ``True`` when at least one page rendered.
+
+        """
+        return bool(self.image)
+
+
+def _joined_text(engine: PdfEngine, case: DocumentCase) -> tuple[str | None, str]:
+    """Read every page of a case and join the readings, or report the refusal.
+
+    The join carries :data:`PAGE_MARKER` between pages so a two-page reading stays
+    attributable to a page. A single-page case gets no marker, because there is no
+    boundary to name.
 
     Args:
         engine: The K2 adapter.
-        source: The PDF to read.
-        page: One-based page number.
-        dpi: The resolution to render at. ``None`` measures the page and caps the
-            registry's floor by what it holds.
+        case: The case to read.
 
     Returns:
-        The page's text as the reader returns it, and the page as `Bytes`.
-
-    Raises:
-        RuntimeError: When either reading refuses. The pair *is* the input to all
-            three probes, so a half-derived pair would make two of them answer about
-            one document and the third about another - which is precisely the
-            comparison this driver exists to make valid.
+        The joined text and the empty string, or ``None`` and the code that refused
+        the first unreadable page - named together, because a caller that received
+        ``None`` alone could not say whether there was no text or no reading.
 
     """
-    text = engine.layout_text(source, [page])
-    if text.value is None:
-        raise RuntimeError(
-            f"layout_text refused page {page}: "
-            f"{text.reason.code if text.reason else 'unknown'}"
+    parts: list[str] = []
+    for page in case.pages:
+        reading = engine.layout_text(case.source, [page])
+        if reading.value is None:
+            code = reading.reason.code if reading.reason else "unknown"
+            return None, code
+        if len(case.pages) > 1:
+            parts.append(PAGE_MARKER.format(page=page))
+        parts.append(reading.value)
+
+    return "".join(parts), ""
+
+
+def _rendered_pages(engine: PdfEngine, case: DocumentCase) -> tuple[list[Bytes], int]:
+    """Render every page of a case at the resolution each page can supply.
+
+    Each page is measured on its own, because the cap is per page and a two-page
+    document can hold two different resolutions - measured here: page 1 of
+    `aptos/two-pages` holds 204.8 DPI and page 2 holds 171.15.
+
+    Args:
+        engine: The K2 adapter.
+        case: The case to render.
+
+    Returns:
+        The pages as `Bytes`, and the resolution of the last page rendered. The
+        resolution is returned rather than averaged: an average of two resolutions
+        describes neither page, and the per-page value is already in the notes.
+
+    Raises:
+        RuntimeError: When a page cannot be rendered. Half a document is not the
+            document, and one unrenderable page would make the image probe answer
+            about a subset the text probe was not given.
+
+    """
+    images: list[Bytes] = []
+    resolution = 0
+    for page in case.pages:
+        resolution = _readable_dpi(engine, case.source, page)
+        rendered = engine.render(case.source, [page], resolution)
+        if rendered.value is None:
+            code = rendered.reason.code if rendered.reason else "unknown"
+            raise RuntimeError(f"render refused page {page} at {resolution} DPI: {code}")
+        images.append(
+            Bytes(data=rendered.value.data, media_type=rendered.value.media_type)
         )
 
-    resolution = _readable_dpi(engine, source, page) if dpi is None else dpi
-    rendered = engine.render(source, [page], resolution)
-    if rendered.value is None:
+    return images, resolution
+
+
+def case_pair(engine: PdfEngine, case: DocumentCase) -> CaseInputs:
+    """Derive one case's text **and** its pixels, so the three probes read one document.
+
+    **A refusal is reported, not raised, and that is the difference from a failure.**
+    A scan refusing `blank_page` is what the document *is*, so the text probe is
+    marked not-probed and the image probe still runs - which is the whole reason a
+    scan is in the table. A render refusing is different in kind: it would leave the
+    image probe with nothing while the text probe ran, so it is raised.
+
+    Args:
+        engine: The K2 adapter.
+        case: The case to derive.
+
+    Returns:
+        The case's inputs, with either shape absent and its reason named.
+
+    Raises:
+        RuntimeError: When the case asks for more pages than :data:`MAX_CASE_PAGES`,
+            or when an image case cannot be read, or when a page cannot be rendered.
+
+    """
+    if len(case.pages) > MAX_CASE_PAGES:
         raise RuntimeError(
-            f"render refused page {page} at {resolution} DPI: "
-            f"{rendered.reason.code if rendered.reason else 'unknown'}"
+            f"{case.name} asks for {len(case.pages)} pages; the budget is "
+            f"{MAX_CASE_PAGES}. A longer document measures the corpus, not the "
+            f"adapter: the call is the same call and the bill is not."
         )
 
-    print(
-        f"         pair  page={page}  text={len(text.value)} chars  "
-        f"image={len(rendered.value.data)} bytes @{resolution} DPI"
+    if case.kind == "image":
+        image = _image(case.source)
+        return CaseInputs(
+            case=case,
+            text=None,
+            text_reason="not_a_pdf",
+            image=(image,),
+            image_reason="",
+            dpi=None,
+            note=f"image {len(image.data)} bytes, no K2 reading to derive",
+        )
+
+    text, text_reason = _joined_text(engine, case)
+    images, resolution = _rendered_pages(engine, case)
+
+    described = f"{len(images)} page(s) @{resolution} DPI"
+    if text is None:
+        described = f"no text layer ({text_reason}); {described}"
+    else:
+        described = f"{len(text)} chars; {described}"
+
+    return CaseInputs(
+        case=case,
+        text=text,
+        text_reason=text_reason,
+        image=tuple(images),
+        image_reason="",
+        dpi=resolution,
+        note=described,
     )
-    return text.value, Bytes(
-        data=rendered.value.data, media_type=rendered.value.media_type
-    )
+
+
+def _bytes_total(images: Sequence[Bytes] | None) -> int:
+    """Report the total size of a tuple of pages.
+
+    Args:
+        images: The pages, or ``None``.
+
+    Returns:
+        The total bytes, or ``0`` when there are none.
+
+    """
+    return sum(len(image.data) for image in images or ())
 
 
 def extract_from_text(
@@ -540,6 +952,7 @@ def extract_from_text(
     prompt: str | None = None,
     schema: Mapping[str, object] | None = None,
     text: str | None = None,
+    label: str = "",
 ) -> _lib.Attempt:
     """Ask the frontier model for the fields out of **text alone**.
 
@@ -558,6 +971,7 @@ def extract_from_text(
         schema: The schema the generation is constrained by, defaulting to the
             fixture's two-field one.
         text: The document's own text, as the reader returned it.
+        label: Which document this call is about, appended to the probe id.
 
     Returns:
         The attempt, carrying the fields.
@@ -567,7 +981,7 @@ def extract_from_text(
     body = template.replace("{text}", "" if text is None else text)
 
     attempt = _lib.run(
-        f"llm_frontier.structured[{model}]",
+        f"llm_frontier.structured[{_probe_suffix(model, label)}]",
         engine.structured,
         model,
         body,
@@ -588,6 +1002,7 @@ def extract_from_text_and_image(
     schema: Mapping[str, object] | None = None,
     text: str | None = None,
     images: list[Bytes] | None = None,
+    label: str = "",
 ) -> _lib.Attempt:
     """Ask the frontier model for the fields, given the text **and** the pixels.
 
@@ -612,6 +1027,7 @@ def extract_from_text_and_image(
         images: The page as `Bytes`. `Bytes` and never a `Path`, for the reason
             `llm_local.payload_types` measures: the encoder accepts a `Path` and
             base64-encodes the *file name*.
+        label: Which document this call is about, appended to the probe id.
 
     Returns:
         The attempt, carrying the fields.
@@ -621,7 +1037,7 @@ def extract_from_text_and_image(
     body = template.replace("{text}", "" if text is None else text)
 
     attempt = _lib.run(
-        f"llm_frontier.text_and_image[{model}]",
+        f"llm_frontier.text_and_image[{_probe_suffix(model, label)}]",
         engine.vision,
         model,
         body,
@@ -645,6 +1061,7 @@ def judge_local(
     samples: Sequence[Mapping[str, object]] | None = None,
     produced_by: str | None = None,
     rubric: str | None = None,
+    label: str = "",
 ) -> _lib.Attempt:
     """Hand the frontier model the local result *and* the image, and ask it to grade.
 
@@ -674,13 +1091,14 @@ def judge_local(
             rather than a rule someone has to remember. A batch caller passes the
             model it ran, because grading one's own output is the prohibition.
         rubric: The rubric to grade against, defaulting to this driver's.
+        label: Which document this call is about, appended to the probe id.
 
     Returns:
         The attempt, carrying the assessment.
 
     """
     attempt = _lib.run(
-        f"llm_frontier.judge[{model}]",
+        f"llm_frontier.judge[{_probe_suffix(model, label)}]",
         engine.judge,
         model,
         RUBRIC if rubric is None else rubric,
@@ -757,6 +1175,181 @@ def naming_rules(engine: FrontierEngine) -> None:
 # --- The run ----------------------------------------------------------------
 
 
+def _selected_cases(names: Sequence[str]) -> tuple[DocumentCase, ...]:
+    """Pick the cases to read, refusing a name the table does not carry.
+
+    A refusal rather than a skip: a typo would otherwise run a *subset* of what the
+    caller asked for and report it as a complete run, which is the same class of
+    error as a probe that silently measures nothing.
+
+    Args:
+        names: The ``--case`` values, in order, or an empty sequence for all of them.
+
+    Returns:
+        The cases to read.
+
+    Raises:
+        KeyError: When a name is not in :data:`CASES`. The message carries the names
+            that are, so the caller does not have to run ``--list`` to recover.
+
+    """
+    if not names:
+        return CASES
+
+    known = {case.name: case for case in CASES}
+    chosen: list[DocumentCase] = []
+    for name in names:
+        case = known.get(name)
+        if case is None:
+            raise KeyError(
+                f"{name!r} is not a case in this bench. It carries "
+                f"{sorted(known)}. Refusing rather than skipping: a run over a "
+                "subset reported as complete is a measurement that did not happen."
+            )
+        chosen.append(case)
+
+    return tuple(chosen)
+
+
+def print_cases(cases: Sequence[DocumentCase]) -> None:
+    """Print the case table, so a reader can pick a subset without reading the source.
+
+    Args:
+        cases: The cases to describe.
+
+    """
+    print(f"{'case':24} {'kind':6} {'pages':6} {'neg':4} {'source'}")
+    print("-" * 88)
+    for case in cases:
+        pages = ",".join(str(page) for page in case.pages)
+        print(
+            f"{case.name:24} {case.kind:6} {pages:6} "
+            f"{'yes' if case.negative else '-':4} {_lib.shown(case.source)}"
+        )
+        print(f"    {case.note}")
+
+
+def report_budget(cases: Sequence[DocumentCase], schema: bool) -> None:
+    """Print how many paid calls this run is about to make, before it makes them.
+
+    **Every call here reaches a paid provider**, so the count is stated up front
+    rather than discovered on a bill. It is an upper bound, not a promise: a document
+    that turns out to have no text layer has its text probe *not probed*, and a call
+    that refuses at `provider_unavailable` is never sent.
+
+    Args:
+        cases: The cases about to be read.
+        schema: Whether the field schema loaded. Without it the three-way probes do
+            not run at all, so the count drops to the two probes that need no schema.
+
+    """
+    textable = sum(1 for case in cases if case.kind == "text")
+    printed = 1 + len(cases) + 1  # requirement 1's demo + capabilities + judge
+    if schema:
+        printed += textable * 2 + len(cases)  # text + both per textable, image per case
+
+    print(
+        f"  cases  = {len(cases)} ({textable} with a text layer, "
+        f"{sum(1 for case in cases if case.negative)} negative controls)"
+    )
+    print(f"  calls  = up to {printed} paid frontier calls, stated before the first")
+    print(
+        "           (`role_conflict` and the two naming probes refuse before the "
+        "request\n            is built, so they cost nothing)"
+    )
+
+
+def run_case(
+    frontier: FrontierEngine,
+    pdf_engine: PdfEngine,
+    case: DocumentCase,
+    schema: Mapping[str, object],
+    expectations: Mapping[str, str],
+    *,
+    dry: bool,
+) -> None:
+    """Read one document three ways, and report each in turn.
+
+    Args:
+        frontier: The K6 adapter.
+        pdf_engine: The K2 adapter, which produces the text and the pixels.
+        case: The document to read.
+        schema: The field schema the three probes are constrained by.
+        expectations: The bucket each input shape is declared to land in, keyed
+            ``"text"`` and ``"image"``.
+        dry: Whether to derive the inputs and stop before the first paid call.
+
+    """
+    label = case.name
+    print()
+    print(f"  === {label}   kind={case.kind}{'   NEGATIVE CONTROL' if case.negative else ''}")
+    if case.negative:
+        print(f"      note: {case.note}")
+
+    try:
+        inputs = case_pair(pdf_engine, case)
+    except (RuntimeError, ValueError) as exc:
+        _lib.note(f"llm_frontier.pair[{label}]", f"NOT PROBED: {exc}")
+        return
+
+    print(f"      source = {_lib.shown(case.source)} page(s) {list(case.pages)}")
+    print(
+        f"      input  = {inputs.note}   "
+        f"image total {_bytes_total(inputs.image)} bytes"
+    )
+
+    if dry:
+        _lib.note(f"llm_frontier.{label}", "DRY RUN: inputs derived, no call made")
+        return
+
+    # A scan has no text layer, so its text probe is *not probed* - never sent an
+    # empty prompt, which would look like a reading that found nothing.
+    if inputs.textable:
+        print("      -- text only")
+        extract_from_text(
+            frontier,
+            MODEL,
+            expectations["text"],
+            schema=schema,
+            text=inputs.text,
+            label=label,
+        )
+    else:
+        _lib.note(
+            f"llm_frontier.structured[{label}]",
+            f"NOT PROBED: no text layer ({inputs.text_reason}); "
+            "the pixels are the only reading this document supports",
+        )
+
+    if inputs.picturable:
+        print("      -- image only")
+        extract_from_image(
+            frontier,
+            MODEL,
+            expectations["image"],
+            images=list(inputs.image or ()),
+            schema=schema,
+            label=label,
+        )
+    else:
+        _lib.note(
+            f"llm_frontier.vision[{label}]",
+            f"NOT PROBED: no page rendered ({inputs.image_reason})",
+        )
+
+    if inputs.textable and inputs.picturable:
+        print("      -- text and image together")
+        extract_from_text_and_image(
+            frontier,
+            MODEL,
+            expectations["image"],
+            schema=schema,
+            text=inputs.text,
+            images=list(inputs.image or ()),
+            label=label,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run every `llm_frontier` probe and tally the result.
 
@@ -767,19 +1360,58 @@ def main(argv: list[str] | None = None) -> int:
         The number of probes that produced a bucket other than the one declared.
 
     """
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0],
+        epilog=(
+            "The case names are the --case values; each carries the measurement it "
+            "was chosen for. Nothing over two pages is read: a longer document "
+            "measures the corpus, not the adapter."
+        ),
+    )
     parser.add_argument(
         "--out",
         type=pathlib.Path,
         default=_lib.DEFAULT_OUT,
         help="kept for symmetry with the other drivers; this one writes nothing",
     )
+    parser.add_argument(
+        "--case",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="read only this case; repeatable. Default: every case in the table",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="print the case table and exit, making no call at all",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "derive every case's text and pixels - which exercises K2 over the whole "
+            "table - and stop before the first frontier call"
+        ),
+    )
     args = parser.parse_args(argv)
 
     _lib.set_out(args.out)
     _lib.reset()
-    engine = _engine()
 
+    try:
+        cases = _selected_cases(args.case)
+    except KeyError as exc:
+        print(exc.args[0])
+        return 1
+
+    if args.list:
+        print(f"the {len(cases)} case(s) this bench reads:")
+        print()
+        print_cases(cases)
+        return 0
+
+    engine = _engine()
     ready = report_gates()
 
     # The two requirements. Without a credential they are still *probed* - the
@@ -802,13 +1434,17 @@ def main(argv: list[str] | None = None) -> int:
         if picturable != "ok"
         else ""
     )
+    expectations = {"text": reachable, "image": picturable}
 
     capabilities(engine, MODEL, "ok")
     print(f"\n=== requirement 1: image + high-level prompt{vision_note}")
-    extract_from_image(engine, MODEL, picturable, images=[_image(_lib.CASE_IMAGE)])
+    if args.dry_run:
+        _lib.note("llm_frontier.vision[requirement-1]", "DRY RUN: no call made")
+    else:
+        extract_from_image(engine, MODEL, picturable, images=[_image(_lib.CASE_IMAGE)])
 
     print()
-    print("=== the same fields, asked for three ways")
+    print("=== the same fields, asked for three ways, per document")
     # Which vendor is being asked is the first fact a frontier run states, because a
     # model name means nothing without it and the two providers disagree about vision.
     print(f"  model  = {MODEL}")
@@ -826,45 +1462,39 @@ def main(argv: list[str] | None = None) -> int:
         _lib.note("llm_frontier.fields", f"NOT PROBED: {exc}")
         schema = None
 
+    report_budget(cases, schema is not None)
+    if args.dry_run:
+        print("  dry run: the pairing below is real, the calls are not")
+
     if schema is not None:
         print(
             f"  schema = {FIELDS_PATH.relative_to(_lib.ROOT)} "
             f"({len(schema.get('properties', {}))} propert(ies))"
         )
-        # One document, read twice: the pair is what makes the three answers
-        # comparable. Two unrelated fixtures would make a disagreement
-        # unattributable to the input.
-        pdf_engine = pdf_driver._engine()
-        source = _lib.SOURCE_PDF
-        page = 1
-        try:
-            text, image = document_pair(pdf_engine, source, page)
-        except (RuntimeError, ValueError) as exc:
-            _lib.note("llm_frontier.pair", f"NOT PROBED: {exc}")
-        else:
-            print(f"  source = {source.relative_to(_lib.ROOT)} page {page}")
-            print()
-            print("  -- text only")
-            extract_from_text(engine, MODEL, reachable, schema=schema, text=text)
-            print()
-            print(f"  -- image only{vision_note}")
-            extract_from_image(engine, MODEL, picturable, images=[image], schema=schema)
-            print()
-            print(f"  -- text and image together{vision_note}")
-            # `picturable`, not `reachable`: this probe sends pixels too, so it
-            # inherits whatever the image branch expects. Passing `reachable` here
-            # was a real slip — it made the *both* probe demand a value from a
-            # provider that had just been correctly refused one.
-            extract_from_text_and_image(
-                engine, MODEL, picturable, schema=schema, text=text, images=[image]
-            )
+    else:
+        print("  schema = ABSENT, so the three-way probes are not run at all")
+
+    # One document per case, read twice: the pair is what makes the three answers
+    # comparable. Two unrelated fixtures would make a disagreement
+    # unattributable to the input.
+    pdf_engine = pdf_driver._engine()
+    if schema is not None:
+        for case in cases:
+            run_case(engine, pdf_engine, case, schema, expectations, dry=args.dry_run)
 
     print()
     # `judge` grades a **transcript** — the port gives it no `images` parameter — so
-    # it is a text call and does not inherit the vision expectation.
-    judge_local(engine, MODEL, reachable)
+    # it is a text call and does not inherit the vision expectation. Asked **once**,
+    # not once per case: its samples are this driver's fixture transcript, so
+    # repeating it per document would pay N times for one measurement.
+    print("=== requirement 2: a transcript graded against a rubric")
+    if args.dry_run:
+        _lib.note("llm_frontier.judge[fixture-transcript]", "DRY RUN: no call made")
+    else:
+        judge_local(engine, MODEL, reachable)
 
     print()
+    print("=== the prohibition and the naming rules, which need no credential")
     # Enforced with no key, because it is decided before the request is built.
     role_conflict(engine, MODEL)
     naming_rules(engine)
