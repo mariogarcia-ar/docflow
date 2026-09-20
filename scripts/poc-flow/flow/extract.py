@@ -163,6 +163,12 @@ def _fields_to_candidates(
 
     The ``DOCUMENT_CONTENT`` weight comes from the run's config, so every
     producer scores the same family the same way.
+
+    A field with **no value** is skipped, whatever spelling the model used for
+    it: the JSON ``null``, an empty string, or the **string** ``"null"``. The
+    prompt asks for the printed ``null`` literal, but a small model often writes
+    the four-letter word instead — and a declared absence must not become a
+    candidate, because it would score as if the model had found a value.
     """
     points = config.family_points["DOCUMENT_CONTENT"]
     candidates: dict[str, list[FieldCandidate]] = {}
@@ -170,7 +176,7 @@ def _fields_to_candidates(
         if value is None:
             continue
         raw = str(value).strip()
-        if not raw:
+        if not raw or raw.lower() == "null":
             continue
         if field in _DERIVED_FIELDS:
             # A derived field has no anchor: no DOCUMENT_CONTENT signal, ever.
