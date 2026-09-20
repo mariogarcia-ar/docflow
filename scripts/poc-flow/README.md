@@ -15,8 +15,9 @@ where they apply — the DPI cap, the legibility gate before OCR, reading the sh
 from the evidence, adversarially framed review. The code is new.
 
 ```bash
-python scripts/poc-flow/myflow.py <document>            # one JSON verdict
-python scripts/poc-flow/myflow.py <document> --pretty    # indented
+python scripts/poc-flow/myflow.py <document>            # the operator report
+python scripts/poc-flow/myflow.py <document> --json     # the engine's result
+python scripts/poc-flow/myflow.py <document> --pretty   # the result, indented
 python scripts/poc-flow/myflow.py <document> --own-cuit 30-12345678-9
 
 # with intermediate artifacts and a resume journal:
@@ -31,7 +32,7 @@ python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --stage 
 python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --stage decide --no-deps
 python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --stage hitl --redo
 
-# watch the progress on stderr (stdout stays the JSON verdict):
+# watch the progress on stderr (stdout stays the report):
 python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --verbose
 ```
 
@@ -39,7 +40,7 @@ python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --verbos
 
 ```bash
 python scripts/poc-flow/myflow.py \
-    tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf --pretty
+    tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf
 ```
 
 ## Running one stage
@@ -64,23 +65,74 @@ run when its inputs are already on disk.
 it: a re-run of `extract` marks the old `decision` and `hitl` as stale, so they
 are never trusted against the new candidates.
 
+## The report
+
+stdout answers an operator's three questions, in order: *where did the run go*, *what
+did the engine decide*, *what do I have to open*.
+
+```
+document: 66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf
+work root: var/work
+
+path
+  1. read      ran     texto_nativo · route layout_text · 1/1 page(s)
+  2. extract   ran     15 field(s) with candidates · 1 note(s)
+  3. decide    ran     15 field(s) decided · 2 confirmed · 13 pending
+  4. hitl      ran     13 field(s) queued for a human
+
+confirmed (2)
+  alta    cuit_emisor                    20-22087601-3  CONF_SCORE_MARGIN_GATE
+  alta    fecha_emision                  2026-08-07     CONF_SCORE_MARGIN_GATE
+
+review (8)
+  critica importe_total_facturado        17.898,30      REV_GATE_UNMET
+      why: score 2 meets the floor but strong evidence is missing
+  …
+
+read next
+  var/work/pending.json  (13 field(s)) — the fields a human must settle
+  var/work/decision.json — every decision, with the signals behind it
+
+notes
+  - text lane B produced no review verdicts
+```
+
+**`path`** is the run's trace: every step, in order, with `ran` versus `reused` — a
+resumed run is visible *as* a resumed run, and a step that reused its artifact is
+never mistaken for one that did the work. Each step carries its result, so the
+tier, the route and the page count are read off the trace instead of from
+`material.json`.
+
+**The field groups** are the engine's own decisions, most severe first inside each
+group: the winner's printed value, the first reason code, and the engine's own
+explanation when it has one. Nothing here is recomputed — a report that scored its
+own candidates would be a second engine.
+
+**`read next`** names only the files that carry work left for a person, in the
+order worth opening them: the queue first (that is where the unfinished work is),
+then the evidence behind a decision that was not confirmed. A path that was never
+written is never named — that would be a guess, not an instruction.
+
+`--json` prints the engine's `FieldResult` instead, for a program: the decisions,
+the full candidate trace with every signal (including the `UNKNOWN` ones kept for
+provenance), the confirmed values and the notes. `--pretty` indents it.
+
 ## Watching progress
 
-`--verbose` (or `-v`) prints each stage's progress to **stderr**, so an operator
-can follow the run without corrupting the JSON verdict on stdout. It shows what
-ran and what was reused:
+`--verbose` (or `-v`) prints each step live to **stderr**, so an operator can
+follow a slow run without corrupting the report on stdout:
 
 ```
 == read: 66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf
 read: tier=texto_nativo route='layout_text' pages=1
+   texto_nativo · route layout_text · 1/1 page(s)
 == extract: 2493 chars of text
-extract: 23 field(s) with candidates
-== decide: 23 field(s)
-decide: 23 decided, 4 confirmed, 19 not confirmed
-== hitl: 19 field(s) pending
+extract: 15 field(s) with candidates
+   15 field(s) with candidates · 1 note(s)
 ```
 
-On a resumed run the lines change to what was reused instead of re-run:
+The stages marked `==` are the ones executed; an indented line is that step's
+result. On a resumed run the lines change to what was reused instead of re-run:
 
 ```
 read: loaded from work root
@@ -89,31 +141,6 @@ extract: loaded from work root
 
 The stages marked `==` are the ones executed; a plain line is a detail of the
 stage above it.
-
-**At the end a summary prints the path the run took, in order**, so you can
-check it was the intended flow:
-
-```
-== summary
- 1. read      ran     66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf
- 2. extract   ran     2493 chars of text
- 3. decide    ran     23 field(s)
- 4. hitl      ran     21 field(s) pending
-```
-
-A resumed run shows which stages were reused instead of executed:
-
-```
-== summary
- 1. read      reused  texto_nativo
- 2. extract   reused  23 field(s)
- 3. decide    ran     23 field(s)
- 4. hitl      ran     21 field(s) pending
-```
-
-The summary's `ran` vs `reused` is the same distinction as the live lines: a
-stage that ran its adapter is `ran`; one whose artifact came from the work root
-is `reused`.
 
 ## Resuming a failed run
 
@@ -136,6 +163,11 @@ confirmed.json   the human's settled values        (stage: hitl, with --confirm)
 journal.json     the signature, digest and stage marks
 ```
 
+Every artifact is written **indented and with non-ASCII left as-is**: these files
+are reviewed by opening them, so a `decision.json` that is one long line is a file
+nobody reads. Writes stay atomic (temp-then-rename), so a kill mid-write leaves the
+previous artifact intact.
+
 The resumption rules are the ones `scripts/poc/_mirror.py::Resume` taught:
 
 | Rule | How it is guaranteed |
@@ -146,7 +178,7 @@ The resumption rules are the ones `scripts/poc/_mirror.py::Resume` taught:
 | a kill cannot truncate an artifact | every write is a temp-then-rename |
 
 A resumed run announces what it skipped on **stderr** — never on stdout, which is
-the JSON verdict's surface. `--redo` ignores the journal and re-runs everything.
+the report's surface. `--redo` ignores the journal and re-runs everything.
 
 ## The queue: what needs a human
 
@@ -222,7 +254,8 @@ is a **refusal reported in `notes`**, never a silent fallback to a different one
 | `engine.py` | the MoE consensus: merge, veto, score, gate | §6 |
 | `hitl.py` | the queue of unconfirmed fields, and the frontier suggestion | §8 |
 | `persist.py` | the work tree: intermediate artifacts, the resume journal | — |
-| `progress.py` | the progress switch; emits to stderr when verbose | — |
+| `progress.py` | the progress switch and the run's step trace | — |
+| `report.py` | the operator report: the path, the decisions, what to read next | — |
 | `run.py` | `run(...)` the whole chain, `run_stage(stage, ...)` one stage | §1 |
 
 `run` and `run_stage` are the entry points. `run_stage` returns a `FieldResult`
@@ -231,13 +264,15 @@ artifacts are intermediate), `decide` returns the per-field verdicts, `hitl`
 returns the final result with confirmations folded in.
 
 ```python
-from flow import run
+from flow import render_report, run, trace
 
 result = run(path, own_cuits=frozenset({"30123456789"}))
 result.extracted  # {field: raw_value} — CONFIRMED fields only
 result.decisions  # {field: FieldDecision} — decision, reason codes, score, margin
 result.trace  # {field: [FieldCandidate]} — every signal kept, including UNKNOWN
 result.notes  # refused calls, missing lanes, fields named for escalation
+
+print(render_report(path, result, trace()))  # the operator report
 
 # with intermediate artifacts, so a failed run resumes:
 result = run(

@@ -61,6 +61,7 @@ from .material import Material  # noqa: E402
 
 __all__: list[str] = [
     "STAGES",
+    "STAGE_ARTIFACTS",
     "STAGE_DECIDE",
     "STAGE_DEPENDENCIES",
     "STAGE_EXTRACT",
@@ -68,6 +69,7 @@ __all__: list[str] = [
     "STAGE_READ",
     "WorkTree",
     "document_digest",
+    "stage_artifact",
     "work_signature",
 ]
 
@@ -105,6 +107,31 @@ CONFIRMED_NAME: Final[str] = "confirmed.json"
 #: Where the rendered pages live, for the vision lane. A text-only document has
 #: no images and therefore no directory.
 IMAGES_DIR: Final[str] = "images"
+
+#: The artifact each stage writes, so a caller can name the file to open without
+#: repeating the mapping. `hitl` writes its queue and, when there is something to
+#: resolve or settle, the files beside it.
+STAGE_ARTIFACTS: Final[dict[str, tuple[str, ...]]] = {
+    STAGE_READ: (MATERIAL_NAME,),
+    STAGE_EXTRACT: (EXTRACTION_NAME,),
+    STAGE_DECIDE: (DECISION_NAME,),
+    STAGE_HITL: (PENDING_NAME,),
+}
+
+
+def stage_artifact(root: pathlib.Path, stage: str) -> tuple[pathlib.Path, ...]:
+    """The files a stage writes, inside a work root.
+
+    Args:
+        root: The work root.
+        stage: One of the four stage names.
+
+    Returns:
+        The artifact paths, in the order the stage writes them. An unknown stage
+        yields none rather than a guessed path.
+
+    """
+    return tuple(root / name for name in STAGE_ARTIFACTS.get(stage, ()))
 
 
 def document_digest(path: pathlib.Path) -> str:
@@ -411,6 +438,16 @@ def _confirmation_from_dict(data: Mapping[str, object]) -> HumanConfirmation:
     )
 
 
+def _encode(payload: object) -> bytes:
+    """Serialise an artifact: UTF-8, non-ASCII left as-is, and indented.
+
+    The artifacts are read by people as much as by the next stage — a decision is
+    reviewed by opening `decision.json`. Indenting costs bytes and buys a file a
+    diff can be read in; one compact line buys neither.
+    """
+    return json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+
+
 def _write_atomic(path: pathlib.Path, payload: bytes) -> None:
     """Write bytes via a temp name then rename, so a kill cannot truncate."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -504,10 +541,7 @@ class WorkTree:
 
     def save_material(self, material: Material) -> None:
         """Write the material and its rendered pages, then mark the stage done."""
-        _write_atomic(
-            self.root / MATERIAL_NAME,
-            json.dumps(_material_to_dict(material), ensure_ascii=False).encode("utf-8"),
-        )
+        _write_atomic(self.root / MATERIAL_NAME, _encode(_material_to_dict(material)))
         if material.images:
             images_dir = self.root / IMAGES_DIR
             for index, image in enumerate(material.images):
@@ -546,10 +580,7 @@ class WorkTree:
     def save_extraction(self, extraction: Extraction) -> None:
         """Write the extraction, then mark the stage done."""
         _write_atomic(
-            self.root / EXTRACTION_NAME,
-            json.dumps(_extraction_to_dict(extraction), ensure_ascii=False).encode(
-                "utf-8"
-            ),
+            self.root / EXTRACTION_NAME, _encode(_extraction_to_dict(extraction))
         )
         self._mark(STAGE_EXTRACT)
 
@@ -566,10 +597,7 @@ class WorkTree:
 
     def save_result(self, result: FieldResult) -> None:
         """Write the final result, then mark the stage done."""
-        _write_atomic(
-            self.root / DECISION_NAME,
-            json.dumps(_result_to_dict(result), ensure_ascii=False).encode("utf-8"),
-        )
+        _write_atomic(self.root / DECISION_NAME, _encode(_result_to_dict(result)))
         self._mark(STAGE_DECIDE)
 
     def load_result(self) -> FieldResult | None:
@@ -593,10 +621,7 @@ class WorkTree:
         """
         _write_atomic(
             self.root / PENDING_NAME,
-            json.dumps(
-                {"pending": [_pending_to_dict(i) for i in items]},
-                ensure_ascii=False,
-            ).encode("utf-8"),
+            _encode({"pending": [_pending_to_dict(i) for i in items]}),
         )
         self._mark(STAGE_HITL)
 
@@ -640,10 +665,7 @@ class WorkTree:
         """Write the frontier's suggestions alongside the queue."""
         _write_atomic(
             self.root / RESOLUTION_NAME,
-            json.dumps(
-                _resolution_to_dict(suggestions, note),
-                ensure_ascii=False,
-            ).encode("utf-8"),
+            _encode(_resolution_to_dict(suggestions, note)),
         )
 
     def load_resolution(self) -> tuple[list[Suggestion], str]:
@@ -664,10 +686,9 @@ class WorkTree:
         """
         _write_atomic(
             self.root / CONFIRMED_NAME,
-            json.dumps(
-                {"human_confirmed": [_confirmation_to_dict(c) for c in confirmations]},
-                ensure_ascii=False,
-            ).encode("utf-8"),
+            _encode(
+                {"human_confirmed": [_confirmation_to_dict(c) for c in confirmations]}
+            ),
         )
 
     def load_confirmations(self) -> list[HumanConfirmation]:

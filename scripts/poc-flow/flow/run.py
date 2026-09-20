@@ -40,6 +40,8 @@ from .hitl import (
 )
 from .material import TIER_DEGRADED, Material, read_material
 from .persist import (
+    CONFIRMED_NAME,
+    RESOLUTION_NAME,
     STAGE_DECIDE,
     STAGE_DEPENDENCIES,
     STAGE_EXTRACT,
@@ -47,9 +49,10 @@ from .persist import (
     STAGE_READ,
     WorkTree,
     document_digest,
+    stage_artifact,
     work_signature,
 )
-from .progress import configure, emit, reused, step, summary
+from .progress import artifact, configure, emit, outcome, reused, step
 
 __all__: list[str] = [
     "STAGE_DECIDE",
@@ -59,6 +62,16 @@ __all__: list[str] = [
     "run",
     "run_stage",
 ]
+
+
+def _record(tree: WorkTree | None, stage: str) -> None:
+    """Attach a stage's artifact paths to its trace entry.
+
+    Only when a work root exists: without one the stage wrote nothing, and naming
+    a file that was never written is worse than naming none.
+    """
+    if tree is not None:
+        artifact(*stage_artifact(tree.root, stage))
 
 
 def _open_tree(  # pylint: disable=too-many-arguments, too-many-positional-arguments
@@ -92,6 +105,8 @@ def _ensure_material(
         material = tree.load_material()
         if material is not None:
             reused("read", material.tier)
+            outcome(f"{material.tier} · route {material.route or '—'}")
+            _record(tree, STAGE_READ)
     if material is None:
         step("read", path.name)
         material = read_material(path, config)
@@ -101,6 +116,11 @@ def _ensure_material(
         )
         if tree is not None:
             tree.save_material(material)
+        outcome(
+            f"{material.tier} · route {material.route or '—'} · "
+            f"{material.pages_read}/{material.pages_total or '?'} page(s)"
+        )
+        _record(tree, STAGE_READ)
     return material
 
 
@@ -116,12 +136,19 @@ def _ensure_extraction(
         extraction = tree.load_extraction()
         if extraction is not None:
             reused("extract", f"{len(extraction.candidates)} field(s)")
+            outcome(f"{len(extraction.candidates)} field(s) with candidates")
+            _record(tree, STAGE_EXTRACT)
     if extraction is None:
         step("extract", f"{len(material.text or '')} chars of text")
         extraction = extract(material, config, artifacts)
         emit(f"extract: {len(extraction.candidates)} field(s) with candidates")
         if tree is not None:
             tree.save_extraction(extraction)
+        outcome(
+            f"{len(extraction.candidates)} field(s) with candidates"
+            + (f" · {len(extraction.notes)} note(s)" if extraction.notes else "")
+        )
+        _record(tree, STAGE_EXTRACT)
     return extraction
 
 
@@ -190,6 +217,11 @@ def _run_decide(  # pylint: disable=too-many-arguments, too-many-positional-argu
     )
     if tree is not None:
         tree.save_result(result)
+    outcome(
+        f"{len(decisions)} field(s) decided · {len(extracted)} confirmed · "
+        f"{len(decisions) - len(extracted)} pending"
+    )
+    _record(tree, STAGE_DECIDE)
     return result, material
 
 
@@ -209,27 +241,35 @@ def _run_hitl(  # pylint: disable=too-many-arguments, too-many-positional-argume
     queued = pending_items(result.decisions)
     notes: list[str] = list(result.notes)
 
+    step("hitl", f"{len(queued)} field(s) pending")
     if tree is not None:
-        step("hitl", f"{len(queued)} field(s) pending")
         tree.save_pending(queued)
-        if queued and resolve:
-            step("resolve", f"{len(queued)} field(s) to the frontier")
-            suggestions, note = suggest(queued, material, config, path.name)
-            tree.save_resolution(suggestions, note)
-            if note:
-                notes.append(f"frontier: {note}")
-                emit(f"resolve: {note}")
-            elif suggestions:
-                notes.append(
-                    f"frontier suggested {len(suggestions)} value(s); confirmation "
-                    "is still a human's"
-                )
-                emit(f"resolve: {len(suggestions)} suggestion(s)")
-    elif queued:
+        _record(tree, STAGE_HITL)
+
+    if queued and resolve and tree is not None:
+        step("resolve", f"{len(queued)} field(s) to the frontier")
+        suggestions, note = suggest(queued, material, config, path.name)
+        tree.save_resolution(suggestions, note)
+        artifact(tree.root / RESOLUTION_NAME)
+        if note:
+            notes.append(f"frontier: {note}")
+            emit(f"resolve: {note}")
+            outcome(f"frontier refused: {note}")
+        else:
+            notes.append(
+                f"frontier suggested {len(suggestions)} value(s); confirmation "
+                "is still a human's"
+            )
+            emit(f"resolve: {len(suggestions)} suggestion(s)")
+            outcome(f"{len(suggestions)} suggestion(s), none of them a verdict")
+
+    if queued and tree is None:
         notes.append(
             f"{len(queued)} field(s) need human review: "
             f"{', '.join(item.field for item in queued)}"
         )
+
+    outcome(f"{len(queued)} field(s) queued for a human")
 
     extracted = dict(result.extracted)
     if confirm:
@@ -240,6 +280,7 @@ def _run_hitl(  # pylint: disable=too-many-arguments, too-many-positional-argume
             # Only the accepted ones are ground truth; a refused confirmation is
             # an out-of-band edit and must not leak into `confirmed.json`.
             tree.save_confirmations([c for c in confirm if c.field in settled])
+            artifact(tree.root / CONFIRMED_NAME)
         extracted.update(settled)
         for refusal in refusals:
             notes.append(f"confirmation refused: {refusal}")
@@ -250,6 +291,7 @@ def _run_hitl(  # pylint: disable=too-many-arguments, too-many-positional-argume
                 f"{', '.join(sorted(settled))}"
             )
             emit(f"confirm: settled {', '.join(sorted(settled))}")
+        outcome(f"{len(settled)} field(s) settled by a human · {len(refusals)} refused")
 
     final = FieldResult(
         decisions=result.decisions,
@@ -313,7 +355,6 @@ def run(  # pylint: disable=too-many-arguments
         resolve=resolve,
         confirm=confirm,
     )
-    summary()
     return result
 
 
@@ -391,14 +432,12 @@ def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
 
     if stage == STAGE_READ:
         material = _run_read(path, config, tree)
-        summary()
         return FieldResult(
             decisions={}, trace={}, extracted={}, notes=list(material.notes)
         )
 
     if stage == STAGE_EXTRACT:
         extraction = _run_extract(path, config, artifacts, tree)
-        summary()
         return FieldResult(
             decisions={},
             trace=extraction.candidates,
@@ -408,11 +447,10 @@ def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
 
     if stage == STAGE_DECIDE:
         result, _material = _run_decide(path, config, artifacts, own_cuits, tree)
-        summary()
         return result
 
     # stage == STAGE_HITL
-    result = _run_hitl(
+    return _run_hitl(
         path,
         config,
         artifacts,
@@ -421,5 +459,3 @@ def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
         resolve=resolve,
         confirm=confirm,
     )
-    summary()
-    return result

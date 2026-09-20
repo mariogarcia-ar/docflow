@@ -8,8 +8,9 @@ Run:
 
     python scripts/poc-flow/myflow.py <document>
 
-Output: one JSON object per document with the per-field decisions, the reason
-codes, and the confirmed fields.
+Output: a report on stdout — where the run went, the per-field decisions with
+their reason codes, and the files a person has to read. `--json` prints the
+engine's result instead, for a program to consume.
 """
 
 from __future__ import annotations
@@ -78,7 +79,16 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print progress to stderr as each stage runs",
     )
-    parser.add_argument("--pretty", action="store_true", help="indent the JSON output")
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="print the engine's result as JSON instead of the operator report",
+    )
+    parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="print the result as indented JSON (implies --json)",
+    )
     return parser
 
 
@@ -121,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
     # import must happen once this file's directory is the working directory
     # (`python scripts/poc-flow/myflow.py …`). A top-level import would fail
     # when run as a script.  pylint: disable=import-outside-toplevel
-    from flow import run, run_stage
+    from flow import render_report, run, run_stage, trace
     from flow.config import DEFAULT_CONFIG
 
     own_cuits = frozenset(
@@ -160,14 +170,17 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
     else:
         result = run(document, **common)
 
-    payload = _serializable(result)
-    print(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            indent=2 if args.pretty else None,
+    if args.json or args.pretty:
+        print(
+            json.dumps(
+                _serializable(result),
+                ensure_ascii=False,
+                indent=2 if args.pretty else None,
+            )
         )
-    )
+        return 0
+
+    print(render_report(document, result, trace(), args.work_root))
     return 0
 
 
