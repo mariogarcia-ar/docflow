@@ -157,43 +157,47 @@ Los artefactos de cada stage quedan congelados desde la Ola A0:
 
 ### Ola A0 — Esqueleto y decisiones
 
-- [ ] Crear `scripts/poc-flow-v2/flow/`, `myflow.py` y este `plan/`
-- [ ] Congelar el contrato de stages (tabla de arriba) y los **stubs** de los cuatro
-- [ ] Definir la forma del registro: `journal.json`, `control.json`, `run.json` (tabla de arriba)
-- [ ] Decidir cómo se importa `_mirror`: por path desde `scripts/poc/` (PoC) o extraído a
-      módulo compartido — marcado `# TODO: [MVP]` si es por path
-- [ ] Definir la semántica de **pause / resume / stop**: `control.json` con estados
-      `running` / `paused` / `stopped`; `v1` no tiene pausa ni stop, así que es decisión
-      nueva y se anota acá
+- [x] Crear `scripts/poc-flow-v2/flow/`, `myflow.py` y este `plan/`
+- [x] Congelar el contrato de stages (tabla de arriba) y los **stubs** de los cuatro
+- [x] Definir la forma del registro: `journal.json`, `control.json`, `run.json` (tabla de arriba)
+- [x] Decidir cómo se importa `_mirror`: **se reimplementó `Journal`** en `flow/journal.py`
+      — `_mirror.Resume` es un journal de *walk de archivos* (una entrada por input), y el
+      proceso necesita uno de *run de stages* (una entrada por stage). Reglas idénticas
+      (B.5), unidad distinta. Queda como `# TODO: [MVP]` extraer lo común si un tercer
+      consumidor lo pide
+- [x] Definir la semántica de **pause / resume / stop**: `control.json` con estados
+      `running` / `paused` / `stopped`, escrito **entre stages** — `pause`/`stop` terminan
+      el stage en curso, lo marcan, escriben el estado y frenan
 
 **Aceptación**: el árbol existe, `run` sobre fakes completa `read → extract → decide → hitl`
 con `--work-root`, y `ruff check` / `ruff format --check` / `pylint` pasan sobre el esqueleto.
 
 ### Ola A1 — Journal y resume
 
-- [ ] `persist.py`: journal delegado en `_mirror` (3 disparadores de flush: conteo, tiempo, `atexit`)
-- [ ] Invalidar ≠ borrar; conjuntos ordenados en la firma canónica (B.5)
-- [ ] `ran` / `reused` como dato del trace, registrado siempre (B.3)
-- [ ] `run.json` derivado: se reconstruye desde el journal + artefactos, nunca es la fuente
+- [x] `persist.py`: journal con invalidar ≠ borrar; firma canónica con conjuntos ordenados
+      (B.5). Los 3 disparadores de flush de `_mirror` no aplican a un run de 4 stages — no hay
+      walk que acotar — así que el journal se escribe atómicamente al marcar cada stage
+- [x] `ran` / `reused` como dato del trace, registrado siempre (B.3)
+- [x] `run.json` derivado: se reconstruye desde el journal + artefactos, nunca es la fuente
 
 **Aceptación**: matar la corrida a mitad de un stage, relanzar, y retoma **en ese stage**
 sin re-ejecutar los completados; `run.json` reconstruido es idéntico al del run completo.
 
 ### Ola A2 — Pause / resume / stop
 
-- [ ] `pause`: el run se detiene al terminar el stage en curso, dejando el journal consistente
-- [ ] `resume`: la siguiente invocación retoma en el primer stage no terminado
-- [ ] `stop --force`: deja el journal consistente (nada a medio escribir), sin pretender éxito
+- [x] `pause`: el run se detiene al terminar el stage en curso, dejando el journal consistente
+- [x] `resume`: la siguiente invocación retoma en el primer stage no terminado
+- [x] `stop --force`: deja el journal consistente (nada a medio escribir), sin pretender éxito
 
 **Aceptación**: `pause` deja el stage en curso no-marcado, `resume` retoma exactamente ahí,
 `stop --force` deja un journal que la próxima corrida lee sin rehacer lo ya hecho.
 
 ### Ola A3 — Reporte y salida
 
-- [ ] `report.py`: `path` (ran/reused), decisiones agrupadas, `read next` nombra **sólo lo escrito** (B.1)
-- [ ] `progress.py`: trace como dato, switch único, stderr (B.4)
-- [ ] `myflow.py`: reporte por defecto, `--json` / `--pretty` (B.1)
-- [ ] Formateo: `_encode` indentado; firma canónica sin indentar (B.6)
+- [x] `report.py`: `path` (ran/reused), decisiones agrupadas, `read next` nombra **sólo lo escrito** (B.1)
+- [x] `progress.py`: trace como dato, switch único, stderr (B.4)
+- [x] `myflow.py`: reporte por defecto, `--json` / `--pretty` (B.1)
+- [x] Formateo: `_encode` indentado; firma canónica sin indentar (B.6)
 
 **Aceptación**: el reporte sobre fakes cabe en 80 columnas, `read next` lista exactamente
 los artefactos escritos, y `--json` emite el `FieldResult` fijo. Un operador responde las

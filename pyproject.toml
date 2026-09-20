@@ -105,8 +105,11 @@ ignore = [
 
 [tool.pylint.main]
 py-version = "3.13"
-# `src` first so the package resolves without an install.
-source-roots = ["src"]
+# `src` first so the package resolves without an install. `scripts/poc-flow-v2`
+# is the Fase A library the `tests/poc_flow_v2/` suite imports as `flow`; it is
+# not installed, so Pylint resolves it from here, exactly as `pytest` does
+# through its own conftest.
+source-roots = ["src", "scripts/poc-flow-v2"]
 ignore-paths = ["\\.venv/", "build/", "dist/"]
 
 [tool.pylint.reports]
