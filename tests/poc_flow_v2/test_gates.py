@@ -140,18 +140,27 @@ def test_reachability_keeps_the_intentional_gap() -> None:
 
 
 def test_registry_schema_and_prompt_agree() -> None:
-    """The registry prompt names every required field, and vice versa."""
-    artifacts = load_artifacts()
-    prompt = artifacts.prompt
-    schema = artifacts.extraction_schema
+    """Every extraction prompt names every required field, and vice versa.
 
+    Both extract lanes share the schema, so the drift test runs over the text
+    prompt and the vision prompt alike — a field the schema requires and one
+    lane never names is the same silent drift, just in one lane.
+    """
+    artifacts = load_artifacts()
+    schema = artifacts.extraction_schema
     required = set(schema["required"])
     properties = set(schema["properties"])
-    missing = sorted(name for name in required if name not in prompt)
-    undeclared = sorted(name for name in properties if name not in prompt)
 
-    assert not missing, f"schema requires {missing} that the prompt never names"
-    assert not undeclared, f"schema declares {undeclared} that the prompt never names"
+    for role in ("extract_texto", "extract_vision"):
+        prompt = artifacts.prompts[role]
+        missing = sorted(name for name in required if name not in prompt)
+        undeclared = sorted(name for name in properties if name not in prompt)
+        assert not missing, (
+            f"{role}: schema requires {missing} that the prompt never names"
+        )
+        assert not undeclared, (
+            f"{role}: schema declares {undeclared} that the prompt never names"
+        )
 
 
 def test_registry_amounts_are_strings() -> None:

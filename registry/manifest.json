@@ -10,7 +10,24 @@
       "format": "text"
     },
     {
+      "key": "prompts/extraction/vision.txt",
+      "format": "text"
+    },
+    {
+      "key": "prompts/review/texto.txt",
+      "format": "text"
+    },
+    {
+      "key": "prompts/review/vision.txt",
+      "format": "text"
+    },
+    {
       "key": "schemas/extraction/invoice.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schemas/review/review.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     }

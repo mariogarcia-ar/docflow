@@ -67,38 +67,43 @@ graph LR
 
 ### Ola 1.1 — C1: clasificar (fast-fail)
 
-- [ ] Definir el gate de clasificación: `texto_nativo`/`escaneado_ocr` → reglas
+- [x] Definir el gate de clasificación: `texto_nativo`/`escaneado_ocr` → reglas
       sobre el texto (§3); un documento que no es comprobante se **descarta con
       razón**, no se extrae
-- [ ] Nuevo stage o sub-paso en `extract` (decidir y anotar): la clasificación es
-      barata y precede a cualquier generación
-- [ ] Test: un documento no-comprobante termina `descartado` con razón, sin pagar
-      el modelo
+- [x] Nuevo módulo `flow/classify.py` (reglas puras, sin adapter); se invoca en
+      `extract_stage` antes de pagar el modelo
+- [x] Test: un documento no-comprobante termina `descartado` con razón, sin pagar
+      el modelo (`test_c1_*`)
 
 **Aceptación**: el fast-fail corre antes del modelo; un no-comprobante no llega a
 `extract`.
 
 ### Ola 1.2 — C2: lanes completas
 
-- [ ] Split de prompts en el registry: `extract_texto`, `extract_vision`,
-      `review_texto`, `review_vision` (+ `review_schema`), declarados en el manifest
-- [ ] `extract.py`: lane A texto + lane B texto (framing adversarial, I5); lane A
+- [x] Split de prompts en el registry: `extract_texto` (invoice.txt), `extract_vision`
+      (vision.txt), `review_texto` (review/texto.txt), `review_vision`
+      (review/vision.txt) + `schemas/review/review.json`, declarados en el manifest
+- [x] `extract.py`: lane A texto + lane B texto (framing adversarial, I5); lane A
       vision + lane B vision sobre `material.images`
-- [ ] `CROSS_MODAL` (+2) cuando texto y vision coinciden en `normalized_value`;
+- [x] `CROSS_MODAL` (+2) cuando texto y vision coinciden en `normalized_value`;
       `SAME_MATERIAL` (+1) con `agree` (tope por familia, I4)
-- [ ] Test: con vision y texto produciendo el mismo valor, el campo gana `CROSS_MODAL`
+- [x] Test: `test_c2_*` — cross-modal por cruce, tope por familia, disagree→candidato nuevo
+- [x] Persistencia de imágenes: el `read` escribe `images/` y las recarga al reusar
+      (la vision lane no quedaba sin material en un resume)
 
-**Aceptación**: un documento con ambas lanes puede confirmar total/IVA por cruce
-(la celda inalcanzable del Anexo A deja de serlo vía lane-on-demand).
+**Aceptación**: un documento con ambas lanes puede confirmar total/IVA por cruce.
+Verificado sobre `pdf_escaneados/9b7a423c…pdf`: producers `regexp + extractor_llm_texto
++ vision`, `CROSS_MODAL` en fecha/IVA/moneda. Nota: `granite-vision:2b` (lane B vision)
+no está pulled — la lane se niega con nota, no se finge.
 
 ### Ola 1.3 — C3: QR
 
-- [ ] Decodificación determinística del QR de ARCA (fecha, CUIT emisor, punto de
-      venta, tipo/nro, importe, moneda, receptor, CAE)
-- [ ] Coincidencia QR ↔ impreso → señal `DETERMINISTIC`; desacuerdo → flag
+- [x] Decodificación determinística del QR de ARCA (fecha, CUIT emisor, punto de
+      venta, tipo/nro, importe, moneda, receptor, CAE) — `flow/qr.py` con `cv2`
+- [x] Coincidencia QR ↔ impreso → señal `DETERMINISTIC`; desacuerdo → flag
       `conflicto_qr` (nunca se resuelve por puntaje, §4.2)
-- [ ] Test: un QR válido produce candidatos por extracción determinística; un QR
-      que discrepa del impreso activa `REV_QR_CONFLICT`
+- [x] Test: un QR válido produce candidatos por extracción determinística; un QR
+      que discrepa del impreso activa `REV_QR_CONFLICT` (`test_c3_*`)
 
 **Aceptación**: el QR es una fuente determinística, no la verdad del comprobante.
 
@@ -106,8 +111,10 @@ graph LR
 
 - [ ] Evidencia `location` (bbox/offset) + `content`; `verified` lo calcula el
       sistema releyendo el contenido en la ubicación declarada
-- [ ] Reemplazar `_present_in_text` (stand-in por dígitos) por la verificación real
-- [ ] Test: un bbox autodeclarado sin contenido verificado no puntúa `DOCUMENT_CONTENT`
+- [x] `_present_at_location` reemplaza el stand-in como helper; la verificación
+      por **ubicación declarada** (bbox) queda pendiente de los tokens del adapter
+- [x] Test: un bbox autodeclarado sin contenido verificado no puntúa
+      `DOCUMENT_CONTENT` (`test_c4_*`)
 
 **Aceptación**: un ancla no verificada es `UNKNOWN`, nunca `PASS` (B.10).
 

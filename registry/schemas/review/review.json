@@ -1,0 +1,22 @@
+{
+  "$comment": "The shape a review verdict must have (my_flow.md review_schema). A field_verdict's enum is agree | disagree | uncertain; a disagree carries a suggested_value. The model supplies only the verdicts, so this file is the MODEL-facing shape. The engine supplies the caller-facing metadata (reviewer, extractor_reviewed, producer) itself; a model cannot know who it is or whom it reviews.",
+  "type": "object",
+  "properties": {
+    "field_verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {"type": "string"},
+          "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain"]},
+          "reason": {"type": ["string", "null"]},
+          "suggested_value": {"type": ["string", "null"]}
+        },
+        "required": ["field", "verdict"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["field_verdicts"],
+  "additionalProperties": false
+}

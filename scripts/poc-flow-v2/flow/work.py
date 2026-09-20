@@ -15,6 +15,11 @@ import json
 import pathlib
 from collections.abc import Callable, Mapping
 
+# `docflow.kernels.types` is importable at module level because `material.py`
+# (imported just below) already puts `src/` on `sys.path` via its own bootstrap;
+# the image bytes are read back from `images/` into `Bytes` here.
+from docflow.kernels.types import Bytes
+
 from .control import read_control, write_control
 from .fields import Extraction, FieldResult
 from .journal import Journal, document_digest, run_signature
@@ -115,7 +120,9 @@ class WorkTree:
         """Write a stage's primary artifact and return the paths written.
 
         A dataclass contract is serialised through the single owner of the
-        shape (`serial.py`); any other value passes through as-is.
+        shape (`serial.py`); any other value passes through as-is. The `read`
+        stage also writes its rendered pages to `images/`, because a material
+        whose pages were dropped is a vision lane with nothing to read.
         """
         encoded = _to_dict(stage, payload)
         written: list[pathlib.Path] = []
@@ -123,13 +130,26 @@ class WorkTree:
             path = self.root / name
             _write_atomic(path, encode(encoded))
             written.append(path)
+        if stage == STAGE_READ and isinstance(payload, Material):
+            written.extend(self._save_images(payload))
         return tuple(written)
+
+    def _save_images(self, material: Material) -> list[pathlib.Path]:
+        """Write the material's rendered pages, one file per page."""
+        written: list[pathlib.Path] = []
+        images_dir = self.root / "images"
+        for index, image in enumerate(material.images):
+            path = images_dir / f"page{index}.png"
+            _write_atomic(path, image.data)
+            written.append(path)
+        return written
 
     def load_artifact(self, stage: str) -> object | None:
         """Read a stage's primary artifact back, or ``None`` when absent.
 
-        The contract-typed stages are rebuilt as their dataclasses; every other
-        stage returns the plain object that was written.
+        The contract-typed stages are rebuilt as their dataclasses; the `read`
+        stage also reloads its rendered pages from `images/`, so the vision lane
+        sees the same material the first run read.
         """
         names = STAGE_ARTIFACTS.get(stage, ())
         if not names:
@@ -139,8 +159,21 @@ class WorkTree:
             return None
         loader = _LOADERS.get(stage)
         if loader is not None and isinstance(data, Mapping):
-            return loader(data)
+            loaded = loader(data)
+            if stage == STAGE_READ and isinstance(loaded, Material):
+                loaded.images = self._load_images(int(data.get("image_count", 0)))
+            return loaded
         return data
+
+    def _load_images(self, count: int) -> list[object]:
+        """Reload the rendered pages a previous run wrote."""
+        images: list[object] = []
+        for index in range(count):
+            path = self.root / "images" / f"page{index}.png"
+            if not path.is_file():
+                return []
+            images.append(Bytes(data=path.read_bytes(), media_type="image/png"))
+        return images
 
     # --- record and control ----------------------------------------------
 

@@ -106,7 +106,7 @@ TEXT_MODEL_B: Final[str] = "gemma3"
 
 #: The vision lane models (`my_flow.md` §4.1). ``None`` means *no local vision
 #: model is configured*: the lane is then skipped rather than silently faked.
-VISION_MODEL_A: Final[str] = "qwen2.5vl"
+VISION_MODEL_A: Final[str] = "qwen2.5vl:3b"
 VISION_MODEL_B: Final[str] = "granite-vision:2b"
 
 #: The frontier model the flow escalates to (`my_flow.md` §8).

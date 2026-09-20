@@ -26,6 +26,7 @@ import pathlib
 from collections.abc import Callable, Mapping
 
 from .artifacts import load_artifacts
+from .classify import classify
 from .config import DEFAULT_CONFIG, Config
 from .control import CONTROL_PAUSED, CONTROL_STOPPED
 from .engine import DecisionContext, evaluate
@@ -128,11 +129,24 @@ def _read_stage(inputs: StageInput) -> object:
 
 
 def _extract_stage(inputs: StageInput) -> object:
-    """Stage `extract`: the real extraction over the read material."""
+    """Stage `extract`: the real extraction over the read material.
+
+    The classification gate runs first (`my_flow.md` §3): a document that is not
+    a receipt is refused with a reason, and no model is paid for it. A refused
+    classification is an `Extraction` with no candidates and the reason in its
+    notes — never a fake answer.
+    """
     material: object = inputs.deps.get(STAGE_READ)
     if not isinstance(material, Material):
         return Extraction(
             candidates={}, values={}, notes=["no material to extract from"]
+        )
+    decision = classify(material.text or "")
+    if not decision.proceeds:
+        return Extraction(
+            candidates={},
+            values={},
+            notes=[f"classified out: {decision.reason}"],
         )
     return extract(material, DEFAULT_CONFIG, load_artifacts())
 
