@@ -743,3 +743,163 @@ cruce de lanes en texto nativo) razón social, descripción y categoría en `tex
 tenían techo 4 y **no podían confirmarse nunca**, y `fecha` no podía pasar el gate por
 falta de una validación "fuerte". Esta tabla debe regenerarse, como test automático, cada
 vez que cambien puntajes, umbrales o el conjunto de señales.
+
+---
+
+## Anexo B. Lecciones de la implementación
+
+Lo que enseñó construir el flujo en `scripts/poc-flow/` (`flow/report.py`,
+`flow/progress.py`, `flow/persist.py`, `flow/run.py`). No son decisiones nuevas: donde una
+lección contradiga un §, manda el §. Son el registro de qué costó, para no volver a
+pagarlo.
+
+### B.1 Trazabilidad: dos audiencias, dos salidas
+
+El primer error fue volcar el JSON del motor a stdout. El JSON es el contrato de la
+máquina—`FieldResult`: decisiones, traza de candidatos, confirmados, notas—y **no es un
+reporte**. Un operador tenía que deducir de él por dónde había pasado el flujo y qué
+archivo abrir, que son justo las dos preguntas que el JSON no está hecho para contestar.
+
+| Audiencia | Salida | Contenido |
+|---|---|---|
+| Persona | stdout | `path` (por dónde pasó), decisiones por resultado, `read next`, `notes` |
+| Programa | stdout con `--json` | el `FieldResult` completo, con la traza de señales |
+
+Tres reglas que salieron de ahí:
+
+1. **El reporte no recalcula nada.** Lee `FieldResult` y el trace; si puntuara sus propios
+   candidatos sería un segundo motor, y los dos podrían discrepar.
+2. **El reporte no nombra un archivo que no se escribió.** Una ruta listada es una
+   instrucción; una inventada es una instrucción falsa. Por eso el reporte deriva
+   `read next` de los artefactos que los steps registraron, no de una lista fija.
+3. **La traza es del runtime, no del reporte.** Cada step registra su resultado y sus
+   archivos como dato (`StepTrace`), y el reporte los imprime. Guardar el resultado en el
+   mismo lugar donde se genera es lo que evita que los dos se desincronicen.
+
+### B.2 Los stages son la unidad, no un detalle de implementación
+
+`read → extract → decide → hitl` como funciones separadas no fue cosmética: es lo que hace
+posible reanudar, correr un solo stage, y nombrar el archivo de cada etapa.
+
+| Stage | Entradas (`STAGE_DEPENDENCIES`) | Artefacto declarado (`STAGE_ARTIFACTS`) |
+|---|---|---|
+| `read` | — | `material.json`, `images/` |
+| `extract` | `read` | `extraction.json` |
+| `decide` | `extract` | `decision.json` |
+| `hitl` | `decide` | `pending.json` (+ `resolution.json`, `confirmed.json`) |
+
+Todo stage declara lo mismo en **un** lugar (`STAGE_DEPENDENCIES`, `STAGE_ARTIFACTS` en
+`persist.py`). Nada de lo que hace el stage está escrito dos veces; y el nombre del
+artefacto vive en un solo sitio. Si el journal, el reporte y el guardado llevan cada uno su
+propia lista, tarde o temprano el reporte nombra un archivo que se llama distinto.
+
+### B.3 `ran` no es `reused`
+
+Un run reanudado se lee igual que uno completo si el reporte no lo distingue. Importa para
+lo único que importa en un PoC de modelos locales: saber si la respuesta que estás leyendo
+la produjo una llamada de hoy o un artefacto de la semana pasada. Por eso cada paso del
+`path` dice `ran` o `reused`, y un stage reusado no se atribuye el trabajo del que lo
+antecede.
+
+### B.4 El progreso en vivo va a stderr
+
+El `verbose` no es diagnóstico decorativo: es la única traza en vivo, y en un flujo con OCR
+y generaciones locales el silencio de un minuto no se distingue de un cuelgue.
+
+- **La respuesta va a stdout, el progreso a stderr.** Una nota de reanudación impresa en
+  stdout corrompería el reporte; es la misma razón por la que `announce()` escribe a stderr.
+- **Un solo dueño del switch.** El módulo de progreso configura la verbosidad una vez y
+  todos los stages emiten por él; un stage que imprimiera por su cuenta rompería el
+  contrato sin que nadie lo note.
+- **La traza se registra siempre**, con o sin `--verbose`: el `path` del reporte no es un
+  extra de la verbosidad, es la respuesta a "¿por dónde pasó?".
+- Un `emit` apagado es un **no-op**, no un buffer que alguien vacía después.
+
+### B.5 Reanudar: cuatro reglas, cada una por un fallo
+
+| Regla | Sin ella |
+|---|---|
+| Un stage se marca `done` **después** de escribir su artefacto | una excepción a mitad de camino dejaría el stage marcado como hecho |
+| Toda escritura es temp + rename | un `kill` en el medio dejaría un artefacto truncado y creíble |
+| El journal lleva el sha256 del documento | editar el PDF reusaría la lectura de la versión anterior |
+| La firma cubre los diales, los CUIT propios y un digest de cada prompt y schema | cambiar un prompt reusaría la extracción del prompt viejo |
+
+Dos detalles que sólo aparecen al implementarlo:
+
+- **Invalidar no es borrar.** Re-correr un stage intermedio marca como no-hechos ese stage y
+  todos los posteriores, pero deja los archivos: el journal deja de confiar en ellos. Si el
+  proceso muere justo después, el próximo arranque no lee estado a medio invalidar.
+- **Al fingerprintear, los conjuntos se ordenan.** El orden de iteración de un `set` o
+  `frozenset` depende de la aleatorización de hashes: una firma construida sobre un conjunto
+  sin ordenar cambiaría en cada corrida y descartaría el journal **siempre**. Es un bug
+  silencioso: parece que el journal no funciona, no que la firma está mal.
+
+### B.6 Formatear es una decisión de audiencia, no de estilo
+
+El mismo dato necesita **dos** serializaciones, y confundirlas rompe algo:
+
+| Serialización | Para quién | Cómo | Si se confunde |
+|---|---|---|---|
+| La firma (`work_signature`) | la máquina | canónica: `sort_keys`, sin indentar | el journal se descarta en cada corrida |
+| El artefacto (`decision.json`, …) | la persona | `indent=2`, `ensure_ascii=False` | un archivo de una sola línea que nadie lee ni puede `diff`ear |
+
+Un `decision.json` compacto no es un artefacto: es un volcado. `pending.json` es la cola que
+un humano abre para trabajar; si está en una línea, no se abre.
+
+Y en el reporte: **cabe en 80 columnas**. El valor largo se corta con `…`, y la explicación
+del motor va en una línea indentada `why:` debajo de la fila. Una fila que se envuelve deja
+de ser una tabla.
+### B.7 Lo que mostró una corrida real (`texto_nativo`, smoke run)
+
+Documento `tests/fixtures/casos/66cd35e9-…pdf`, tier `texto_nativo`, una página: 2
+`CONFIRMED` (CUIT por checksum, fecha por regla de fecha), el resto repartido entre
+`REVIEW` y `ESCALATE`. Vale registrar por qué, porque cada caso es una lección:
+
+- **El número de campos no es constante** (15 o 16 entre corridas, con el mismo documento y
+  el mismo prompt): cambia lo que el modelo devuelve, no el documento. Una métrica sobre
+  "campos extraídos" mide al modelo tanto como al comprobante; la que importa es la de
+  confirmados por campo.
+- **`importe_total_facturado` e `iva` quedaron en `REV_GATE_UNMET`**, no en escalamiento:
+  score 2 ≥ piso, pero sin `DETERMINISTIC` ni `CROSS_MODAL`. Es **la celda inalcanzable del
+  Anexo A apareciendo en la práctica**: sin lane vision y sin aritmética aplicable, un campo
+  crítico en `texto_nativo` no confirma. La lane a demanda de §6.5 no es una optimización,
+  es la condición para que ese par (campo, tier) tenga camino.
+- **`iva` volvió `"21,0%"`** y el validador aritmético contestó `UNKNOWN` ("a component is
+  not a plain amount"). Es lo correcto (§6.4: sin todos los componentes no hay `FAIL`, y sin
+  `FAIL` no hay veto), pero muestra que **un componente de una regla tiene contrato de
+  forma**: la aritmética necesita importes, y una alícuota no lo es. Va con
+  `required_components`.
+- **La lane B no devolvió veredictos** ("text lane B produced no review verdicts"). Sin
+  `SAME_MATERIAL`, los campos de severidad baja quedan con techo 2 (`DOCUMENT_CONTENT`) y no
+  alcanzan T=3. Un lane que no corre se reporta como nota; nunca como un cero silencioso.
+- **Campos de severidad baja con un solo productor y ninguna señal `PASS`** puntúan 0 y
+  escalan (`ESC_LOW_SCORE`): un valor sin ninguna evidencia que lo respalde no es un
+  candidato débil, es un candidato sin evidencia.
+- **El modelo contestó con la descripción del schema.** `tipo_comprobante` volvió
+  `"A | B | C | 090 | 099"` y `condicion_impositiva_dominante` `"21 | 10_5 | 27 | 2_5 |
+  exento_no_gravado | null"`: ese texto es, literalmente, el `description` de cada campo en
+  `extraction.json`, porque ahí las opciones se declaran como texto libre y no como `enum`.
+  Es un **artefacto de parseo, no una lectura**. Arreglo: declarar el `enum` de verdad, o
+  descartar en el productor todo valor idéntico a la descripción del campo. Nota que el
+  motor igual hizo lo correcto — el candidato no tiene ninguna señal `PASS`, así que escaló
+  en vez de confirmar basura.
+
+La conclusión de la corrida es a favor del diseño, no en contra: el motor no confirmó nada
+que no pudiera sostener, y los campos que no confirmó son exactamente los que no tenían
+evidencia fuerte disponible. Lo que falta no es un umbral más bajo, es la escalera de §6.5.
+
+### B.8 Convenciones que pagaron
+
+- **La librería es el entregable; el CLI es un cliente.** `myflow.py` parsea argumentos e
+  imprime; todo lo demás es una llamada a la librería.
+- **Un solo dueño por nombre de campo.** `SUBTOTAL_FIELD` / `IVA_FIELD` / `TOTAL_FIELD`
+  existen una vez, porque el schema y el motor tienen que nombrar lo mismo.
+- **Una negativa es una nota, no una excepción.** Un modelo que no contesta, una lane sin
+  configurar: se registran en `notes` y el flujo sigue. Lo que no se hace nunca es
+  sustituir la respuesta por un valor por defecto.
+- **El reporte no importa `docflow`.** Es lo que permite ejercitarlo con valores
+  construidos, sin adapters ni modelos.
+- **Las gates corren sobre este árbol aunque `pytest` no lo colecte**: `ruff check`,
+  `ruff format --check` y `pylint` sobre `scripts/poc-flow/` son parte del cierre, y los
+  módulos puros (`route`, `validators`, `fields`, `engine`, `report`, `progress`) no
+  necesitan un modelo para probarse.
