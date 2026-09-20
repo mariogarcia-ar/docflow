@@ -128,29 +128,37 @@ no está pulled — la lane se niega con nota, no se finge.
 
 ### Ola 2.1 — C5: grupos de consistencia
 
-- [ ] `required_components` por `tipo_comprobante` (Factura C no discrimina IVA)
-- [ ] Evaluar **combinaciones** `{subtotal, IVA, total}`: exactamente una
-      consistente → +3 y veto a las otras; cero o más de una → escalar
-- [ ] Test: una Factura C sin IVA discriminado no se juzga por la ecuación de
-      neto+IVA (es `UNKNOWN`, no `FAIL`)
+- [x] `required_components` por `tipo_comprobante` (Factura C no discrimina IVA):
+      `validators.required_components_for` — `C` → sin componentes, default neto+IVA
+- [x] Evaluar **combinaciones** `{subtotal, IVA, total}`: `engine._resolve_arithmetic`
+      resuelve una vez antes de decidir — exactamente una consistente → +3; cero o
+      más de una → `ESC_NO_UNIQUE_ARITHMETIC_COMBINATION`
+- [x] Test: `test_c5_*` — Factura C sin componentes, combinación única suma +3,
+      combinación no única escala
 
 **Aceptación**: el validador aritmético no veta lo que no puede evaluar (§6.4).
 
 ### Ola 2.2 — C6: lane-on-demand
 
-- [ ] Cuando un campo crítico no cierra el gate y falta la vision lane, correrla
-      a demanda antes de escalar (§6.5)
-- [ ] Test: total/IVA en texto nativo sin determinístico corre vision y cierra
-      (la escalera del Anexo A)
+- [x] Detección pura (`flow/lane.py::needs_vision_lane`): qué campos críticos con
+      gate no satisfecho necesitan la vision lane, y qué familias fuertes faltan
+- [x] Cableada en `decide_stage` dentro del resolver loop: los gates sin cerrar se
+      reportan con nota honesta
+- [ ] El **render a demanda** sigue pendiente: un texto nativo no tiene páginas
+      renderizadas hasta pedirlas, y ese adapter call no está → `# TODO: [MVP]`
+- [x] Test: `test_c6_*` — gate no satisfecho necesita lane, gate cerrado no
 
-**Aceptación**: el par (campo, tier) inalcanzable del Anexo A tiene camino real.
+**Aceptación parcial**: la escalera detecta y reporta; el render real queda
+diferido, no silencioso.
 
 ### Ola 2.3 — C7: resolver (loop → motor)
 
-- [ ] `resolver` deriva candidatos con traza; re-entra al motor solo si hay
-      candidato o evidencia **nuevos** (`ESC_NO_NEW_EVIDENCE` si no)
-- [ ] Tope de `max_loops=2` (`ESC_LOOP_LIMIT`)
-- [ ] Test: un validador que dirime re-entra; sin novedad escala directo
+- [x] `flow/resolve.py::resolver_loop`: re-entra al motor solo con evidencia
+      nueva; `same_decision_set` compara decisión/valor/razones, no el score
+- [x] `ESC_NO_NEW_EVIDENCE` cuando el resolver no aporta; `ESC_LOOP_LIMIT` al
+      agotar `max_loops=2`
+- [x] Cableado en `decide_stage` (el resolver actual es la escalera de C6)
+- [x] Test: `test_c7_*` — re-entra con evidencia nueva, se detiene sin novedad
 
 **Aceptación**: el loop está acotado y nunca repite el motor sobre la misma evidencia.
 

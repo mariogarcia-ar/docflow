@@ -20,16 +20,26 @@ import datetime
 import re
 from typing import Final
 
-from .fields import FAIL, PASS, UNKNOWN, EvidenceSignal
+from .fields import (
+    FAIL,
+    IVA_FIELD,
+    PASS,
+    SUBTOTAL_FIELD,
+    TOTAL_FIELD,
+    UNKNOWN,
+    EvidenceSignal,
+)
 
 __all__: list[str] = [
     "ARITHMETIC_INCONSISTENT",
     "CUITS_CHECKSUM_INVALID",
     "CUITS_OWN_AS_EMISOR",
     "DATE_NONEXISTENT",
+    "arithmetic_consistent",
     "arithmetic_signal",
     "cuit_signal",
     "date_signal",
+    "required_components_for",
 ]
 
 #: The veto names the engine recognizes (`my_flow.md` §6.3). The closed list is
@@ -38,6 +48,12 @@ CUITS_CHECKSUM_INVALID: Final[str] = "CUITS_CHECKSUM_INVALID"
 CUITS_OWN_AS_EMISOR: Final[str] = "CUITS_OWN_AS_EMISOR"
 DATE_NONEXISTENT: Final[str] = "DATE_NONEXISTENT"
 ARITHMETIC_INCONSISTENT: Final[str] = "ARITHMETIC_INCONSISTENT"
+
+#: The receipt types that do **not** discriminate IVA (`my_flow.md` §6.4): for a
+#: Factura C the net-plus-VAT equation has nothing to judge, so no component is
+#: required and the validator answers UNKNOWN rather than vetoing a type it does
+#: not model.
+_NO_IVA_TYPES: Final[frozenset[str]] = frozenset({"C"})
 
 #: TODO: [MVP] The ``required_components`` per ``tipo_comprobante`` (`my_flow.md`
 #: §6.4) is not modelled: this version assumes the net-plus-VAT combination and
@@ -94,6 +110,41 @@ def _parse_amount(raw: str) -> float | None:
         return float(normalized)
     except ValueError:
         return None
+
+
+def required_components_for(tipo_comprobante: str) -> tuple[str, ...]:
+    """The components the arithmetic rule needs for a receipt type (§6.4).
+
+    A Factura C does not discriminate IVA, so the net-plus-VAT equation has no
+    components and the validator answers UNKNOWN rather than judging it wrong.
+    The default is the net-plus-VAT combination: subtotal, IVA and total.
+    """
+    tipo = str(tipo_comprobante).strip()
+    if tipo in _NO_IVA_TYPES:
+        return ()
+    return (SUBTOTAL_FIELD, IVA_FIELD, TOTAL_FIELD)
+
+
+def arithmetic_consistent(
+    subtotal: str,
+    iva: str,
+    total: str,
+    *,
+    tolerance: float = 0.01,
+) -> bool:
+    """Whether ``subtotal + IVA == total`` within tolerance.
+
+    Pure predicate, exported so the engine can evaluate **combinations** (§6.4)
+    without reaching into the validator's signal vocabulary. Returns ``False``
+    when any component is unparseable — the caller decides whether that is
+    UNKNOWN (a single combination) or a non-unique resolution (many).
+    """
+    sub = _parse_amount(subtotal)
+    tax = _parse_amount(iva)
+    tot = _parse_amount(total)
+    if sub is None or tax is None or tot is None:
+        return False
+    return abs(sub + tax - tot) <= tolerance
 
 
 def cuit_signal(

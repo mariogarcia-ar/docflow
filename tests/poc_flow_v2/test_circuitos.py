@@ -17,11 +17,21 @@ import cv2
 import numpy as np
 from flow.classify import classify
 from flow.config import DEFAULT_CONFIG, FAMILY_POINTS
-from flow.engine import _family_score
+from flow.engine import DecisionContext, _family_score, evaluate
 from flow.extract import _apply_review, _cross_modal, _present_at_location
-from flow.fields import PASS, EvidenceSignal, FieldCandidate
+from flow.fields import (
+    DECISION_CONFIRMED,
+    DECISION_REVIEW,
+    PASS,
+    EvidenceSignal,
+    FieldCandidate,
+    FieldDecision,
+    FieldResult,
+)
+from flow.lane import needs_vision_lane
 from flow.qr import qr_candidates, qr_conflict, qr_deterministic
-from flow.validators import arithmetic_signal
+from flow.resolve import resolver_loop
+from flow.validators import arithmetic_signal, required_components_for
 
 # --- C1: classify ----------------------------------------------------------
 
@@ -215,6 +225,209 @@ def test_c2_a_reviewer_disagree_produces_a_new_candidate() -> None:
     produced = candidates["importe_total_facturado"]
     assert len(produced) == 2
     assert any(p.producers == ["reviewer_suggested"] for p in produced)
+
+
+# --- C5: arithmetic consistency (combinations + required components) --------
+
+
+def test_c5_a_factura_c_has_no_required_components() -> None:
+    """A Factura C does not discriminate IVA, so the equation has no components."""
+    assert not required_components_for("C")
+
+
+def test_c5_the_default_combination_needs_all_three() -> None:
+    """The net-plus-VAT combination requires subtotal, IVA and total."""
+    assert required_components_for("A") == (
+        "subtotal",
+        "iva",
+        "importe_total_facturado",
+    )
+
+
+def test_c5_one_consistent_combination_scores_once() -> None:
+    """Exactly one consistent combination gives the +3 to total and IVA."""
+    candidates = {
+        "subtotal": [FieldCandidate("15000", "15.000,00", ["llm"], [], [])],
+        "iva": [FieldCandidate("289830", "2.898,30", ["llm"], [], [])],
+        "importe_total_facturado": [
+            FieldCandidate("1789830", "17.898,30", ["llm"], [], []),
+            FieldCandidate("9999999", "99.999,99", ["llm"], [], []),
+        ],
+    }
+    ctx = DecisionContext(
+        config=DEFAULT_CONFIG, tier="texto_nativo", own_cuits=frozenset()
+    )
+    decisions = evaluate(
+        candidates,
+        ctx,
+        {
+            "subtotal": "15.000,00",
+            "iva": "2.898,30",
+            "importe_total_facturado": "17.898,30",
+        },
+    )
+
+    assert ctx.arithmetic_resolution == "consistent"
+    total = decisions["importe_total_facturado"]
+    assert any(
+        s.family == "DETERMINISTIC" and s.result == "PASS" for s in total.winner.signals
+    )
+
+
+def test_c5_non_unique_combination_escalates() -> None:
+    """More than one consistent combination escalates, never a false +3.
+
+    Two different (subtotal, IVA) pairs both sum to the same total: the equation
+    cannot pick which is the reading, so it must not hand out a deterministic
+    PASS to either.
+    """
+    candidates = {
+        "subtotal": [
+            FieldCandidate("15000", "15.000,00", ["llm"], [], []),
+            FieldCandidate("14900", "14.900,00", ["llm"], [], []),
+        ],
+        "iva": [
+            FieldCandidate("289830", "2.898,30", ["llm"], [], []),
+            FieldCandidate("299830", "2.998,30", ["llm"], [], []),
+        ],
+        "importe_total_facturado": [
+            FieldCandidate("1789830", "17.898,30", ["llm"], [], []),
+        ],
+    }
+    ctx = DecisionContext(
+        config=DEFAULT_CONFIG, tier="texto_nativo", own_cuits=frozenset()
+    )
+    decisions = evaluate(
+        candidates,
+        ctx,
+        {
+            "subtotal": "15.000,00",
+            "iva": "2.898,30",
+            "importe_total_facturado": "17.898,30",
+        },
+    )
+
+    total = decisions["importe_total_facturado"]
+    assert "ESC_NO_UNIQUE_ARITHMETIC_COMBINATION" in total.reason_codes
+
+
+# --- C6: lane-on-demand -----------------------------------------------------
+
+
+def test_c6_a_critical_field_with_unmet_gate_needs_vision() -> None:
+    """A critical REVIEW with no strong evidence is the ladder's target."""
+    decision = FieldDecision(
+        field="importe_total_facturado",
+        severity="critica",
+        decision=DECISION_REVIEW,
+        reason_codes=["REV_GATE_UNMET"],
+        winner=FieldCandidate("1789830", "17.898,30", ["llm"], [], []),
+        runner_up=None,
+        score=2,
+        margin=2,
+        threshold=5,
+        strong=("DETERMINISTIC", "CROSS_MODAL"),
+        gate_satisfied=False,
+        notes=[],
+    )
+
+    needed = needs_vision_lane({"importe_total_facturado": decision})
+
+    assert "importe_total_facturado" in needed
+
+
+def test_c6_a_closed_gate_does_not_need_vision() -> None:
+    """A gate already satisfied is not a ladder target."""
+    decision = FieldDecision(
+        field="importe_total_facturado",
+        severity="critica",
+        decision=DECISION_CONFIRMED,
+        reason_codes=["CONF_SCORE_MARGIN_GATE"],
+        winner=FieldCandidate("1789830", "17.898,30", ["llm"], [], []),
+        runner_up=None,
+        score=5,
+        margin=3,
+        threshold=5,
+        strong=("DETERMINISTIC", "CROSS_MODAL"),
+        gate_satisfied=True,
+        notes=[],
+    )
+
+    assert not needs_vision_lane({"importe_total_facturado": decision})
+
+
+# --- C7: resolver loop ------------------------------------------------------
+
+
+def test_c7_the_loop_reaters_only_with_new_evidence() -> None:
+    """A resolver that changes the candidate set re-enters the engine."""
+    calls: list[int] = []
+
+    def decide():
+        calls.append(1)
+        return _result_of(
+            [
+                FieldDecision(
+                    field="importe_total_facturado",
+                    severity="critica",
+                    decision=DECISION_CONFIRMED if len(calls) > 1 else "REVIEW",
+                    reason_codes=[],
+                    winner=FieldCandidate("1789830", "17.898,30", ["llm"], [], []),
+                    runner_up=None,
+                    score=3,
+                    margin=2,
+                    threshold=5,
+                    strong=("DETERMINISTIC",),
+                    gate_satisfied=True,
+                    notes=[],
+                )
+            ]
+        )
+
+    def resolve(result):
+        del result
+        return len(calls) == 1
+
+    resolver_loop(decide, resolve, max_loops=2)
+
+    assert len(calls) == 2
+
+
+def test_c7_a_resolver_with_nothing_new_stops_with_a_reason() -> None:
+    """No new evidence → ESC_NO_NEW_EVIDENCE, no re-entry."""
+    calls: list[int] = []
+
+    def decide():
+        calls.append(1)
+        return _result_of(
+            [
+                FieldDecision(
+                    field="importe_total_facturado",
+                    severity="critica",
+                    decision=DECISION_REVIEW,
+                    reason_codes=["REV_GATE_UNMET"],
+                    winner=FieldCandidate("1789830", "17.898,30", ["llm"], [], []),
+                    runner_up=None,
+                    score=2,
+                    margin=2,
+                    threshold=5,
+                    strong=("DETERMINISTIC", "CROSS_MODAL"),
+                    gate_satisfied=False,
+                    notes=[],
+                )
+            ]
+        )
+
+    result = resolver_loop(decide, lambda _result: False, max_loops=2)
+
+    assert len(calls) == 1
+    assert "ESC_NO_NEW_EVIDENCE" in result.notes
+
+
+def _result_of(decisions):
+    return FieldResult(
+        decisions={d.field: d for d in decisions}, trace={}, extracted={}, notes=[]
+    )
 
 
 def _qr_fixture() -> bytes:

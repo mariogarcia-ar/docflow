@@ -18,6 +18,7 @@ testable with constructed candidates.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Final
 
 from .config import (
     DEFAULT_CONFIG,
@@ -40,7 +41,13 @@ from .fields import (
     merge_candidates,
     severity_for,
 )
-from .validators import arithmetic_signal, cuit_signal, date_signal
+from .validators import (
+    arithmetic_consistent,
+    arithmetic_signal,
+    cuit_signal,
+    date_signal,
+    required_components_for,
+)
 
 __all__: list[str] = [
     "DecisionContext",
@@ -52,6 +59,10 @@ __all__: list[str] = [
 #: outside this mapping carries no deterministic signal — its gate then needs a
 #: cross-lane or native-anchor signal to close, which is exactly Anexo A.
 _VALIDATOR_FIELDS: frozenset[str] = frozenset({"cuit_emisor", "fecha_emision"})
+
+#: The reason code a non-unique arithmetic combination escalates with
+#: (`my_flow.md` §6.4).
+ESC_NO_UNIQUE_ARITHMETIC: Final[str] = "ESC_NO_UNIQUE_ARITHMETIC_COMBINATION"
 
 
 # `too-few-public-methods`: `DecisionContext` is a bundle of dials handed to a
@@ -86,6 +97,12 @@ class DecisionContext:
         self.own_cuits = own_cuits
         self.validator_fields = _VALIDATOR_FIELDS
         self.veto_codes = config.veto_codes
+        #: The arithmetic combination resolution, set by :func:`evaluate` before
+        #: deciding. One of: ``None`` (no combination evaluable — every
+        #: component is UNKNOWN), ``"consistent"`` (exactly one combination),
+        #: or ``"non_unique"`` (zero or many consistent combinations, which
+        #: escalates).
+        self.arithmetic_resolution: str | None = None
 
 
 def _validator_signals(
@@ -123,20 +140,23 @@ def _attach_arithmetic(
 ) -> list[EvidenceSignal]:
     """The arithmetic signal for the subtotal/IVA/total combination.
 
-    The rule refutes a combination, not a field (`my_flow.md` §6.4): when the
-    three values are all present and consistent, the total and the IVA each get
-    the +3; when they are all present and inconsistent, the combination is
-    vetoed. A missing component yields UNKNOWN.
+    The rule refutes a combination, not a field (`my_flow.md` §6.4). The
+    combination resolution is computed once in :func:`evaluate` and carried on
+    the context: exactly one consistent combination gives the +3 to its total
+    and IVA; zero or many escalates (`ESC_NO_UNIQUE_ARITHMETIC_COMBINATION`);
+    no evaluable combination stays UNKNOWN.
     """
     if field not in {TOTAL_FIELD, IVA_FIELD}:
+        return []
+    if candidate.raw_value != values.get(field, ""):
+        return []
+    if ctx.arithmetic_resolution is None:
+        return []
+    if ctx.arithmetic_resolution == "non_unique":
         return []
     sub = values.get(SUBTOTAL_FIELD, "")
     tax = values.get(IVA_FIELD, "")
     tot = values.get(TOTAL_FIELD, "")
-    # Only the candidate that matches the chosen total gets the signal; the
-    # others are left to the ordinary scoring.
-    if candidate.raw_value != values.get(field, ""):
-        return []
     signal = arithmetic_signal(sub, tax, tot, family_points=ctx.config.family_points)
     return [signal]
 
@@ -259,6 +279,12 @@ def decide_field(  # pylint: disable=too-many-locals
         reason_codes.append("ESC_ALL_VETOED")
         decision = DECISION_ESCALATE
         notes.append("every candidate was vetoed")
+    elif (
+        field in {TOTAL_FIELD, IVA_FIELD} and ctx.arithmetic_resolution == "non_unique"
+    ):
+        reason_codes.append(ESC_NO_UNIQUE_ARITHMETIC)
+        decision = DECISION_ESCALATE
+        notes.append("zero or more than one arithmetic combination is consistent")
     elif score < ESCALATE_FLOOR:
         reason_codes.append("ESC_LOW_SCORE")
         decision = DECISION_ESCALATE
@@ -295,12 +321,80 @@ def decide_field(  # pylint: disable=too-many-locals
     )
 
 
+def _resolve_arithmetic(
+    ctx: DecisionContext,
+    candidates: Mapping[str, list[FieldCandidate]],
+    values: Mapping[str, str],
+) -> None:
+    """Resolve the arithmetic combination once, before any field is decided.
+
+    §6.4: the rule refutes a **combination**, not a field. The candidates for
+    subtotal, IVA and total each offer alternative values; the combination is
+    the cross-product of their normalized values. Exactly one consistent
+    combination → ``"consistent"`` (its +3 goes to the matching total/IVA);
+    zero or many → ``"non_unique"``; no evaluable component → ``None``.
+    """
+    tipo = _tipo_comprobante(candidates, values)
+    required = required_components_for(tipo)
+    if not required:
+        ctx.arithmetic_resolution = None
+        return
+
+    subtotals = _values_for(candidates, SUBTOTAL_FIELD, values)
+    taxes = _values_for(candidates, IVA_FIELD, values)
+    totals = _values_for(candidates, TOTAL_FIELD, values)
+    if not (subtotals and taxes and totals):
+        ctx.arithmetic_resolution = None
+        return
+
+    consistent: list[tuple[str, str, str]] = []
+    for sub in subtotals:
+        for tax in taxes:
+            for tot in totals:
+                if arithmetic_consistent(sub, tax, tot):
+                    consistent.append((sub, tax, tot))
+
+    if len(consistent) == 1:
+        ctx.arithmetic_resolution = "consistent"
+    else:
+        ctx.arithmetic_resolution = "non_unique"
+
+
+def _tipo_comprobante(
+    candidates: Mapping[str, list[FieldCandidate]], values: Mapping[str, str]
+) -> str:
+    """The receipt type, read from the candidates or the document values."""
+    produced = candidates.get("tipo_comprobante")
+    if produced:
+        return produced[0].raw_value
+    return values.get("tipo_comprobante", "")
+
+
+def _values_for(
+    candidates: Mapping[str, list[FieldCandidate]],
+    field: str,
+    values: Mapping[str, str],
+) -> list[str]:
+    """The alternative raw values a field offers, deduplicated, stable order."""
+    found: list[str] = []
+    for candidate in candidates.get(field, []):
+        if candidate.raw_value not in found:
+            found.append(candidate.raw_value)
+    doc_value = values.get(field, "")
+    if doc_value and doc_value not in found:
+        found.append(doc_value)
+    return found
+
+
 def evaluate(
     decisions: Mapping[str, list[FieldCandidate]],
     ctx: DecisionContext,
     values: Mapping[str, str],
 ) -> dict[str, FieldDecision]:
     """Decide every field in a document.
+
+    The arithmetic combination is resolved once, before any field, so the
+    total and the IVA see the same resolution (§6.4).
 
     Args:
         decisions: Field name to its unmerged candidates.
@@ -311,6 +405,7 @@ def evaluate(
         Field name to :class:`FieldDecision`.
 
     """
+    _resolve_arithmetic(ctx, decisions, values)
     return {
         field: decide_field(field, candidates, ctx, values)
         for field, candidates in decisions.items()

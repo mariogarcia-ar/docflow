@@ -33,9 +33,11 @@ from .engine import DecisionContext, evaluate
 from .extract import extract
 from .fields import DECISION_CONFIRMED, Extraction, FieldResult
 from .hitl import pending_items
+from .lane import needs_vision_lane
 from .material import Material, read_material
 from .progress import StepTrace, artifact, configure, emit, outcome, reused, step, trace
 from .record import RunRecord
+from .resolve import resolver_loop
 from .stages import (
     STAGE_DECIDE,
     STAGE_DEPENDENCIES,
@@ -101,18 +103,43 @@ def decide_stage(inputs: StageInput) -> FieldResult:
         tier=_material_tier(material),
         own_cuits=_own_cuits(inputs.settings),
     )
-    decisions = evaluate(extraction.candidates, context, extraction.values)
-    extracted = {
-        field: decision.winner.raw_value
-        for field, decision in decisions.items()
-        if decision.decision == DECISION_CONFIRMED and decision.winner is not None
-    }
-    return FieldResult(
-        decisions=decisions,
-        trace=extraction.candidates,
-        extracted=extracted,
-        notes=list(extraction.notes),
-    )
+
+    def decide_once() -> FieldResult:
+        decisions = evaluate(extraction.candidates, context, extraction.values)
+        extracted = {
+            field: decision.winner.raw_value
+            for field, decision in decisions.items()
+            if decision.decision == DECISION_CONFIRMED and decision.winner is not None
+        }
+        return FieldResult(
+            decisions=decisions,
+            trace=extraction.candidates,
+            extracted=extracted,
+            notes=list(extraction.notes),
+        )
+
+    def resolve_once(result: FieldResult) -> bool:
+        """The ladder: run the vision lane on demand for the unmet gates.
+
+        The pure half (which fields still need a lane) lives in `lane.py`; the
+        render itself is deferred (`# TODO: [MVP]`) — a native-text material
+        carries no pages until one is rendered, and that adapter call is the
+        missing piece. Until then the resolver reports the need honestly rather
+        than pretending the ladder ran.
+        """
+        needed = needs_vision_lane(result.decisions)
+        if not needed:
+            return False
+        # The render-on-demand is not wired: report the unmet gates so the
+        # decision is honest, and stop the loop — no new evidence was produced.
+        result.notes.append(
+            f"lane-on-demand deferred: {', '.join(sorted(needed))} "
+            "still lack strong evidence"
+        )
+        return False
+
+    result = resolver_loop(decide_once, resolve_once, max_loops=config.max_loops)
+    return result
 
 
 def hitl_stage(inputs: StageInput) -> list[object]:
