@@ -30,6 +30,9 @@ python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --resolv
 python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --stage extract
 python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --stage decide --no-deps
 python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --stage hitl --redo
+
+# watch the progress on stderr (stdout stays the JSON verdict):
+python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --verbose
 ```
 
 `tests/fixtures/` is the corpus of record for a smoke run:
@@ -60,6 +63,32 @@ run when its inputs are already on disk.
 `--stage X --redo` re-runs **only** X and invalidates everything downstream of
 it: a re-run of `extract` marks the old `decision` and `hitl` as stale, so they
 are never trusted against the new candidates.
+
+## Watching progress
+
+`--verbose` (or `-v`) prints each stage's progress to **stderr**, so an operator
+can follow the run without corrupting the JSON verdict on stdout. It shows what
+ran and what was reused:
+
+```
+== read: 66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf
+read: tier=texto_nativo route='layout_text' pages=1
+== extract: 2493 chars of text
+extract: 23 field(s) with candidates
+== decide: 23 field(s)
+decide: 23 decided, 4 confirmed, 19 not confirmed
+== hitl: 19 field(s) pending
+```
+
+On a resumed run the lines change to what was reused instead of re-run:
+
+```
+read: loaded from work root
+extract: loaded from work root
+```
+
+The stages marked `==` are the ones executed; a plain line is a detail of the
+stage above it.
 
 ## Resuming a failed run
 
@@ -168,6 +197,7 @@ is a **refusal reported in `notes`**, never a silent fallback to a different one
 | `engine.py` | the MoE consensus: merge, veto, score, gate | §6 |
 | `hitl.py` | the queue of unconfirmed fields, and the frontier suggestion | §8 |
 | `persist.py` | the work tree: intermediate artifacts, the resume journal | — |
+| `progress.py` | the progress switch; emits to stderr when verbose | — |
 | `run.py` | `run(...)` the whole chain, `run_stage(stage, ...)` one stage | §1 |
 
 `run` and `run_stage` are the entry points. `run_stage` returns a `FieldResult`

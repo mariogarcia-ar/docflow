@@ -72,6 +72,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="with --stage: refuse to run missing dependencies instead of "
         "producing them",
     )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="print progress to stderr as each stage runs",
+    )
     parser.add_argument("--pretty", action="store_true", help="indent the JSON output")
     return parser
 
@@ -138,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
         "redo": args.redo,
         "resolve": args.resolve,
         "confirm": confirmations or None,
+        "verbose": args.verbose,
     }
 
     if args.stage is not None:

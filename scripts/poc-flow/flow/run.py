@@ -49,6 +49,7 @@ from .persist import (
     document_digest,
     work_signature,
 )
+from .progress import configure, emit, step
 
 __all__: list[str] = [
     "STAGE_DECIDE",
@@ -89,8 +90,15 @@ def _ensure_material(
     material: Material | None = None
     if tree is not None and tree.done(STAGE_READ):
         material = tree.load_material()
+        if material is not None:
+            emit("read: loaded from work root")
     if material is None:
+        step("read", path.name)
         material = read_material(path, config)
+        emit(
+            f"read: tier={material.tier} route={material.route!r} "
+            f"pages={material.pages_read}"
+        )
         if tree is not None:
             tree.save_material(material)
     return material
@@ -106,8 +114,12 @@ def _ensure_extraction(
     extraction: Extraction | None = None
     if tree is not None and tree.done(STAGE_EXTRACT):
         extraction = tree.load_extraction()
+        if extraction is not None:
+            emit("extract: loaded from work root")
     if extraction is None:
+        step("extract", f"{len(material.text or '')} chars of text")
         extraction = extract(material, config, artifacts)
+        emit(f"extract: {len(extraction.candidates)} field(s) with candidates")
         if tree is not None:
             tree.save_extraction(extraction)
     return extraction
@@ -155,6 +167,7 @@ def _run_decide(  # pylint: disable=too-many-arguments, too-many-positional-argu
         )
 
     extraction = _ensure_extraction(material, config, artifacts, tree)
+    step("decide", f"{len(extraction.candidates)} field(s)")
     ctx = DecisionContext(config=config, tier=material.tier, own_cuits=own_cuits)
     decisions = evaluate(extraction.candidates, ctx, extraction.values)
 
@@ -163,6 +176,11 @@ def _run_decide(  # pylint: disable=too-many-arguments, too-many-positional-argu
         for field, decision in decisions.items()
         if decision.decision == DECISION_CONFIRMED and decision.winner is not None
     }
+
+    emit(
+        f"decide: {len(decisions)} decided, {len(extracted)} confirmed, "
+        f"{len(decisions) - len(extracted)} not confirmed"
+    )
 
     result = FieldResult(
         decisions=decisions,
@@ -192,17 +210,21 @@ def _run_hitl(  # pylint: disable=too-many-arguments, too-many-positional-argume
     notes: list[str] = list(result.notes)
 
     if tree is not None:
+        step("hitl", f"{len(queued)} field(s) pending")
         tree.save_pending(queued)
         if queued and resolve:
+            step("resolve", f"{len(queued)} field(s) to the frontier")
             suggestions, note = suggest(queued, material, config, path.name)
             tree.save_resolution(suggestions, note)
             if note:
                 notes.append(f"frontier: {note}")
+                emit(f"resolve: {note}")
             elif suggestions:
                 notes.append(
                     f"frontier suggested {len(suggestions)} value(s); confirmation "
                     "is still a human's"
                 )
+                emit(f"resolve: {len(suggestions)} suggestion(s)")
     elif queued:
         notes.append(
             f"{len(queued)} field(s) need human review: "
@@ -213,6 +235,7 @@ def _run_hitl(  # pylint: disable=too-many-arguments, too-many-positional-argume
     if confirm:
         pending_by_field = {item.field: item for item in queued}
         settled, refusals = apply_confirmations(confirm, pending_by_field)
+        step("confirm", f"{len(settled)} accepted, {len(refusals)} refused")
         if tree is not None:
             # Only the accepted ones are ground truth; a refused confirmation is
             # an out-of-band edit and must not leak into `confirmed.json`.
@@ -220,11 +243,13 @@ def _run_hitl(  # pylint: disable=too-many-arguments, too-many-positional-argume
         extracted.update(settled)
         for refusal in refusals:
             notes.append(f"confirmation refused: {refusal}")
+            emit(f"confirm: refused {refusal}")
         if settled:
             notes.append(
                 f"{len(settled)} field(s) settled by a human: "
                 f"{', '.join(sorted(settled))}"
             )
+            emit(f"confirm: settled {', '.join(sorted(settled))}")
 
     final = FieldResult(
         decisions=result.decisions,
@@ -246,6 +271,7 @@ def run(  # pylint: disable=too-many-arguments
     redo: bool = False,
     resolve: bool = False,
     confirm: list[HumanConfirmation] | None = None,
+    verbose: bool = False,
 ) -> FieldResult:
     """Process one document and return the engine's per-field decisions.
 
@@ -264,12 +290,14 @@ def run(  # pylint: disable=too-many-arguments
         resolve: Ask the frontier model to suggest an answer for each pending
             field (§8). The suggestion is evidence, never a verdict.
         confirm: A human's settled values for the pending fields (§8, I6).
+        verbose: Print progress to stderr as each stage runs.
 
     Returns:
         The decisions, the candidate trace and the confirmed extractions.
 
     """
     ensure_docflow_importable()
+    configure(verbose)
     artifacts = load_artifacts()
 
     tree: WorkTree | None = None
@@ -298,6 +326,7 @@ def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
     resolve: bool = False,
     confirm: list[HumanConfirmation] | None = None,
     with_dependencies: bool = True,
+    verbose: bool = False,
 ) -> FieldResult:
     """Run **one** named stage and return its result.
 
@@ -319,6 +348,7 @@ def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
         confirm: For the ``hitl`` stage: a human's settled values.
         with_dependencies: Produce missing inputs first. When ``False``, a
             missing dependency raises.
+        verbose: Print progress to stderr as the stage runs.
 
     Returns:
         The result of the requested stage. For ``read`` and ``extract`` this is
@@ -331,6 +361,7 @@ def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
 
     """
     ensure_docflow_importable()
+    configure(verbose)
     if stage not in STAGE_DEPENDENCIES:
         raise ValueError(
             f"unknown stage {stage!r}; choose from {list(STAGE_DEPENDENCIES)}"
