@@ -109,11 +109,13 @@ class StageInput:
 
     Attributes:
         document: The document's file name.
+        path: The document's filesystem path, for the stages that read it.
         settings: The run's dials, as the caller handed them in.
         deps: The loaded artifact of each dependency stage, keyed by stage name.
 
     """
 
     document: str
+    path: pathlib.Path
     settings: Mapping[str, object]
     deps: Mapping[str, object]

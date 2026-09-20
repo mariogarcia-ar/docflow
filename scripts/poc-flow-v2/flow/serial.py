@@ -25,6 +25,7 @@ from .fields import (
     FieldResult,
 )
 from .hitl import HumanConfirmation, PendingItem
+from .material import Material
 
 __all__: list[str] = [
     "confirmation_from_dict",
@@ -33,6 +34,8 @@ __all__: list[str] = [
     "extraction_from_dict",
     "extraction_to_dict",
     "jsonable",
+    "material_from_dict",
+    "material_to_dict",
     "pending_from_dict",
     "pending_to_dict",
     "result_from_dict",
@@ -265,4 +268,39 @@ def confirmation_from_dict(data: Mapping[str, Any]) -> HumanConfirmation:
         field=str(data["field"]),
         value=str(data["value"]),
         note=str(data.get("note", "")),
+    )
+
+
+def material_to_dict(material: Material) -> dict[str, object]:
+    """The `read` stage's artifact, without the image bytes.
+
+    The rendered pages are written as files beside the artifact (`images/`), so
+    the JSON carries their count, not their bytes — a material with megabytes of
+    base64 inline is the artifact nobody opens.
+    """
+    return {
+        "kind": material.kind,
+        "tier": material.tier,
+        "text": material.text,
+        "route": material.route,
+        "pages_read": material.pages_read,
+        "pages_total": material.pages_total,
+        "image_count": len(material.images),
+        "notes": list(material.notes),
+    }
+
+
+def material_from_dict(data: Mapping[str, Any]) -> Material:
+    """Rebuild the `read` stage's artifact, with no images (they live on disk)."""
+    return Material(
+        kind=str(data["kind"]),
+        tier=str(data["tier"]),
+        text=str(data["text"]) if data.get("text") is not None else None,
+        route=str(data["route"]),
+        pages_read=int(data["pages_read"]),
+        pages_total=int(data["pages_total"])
+        if data.get("pages_total") is not None
+        else None,
+        images=[],
+        notes=list(data["notes"]),
     )

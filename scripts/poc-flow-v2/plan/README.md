@@ -220,15 +220,20 @@ tres preguntas de §Lo más importante sin mirar el código.
 
 ### Ola B2 — Plomería de adapters (reescribir)
 
-- [ ] `artifacts.py`: leer prompt/schema de `registry/` (K8), nunca de copia local (B.15)
-- [ ] `material.py`: ruta por página, cap anunciado (B.12 / B.13)
-- [ ] `extract.py`: lane-on-demand, `enum` real, `verified` por el sistema (B.7 / B.10 / B.11)
-- [ ] `validators.py`: `required_components` por `tipo_comprobante`; un componente no-importe
-      responde `UNKNOWN`, nunca `FAIL` (B.7)
-- [ ] Reemplazar los stubs de `read` / `extract`
+- [x] `artifacts.py`: leer prompt/schema de `registry/` (K8), nunca de copia local (B.15);
+      el hash del registry entra en la firma del journal (un asset cambiado es otro run)
+- [x] `material.py`: portado verbatim — ruta por página, DPI capado, legibilidad antes de OCR (B.13)
+- [ ] `extract.py`: lane A real (modelo local + prompt/schema del registry); **review y vision
+      diferidos** — el registry tiene un prompt y un schema, no el split por rol/lane de §4.1
+      (nota honesta, nunca un fake) → `# TODO: [MVP]`
+- [ ] `validators.py`: `required_components` por `tipo_comprobante` — **no hecho aún**; el
+      validador sigue asumiendo neto+IVA y responde `UNKNOWN` con componente faltante (B.7)
+- [x] Reemplazar los stubs de `read` / `extract` por los adapters y el motor reales
 
 **Aceptación**: el flujo corre sobre el fixture real con `--work-root`, y una corrida
 interrumpida retoma en el stage exacto (los tests de la Fase A siguen en verde sin cambios).
+Parcial: corre end-to-end (4 confirmados, 10 pendientes sobre el fixture); los dos `[ ]`
+restantes son `# TODO: [MVP]` declarados, no silenciosos.
 
 ## Fase C — Gates y paridad
 

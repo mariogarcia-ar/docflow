@@ -1,7 +1,9 @@
 """Fase A: the run process — stages, journal, resume, pause/stop, record.
 
-These tests exercise the process over the stubs, never over an adapter. A
-process test that needed a model would prove the model, not the process.
+These tests exercise the process over unreadable inputs: the documents are
+tiny bytes no adapter can read, so the stages degrade fast and the test pays
+nothing per run. A process test that needed a real model would prove the model,
+not the process.
 
 The invariant the whole Fase A exists for (`plan/README.md`): an operator can
 answer — where did the document go, what was decided, how does it resume —

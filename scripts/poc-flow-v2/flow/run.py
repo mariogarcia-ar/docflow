@@ -25,11 +25,14 @@ import dataclasses
 import pathlib
 from collections.abc import Callable, Mapping
 
+from .artifacts import load_artifacts
 from .config import DEFAULT_CONFIG, Config
 from .control import CONTROL_PAUSED, CONTROL_STOPPED
 from .engine import DecisionContext, evaluate
+from .extract import extract
 from .fields import DECISION_CONFIRMED, Extraction, FieldResult
 from .hitl import pending_items
+from .material import Material, read_material
 from .progress import StepTrace, artifact, configure, emit, outcome, reused, step, trace
 from .record import RunRecord
 from .stages import (
@@ -42,21 +45,10 @@ from .stages import (
     StageInput,
     stage_artifact,
 )
-from .stubs import StageContext, extract_stage, read_stage
 from .work import WorkTree
 
-__all__: list[str] = [
-    "STAGE_DECIDE",
-    "STAGE_EXTRACT",
-    "STAGE_HITL",
-    "STAGE_READ",
-    "RunOutcome",
-    "run",
-]
-
 #: A stage's function: it takes its input and returns the value its artifact
-#: will hold. Fase B2 replaces `read` and `extract` with the real adapters
-#: behind the same signature.
+#: will hold.
 StageFunc = Callable[[StageInput], object]
 
 
@@ -76,6 +68,8 @@ class RunOutcome:
 
 def _material_tier(material: object) -> str:
     """The tier a `read` artifact declares, defaulting to the OCR tier."""
+    if isinstance(material, Material):
+        return material.tier
     if isinstance(material, Mapping) and isinstance(material.get("tier"), str):
         return str(material["tier"])
     return "escaneado_ocr"
@@ -129,13 +123,18 @@ def hitl_stage(inputs: StageInput) -> list[object]:
 
 
 def _read_stage(inputs: StageInput) -> object:
-    """Stage `read`, adapted to the deferred implementation."""
-    return read_stage(StageContext(document=inputs.document, work_root=None))
+    """Stage `read`: the real material, read through the adapters."""
+    return read_material(inputs.path)
 
 
 def _extract_stage(inputs: StageInput) -> object:
-    """Stage `extract`, adapted to the deferred implementation."""
-    return extract_stage(StageContext(document=inputs.document, work_root=None))
+    """Stage `extract`: the real extraction over the read material."""
+    material: object = inputs.deps.get(STAGE_READ)
+    if not isinstance(material, Material):
+        return Extraction(
+            candidates={}, values={}, notes=["no material to extract from"]
+        )
+    return extract(material, DEFAULT_CONFIG, load_artifacts())
 
 
 #: The four stages in order, with the function that implements each.
@@ -207,11 +206,8 @@ def _result_of(tree: WorkTree) -> FieldResult:
 
 
 def _result_without_tree() -> FieldResult:
-    """The result of an unpersisted run: decide over the deferred extract."""
-    extraction = extract_stage(StageContext(document="", work_root=None))
-    return decide_stage(
-        StageInput(document="", settings={}, deps={STAGE_EXTRACT: extraction})
-    )
+    """The result of an unpersisted run: nothing persisted, nothing decided."""
+    return FieldResult(decisions={}, trace={}, extracted={}, notes=[])
 
 
 def _stage_input(
@@ -227,7 +223,12 @@ def _stage_input(
             loaded = tree.load_artifact(dependency)
             if loaded is not None:
                 deps[dependency] = loaded
-    return StageInput(document=document.name, settings=settings, deps=deps)
+    return StageInput(
+        document=document.name,
+        path=document,
+        settings=settings,
+        deps=deps,
+    )
 
 
 def run(  # pylint: disable=too-many-arguments, too-many-positional-arguments
@@ -258,9 +259,12 @@ def run(  # pylint: disable=too-many-arguments, too-many-positional-arguments
 
     """
     configure(verbose)
+    artifacts = load_artifacts()
+    signature_settings = dict(settings)
+    signature_settings["registry"] = artifacts.signature
     tree: WorkTree | None = None
     if work_root is not None:
-        tree = WorkTree.open(work_root, document, settings)
+        tree = WorkTree.open(work_root, document, signature_settings)
         tree.journal.announce()
         if redo:
             tree.journal.clear_from(STAGES[0])

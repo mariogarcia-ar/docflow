@@ -18,11 +18,14 @@ from collections.abc import Callable, Mapping
 from .control import read_control, write_control
 from .fields import Extraction, FieldResult
 from .journal import Journal, document_digest, run_signature
+from .material import Material
 from .record import RunRecord, read_run, write_run
 from .serial import (
     encode,
     extraction_from_dict,
     extraction_to_dict,
+    material_from_dict,
+    material_to_dict,
     pending_from_dict,
     pending_to_dict,
     result_from_dict,
@@ -33,6 +36,7 @@ from .stages import (
     STAGE_DECIDE,
     STAGE_EXTRACT,
     STAGE_HITL,
+    STAGE_READ,
     stage_artifact,
 )
 
@@ -67,12 +71,15 @@ def _to_dict(stage: str, payload: object) -> object:
         return extraction_to_dict(payload)
     if stage == STAGE_HITL and isinstance(payload, list):
         return pending_to_dict(payload)
+    if stage == STAGE_READ and isinstance(payload, Material):
+        return material_to_dict(payload)
     return payload
 
 
 #: The reader that rebuilds each contract-typed stage's artifact. A stage not
 #: in this table stores a plain object and is read back as-is.
 _LOADERS: dict[str, Callable[[Mapping[str, object]], object]] = {
+    STAGE_READ: material_from_dict,
     STAGE_DECIDE: result_from_dict,
     STAGE_EXTRACT: extraction_from_dict,
     STAGE_HITL: pending_from_dict,
