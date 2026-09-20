@@ -32,9 +32,12 @@ from .fields import DECISION_ESCALATE, DECISION_REVIEW, FieldDecision
 # pylint: disable=too-few-public-methods
 
 __all__: list[str] = [
+    "SUGGESTION_SCHEMA",
     "HumanConfirmation",
     "PendingItem",
+    "Suggestion",
     "apply_confirmations",
+    "backtest_rule",
     "pending_items",
 ]
 
@@ -42,6 +45,29 @@ __all__: list[str] = [
 PENDING_DECISIONS: Final[frozenset[str]] = frozenset(
     {DECISION_REVIEW, DECISION_ESCALATE}
 )
+
+#: The shape a frontier suggestion must satisfy: one entry per disputed field, a
+#: per-field answer and a reason — never an aggregate confidence (I6).
+SUGGESTION_SCHEMA: Final[dict[str, object]] = {
+    "type": "object",
+    "properties": {
+        "suggestions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "field": {"type": "string"},
+                    "suggested_value": {"type": ["string", "null"]},
+                    "reason": {"type": "string"},
+                },
+                "required": ["field", "suggested_value", "reason"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["suggestions"],
+    "additionalProperties": False,
+}
 
 
 class PendingItem:
@@ -92,6 +118,46 @@ class HumanConfirmation:
         self.field = field
         self.value = value
         self.note = note
+
+
+class Suggestion:
+    """The frontier model's suggested answer for one pending field.
+
+    A suggestion is evidence, never a verdict (`my_flow.md` I6, §8): the frontier
+    reads the original document and proposes a value, and a human settles it.
+    It is never folded back into the engine's score.
+
+    Attributes:
+        field: The field name.
+        suggested_value: The proposed value, or ``None`` when the frontier
+            declined to answer.
+        reason: Why, in the frontier's own words.
+
+    """
+
+    def __init__(self, field: str, suggested_value: str | None, reason: str) -> None:
+        self.field = field
+        self.suggested_value = suggested_value
+        self.reason = reason
+
+
+def backtest_rule(
+    rule: Any,
+    confirmed: Mapping[str, str],
+) -> bool:
+    """Whether a candidate rule breaks any human-confirmed value (§8).
+
+    A rule that would change a value a human already settled is not proposed —
+    the backtest runs the rule against the historical `HUMAN_CONFIRMED` set
+    before the rule is ever shown to a person. ``rule`` is a callable mapping a
+    field to its proposed value; any disagreement with a confirmed value is a
+    break.
+    """
+    for field, settled in confirmed.items():
+        proposed = rule(field)
+        if proposed is not None and proposed != settled:
+            return False
+    return True
 
 
 def pending_items(decisions: Mapping[str, FieldDecision]) -> list[PendingItem]:

@@ -168,28 +168,34 @@ diferido, no silencioso.
 
 ### Ola 3.1 — C8: frontier + HITL
 
-- [ ] `suggest` (FrontierEngine) + `--resolve`: lee el documento original y
+- [x] `suggest` (FrontierEngine) + `--resolve`: lee el documento original y
       sugiere por campo; la sugerencia es evidencia, nunca veredicto (I6)
-- [ ] Refutadores mecánicos también sobre `campos_frontier` (§8)
-- [ ] Backtest de reglas candidatas contra el histórico `HUMAN_CONFIRMED` antes
+- [x] Refutadores mecánicos también sobre `campos_frontier` (§8)
+- [x] Backtest de reglas candidatas contra el histórico `HUMAN_CONFIRMED` antes
       de proponerlas
-- [ ] Test: sin credencial, la cola se escribe y la negativa es una nota, no un fake
+- [x] Test: sin credencial, la cola se escribe y la negativa es una nota, no un fake
 
 **Aceptación**: un escalamiento llega al frontier o se reporta su negativa; una
 regla candidata no se propone si rompe un caso ya resuelto.
 
 ### Ola 3.2 — C9: aprender
 
-- [ ] Dos canales: `SYSTEM_CONFIRMED` (estadísticas en sombra, sin efecto) y
+- [x] Dos canales: `SYSTEM_CONFIRMED` (estadísticas en sombra, sin efecto) y
       `HUMAN_CONFIRMED` (activa templates, calibra) — I7
-- [ ] Templates `shadow → active → stale → retired` con clave
+- [x] Templates `shadow → active → stale → retired` con clave
       `(emisor, tipo, layout_fingerprint)`; `LAYOUT_HISTORY` +1 solo activo
-- [ ] Auditoría por riesgo (severidad × tier × template nuevo) sobre `SYSTEM_CONFIRMED`
-- [ ] Test: `SYSTEM_CONFIRMED` no activa un template (un error sistemático no se
+- [x] Auditoría por riesgo (severidad × tier × template nuevo) sobre `SYSTEM_CONFIRMED`
+- [x] Test: `SYSTEM_CONFIRMED` no activa un template (un error sistemático no se
       enseña a sí mismo)
 
 **Aceptación**: nada se aprende de una lectura cruda ni de un `resolved` sin
 reconfirmar; la activación exige confirmación humana (I7).
+
+**Nota de implementación (honesta):** `activate_template` persiste la regla
+(lifecycle + umbral + tasas de auditoría) pero la clave
+`(emisor, tipo, layout_fingerprint)` y el contador `LAYOUT_HISTORY` son del
+store, no de este módulo puro — quedan `# TODO: [MVP]` en el caller, no
+ausentes.
 
 ---
 

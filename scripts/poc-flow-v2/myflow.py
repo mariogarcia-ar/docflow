@@ -67,6 +67,19 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="print the result as indented JSON (implies --json)",
     )
+    parser.add_argument(
+        "--resolve",
+        action="store_true",
+        help="ask the frontier to suggest a value for each pending field "
+        "(needs --work-root)",
+    )
+    parser.add_argument(
+        "--confirm",
+        action="append",
+        default=[],
+        metavar="FIELD=VALUE",
+        help="a human's settled value for a pending field (repeatable)",
+    )
     return parser
 
 
@@ -104,6 +117,9 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
         verbose=args.verbose,
     )
 
+    if args.resolve or args.confirm:
+        outcome = _settle(outcome, document, args)
+
     if args.json or args.pretty:
         print(
             json.dumps(
@@ -116,6 +132,78 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
 
     print(render_report(document, outcome.result, outcome.steps, args.work_root))
     return 0
+
+
+def _settle(outcome, document, args):  # pylint: disable=too-many-locals
+    """The frontier suggestion and the human's confirmations (§8, I6).
+
+    Each branch carries its own local bookkeeping (the suggestion note, the
+    per-field refusal notes, the settled/refused dicts); collapsing them into
+    a shared helper would obscure the two distinct §8/I6 hand-offs.
+    """
+    from flow.config import DEFAULT_CONFIG
+    from flow.frontier import suggest
+    from flow.hitl import HumanConfirmation, apply_confirmations, pending_items
+    from flow.material import read_material
+    from flow.serial import encode
+
+    if args.work_root is None:
+        return outcome
+
+    queued = pending_items(outcome.result.decisions)
+    notes = list(outcome.result.notes)
+    extracted = dict(outcome.result.extracted)
+
+    if args.resolve and queued:
+        material = read_material(document, DEFAULT_CONFIG)
+        suggestions, note = suggest(queued, material, DEFAULT_CONFIG, document.name)
+        if note:
+            notes.append(f"frontier: {note}")
+        elif suggestions:
+            notes.append(f"frontier suggested {len(suggestions)} value(s)")
+        # The suggestion is evidence, never a verdict: written beside the queue.
+        (args.work_root / "resolution.json").write_text(
+            encode(
+                {
+                    "suggestions": [
+                        {
+                            "field": s.field,
+                            "suggested_value": s.suggested_value,
+                            "reason": s.reason,
+                        }
+                        for s in suggestions
+                    ]
+                }
+            ).decode("utf-8"),
+            encoding="utf-8",
+        )
+
+    if args.confirm:
+        pending_by_field = {item.field: item for item in queued}
+        confirmations = []
+        for entry in args.confirm:
+            field, _, value = entry.partition("=")
+            confirmations.append(HumanConfirmation(field=field, value=value))
+        settled, refusals = apply_confirmations(confirmations, pending_by_field)
+        extracted.update(settled)
+        for refusal in refusals:
+            notes.append(f"confirmation refused: {refusal}")
+        (args.work_root / "confirmed.json").write_text(
+            encode({"human_confirmed": settled}).decode("utf-8"),
+            encoding="utf-8",
+        )
+
+    from flow.fields import FieldResult
+
+    return type(outcome)(
+        result=FieldResult(
+            decisions=outcome.result.decisions,
+            trace=outcome.result.trace,
+            extracted=extracted,
+            notes=notes,
+        ),
+        steps=outcome.steps,
+    )
 
 
 if __name__ == "__main__":

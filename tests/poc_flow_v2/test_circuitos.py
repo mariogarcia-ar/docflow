@@ -28,7 +28,19 @@ from flow.fields import (
     FieldDecision,
     FieldResult,
 )
+from flow.frontier import suggest
+from flow.hitl import PendingItem, backtest_rule
 from flow.lane import needs_vision_lane
+from flow.learn import (
+    ACTIVATION_COUNT,
+    TEMPLATE_ACTIVE,
+    TEMPLATE_SHADOW,
+    TEMPLATE_STALE,
+    activate_template,
+    audit_rate_for,
+    template_state,
+)
+from flow.material import Material
 from flow.qr import qr_candidates, qr_conflict, qr_deterministic
 from flow.resolve import resolver_loop
 from flow.validators import arithmetic_signal, required_components_for
@@ -428,6 +440,100 @@ def _result_of(decisions):
     return FieldResult(
         decisions={d.field: d for d in decisions}, trace={}, extracted={}, notes=[]
     )
+
+
+# --- C8: frontier backtest --------------------------------------------------
+
+
+def test_c8_a_rule_that_breaks_a_confirmed_value_is_not_proposed() -> None:
+    """A candidate rule that disagrees with a human-confirmed value is refused."""
+
+    def rule(field):
+        return "17.898,30" if field == "importe_total_facturado" else None
+
+    confirmed = {"importe_total_facturado": "17.899,00"}
+
+    assert backtest_rule(rule, confirmed) is False
+
+
+def test_c8_a_rule_consistent_with_history_is_proposed() -> None:
+    """A rule that never disagrees with a confirmed value passes the backtest."""
+
+    def rule(field):
+        return "17.898,30" if field == "importe_total_facturado" else None
+
+    confirmed = {"importe_total_facturado": "17.898,30"}
+
+    assert backtest_rule(rule, confirmed) is True
+
+
+def test_c8_without_a_credential_the_queue_survives(monkeypatch) -> None:
+    """No key: suggestions are empty and the refusal is a note, never a fake."""
+    monkeypatch.delenv("DOCFLOW_FRONTIER_KEY", raising=False)
+    material = Material(
+        kind="pdf",
+        tier="texto_nativo",
+        text="CUIT 20-22087601-3 Importe $ 17.898,30",
+        route="layout_text",
+        pages_read=1,
+        pages_total=1,
+        images=[],
+        notes=[],
+    )
+    item = PendingItem(
+        field="importe_total_facturado",
+        severity="critica",
+        decision="REVIEW",
+        reason_codes=["REV_GATE_UNMET"],
+        winner=FieldCandidate("1789830", "17.898,30", ["llm"], [], []),
+        runner_up=None,
+    )
+
+    suggestions, note = suggest([item], material, DEFAULT_CONFIG, "f.pdf")
+
+    assert not suggestions
+    assert note.startswith("frontier refused:")
+
+
+# --- C9: learning -----------------------------------------------------------
+
+
+def test_c9_only_human_confirmation_activates_a_template() -> None:
+    """A shadow template becomes active only with enough HUMAN confirmations."""
+
+    state = "shadow"
+    newly_active = False
+    for count in range(ACTIVATION_COUNT):
+        state, newly_active = activate_template(True, sample_count_human=count)
+
+    assert state == TEMPLATE_ACTIVE
+    assert newly_active is True
+
+
+def test_c9_system_confirmations_never_activate_a_template() -> None:
+    """A systematic error cannot teach itself (I7): no human sample, no active.
+
+    ``template_state`` keys on the *human* sample count; however many
+    ``SYSTEM_CONFIRMED`` samples there are, with zero human confirmations the
+    template stays in shadow.
+    """
+
+    assert template_state(sample_count_human=0) == TEMPLATE_SHADOW
+    assert template_state(sample_count_human=ACTIVATION_COUNT - 1) == TEMPLATE_SHADOW
+
+
+def test_c9_an_inconsistent_confirmation_stales_the_template() -> None:
+    """A confirmation that disagrees with the template is a new layout."""
+
+    state, newly_active = activate_template(False, sample_count_human=10)
+    assert state == TEMPLATE_STALE
+    assert newly_active is False
+
+
+def test_c9_audit_rate_is_severity_based() -> None:
+    """The audit rate is per severity, sampled from the SYSTEM set (§9)."""
+
+    assert audit_rate_for("critica") > audit_rate_for("baja")
 
 
 def _qr_fixture() -> bytes:
