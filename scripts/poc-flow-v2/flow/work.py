@@ -13,14 +13,28 @@ from __future__ import annotations
 
 import json
 import pathlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from .control import read_control, write_control
-from .fields import FieldResult
+from .fields import Extraction, FieldResult
 from .journal import Journal, document_digest, run_signature
 from .record import RunRecord, read_run, write_run
-from .serial import encode, result_from_dict, result_to_dict
-from .stages import STAGE_ARTIFACTS, STAGE_DECIDE, stage_artifact
+from .serial import (
+    encode,
+    extraction_from_dict,
+    extraction_to_dict,
+    pending_from_dict,
+    pending_to_dict,
+    result_from_dict,
+    result_to_dict,
+)
+from .stages import (
+    STAGE_ARTIFACTS,
+    STAGE_DECIDE,
+    STAGE_EXTRACT,
+    STAGE_HITL,
+    stage_artifact,
+)
 
 __all__: list[str] = [
     "WorkTree",
@@ -38,6 +52,39 @@ def _write_atomic(path: pathlib.Path, payload: bytes) -> None:
     staging = path.with_name(path.name + ".tmp")
     staging.write_bytes(payload)
     staging.replace(path)
+
+
+def _to_dict(stage: str, payload: object) -> object:
+    """The plain object a stage's payload serialises as.
+
+    The shape of each artifact is owned by `serial.py`; this is the single
+    dispatch that maps a stage to its contract, so `save_artifact` and
+    `load_artifact` never special-case a type inline.
+    """
+    if stage == STAGE_DECIDE and isinstance(payload, FieldResult):
+        return result_to_dict(payload)
+    if stage == STAGE_EXTRACT and isinstance(payload, Extraction):
+        return extraction_to_dict(payload)
+    if stage == STAGE_HITL and isinstance(payload, list):
+        return pending_to_dict(payload)
+    return payload
+
+
+#: The reader that rebuilds each contract-typed stage's artifact. A stage not
+#: in this table stores a plain object and is read back as-is.
+_LOADERS: dict[str, Callable[[Mapping[str, object]], object]] = {
+    STAGE_DECIDE: result_from_dict,
+    STAGE_EXTRACT: extraction_from_dict,
+    STAGE_HITL: pending_from_dict,
+}
+
+
+def _load_data(path: pathlib.Path) -> object | None:
+    """Read one artifact file as JSON, or ``None`` when absent/unreadable."""
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 class WorkTree:
@@ -60,13 +107,10 @@ class WorkTree:
     def save_artifact(self, stage: str, payload: object) -> tuple[pathlib.Path, ...]:
         """Write a stage's primary artifact and return the paths written.
 
-        A `FieldResult` is serialised through the single owner of the shape;
-        any other value passes through as-is, so the stubs and the real
-        libraries share one encoding.
+        A dataclass contract is serialised through the single owner of the
+        shape (`serial.py`); any other value passes through as-is.
         """
-        encoded = (
-            result_to_dict(payload) if isinstance(payload, FieldResult) else payload
-        )
+        encoded = _to_dict(stage, payload)
         written: list[pathlib.Path] = []
         for name in STAGE_ARTIFACTS.get(stage, ()):
             path = self.root / name
@@ -77,19 +121,18 @@ class WorkTree:
     def load_artifact(self, stage: str) -> object | None:
         """Read a stage's primary artifact back, or ``None`` when absent.
 
-        The `decide` artifact is rebuilt as a `FieldResult`; every other stage
-        returns the plain object the stub wrote.
+        The contract-typed stages are rebuilt as their dataclasses; every other
+        stage returns the plain object that was written.
         """
         names = STAGE_ARTIFACTS.get(stage, ())
         if not names:
             return None
-        path = self.root / names[0]
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        data = _load_data(self.root / names[0])
+        if data is None:
             return None
-        if stage == STAGE_DECIDE and isinstance(data, Mapping):
-            return result_from_dict(data)
+        loader = _LOADERS.get(stage)
+        if loader is not None and isinstance(data, Mapping):
+            return loader(data)
         return data
 
     # --- record and control ----------------------------------------------

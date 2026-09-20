@@ -2,8 +2,9 @@
 
 This is the heart of Fase A: the four stages run in order, each one persisted
 and marked in the journal only when its artifact is written, each step recorded
-into the trace, and the whole path written to `run.json` at the end. The stages
-themselves are stubs — the process is real.
+into the trace, and the whole path written to `run.json` at the end. Fase B1
+wires the real decision engine into `decide` and `hitl`; `read` and `extract`
+are still the deferred stages, now returning the real contracts.
 
 The process answers the three questions `plan/README.md` makes the definition
 of "correct" (`my_flow.md` B.1-B.6, B.14):
@@ -24,19 +25,24 @@ import dataclasses
 import pathlib
 from collections.abc import Callable, Mapping
 
+from .config import DEFAULT_CONFIG, Config
 from .control import CONTROL_PAUSED, CONTROL_STOPPED
-from .fields import FieldResult
+from .engine import DecisionContext, evaluate
+from .fields import DECISION_CONFIRMED, Extraction, FieldResult
+from .hitl import pending_items
 from .progress import StepTrace, artifact, configure, emit, outcome, reused, step, trace
 from .record import RunRecord
 from .stages import (
     STAGE_DECIDE,
+    STAGE_DEPENDENCIES,
     STAGE_EXTRACT,
     STAGE_HITL,
     STAGE_READ,
     STAGES,
+    StageInput,
     stage_artifact,
 )
-from .stubs import StubContext, stub_decide, stub_extract, stub_hitl, stub_read
+from .stubs import StageContext, extract_stage, read_stage
 from .work import WorkTree
 
 __all__: list[str] = [
@@ -48,11 +54,10 @@ __all__: list[str] = [
     "run",
 ]
 
-
-#: A stage's function: it takes a context and returns the value its artifact
-#: will hold. Fase B replaces the stubs with the real libraries behind the same
-#: signature.
-StageFunc = Callable[[StubContext], object]
+#: A stage's function: it takes its input and returns the value its artifact
+#: will hold. Fase B2 replaces `read` and `extract` with the real adapters
+#: behind the same signature.
+StageFunc = Callable[[StageInput], object]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -60,7 +65,7 @@ class RunOutcome:
     """What a run produced, so the caller can print or persist it.
 
     Attributes:
-        result: The engine's field result (the stub's, in Fase A).
+        result: The engine's field result.
         steps: The trace of the run, in order.
 
     """
@@ -69,19 +74,83 @@ class RunOutcome:
     steps: tuple[StepTrace, ...]
 
 
-#: The four stages in order, with the stub that implements each in Fase A.
+def _material_tier(material: object) -> str:
+    """The tier a `read` artifact declares, defaulting to the OCR tier."""
+    if isinstance(material, Mapping) and isinstance(material.get("tier"), str):
+        return str(material["tier"])
+    return "escaneado_ocr"
+
+
+def _own_cuits(settings: Mapping[str, object]) -> frozenset[str]:
+    """The business's own CUITs, digits only, from the run's settings."""
+    raw = settings.get("own_cuits")
+    if not isinstance(raw, (frozenset, set, list, tuple)):
+        return frozenset()
+    return frozenset(str(value) for value in raw)
+
+
+def decide_stage(inputs: StageInput) -> FieldResult:
+    """Stage `decide`: score the extraction's candidates with the real engine."""
+    config: Config = DEFAULT_CONFIG
+    extraction: object = inputs.deps.get(STAGE_EXTRACT)
+    if not isinstance(extraction, Extraction):
+        return FieldResult(
+            decisions={},
+            trace={},
+            extracted={},
+            notes=["decide ran without an extraction to score"],
+        )
+    material = inputs.deps.get(STAGE_READ)
+    context = DecisionContext(
+        config=config,
+        tier=_material_tier(material),
+        own_cuits=_own_cuits(inputs.settings),
+    )
+    decisions = evaluate(extraction.candidates, context, extraction.values)
+    extracted = {
+        field: decision.winner.raw_value
+        for field, decision in decisions.items()
+        if decision.decision == DECISION_CONFIRMED and decision.winner is not None
+    }
+    return FieldResult(
+        decisions=decisions,
+        trace=extraction.candidates,
+        extracted=extracted,
+        notes=list(extraction.notes),
+    )
+
+
+def hitl_stage(inputs: StageInput) -> list[object]:
+    """Stage `hitl`: queue every field the engine did not confirm."""
+    result: object = inputs.deps.get(STAGE_DECIDE)
+    if not isinstance(result, FieldResult):
+        return []
+    return list(pending_items(result.decisions))
+
+
+def _read_stage(inputs: StageInput) -> object:
+    """Stage `read`, adapted to the deferred implementation."""
+    return read_stage(StageContext(document=inputs.document, work_root=None))
+
+
+def _extract_stage(inputs: StageInput) -> object:
+    """Stage `extract`, adapted to the deferred implementation."""
+    return extract_stage(StageContext(document=inputs.document, work_root=None))
+
+
+#: The four stages in order, with the function that implements each.
 _STAGES: tuple[tuple[str, StageFunc], ...] = (
-    (STAGE_READ, stub_read),
-    (STAGE_EXTRACT, stub_extract),
-    (STAGE_DECIDE, stub_decide),
-    (STAGE_HITL, stub_hitl),
+    (STAGE_READ, _read_stage),
+    (STAGE_EXTRACT, _extract_stage),
+    (STAGE_DECIDE, decide_stage),
+    (STAGE_HITL, hitl_stage),
 )
 
 
 def _run_one(
     stage: str,
     func: StageFunc,
-    context: StubContext,
+    inputs: StageInput,
     tree: WorkTree,
     *,
     redo: bool,
@@ -98,8 +167,8 @@ def _run_one(
         artifact(*stage_artifact(tree.root, stage))
         return
 
-    step(stage, f"{context.document}")
-    value = func(context)
+    step(stage, inputs.document)
+    value = func(inputs)
     written = tree.save_artifact(stage, value)
     tree.journal.mark(stage)
     outcome(_ran_detail(stage, value))
@@ -113,8 +182,19 @@ def _reuse_detail(stage: str, tree: WorkTree) -> str:
 
 
 def _ran_detail(stage: str, value: object) -> str:
-    """What to say about a stage that ran: a one-line account of its value."""
-    del value
+    """A one-line account of a stage that ran."""
+    if isinstance(value, FieldResult):
+        count = len(value.decisions)
+        confirmed = sum(
+            1
+            for decision in value.decisions.values()
+            if decision.decision == DECISION_CONFIRMED
+        )
+        return f"{count} field(s) decided, {confirmed} confirmed"
+    if isinstance(value, Extraction):
+        return f"{len(value.candidates)} field(s) with candidates"
+    if isinstance(value, list):
+        return f"{len(value)} field(s) pending"
     return f"{stage} ran"
 
 
@@ -127,8 +207,27 @@ def _result_of(tree: WorkTree) -> FieldResult:
 
 
 def _result_without_tree() -> FieldResult:
-    """The result of an unpersisted run: the decide stub's answer."""
-    return stub_decide(StubContext(document="", work_root=None))
+    """The result of an unpersisted run: decide over the deferred extract."""
+    extraction = extract_stage(StageContext(document="", work_root=None))
+    return decide_stage(
+        StageInput(document="", settings={}, deps={STAGE_EXTRACT: extraction})
+    )
+
+
+def _stage_input(
+    tree: WorkTree | None,
+    stage: str,
+    document: pathlib.Path,
+    settings: Mapping[str, object],
+) -> StageInput:
+    """The inputs a stage receives: its dependency artifacts, already loaded."""
+    deps: dict[str, object] = {}
+    if tree is not None:
+        for dependency in STAGE_DEPENDENCIES.get(stage, ()):
+            loaded = tree.load_artifact(dependency)
+            if loaded is not None:
+                deps[dependency] = loaded
+    return StageInput(document=document.name, settings=settings, deps=deps)
 
 
 def run(  # pylint: disable=too-many-arguments, too-many-positional-arguments
@@ -166,23 +265,17 @@ def run(  # pylint: disable=too-many-arguments, too-many-positional-arguments
         if redo:
             tree.journal.clear_from(STAGES[0])
 
-    context = StubContext(
-        document=str(document),
-        work_root=str(work_root) if work_root is not None else None,
-    )
-
     if tree is not None and stop:
         tree.write_control(CONTROL_STOPPED)
 
     for stage, func in _STAGES:
+        inputs = _stage_input(tree, stage, document, settings)
         if tree is None:
-            step(stage, context.document)
-            func(context)
+            step(stage, document.name)
+            func(inputs)
             continue
-        _run_one(stage, func, context, tree, redo=redo)
+        _run_one(stage, func, inputs, tree, redo=redo)
         if pause or stop:
-            # The stage in flight finished and was marked; now honour the
-            # requested stop, which is exactly the boundary a resume needs.
             if pause:
                 tree.write_control(CONTROL_PAUSED)
             break
@@ -200,8 +293,3 @@ def run(  # pylint: disable=too-many-arguments, too-many-positional-arguments
         )
     emit(f"run: {len(steps)} step(s) recorded")
     return RunOutcome(result=result, steps=steps)
-
-
-def _result_without_tree() -> FieldResult:
-    """The result of an unpersisted run: the decide stub's answer."""
-    return stub_decide(StubContext(document="", work_root=None))

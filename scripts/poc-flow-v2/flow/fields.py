@@ -33,6 +33,7 @@ __all__: list[str] = [
     "TOTAL_FIELD",
     "UNKNOWN",
     "EvidenceSignal",
+    "Extraction",
     "FieldCandidate",
     "FieldDecision",
     "FieldResult",
@@ -284,6 +285,26 @@ class FieldResult:
     decisions: dict[str, FieldDecision]
     trace: dict[str, list[FieldCandidate]]
     extracted: dict[str, str]
+    notes: list[str]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Extraction:
+    """What the producers handed back, before the engine merges and scores.
+
+    The `extract` stage's artifact: the unmerged candidates per field, the
+    document-level values the arithmetic combination needs, and the stage's
+    notes. The engine consumes this and returns a :class:`FieldResult`.
+
+    Attributes:
+        candidates: Field name to the list of unmerged candidates.
+        values: Document-level values (subtotal, IVA, total).
+        notes: A refused call, a skipped lane.
+
+    """
+
+    candidates: dict[str, list[FieldCandidate]]
+    values: dict[str, str]
     notes: list[str]
 
 

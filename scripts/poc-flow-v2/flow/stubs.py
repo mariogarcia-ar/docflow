@@ -1,14 +1,19 @@
-"""The stage stubs: values a run process can drive without an adapter.
+"""The `read` and `extract` stage implementations, in their Fase B form.
 
-The Fase A plan builds the run process over **fakes** (`plan/README.md`). Each
-stage here returns a constructed value and records the call, so the process —
-journal, resume, pause/stop, trace, report — is exercised before any model or
-engine is connected. Nothing imports `docflow`; this module is pure standard
-library plus the frozen data contract in `fields.py`.
+Fase A ran every stage on a fixed stub. Fase B1 wires the real engine into
+`decide` and `hitl`; `read` and `extract` still produce fixed values here,
+because the adapters behind them (`material`, the LLM lanes, the registry) are
+the Fase B2 plumbing. The values are now the **real contracts** — an
+`Extraction` with `FieldCandidate`s, not plain mappings — so the engine and the
+queue run end to end over shaped input, while the adapter calls stay deferred.
 
-Fase B replaces each stub with the real library. The tests of Fase A keep
-passing unchanged, because a stage's contract is its name and its artifact, not
-what produced the value inside it.
+Two facts worth stating, both deliberate:
+
+- `read` returns a fixed material and is tagged `# TODO: [MVP]`: the real
+  read is `material.py`, which needs the `docflow` adapters.
+- `extract` builds candidates the way the engine expects (unmerged), plus the
+  document-level values the arithmetic validator combines, and is tagged the
+  same way: the real extract is `extract.py` with the LLM lanes.
 """
 
 from __future__ import annotations
@@ -16,133 +21,23 @@ from __future__ import annotations
 import dataclasses
 import time
 
-from .fields import (
-    DECISION_CONFIRMED,
-    DECISION_REVIEW,
-    EvidenceSignal,
-    FieldCandidate,
-    FieldDecision,
-    FieldResult,
-)
+from .fields import Extraction, FieldCandidate
 
 __all__: list[str] = [
     "STUB_LATENCY_SECONDS",
-    "STUB_RESULT",
-    "StubContext",
-    "stub_decide",
-    "stub_extract",
-    "stub_hitl",
-    "stub_read",
+    "StageContext",
+    "extract_stage",
+    "read_stage",
 ]
 
 
-def _decisions() -> dict[str, FieldDecision]:
-    """The fixed decision set: one confirmed field, one in review."""
-    return {
-        "cuit_emisor": FieldDecision(
-            field="cuit_emisor",
-            severity="alta",
-            decision=DECISION_CONFIRMED,
-            reason_codes=["CONF_SCORE_MARGIN_GATE"],
-            winner=FieldCandidate(
-                normalized_value="20123456783",
-                raw_value="20-12345678-3",
-                producers=["regexp"],
-                signals=[
-                    EvidenceSignal(
-                        family="DETERMINISTIC",
-                        result="PASS",
-                        points=3,
-                        detail="CUIT checksum valid",
-                        verified=False,
-                    )
-                ],
-                hard_refutations=[],
-            ),
-            runner_up=None,
-            score=3,
-            margin=3,
-            threshold=3,
-            strong=("DETERMINISTIC", "CROSS_MODAL", "NATIVE_ANCHOR"),
-            gate_satisfied=True,
-            notes=[],
-        ),
-        "importe_total_facturado": FieldDecision(
-            field="importe_total_facturado",
-            severity="critica",
-            decision=DECISION_REVIEW,
-            reason_codes=["REV_GATE_UNMET"],
-            winner=FieldCandidate(
-                normalized_value="1789830",
-                raw_value="17.898,30",
-                producers=["extractor_llm_texto"],
-                signals=[
-                    EvidenceSignal(
-                        family="DOCUMENT_CONTENT",
-                        result="PASS",
-                        points=2,
-                        detail="value present in the text",
-                        verified=True,
-                    )
-                ],
-                hard_refutations=[],
-            ),
-            runner_up=None,
-            score=2,
-            margin=2,
-            threshold=5,
-            strong=("DETERMINISTIC", "CROSS_MODAL"),
-            gate_satisfied=False,
-            notes=["score 2 meets the floor but strong evidence is missing"],
-        ),
-    }
-
-
-def _trace_for(
-    decisions: dict[str, FieldDecision],
-) -> dict[str, list[FieldCandidate]]:
-    """The candidate set behind each decision, so trace and decisions agree."""
-    return {
-        field: [decision.winner] if decision.winner is not None else []
-        for field, decision in decisions.items()
-    }
-
-
-def _build_result() -> FieldResult:
-    decisions = _decisions()
-    return FieldResult(
-        decisions=decisions,
-        trace=_trace_for(decisions),
-        extracted={"cuit_emisor": "20-12345678-3"},
-        notes=["stub: no model ran"],
-    )
-
-
-#: A fixed result the stub stages hand back: one field confirmed, one in review
-#: — enough for the report and the queue to have something real to show.
-STUB_RESULT: FieldResult = _build_result()
-
-
-#: How long each stub waits before answering, so an interrupt or pause test has
-#: a real window to act in. Fase B removes the wait together with the stub.
-STUB_LATENCY_SECONDS: float = 0.5
-
-
-def _simulate_work() -> None:
-    """Block briefly, standing in for the real stage's adapter call.
-
-    The wait exists only so a run can be interrupted or paused mid-stage — it
-    models the latency of the read/extract/decide work, not any of its result.
-    """
-    time.sleep(STUB_LATENCY_SECONDS)
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
-class StubContext:
-    """What a stub stage needs, recorded so a test can assert the hand-off.
+class StageContext:
+    """What a stage implementation receives, recorded so a test can assert the
+    hand-off.
 
     Attributes:
-        document: The document being processed.
+        document: The document's file name.
         work_root: Where the run writes, or ``None``.
 
     """
@@ -151,12 +46,21 @@ class StubContext:
     work_root: str | None
 
 
-def stub_read(context: StubContext) -> object:
-    """Stage `read`: return a fixed material and say so.
+#: How long a deferred stage waits before answering, so an interrupt or pause
+#: test has a real window to act in. Removed together with the stub.
+STUB_LATENCY_SECONDS: float = 0.5
 
-    The value is a plain mapping, not a `Material` — Fase A never constructs the
-    adapter's type, and the run process must not depend on its shape. Fase B
-    replaces this with the real `Material`.
+
+def _simulate_work() -> None:
+    """Block briefly, standing in for the real adapter call the stage defers."""
+    time.sleep(STUB_LATENCY_SECONDS)
+
+
+def read_stage(context: StageContext) -> dict[str, object]:
+    """Stage `read`: a fixed material, the real contract's shape.
+
+    The value is a plain mapping, not a `Material` — the real read is Fase B2
+    (`material.py`), which constructs the adapter's type.  # TODO: [MVP]
     """
     _simulate_work()
     return {
@@ -169,40 +73,34 @@ def stub_read(context: StubContext) -> object:
     }
 
 
-def stub_extract(context: StubContext) -> object:
-    """Stage `extract`: return a fixed extraction over the material."""
-    _simulate_work()
-    return {
-        "candidates": {"cuit_emisor": ["20-12345678-3"], "total": ["17.898,30"]},
-        "values": {"subtotal": "15.000,00", "iva": "2.898,30", "total": "17.898,30"},
-        "notes": [f"stub extract of {context.document}"],
-    }
+def _candidate(raw: str, producer: str) -> FieldCandidate:
+    """One unmerged candidate, the shape the engine merges and scores."""
+    return FieldCandidate(
+        normalized_value="".join(ch for ch in raw if ch not in "., "),
+        raw_value=raw,
+        producers=[producer],
+        signals=[],
+        hard_refutations=[],
+    )
 
 
-def stub_decide(context: StubContext) -> FieldResult:
-    """Stage `decide`: return the fixed decision set.
+def extract_stage(context: StageContext) -> Extraction:
+    """Stage `extract`: fixed candidates the engine will actually decide over.
 
-    The context is unused by design: the stub's answer is fixed, so the same
-    result is returned whatever document the process hands it — which is the
-    point of a stub (Fase A drives the process, not the engine).
+    The values mirror the smoke fixture's shape — a valid CUIT, a total that
+    matches the subtotal-plus-IVA combination — so `decide` produces the same
+    kinds of verdicts a real document does.  # TODO: [MVP]
     """
     _simulate_work()
-    del context
-    return STUB_RESULT
-
-
-def stub_hitl(context: StubContext) -> list[dict[str, object]]:
-    """Stage `hitl`: queue every field the engine did not confirm.
-
-    The context is unused by design, for the same reason as `stub_decide`.
-    """
-    _simulate_work()
-    del context
-    return [
-        {
-            "field": "importe_total_facturado",
-            "severity": "critica",
-            "decision": DECISION_REVIEW,
-            "reason_codes": ["REV_GATE_UNMET"],
-        }
-    ]
+    return Extraction(
+        candidates={
+            "cuit_emisor": [_candidate("20-22087601-3", "regexp")],
+            "importe_total_facturado": [_candidate("17.898,30", "extractor_llm_texto")],
+        },
+        values={
+            "subtotal": "15.000,00",
+            "iva": "2.898,30",
+            "importe_total_facturado": "17.898,30",
+        },
+        notes=[f"stub extract of {context.document}"],
+    )

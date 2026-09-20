@@ -207,10 +207,11 @@ tres preguntas de §Lo más importante sin mirar el código.
 
 ### Ola B1 — Motor de decisión (portar, no tocar)
 
-- [ ] Portar `fields.py`, `validators.py`, `engine.py`, `config.py`, `route.py`
-- [ ] Portar `hitl.py`
-- [ ] Reemplazar los stubs de `decide` / `hitl` por los módulos portados
-- [ ] Probar cada invariante con valores construidos (I2, I3, I4, I10)
+- [x] Portar `fields.py`, `validators.py`, `engine.py`, `config.py`, `route.py`
+- [x] Portar `hitl.py` (la mitad mecánica: `pending_items`, `apply_confirmations`);
+      `suggest` (frontier) es B2, no se finge
+- [x] Reemplazar los stubs de `decide` / `hitl` por los módulos portados
+- [x] Probar cada invariante con valores construidos (I2, I3, I4, I10)
 
 **Aceptación**: los módulos puros pasan `pytest` sin adapters, y cada test de invariante
 **falla al mutar** la fuente (B.16).

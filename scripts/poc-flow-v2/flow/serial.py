@@ -19,14 +19,22 @@ from typing import Any
 
 from .fields import (
     EvidenceSignal,
+    Extraction,
     FieldCandidate,
     FieldDecision,
     FieldResult,
 )
+from .hitl import HumanConfirmation, PendingItem
 
 __all__: list[str] = [
+    "confirmation_from_dict",
+    "confirmation_to_dict",
     "encode",
+    "extraction_from_dict",
+    "extraction_to_dict",
     "jsonable",
+    "pending_from_dict",
+    "pending_to_dict",
     "result_from_dict",
     "result_to_dict",
 ]
@@ -172,4 +180,89 @@ def result_from_dict(data: Mapping[str, Any]) -> FieldResult:
         },
         extracted={str(key): str(value) for key, value in data["extracted"].items()},
         notes=list(data["notes"]),
+    )
+
+
+def extraction_to_dict(extraction: Extraction) -> dict[str, object]:
+    """The `extract` stage's artifact as a plain object."""
+    return {
+        "candidates": {
+            field: [_candidate_to_dict(c) for c in produced]
+            for field, produced in extraction.candidates.items()
+        },
+        "values": dict(extraction.values),
+        "notes": list(extraction.notes),
+    }
+
+
+def extraction_from_dict(data: Mapping[str, Any]) -> Extraction:
+    """Rebuild the `extract` stage's artifact."""
+    return Extraction(
+        candidates={
+            str(field): [_candidate_from_dict(c) for c in produced]
+            for field, produced in data["candidates"].items()
+        },
+        values={str(key): str(value) for key, value in data["values"].items()},
+        notes=list(data["notes"]),
+    )
+
+
+def _pending_to_dict(item: PendingItem) -> dict[str, object]:
+    return {
+        "field": item.field,
+        "severity": item.severity,
+        "decision": item.decision,
+        "reason_codes": list(item.reason_codes),
+        "winner": (
+            _candidate_to_dict(item.winner) if item.winner is not None else None
+        ),
+        "runner_up": (
+            _candidate_to_dict(item.runner_up) if item.runner_up is not None else None
+        ),
+    }
+
+
+def _pending_from_dict(data: Mapping[str, Any]) -> PendingItem:
+    winner = data.get("winner")
+    runner_up = data.get("runner_up")
+    return PendingItem(
+        field=str(data["field"]),
+        severity=str(data["severity"]),
+        decision=str(data["decision"]),
+        reason_codes=list(data["reason_codes"]),
+        winner=(_candidate_from_dict(winner) if isinstance(winner, Mapping) else None),
+        runner_up=(
+            _candidate_from_dict(runner_up) if isinstance(runner_up, Mapping) else None
+        ),
+    )
+
+
+def pending_to_dict(items: list[PendingItem]) -> dict[str, object]:
+    """The `hitl` stage's artifact as a plain object."""
+    return {"pending": [_pending_to_dict(item) for item in items]}
+
+
+def pending_from_dict(data: Mapping[str, Any]) -> list[PendingItem]:
+    """Rebuild the `hitl` stage's queue."""
+    raw = data.get("pending")
+    if not isinstance(raw, list):
+        return []
+    return [_pending_from_dict(entry) for entry in raw if isinstance(entry, Mapping)]
+
+
+def confirmation_to_dict(confirmation: HumanConfirmation) -> dict[str, object]:
+    """A settled value as a plain object."""
+    return {
+        "field": confirmation.field,
+        "value": confirmation.value,
+        "note": confirmation.note,
+    }
+
+
+def confirmation_from_dict(data: Mapping[str, Any]) -> HumanConfirmation:
+    """Rebuild a settled value."""
+    return HumanConfirmation(
+        field=str(data["field"]),
+        value=str(data["value"]),
+        note=str(data.get("note", "")),
     )
