@@ -132,9 +132,14 @@ def _fields_to_candidates(
     fields: Mapping[str, object],
     producer: str,
     text: str | None,
-    points: int,
+    config: Config,
 ) -> dict[str, list[FieldCandidate]]:
-    """Turn a model's field mapping into one candidate per non-empty field."""
+    """Turn a model's field mapping into one candidate per non-empty field.
+
+    The ``DOCUMENT_CONTENT`` weight comes from the run's config, so every
+    producer scores the same family the same way.
+    """
+    points = config.family_points["DOCUMENT_CONTENT"]
     candidates: dict[str, list[FieldCandidate]] = {}
     for field, value in fields.items():
         if value is None:
@@ -208,9 +213,13 @@ def _review_verdicts(
 def _apply_review(
     candidates: dict[str, list[FieldCandidate]],
     verdicts: list[Mapping[str, object]],
-    points: int,
+    config: Config,
 ) -> None:
     """Fold a reviewer's verdicts into the candidates it reviewed.
+
+    The family points come from the run's config, never from a literal here: a
+    second copy of a scoring weight is how two callers come to disagree while
+    both report success.
 
     - ``agree`` → SAME_MATERIAL +1 on A's candidate;
     - ``disagree`` → soft refutation -2 on A's candidate, and a **new**
@@ -218,6 +227,8 @@ def _apply_review(
       §6.2);
     - ``uncertain`` → neutral.
     """
+    same_material = config.family_points["SAME_MATERIAL"]
+    soft = config.family_points["SOFT_REFUTATION"]
     for verdict in verdicts:
         field = str(verdict.get("field", ""))
         state = verdict.get("verdict")
@@ -228,12 +239,14 @@ def _apply_review(
             continue
         if state == _AGREE:
             produced[0].signals.append(
-                EvidenceSignal("SAME_MATERIAL", PASS, points, "B agree", verified=False)
+                EvidenceSignal(
+                    "SAME_MATERIAL", PASS, same_material, "B agree", verified=False
+                )
             )
         elif state == _DISAGREE:
             produced[0].signals.append(
                 EvidenceSignal(
-                    "SOFT_REFUTATION", FAIL, -2, "B disagree", verified=False
+                    "SOFT_REFUTATION", FAIL, soft, "B disagree", verified=False
                 )
             )
             suggested = verdict.get("suggested_value")
@@ -241,13 +254,14 @@ def _apply_review(
                 produced.append(_candidate(str(suggested), "reviewer_suggested", []))
 
 
-def _cross_modal(candidates: dict[str, list[FieldCandidate]], points: int) -> None:
-    """Add CROSS_MODAL +2 where the text lane and the vision lane agree.
+def _cross_modal(candidates: dict[str, list[FieldCandidate]], config: Config) -> None:
+    """Add CROSS_MODAL where the text lane and the vision lane agree.
 
     The signal is earned when a field has at least one text-lane producer and
     one vision-lane producer on the **same** normalized value. It is attached to
-    that merged value's candidates; the engine's family cap keeps it at +2.
+    that merged value's candidates; the engine's family cap keeps it to one.
     """
+    points = config.family_points["CROSS_MODAL"]
     for _field, produced in candidates.items():
         text_values = {
             c.normalized_value
@@ -323,7 +337,7 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
             notes.append("text lane A refused; no text candidates")
         else:
             text_fields = _fields_to_candidates(
-                answered, "extractor_llm_texto", text, 2
+                answered, "extractor_llm_texto", text, config
             )
             for field, produced in text_fields.items():
                 candidates.setdefault(field, []).extend(produced)
@@ -337,7 +351,7 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
         verdicts = _review_verdicts(
             engine, config.text_model_b, review_prompt, review_schema
         )
-        _apply_review(candidates, verdicts, 1)
+        _apply_review(candidates, verdicts, config)
         if not verdicts:
             notes.append("text lane B produced no review verdicts")
 
@@ -354,7 +368,7 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
         if answered is None:
             notes.append("vision lane A refused; no vision candidates")
         else:
-            vision_fields = _fields_to_candidates(answered, "vision", None, 2)
+            vision_fields = _fields_to_candidates(answered, "vision", None, config)
             for field, produced in vision_fields.items():
                 candidates.setdefault(field, []).extend(produced)
 
@@ -363,9 +377,9 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
         verdicts = _review_verdicts(
             engine, config.vision_model_b, review_vision_prompt, review_schema
         )
-        _apply_review(candidates, verdicts, 1)
+        _apply_review(candidates, verdicts, config)
 
     # --- Cross-modal agreement -------------------------------------------
-    _cross_modal(candidates, 2)
+    _cross_modal(candidates, config)
 
     return Extraction(candidates=candidates, values=values, notes=notes)

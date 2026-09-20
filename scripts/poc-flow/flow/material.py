@@ -236,7 +236,9 @@ def _read_pdf(  # pylint: disable=too-many-arguments, too-many-positional-argume
             image = rendered.value
             try:
                 frame.write_bytes(image.data)
-                legibility, sharpness, threshold = _legibility(raster, frame, 100.0)
+                legibility, sharpness, threshold = _legibility(
+                    raster, frame, config.legibility_threshold
+                )
             except OSError:
                 pass
 
@@ -273,9 +275,9 @@ def _read_pdf(  # pylint: disable=too-many-arguments, too-many-positional-argume
         read = ocr.layout(
             frame,
             [1],
-            150,
-            "es",
-            line_tolerance=25.0 * 150 / 72,
+            config.ocr_dpi,
+            config.ocr_lang,
+            line_tolerance=config.ocr_line_tolerance_points * config.ocr_dpi / 72,
             orientation="horizontal",
             tables=False,
         )
@@ -320,7 +322,9 @@ def _read_image(
     config: Config,
 ) -> Material:
     """Read an image file: legibility-gate, then OCR with layout ordering."""
-    legibility, sharpness, threshold = _legibility(raster, path, 100.0)
+    legibility, sharpness, threshold = _legibility(
+        raster, path, config.legibility_threshold
+    )
     verdict = decide(
         shape="image",
         legibility=legibility,
@@ -344,9 +348,9 @@ def _read_image(
     read = ocr.layout(
         path,
         [1],
-        150,
-        "es",
-        line_tolerance=25.0 * 150 / 72,
+        config.ocr_dpi,
+        config.ocr_lang,
+        line_tolerance=config.ocr_line_tolerance_points * config.ocr_dpi / 72,
         orientation="horizontal",
         tables=False,
     )

@@ -118,6 +118,20 @@ FRONTIER_MODEL: Final[str] = "anthropic:claude-sonnet-4-6"
 MIN_CHARS: Final[int] = 40
 RENDER_DPI: Final[int] = 150
 
+#: The sharpness an image must reach to be read (`my_flow.md` §2, `illegible`).
+#: Required with no default by the adapter, which is why it is a dial here.
+LEGIBILITY_THRESHOLD: Final[float] = 100.0
+
+#: The resolution OCR boxes are expressed at, and the row tolerance in **PDF
+#: points at 72 DPI** — the legacy's own unit, scaled by the DPI the boxes use.
+#: Both are OCR geometry, not policy: they decide what "one row" means.
+OCR_DPI: Final[int] = 150
+OCR_LINE_TOLERANCE_POINTS: Final[float] = 25.0
+
+#: The OCR language hint. The installed engine does not expose a per-call
+#: language setting and reports the request in its evidence instead.
+OCR_LANG: Final[str] = "es"
+
 #: TODO: [MVP] The per-(field, tier) reachability table of Anexo A is not yet
 #: enforced. It belongs to a build-time test, not to a runtime dial.
 
@@ -134,6 +148,10 @@ class Config:
         frontier_model: The model `resolve` escalates to.
         min_chars: The text-layer floor, `my_flow.md` §2.
         render_dpi: The render target, capped by the page's own resolution.
+        legibility_threshold: The sharpness an image must reach to be read.
+        ocr_dpi: The resolution OCR boxes are expressed at.
+        ocr_line_tolerance_points: The row tolerance, in PDF points at 72 DPI.
+        ocr_lang: The OCR language hint.
         escalate_floor: The score below which a field escalates outright.
         max_loops: Resolver → engine re-entry cap.
         severity: Per-severity dials; the defaults are :data:`SEVERITY`.
@@ -149,6 +167,10 @@ class Config:
     frontier_model: str = FRONTIER_MODEL
     min_chars: int = MIN_CHARS
     render_dpi: int = RENDER_DPI
+    legibility_threshold: float = LEGIBILITY_THRESHOLD
+    ocr_dpi: int = OCR_DPI
+    ocr_line_tolerance_points: float = OCR_LINE_TOLERANCE_POINTS
+    ocr_lang: str = OCR_LANG
     escalate_floor: int = ESCALATE_FLOOR
     max_loops: int = MAX_LOOPS
     severity: dict[str, FieldDial] = dataclasses.field(

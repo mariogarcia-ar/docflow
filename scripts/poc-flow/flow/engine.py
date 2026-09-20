@@ -22,7 +22,6 @@ from collections.abc import Mapping
 from .config import (
     DEFAULT_CONFIG,
     ESCALATE_FLOOR,
-    FAMILY_POINTS,
     Config,
     FieldDial,
 )
@@ -84,10 +83,6 @@ class DecisionContext:
         self.own_cuits = own_cuits
         self.validator_fields = _VALIDATOR_FIELDS
         self.veto_codes = config.veto_codes
-
-
-def _points(config: Config, family: str) -> int:
-    return config.family_points.get(family, FAMILY_POINTS.get(family, 0))
 
 
 def _validator_signals(

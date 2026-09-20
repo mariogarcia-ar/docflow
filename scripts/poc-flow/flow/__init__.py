@@ -12,8 +12,8 @@ flow of `my_flow.md` on top of the `docflow` adapters, reusing the lessons from
 - the score belongs to the candidate, and candidates with the same
   `normalized_value` merge before scoring (`my_flow.md` I2).
 
-The public entry point is :func:`docflow_flow.run`. `myflow.py` next to this
-package is one thin caller of it.
+The public entry point is :func:`flow.run`. `myflow.py` next to this package is
+one thin caller of it.
 """
 
 from __future__ import annotations
