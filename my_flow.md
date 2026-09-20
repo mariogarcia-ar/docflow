@@ -1,4 +1,4 @@
-# Flujo de extracción de comprobantes fiscales (v3)
+# Flujo de extracción de comprobantes fiscales (v4)
 
 > Ningún modelo determina por sí solo la verdad del documento. La confianza surge de la
 > combinación entre evidencia documental, validaciones determinísticas, consistencia
@@ -69,16 +69,17 @@ de A, por la misma razón por la que la opinión del frontier tampoco alcanza so
 documento
   → rutear (tipo de material + legibilidad)
   → clasificar (¿es comprobante?)
-  → extraer campos
+  → extraer campos (expertos generan candidatos + evidencia)
   → normalizar
-  → validar campos
+  → motor de decisión (consenso MoE, §6)
        ├─ confirmado                          → aprender
-       ├─ resoluble con evidencia             → resolver → validar (loop) → aprender
-       └─ no resoluble / material degradado   → escalar (cola) → [no aprende de esto todavía]
+       ├─ revisar/resolver con evidencia      → resolver → motor de decisión (loop) → aprender
+       └─ escalar (score bajo / material degradado) → cola (§8) → [no aprende de esto todavía]
 ```
 
-Cambios vs. v1: se agrega **normalizar** entre extraer y validar, y se renombra
-**corregir → resolver** (ver §5).
+Cambios vs. v3: "validar campos" se reemplaza por el **motor de decisión** (§6) —
+en vez de branches fijos, cada candidato acumula puntaje según la evidencia que lo
+respalda, con un gate aparte para campos críticos que el puntaje solo no puede saltar.
 
 ---
 
@@ -93,8 +94,8 @@ Cambios vs. v1: se agrega **normalizar** entre extraer y validar, y se renombra
 
 Esta tabla es una heurística de **ruteo** (cuánto trabajo hacer, qué lecturas pedir),
 no una afirmación de verdad — un PDF nativo con texto corrupto o un OCR sobre
-documento perfecto son posibles en cualquier dirección. Quien arbitra la verdad son
-los refutadores del paso 5, no este tier.
+documento perfecto son posibles en cualquier dirección. Quien arbitra la verdad es
+el motor de decisión (§6), no este tier.
 
 ```
 documento
@@ -228,37 +229,87 @@ porque el prompt de extracción ya exige preservar el formato impreso.
 
 ---
 
-## 6. Validar campos
+## 6. Motor de decisión (consenso MoE)
 
-```
-→ refutadores mecánicos, sobre cada lectura por separado
-    (etiqueta↔evidencia, trazabilidad al prompt, aritmética, ventana de contexto)
-       ├─ alguna lectura con violación → esa lectura no vota
-       └─ lecturas limpias → comparar (sobre normalized_value)
-              ├─ coinciden → confirmado
-              └─ difieren  → ¿algún refutador dirime cuál vale?
-                     ├─ sí → resoluble → resolver
-                     └─ no → severidad del campo en disputa
-                            ├─ bajo/medio (ej. descripción) → aceptar la de mayor confianza, registrar
-                            └─ alto/crítico (ej. total, IVA, CUIT, fecha) → escalar
+Reemplaza los branches ad-hoc de v3 por un mecanismo explícito y calibrable. Cada
+campo recibe candidatos y señales de varios expertos; un motor de decisión combina
+esas señales en un puntaje, en vez de contar votos.
 
-si hay emisor conocido:
-  → chequeo posicional adicional con schema-visual (bbox vs. zona esperada)
-       ├─ coincide → suma a "confirmado"
-       └─ no coincide → refutador disparado → resoluble / escalar
-```
+**Expertos, mapeados a lo que ya existe en el flujo:**
 
-**Matriz de severidad por campo** (ejemplo, ajustable por proyecto):
-
-| Campo | Severidad |
+| Experto | De dónde sale en este documento |
 |---|---|
-| total, IVA | crítica |
-| CUIT, fecha | alta |
-| razón social | media |
-| descripción, categoría | baja |
+| OCR / texto nativo | §2, extracción de texto por fuente |
+| Extractor LLM | extract_A, §4 |
+| Reviewer / Critic | extract_B, §4 |
+| Modelo visual | extract_A vision, §4 |
+| Validadores determinísticos | refutadores mecánicos ya usados en v1-v3 |
+| Histórico / schema-visual | §0, chequeo posicional por emisor |
 
-Solo campos de severidad baja/media pueden resolverse por "mayor confianza" sin
-evidencia que dirima; alta/crítica siempre requieren refutador que dirima o escalan.
+**Puntaje por candidato:**
+
+| Señal | Puntos |
+|---|---|
+| Validación determinística fuerte (aritmética, checksum, regla fiscal) | +3 |
+| Evidencia directa en el documento (bbox/posición localizada) | +2 |
+| Coincidencia de fuente **independiente** — únicamente texto-lane final vs. vision-lane final (distinto material) | +2 |
+| Reviewer/Critic (B) no logra refutar el candidato de A, mismo lane | +1 |
+| Coincide con patrón histórico / schema-visual del emisor | +1 |
+| Falta evidencia suficiente | −2 |
+| Contradicción determinística o evidencia directa en contra | −3 |
+
+**Regla que no es negociable, porque es la que evita el doble conteo:** una
+coincidencia entre extract_A y extract_B **dentro del mismo lane** nunca puntúa como
+el +2 de "fuente independiente" — eso está reservado para el cruce entre lanes
+(texto vs. vision), el único par que comparte solo el documento. A/B compartiendo
+lane solo puede sumar el +1 de revisor-no-refuta. Si esta distinción no queda fija
+en el motor, el score reintroduce en silencio el mismo problema de independencia que
+todo este diseño existe para evitar.
+
+Cuando B discrepa y propone `suggested_value` (§0), ese valor es un candidato nuevo
+que arranca su propio puntaje desde cero — no hereda los puntos de A, ni gana por
+default por venir del revisor.
+
+**Umbrales** (punto de partida, no medido todavía — calibrar contra el histórico de
+`campos_confirmados` con el mismo mecanismo de backtest de §8):
+
+```text
+score >= 6     → CONFIRMADO
+score 3 a 5    → REVISAR / RESOLVER
+score < 3      → ESCALAR
+```
+
+**Gate adicional para campos de severidad alta/crítica** (mismo criterio de v2, ahora
+expresado sobre el score): el puntaje solo no alcanza para confirmar `total`, `IVA`,
+`CUIT` o `fecha` — necesitan además al menos una evidencia fuerte independiente
+(+2 cruce de lanes) o una validación determinística (+3), aunque el score total ya
+supere 6. Esto evita que un campo crítico se confirme solo porque acumuló varios +1
+(revisor + histórico), que son señales débiles por separado.
+
+| Campo | Severidad | Requisito extra sobre el score |
+|---|---|---|
+| total, IVA | crítica | +2 cruce de lanes o +3 determinístico, obligatorio |
+| CUIT, fecha | alta | +2 cruce de lanes o +3 determinístico, obligatorio |
+| razón social | media | score solo alcanza |
+| descripción, categoría | baja | score solo alcanza |
+
+**Salida del motor, por campo:**
+
+```
+score + gate de severidad
+   ├─ CONFIRMADO         → aprender
+   ├─ REVISAR/RESOLVER   → ¿algún refutador dirime cuál candidato vale?
+   │                            ├─ sí → resolver (§7) → vuelve al motor (recalcula score)
+   │                            └─ no → escalar (§8)
+   └─ ESCALAR            → escalar (§8), directo a modelo de mayor capacidad (frontier)
+```
+
+El objetivo no es sumar modelos — es combinar expertos con errores poco
+correlacionados. Agregar un tercer LLM que lee el mismo texto no mueve el score en
+ninguna categoría de +2; solo el cruce texto/vision y las reglas determinísticas
+mueven la aguja de verdad.
+
+
 
 ---
 
@@ -276,8 +327,8 @@ con traza completa:
 }
 ```
 
-Después de resolver, vuelve a pasar por "validar" (loop) antes de confirmarse — una
-resolución no se acepta sin re-chequeo.
+Después de resolver, vuelve a pasar por el motor de decisión (loop) antes de
+confirmarse — una resolución no se acepta sin recalcular el score.
 
 ---
 
@@ -325,10 +376,14 @@ de un `resolved` que no volvió a pasar por validar.
 - **Regla determinística para el blind spot emisor/receptor**: CUIT propio conocido →
   nunca es `cuit_emisor`. Candidata a refutador fijo desde el día uno, no depende de
   aprendizaje ni de schema-visual.
-- Los "validadores" del paso 6 pueden tipificarse (sintácticos, aritméticos,
-  de evidencia, de posición, de reglas de negocio) a medida que se agreguen — no hace
-  falta la taxonomía completa desde el arranque, alcanza con que cada uno declare
-  contra qué evidencia refuta.
+- Los validadores determinísticos que alimentan el +3/−3 del motor de decisión
+  pueden tipificarse (sintácticos, aritméticos, de evidencia, de posición, de reglas
+  de negocio) a medida que se agreguen — no hace falta la taxonomía completa desde
+  el arranque, alcanza con que cada uno declare contra qué evidencia refuta.
+- **Umbrales del motor de decisión (§6) sin calibrar**: `6 / 3-5 / <3` es un punto de
+  partida razonable, no un resultado medido. Usar el mismo histórico de
+  `campos_confirmados` que ya alimenta el backtest de reglas (§8) para ajustar los
+  cortes antes de confiar en ellos en producción.
 - **Trade-off aceptado en el patrón A/B (§4):** que B vea la respuesta de A antes de
   opinar introduce sesgo de anclaje — es más barato que una segunda extracción a
   ciegas, pero es una validación más débil que una verdaderamente independiente. Se
