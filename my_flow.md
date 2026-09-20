@@ -1,4 +1,4 @@
-# Flujo de extracción de comprobantes fiscales (v2)
+# Flujo de extracción de comprobantes fiscales (v3)
 
 > Ningún modelo determina por sí solo la verdad del documento. La confianza surge de la
 > combinación entre evidencia documental, validaciones determinísticas, consistencia
@@ -93,26 +93,66 @@ escaneado_ocr  → reglas sobre el texto OCR, o reglas de elementos visuales
 
 ## 4. Extraer campos
 
+### 4.1 Modelos por lane (primario / alternativo)
+
+| Lane | Primario (extract_A) | Alternativo (extract_B, revisor) |
+|---|---|---|
+| texto (razonamiento) | deepseek-r1 | gemma3 |
+| vision | qwen2.5vl | Granite-Vision (2B) |
+
+El rol de A y B **no es simétrico**: A extrae desde cero; B recibe el texto/imagen
+original **más** la extracción de A, y se le pide explícitamente que busque errores en
+esa extracción — no que confirme si está bien. Framing adversarial, no confirmatorio:
+un modelo al que le preguntás "¿está bien esto?" tiende a decir que sí más de lo que
+debería; uno al que le pedís "encontrá qué está mal" discrepa con más facilidad
+cuando corresponde.
+
+**Condición no negociable:** B tiene que leer la fuente (texto o imagen), no solo la
+respuesta de A. Si B solo ve el JSON de A sin volver a mirar el documento, es
+exactamente el patrón `judge` (K6) que ya se descartó en `my_hitl_llm_frontier.md`
+por no poder detectar error de material — calificar la transcripción no es lo mismo
+que calificar contra la evidencia.
+
+### 4.2 Extracción
+
 ```
 tier == texto_nativo
   → regexp para campos de formato fijo (CUIT, fecha, tipo, nro_comprobante)
-  → LLM local → extract_A
-  → LLM local otra vez, mismo texto, autorrevisión → extract_B
-       ├─ extract_A == extract_B → extraction_consistent
-       └─ difieren                → extraction_unstable → escalar
-  → cruzar regexp vs. extraction_consistent en los campos que ambos cubren
+  → extract_A (deepseek-r1) sobre el texto → campos_A
+  → extract_B (gemma3), recibe texto + campos_A, prompt "buscá errores en esta
+    extracción" → veredicto por campo
+       ├─ B no señala errores → cross_model_agreement
+       └─ B señala discrepancia en algún campo → discrepancia_señalada (por campo)
+  → cruzar regexp vs. campos_A en los campos que ambos cubren
 
 tier == escaneado_ocr
-  → LLM local sobre texto_ocr → extract_A / extract_B → extraction_consistent | unstable
-  → (en paralelo) LLM local vision sobre el render → campos_vision
-  salida: extraction_consistent (texto) + campos_vision, SIN fusionar
+  → mismo patrón (extract_A deepseek-r1 / extract_B gemma3 revisor) sobre texto_ocr
+  → (en paralelo, mismo patrón) extract_A (qwen2.5vl) sobre el render → campos_vision_A
+    extract_B (Granite-Vision 2B), recibe render + campos_vision_A, mismo framing
+    adversarial → cross_model_agreement | discrepancia_señalada
+
+  salida: (campos_A texto, con su veredicto de B) + (campos_vision_A, con su veredicto de B),
+          SIN fusionar entre lanes — eso sigue siendo responsabilidad de "validar"
 ```
 
-**Nota de terminología:** `extraction_consistent` describe que dos corridas del mismo
-modelo sobre el mismo texto coinciden — es un chequeo de **estabilidad**, no de
-**validación**. Ambas corridas pueden coincidir y estar igual de equivocadas, porque
-comparten modelo y texto. La validación real ocurre en el paso 5, contra evidencia
-externa al modelo.
+**Dos ejes de refutación, no uno solo:**
+- **Dentro de cada lane** (A/B, mismo material, modelos distintos) → refuta errores de
+  *razonamiento del modelo* sobre ese material.
+- **Entre lanes** (texto final vs. vision final, distinto material) → sigue siendo el
+  único par que puede refutar un error de *OCR/material*, porque comparte solo el
+  documento. El chequeo A/B no reemplaza esto — lo complementa.
+
+**Nota de terminología:** `cross_model_agreement` reemplaza a `extraction_consistent`.
+Es una señal más fuerte que la versión anterior (dos modelos con pesos distintos, no
+el mismo modelo dos veces), pero sigue sin ser prueba definitiva: A y B comparten el
+mismo material (mismo texto u mismo render), así que un error de OCR o de render que
+ambos "vean" igual sigue sin ser detectable en este paso — para eso está el cruce
+entre lanes.
+
+**Qué reemplaza a la detección de inestabilidad de v2:** ya no depende de correr el
+mismo modelo dos veces — un output que no parsea contra el `schema` (formato JSON
+constreñido) o que se corta a mitad de generación se trata como fallo de
+extracción y reintenta, independientemente del chequeo A/B.
 
 Cada campo extraído se representa como objeto, no como valor suelto:
 
@@ -251,3 +291,10 @@ de un `resolved` que no volvió a pasar por validar.
   de evidencia, de posición, de reglas de negocio) a medida que se agreguen — no hace
   falta la taxonomía completa desde el arranque, alcanza con que cada uno declare
   contra qué evidencia refuta.
+- **Trade-off aceptado en el patrón A/B (§4):** que B vea la respuesta de A antes de
+  opinar introduce sesgo de anclaje — es más barato que una segunda extracción a
+  ciegas, pero es una validación más débil que una verdaderamente independiente. Se
+  acepta por costo; si en producción se mide que B rara vez discrepa (posible señal
+  de que está rubber-stampeando en vez de revisando), vale la pena medir cuánto
+  cambia el comportamiento si a B se le pide extraer primero sin ver a A, y comparar
+  después — más caro, pero sin el sesgo de anclaje.
