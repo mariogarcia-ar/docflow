@@ -25,6 +25,8 @@ from .fields import (
     DECISION_CONFIRMED,
     DECISION_ESCALATE,
     DECISION_REVIEW,
+    FAIL,
+    UNKNOWN,
     FieldDecision,
     FieldResult,
 )
@@ -143,7 +145,12 @@ def _decision_lines(decisions: list[FieldDecision]) -> list[str]:
 
 
 def _decision_line(decision: FieldDecision) -> str:
-    """One field's row: severity, name, the winner's printed value, and why."""
+    """One field's row: severity, name, the winner's printed value, and why.
+
+    A row whose winner carries a non-PASS signal appends a `signals:` line
+    naming each `FAIL` (with its veto detail) and `UNKNOWN` (with its family),
+    so the report distinguishes *no evidence* from *evidence against* (B.9).
+    """
     value = decision.winner.raw_value if decision.winner is not None else "—"
     if len(value) > _VALUE_WIDTH:
         value = value[: _VALUE_WIDTH - 1] + "…"
@@ -155,7 +162,34 @@ def _decision_line(decision: FieldDecision) -> str:
     why = decision.notes[0] if decision.notes else ""
     if why:
         line += f"\n      why: {why}"
+    signal_states = _signal_states(decision)
+    if signal_states:
+        line += f"\n      signals: {signal_states}"
     return line
+
+
+def _signal_states(decision: FieldDecision) -> str:
+    """The winner's non-PASS signal states, as one readable phrase.
+
+    A `FAIL` names what refuted; an `UNKNOWN` names the family that could not
+    decide. Both are kept — the report does not fold a gap into a verdict.
+    """
+    winner = decision.winner
+    if winner is None:
+        return ""
+    fails: list[str] = []
+    unknowns: list[str] = []
+    for signal in winner.signals:
+        if signal.result == FAIL:
+            fails.append(signal.detail or signal.family)
+        elif signal.result == UNKNOWN:
+            unknowns.append(signal.family)
+    parts: list[str] = []
+    if fails:
+        parts.append("FAIL=" + ", ".join(sorted(set(fails))))
+    if unknowns:
+        parts.append("UNKNOWN=" + ", ".join(sorted(set(unknowns))))
+    return "; ".join(parts)
 
 
 def _next_lines(result: FieldResult, steps: Sequence[StepTrace]) -> list[str]:

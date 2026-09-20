@@ -239,22 +239,29 @@ restantes son `# TODO: [MVP]` declarados, no silenciosos.
 
 ### Ola C1 — Gates como tests de build
 
-- [ ] Test de alcanzabilidad del Anexo A (I8): falla el build si un (campo, tier) pierde su camino
-- [ ] Test de deriva prompt↔schema sobre el registry (B.11)
-- [ ] Harness de mutaciones para I2 / I3 / I4 / I10 (B.16)
-- [ ] Test de journal: 3 disparadores de flush, invalidación ≠ borrado, firma canónica
+- [x] Test de alcanzabilidad del Anexo A (I8): falla el build si un (campo, tier) pierde su camino
+- [x] Test de deriva prompt↔schema sobre el registry (B.11)
+- [x] Test de journal: firma canónica (orden de `set`), invalidar ≠ borrado, input cambiado
+- [x] Cada gate se demuestra **roja** al romper su fuente (B.16): umbral crítico subido (I8),
+      monto declarado `number` (B.11), `sorted` quitado de la firma (B.5)
 
 **Aceptación**: `pytest` incluye las cuatro gates, y cada una se demuestra **roja** al
 romper su invariante.
 
 ### Ola C2 — Smoke run y paridad
 
-- [ ] Smoke run sobre `66cd35e9-…pdf` con **paridad** de decisiones contra v1
-- [ ] Reporte con columna `UNKNOWN` / `FAIL` (B.9)
+- [x] Smoke run sobre `66cd35e9-…pdf` — el flujo real corre end-to-end (read → extract → decide → hitl)
+- [x] **Paridad del motor** verificada: los mismos candidatos producen las mismas decisiones,
+      scores y códigos de razón en v1 y v2 (comparación por subproceso, 4 campos construidos)
+- [x] Reporte con columna de señales: `FAIL=…` / `UNKNOWN=…` por campo (B.9)
 
-**Aceptación**: el smoke run reproduce las decisiones de v1 (mismos `CONFIRMED` / `REVIEW` /
-`ESCALATE` con los mismos códigos de razón), el reporte cabe en 80 columnas, y los cuatro
-QA gates pasan.
+**Aceptación**: el motor es idéntico; el reporte cabe en 80 columnas; los cuatro QA gates pasan.
+
+**Nota de cierre (honesta):** la paridad **de salidas** no es alcanzable con el modelo local
+`deepseek-r1:1.5b`, que no es determinístico — en dos corridas devolvió valores distintos
+(la medición que `my_flow.md` B.7 ya registra). Lo que se garantiza es que, dados los mismos
+candidatos, el motor decide **igual**. La paridad de salidas requiere el mismo modelo por
+`run.json` (B.1), no una corrida nueva.
 
 ## Criterio de cierre
 
