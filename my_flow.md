@@ -748,15 +748,19 @@ vez que cambien puntajes, umbrales o el conjunto de señales.
 
 ## Anexo B. Lecciones de la implementación
 
-Lo que enseñó construir el flujo en `scripts/poc-flow/` (`flow/report.py`,
-`flow/progress.py`, `flow/persist.py`, `flow/run.py`). No son decisiones nuevas: donde una
-lección contradiga un §, manda el §. Son el registro de qué costó, para no volver a
-pagarlo.
+Dos fuentes, y conviene saber de dónde sale cada una. **B.1–B.8** son del flujo
+(`scripts/poc-flow/`): construir el motor y su reporte. **B.9–B.16** son del bench de
+kernels (`scripts/poc/`, `docs/findings/`): defectos medidos que el diseño del flujo ya
+contempla —se citan contra el § o el invariante que los previene— y que valen como registro
+de por qué esas reglas están escritas así.
+
+No son decisiones nuevas: donde una lección contradiga un §, manda el §. Son el registro de
+qué costó, para no volver a pagarlo.
 
 ### B.1 Trazabilidad: dos audiencias, dos salidas
 
 El primer error fue volcar el JSON del motor a stdout. El JSON es el contrato de la
-máquina—`FieldResult`: decisiones, traza de candidatos, confirmados, notas—y **no es un
+máquina —`FieldResult`: decisiones, traza de candidatos, confirmados, notas— y **no es un
 reporte**. Un operador tenía que deducir de él por dónde había pasado el flujo y qué
 archivo abrir, que son justo las dos preguntas que el JSON no está hecho para contestar.
 
@@ -903,3 +907,189 @@ evidencia fuerte disponible. Lo que falta no es un umbral más bajo, es la escal
   `ruff format --check` y `pylint` sobre `scripts/poc-flow/` son parte del cierre, y los
   módulos puros (`route`, `validators`, `fields`, `engine`, `report`, `progress`) no
   necesitan un modelo para probarse.
+
+### B.9 Un cero no dice por qué es cero
+
+Todo lo que sigue viene del bench de kernels (`scripts/poc/README.md`), donde la lección
+se pagó caro: **tres situaciones distintas se ven igual en un reporte numérico**, y
+confundirlas convierte un defecto en un dato.
+
+| Lo que se ve | Lo que pasó | Cómo se nombra |
+|---|---|---|
+| 0 | el chequeo **no se hizo** (faltaba un dato, no se llamó) | non-event |
+| 0 | se hizo y **no encontró nada** | hallazgo sobre el documento |
+| ±5.0 | se hizo y **saturó** el rango del método | cota, no medición |
+
+Los tres casos están medidos en el bench:
+
+- `image rescale` no podía correr porque nadie medía el DPI: el mensaje era *"not rescaled:
+  no `--assumed-dpi`, and K3 cannot measure the DPI"* (el driver **no miró**). Al leer la
+  medición que `batch_pdf.py` ya había registrado, el mismo caso se reporta como *"below the
+  floor: 100 < 150 declared readable, and upscaling is refused"* — que es un hallazgo sobre
+  el corpus. El archivo ausente era idéntico; el significado no.
+- `skew_estimate` satura en ±5°: es un barrido real de paso 0.25°, así que `±5.0` significa
+  *"al menos 5"* y no una medición. Reportarlo como número es reportar un techo como valor.
+- `blank_page` en todo archivo de imagen: dos APIs del mismo motor discrepan dentro de una
+  sola medición (`get_images()` cuenta 0, `get_image_info()` cuenta 1), así que un escaneo se
+  reporta como página *"sin texto y sin imagen"*. El cero no era del documento.
+
+**Lección para el flujo.** Es exactamente la razón de existir de **I10**: un validador
+responde `PASS` / `FAIL` / `UNKNOWN`, y `UNKNOWN` **no puntúa, no penaliza y nunca veta**.
+Un cero de evidencia y un cero de "no se pudo evaluar" no pueden pesar lo mismo, o el motor
+castiga a un documento por una regla que no llegó a correr. En la práctica (§6.2) eso se ve
+dos veces: la aritmética sin todos sus componentes contesta `UNKNOWN` en vez de `FAIL`, y una
+lane que no corrió es una **nota**, nunca un cero silencioso.
+
+### B.10 El modo de fallo peligroso es el que devuelve un valor plausible
+
+Los defectos caros del bench comparten una forma: **no hubo error, hubo una respuesta**.
+
+| Defecto | Qué devolvió | Por qué no se notó |
+|---|---|---|
+| un `Path` pasado a `vision` | 136 caracteres base64 del **nombre del archivo** donde se esperaban 340 932 de píxeles | `_encode_image` acepta `Path` y hace `bytes(path)`; ninguna excepción |
+| un prompt más grande que la ventana | la respuesta describe **el principio** del documento | el runtime corta sin avisar y `done_reason` queda en `'stop'` |
+| `judge` sin schema | los **samples devueltos tal cual**, parseados como "objeto válido" | el parser sólo puede exigir que sea un objeto |
+
+El tercero es el más instructivo: el veredicto *era* la cosa que se estaba juzgando. Cualquier
+validador sintáctico lo aprueba, porque un objeto es un objeto.
+
+**Lección para el flujo.** De acá sale el diseño de §4.2 y §6.2: **`verified` lo calcula el
+sistema, no el modelo**. Un `bbox` autodeclarado no puntúa; un ancla de contenido vale sólo si
+el sistema releyó el contenido en la ubicación declarada. Es también la razón de que un
+output que no parsea contra el schema sea un **fallo de extracción** y no un valor con menos
+campos, y de que la identidad del modelo se versione como objeto (`role`, `family`, `variant`,
+`quantization`, `runtime`, `prompt_version`): una respuesta plausible de un modelo equivocado
+es indistinguible de una respuesta correcta si no se sabe quién la produjo.
+
+Y en §8/§9: una sugerencia del frontier **no puede volver como veredicto** (I6, I7). Si el
+revisor pudiera cerrar lo que revisa, el sistema aprendería de su propia respuesta — que es
+el mismo defecto del `judge`, un nivel más arriba.
+
+### B.11 Las reglas de lectura y el tipo del dato son dos artefactos
+
+El defecto medido en el bench: con el schema declarando `total` como `integer`, el mismo
+modelo devolvió `1789830`, `1789830` y `17898` sobre un documento que imprime `$ 17.898,30`.
+El schema decía *número*, así que un separador de miles que el modelo leía con claridad tenía
+que desaparecer. Nada falló: un número equivocado es un número válido.
+
+El arreglo separó dos preguntas en dos artefactos:
+
+| Artefacto | Responde |
+|---|---|
+| prompt | *qué buscar y cómo leerlo* (un importe vuelve **como se imprime**, texto) |
+| schema | *qué forma tiene la respuesta* (tipo, `required`, `enum`) |
+
+Son archivos distintos porque cambian por razones distintas y en momentos distintos; un solo
+archivo forzaría las dos ediciones en un mismo diff. El precio de separarlos es la deriva, y
+se paga con un test que compara el `required` del schema contra el texto del prompt **en las
+dos direcciones**. Ese test se ganó el lugar de inmediato: encontró que **16 campos eran
+exigidos por el schema y no estaban nombrados en el prompt**, o sea que el modelo estaba
+obligado a contestar claves de las que nunca se le había hablado.
+
+Medición con el par corregido, tres corridas cada uno: `deepseek-v4-pro` (API) volvió el
+importe como se imprime **3/3**; `deepseek-r1:1.5b` (local), **1/3**. O sea: **el prompt fija
+el formato, el modelo fija la confiabilidad**, y el defecto original era *prompt **y**
+capacidad del modelo*, no prompt solo. Un modelo de 1.5B además inventa nombres de clave
+(`improve_total_facturao`), y eso no lo arregla ningún prompt.
+
+**Lección para el flujo.** Aplica a §0 y §4.2 y es la versión precisa de B.7: los importes son
+`string` en el schema, el `enum` va declarado como `enum` (no en el `description`), y la
+deriva prompt↔schema se verifica, no se supone.
+
+### B.12 Un recorte anunciado no es un recorte silencioso
+
+`batch.py` lee como máximo 3 páginas por documento (`MAX_PAGES`), porque un prompt que no
+entra en la ventana no produce una respuesta corta: produce un **HTTP 400**. Lo que importa
+del arreglo es qué se hizo con el techo: el recorte **devuelve una frase que nombra lo que
+dejó afuera**, y esa frase llega a la consola, al registro de skip y al código de salida.
+
+```
+PARTIAL: read the first 3 of 59 pages — this version caps a document at 3 (MAX_PAGES);
+the text below is NOT the whole document
+```
+
+El número no es la política: **el aviso sí**. Y se falsificó en vez de suponerse: silenciar
+el campo deja el banner ausente *y* el código de salida vuelve a 0, que es cómo se comprobó
+que el aviso era lo que sostenía la advertencia. Ese estado intermedio (`~`) existe porque los
+otros dos serían mentira: `ok` omitiría el recorte, `..` escondería que sí hubo extracción.
+
+**Lección para el flujo.** La misma forma que los códigos de razón de §6.5: el `motivo` de un
+escalamiento no es decoración, es lo que permite contar *por qué* escala un emisor. Y en el
+reporte (B.1): un `read next` no puede decir "todo confirmado" cuando lo que pasó es que
+nadie miró.
+
+### B.13 La ruta se decide por página, no por documento
+
+Un PDF mezcla páginas con texto, páginas escaneadas y páginas en blanco: en el fixture grande,
+59 páginas de las cuales 2 son `blank_page`. Una decisión por documento mandaría esas dos al
+renderer y exportaría bitmaps de nada.
+
+Y no se puede preguntar por el rango: medido, `layout_text 1-3` devuelve 1263 caracteres y
+`render 1-3` devuelve 208 761 bytes **sobre el mismo rango**, o sea que ninguna operación de
+rango contesta *"este rango es texto o imagen"*. La granularidad tiene que ser la página,
+porque una operación de rango contesta que sí a las dos cosas.
+
+**Lección para el flujo.** Es la regla de §2, y la razón de que `blank` no sea un caso
+"raro": una página en blanco **no se exporta** — el kernel ya declaró que no tiene ni texto
+utilizable ni imagen — pero **se contabiliza**, en un archivo (`<stem>.pages.json`) y no en una
+línea de consola que se va con el scroll.
+
+### B.14 Reanudar en el bench: un umbral que no se alcanza
+
+El journal del bench se escribía "cada 100 archivos", y eso tenía un defecto que se vio con
+una corrida real: interrumpir con `^C` un walk de 76 imágenes **no dejaba journal alguno**,
+porque nunca se llegaba a 100. El trabajo hecho se perdía igual que antes de que el journal
+existiera. Un umbral en cantidad es *inalcanzable en un walk corto*; uno en tiempo solo es el
+problema opuesto, porque medir un archivo lleva milisegundos y unos segundos son miles de
+entradas. La solución son **tres disparadores, uno por modo de fallo**: cada 50 registros,
+cada 30 s y un hook de `atexit` (el hook cubre `^C`; el periódico cubre `SIGKILL`, que el hook
+no puede). Juntos acotan la pérdida a los últimos 30 segundos.
+
+Dos reglas más del mismo journal, que es la versión simple del de B.5:
+
+- **Sólo se registra lo que produjo salida.** Un refusal (sin credencial, PDF protegido,
+escaneo ilegible) **no** deja entrada, así que se reintenta siempre: si dejara entrada, una
+condición transitoria se volvería permanente y una corrida posterior con credencial saltaría
+el corpus entero reportando éxito.
+- **Una corrida de prueba no deja nada.** `--no-save` no escribe journal, para que un dry run
+no haga que la próxima corrida real saltee lo que él se negó a escribir.
+
+### B.15 El sobre tipado tiene un dueño, y no es el probe
+
+`Evidence` del bench lleva `MappingProxyType`, que `json.dumps` rechaza. La regla que se
+adoptó fue **no serializarlo**: el probe *describe* el valor y la codificación es trabajo de
+otra tarea (`S1-T20`). Un probe que se fabricara su propio encoder sería una segunda fuente de
+verdad sobre la misma forma, y las dos discreparían sin que nada lo note.
+
+Lo mismo vale para umbrales: **ningún probe hardcodea un umbral**; la política se lee de
+`registry/policies/thresholds.json`. Una constante local haría que el probe discrepe de todos
+los demás llamadores mientras reporta éxito.
+
+**Lección para el flujo.** Es la misma regla que hace que `FieldDecision` y `FieldCandidate`
+tengan un solo dueño (§5, §6.5) y que `SUBTOTAL_FIELD` / `IVA_FIELD` / `TOTAL_FIELD` existan
+una sola vez: **una forma declarada en dos lugares es una discrepancia diferida**. Y en el
+reporte: no recalcula, lee.
+
+### B.16 Probar el mutante, no el verde
+
+El bench mantiene un arnés de mutaciones (`tests/adapters/mutation_*.py`): cada entrada
+**rompe una sola propiedad**, corre las suites que la guardan y registra qué tests fallaron.
+La regla es dura y vale la pena copiarla: *una mutación cuyo conjunto de fallos no contiene el
+test que guarda la propiedad no prueba nada* — o la ancla no pegó, o el test nunca ejercitó ese
+código. Resultados desde el XML de JUnit, porque los nombres largos se envuelven en la consola
+y un `grep` fallido se lee como un pase.
+
+La contracara, también del bench: **`tests/fixtures/verify_pocflow.py` es una herramienta, no
+un test** — reporta, no asegura, y vive fuera de `testpaths`. Es lo que permite correr la
+verificación de deriva prompt↔schema sin inventar un test que no corresponde.
+
+**Lección para el flujo.** Un test que guarda un invariante (I2, I3, I4, I10) tiene que
+**fallar** cuando el invariante se rompe; la forma de saberlo es mutar la fuente, observar el
+fallo, restaurar y volver a verde — y reportar **las dos** observaciones. Un test que sólo pasa
+cuando el código está bien no prueba nada.
+
+### B.17 Cómo usar este anexo
+
+El Anexo A se regenera cuando cambian puntajes o umbrales. Este no: **cada sección de acá
+debería poder convertirse en un test o en un campo del reporte.** Si una lección no se puede
+verificar ni observar, todavía es una opinión — y B.16 dice qué hacer con eso.
