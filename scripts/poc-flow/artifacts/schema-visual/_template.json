@@ -1,8 +1,0 @@
-{
-  "$comment": "Placeholder template for a positional schema-visual (my_flow.md §0, §9). The real key is (emisor, tipo_comprobante, layout_fingerprint); this file is named _template to say it applies to nothing yet, and is never loaded as a key.",
-  "schema_version": 1,
-  "issuer": null,
-  "tipo_comprobante": null,
-  "layout_fingerprint": null,
-  "labels": {}
-}

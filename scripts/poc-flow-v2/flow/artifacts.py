@@ -52,7 +52,7 @@ _REVIEW_SCHEMA_KEY: Final[str] = "schemas/review/review.json"
 
 
 # `too-few-public-methods`: `Artifacts` is a load-or-refuse bundle; its fields
-# are the contract. The same reasoning v1's `artifacts.py` states.
+# are the contract, not its methods.
 # pylint: disable=too-few-public-methods
 
 

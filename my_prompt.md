@@ -11,6 +11,10 @@ un cli deberia tener
 entrada > proceso > salida 
 
 ---
+cat var/work/run.json| jq 
+jq -r '.text' var/work/material.json
+
+
 rm -rf var
 python scripts/poc/batch_pdf.py  tests/fixtures/ --out var/run
 python scripts/poc/batch_ocr.py  tests/fixtures/ --out var/run

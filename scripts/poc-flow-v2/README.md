@@ -1,14 +1,15 @@
 # `scripts/poc-flow-v2/` — el proceso de ejecución, reconstruido
 
-v2 es la **segunda versión** del flujo de `my_flow.md`, construida sobre las
-lecciones del Anexo B. La diferencia con v1 es de método: **primero el proceso
-`run`** (trazabilidad, journal, pause/resume/stop, reporte), probado sobre fakes,
-y **después** la migración de las librerías. El plan está en
+v2 es la implementación **única y vigente** del flujo de `my_flow.md`. Nació como segunda
+versión construida sobre las lecciones del Anexo B, y su diferencia con el predecesor era de
+método: **primero el proceso `run`** (trazabilidad, journal, pause/resume/stop, reporte),
+probado sobre fakes, y **después** la migración de las librerías. El plan está en
 [`plan/README.md`](plan/README.md).
 
-Esto **no** es `scripts/poc-flow/` (que se mantiene como referencia) ni
-`scripts/poc/` (el banco de kernels). Es la capa que responde *por dónde pasó el
-documento, qué se decidió y cómo se reanuda*.
+Esto **no** es `scripts/poc/` (el banco de kernels). Es la capa que responde *por dónde pasó
+el documento, qué se decidió y cómo se reanuda*. El predecesor —`scripts/poc-flow/`— se
+retiró al cerrar la migración: v2 es su reemplazo, y lo que quedaba vivo de v1 (los
+artefactos de prompt y schema) vive en `registry/` y se lee por K8.
 
 ```bash
 python scripts/poc-flow-v2/myflow.py <document>            # el reporte
@@ -25,7 +26,7 @@ Las tres fases del plan están ejecutadas:
   llaman a los adapters, el prompt y el schema se leen del registry (K8), y `decide`
   corre el motor.
 - **Fase C** — gates como tests de build (alcanzabilidad I8, deriva prompt↔schema,
-  journal) con prueba de mutación, y paridad del **motor** verificada contra v1.
+  journal) con prueba de mutación, y paridad del **motor** verificada contra el predecesor.
 
 Queda diferido, declarado y no silencioso (`# TODO: [MVP]`): el split por rol/lane
 en el registry (review y vision lane) y `required_components` por `tipo_comprobante`.
@@ -192,10 +193,17 @@ Los tests de proceso corren sobre entradas ilegibles (bytes que ningún adapter
 lee), así que degradan rápido y no pagan modelos: un test de proceso que
 necesitara un modelo probaría el modelo, no el proceso.
 
-## Paridad con v1
+## Paridad con el predecesor
 
-Dado el mismo set de candidatos, el motor de v2 produce **las mismas decisiones,
-scores y códigos de razón** que v1 (verificado por subproceso). La paridad de
-salidas no se persigue: el modelo local `deepseek-r1:1.5b` no es determinístico,
-y dos corridas devuelven valores distintos (`my_flow.md` B.7). La paridad que se
-garantiza es la del motor, que es lo que v2 migró.
+Dado el mismo set de candidatos, el motor de v2 produjo **las mismas decisiones,
+scores y códigos de razón** que `scripts/poc-flow/` (verificado por subproceso
+mientras ambos coexistían). La paridad de salidas no se persigue: el modelo local
+`deepseek-r1:1.5b` no es determinístico, y dos corridas devuelven valores distintos
+(`my_flow.md` B.7). La paridad que se garantiza es la del motor, que es lo que la
+migración portó.
+
+Esa comparación por subproceso fue una verificación de una sola vez, no un test
+del repo: con el predecesor retirado ya no es re-ejecutable. La paridad que hoy
+queda **vigilada** es la de los invariantes (I2, I3, I4, I10), que
+`test_invariants.py` guarda con valores construidos y
+`mutation_invariants.py` demuestra roja al mutar la fuente.

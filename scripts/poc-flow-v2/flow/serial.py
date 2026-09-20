@@ -4,10 +4,8 @@ One owner for the shape (`my_flow.md` B.15): the artifacts are written by
 :func:`encode` and read back by the ``*_from_dict`` functions here. A second
 encoder elsewhere would be a second source of truth about the same form.
 
-The helpers mirror `scripts/poc-flow/flow/persist.py`, reduced to the types the
-run process persists in Fase A: `FieldResult`, `FieldDecision`, `FieldCandidate`
-and `EvidenceSignal`. Fase B ports the rest of the engine on top of the same
-shapes and needs no change here.
+The helpers cover the types the run process persists: `FieldResult`,
+`FieldDecision`, `FieldCandidate` and `EvidenceSignal`.
 """
 
 from __future__ import annotations

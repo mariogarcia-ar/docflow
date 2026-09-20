@@ -749,7 +749,7 @@ vez que cambien puntajes, umbrales o el conjunto de señales.
 ## Anexo B. Lecciones de la implementación
 
 Dos fuentes, y conviene saber de dónde sale cada una. **B.1–B.8** son del flujo
-(`scripts/poc-flow/`): construir el motor y su reporte. **B.9–B.16** son del bench de
+(`scripts/poc-flow-v2/`): construir el motor y su reporte. **B.9–B.16** son del bench de
 kernels (`scripts/poc/`, `docs/findings/`): defectos medidos que el diseño del flujo ya
 contempla —se citan contra el § o el invariante que los previene— y que valen como registro
 de por qué esas reglas están escritas así.
@@ -903,10 +903,10 @@ evidencia fuerte disponible. Lo que falta no es un umbral más bajo, es la escal
   sustituir la respuesta por un valor por defecto.
 - **El reporte no importa `docflow`.** Es lo que permite ejercitarlo con valores
   construidos, sin adapters ni modelos.
-- **Las gates corren sobre este árbol aunque `pytest` no lo colecte**: `ruff check`,
-  `ruff format --check` y `pylint` sobre `scripts/poc-flow/` son parte del cierre, y los
-  módulos puros (`route`, `validators`, `fields`, `engine`, `report`, `progress`) no
-  necesitan un modelo para probarse.
+- **Las gates corren sobre este árbol**: `ruff check`, `ruff format --check` y `pylint`
+  sobre `scripts/poc-flow-v2/` son parte del cierre, y los módulos puros (`route`,
+  `validators`, `fields`, `engine`, `report`, `progress`) no necesitan un modelo para
+  probarse.
 
 ### B.9 Un cero no dice por qué es cero
 
@@ -1079,9 +1079,12 @@ test que guarda la propiedad no prueba nada* — o la ancla no pegó, o el test 
 código. Resultados desde el XML de JUnit, porque los nombres largos se envuelven en la consola
 y un `grep` fallido se lee como un pase.
 
-La contracara, también del bench: **`tests/fixtures/verify_pocflow.py` es una herramienta, no
-un test** — reporta, no asegura, y vive fuera de `testpaths`. Es lo que permite correr la
-verificación de deriva prompt↔schema sin inventar un test que no corresponde.
+La contracara, también del bench: **una verificación de deriva puede ser una herramienta, no
+un test** — reporta, no asegura, y vive fuera de `testpaths`. Es lo que permitía correr la
+verificación de deriva prompt↔schema sin inventar un test que no correspondía. El flujo la
+retiró: esa deriva hoy es `tests/poc_flow_v2/test_gates.py::test_registry_schema_and_prompt_agree`,
+un test de build que **falla** cuando el prompt y el schema se separan, porque ahí sí
+corresponde que asegure.
 
 **Lección para el flujo.** Un test que guarda un invariante (I2, I3, I4, I10) tiene que
 **fallar** cuando el invariante se rompe; la forma de saberlo es mutar la fuente, observar el

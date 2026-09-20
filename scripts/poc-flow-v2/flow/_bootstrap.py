@@ -3,8 +3,7 @@
 The `docflow` package lives under ``src/`` (`pyproject.toml`), so the import is
 always ``docflow.…``. The `pythonpath = ["src"]` setting applies to `pytest` and
 nothing else, so a standalone library that calls the adapters directly must put
-``src/`` on `sys.path` itself — exactly as `scripts/poc/_lib.py::bootstrap` and
-`scripts/poc-flow/flow/_bootstrap.py` do.
+``src/`` on `sys.path` itself — exactly as `scripts/poc/_lib.py::bootstrap` does.
 
 This module is deliberately small and depends only on the standard library, so
 it can be imported before `docflow` resolves.

@@ -1,7 +1,7 @@
 {
   "root": "tests/fixtures",
-  "files": 97,
-  "bytes": 72161742,
+  "files": 98,
+  "bytes": 73175523,
   "pdf_detector": "voucherflow",
   "by_folder": {
     "blur": {
@@ -39,6 +39,10 @@
     "pdf_escaneados": {
       "files": 5,
       "bytes": 2330751
+    },
+    "pdf_large": {
+      "files": 1,
+      "bytes": 1013781
     }
   },
   "excluded": [
@@ -857,6 +861,15 @@
       "bytes": 437854,
       "sha256": "0f1499d0bd76bdbab9331434d741a3588fb73c36e49d3fb16c6d9b82ccafd390",
       "pdf_type": "pdf_escaneado"
+    },
+    {
+      "path": "pdf_large/MetodoCITRA17-APL.pdf",
+      "folder": "pdf_large",
+      "name": "MetodoCITRA17-APL",
+      "extension": "pdf",
+      "bytes": 1013781,
+      "sha256": "f2f88804f3e94b77845ad4da3ceb3af65cee887a1a959d91feb1011db3e17724",
+      "pdf_type": "pdf_texto"
     }
   ]
 }

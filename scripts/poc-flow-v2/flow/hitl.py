@@ -4,10 +4,10 @@
 **pending** item — the engine did not confirm it, and a person must look. This
 module turns those fields into a queue and folds a human's confirmations in.
 
-It is the adapter-free half of `scripts/poc-flow/flow/hitl.py`. The frontier
-suggestion (`suggest`) needs `FrontierEngine`, which is Fase B2 (the adapter
-plumbing); it is marked here rather than faked, so the queue — the deliverable
-of §8's mechanical half — is real while the suggestion stays honest.
+It is the adapter-free half of the step: `my_flow.md` §8's frontier
+suggestion (`suggest`) needs `FrontierEngine`, an adapter; it is marked here
+rather than faked, so the queue — the deliverable of §8's mechanical half — is
+real while the suggestion stays honest.
 
 Two boundaries are enforced, never silent:
 
@@ -28,7 +28,7 @@ from .fields import DECISION_ESCALATE, DECISION_REVIEW, FieldDecision
 
 # `too-few-public-methods`: `PendingItem` and `HumanConfirmation` are records the
 # flow hands between stages — their fields, not their methods, are the contract
-# (`my_flow.md` B.15), the same reasoning v1's `hitl.py` states.
+# (`my_flow.md` B.15).
 # pylint: disable=too-few-public-methods
 
 __all__: list[str] = [

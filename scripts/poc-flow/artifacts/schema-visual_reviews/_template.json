@@ -1,8 +1,0 @@
-{
-  "$comment": "Placeholder for a schema-visual review (my_flow.md §0, §9). The real key is (emisor, tipo_comprobante, layout_fingerprint); this file is named _template to say it applies to nothing yet. Its verdicts must match schema_review/review.json's field_verdicts.",
-  "schema_version": 1,
-  "issuer": null,
-  "tipo_comprobante": null,
-  "layout_fingerprint": null,
-  "field_verdicts": []
-}

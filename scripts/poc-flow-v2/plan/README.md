@@ -3,8 +3,8 @@
 | Campo | Valor |
 |---|---|
 | Alcance | Migrar `scripts/poc-flow/` a `scripts/poc-flow-v2/`, incorporando las lecciones del Anexo B **como diseño**, no como anexo |
-| Fuente | `my_flow.md` (flujo + Anexo A/B) · `scripts/poc-flow/` (implementación actual) · `scripts/poc/` (librerías robustas) |
-| Estado | **Plan** — esperando aprobación antes de ejecutar |
+| Fuente | `my_flow.md` (flujo + Anexo A/B) · el predecesor `scripts/poc-flow/` (retirado al cerrar la migración) · `scripts/poc/` (librerías robustas) |
+| Estado | **Cerrado** — el predecesor se retiró; v2 es la implementación vigente |
 | Esfuerzo | `S` / `M` / `L` por ola; sin fechas |
 
 ---
@@ -252,7 +252,9 @@ romper su invariante.
 
 - [x] Smoke run sobre `66cd35e9-…pdf` — el flujo real corre end-to-end (read → extract → decide → hitl)
 - [x] **Paridad del motor** verificada: los mismos candidatos producen las mismas decisiones,
-      scores y códigos de razón en v1 y v2 (comparación por subproceso, 4 campos construidos)
+      scores y códigos de razón en v1 y v2 (comparación por subproceso, 4 campos construidos).
+      Verificación de una sola vez: con el predecesor retirado no es re-ejecutable, y lo que
+      queda vigilado son los invariantes (`test_invariants.py` + `mutation_invariants.py`)
 - [x] Reporte con columna de señales: `FAIL=…` / `UNKNOWN=…` por campo (B.9)
 
 **Aceptación**: el motor es idéntico; el reporte cabe en 80 columnas; los cuatro QA gates pasan.
@@ -269,7 +271,7 @@ candidatos, el motor decide **igual**. La paridad de salidas requiere el mismo m
    reporte y `--json` funcionan **antes** de conectar el motor (gate de la Fase A).
 2. **Registro legible** — un operador responde las tres preguntas (¿por dónde pasó?, ¿qué se
    decidió?, ¿cómo se reanuda?) sin mirar el código ni reproducir la corrida.
-3. **Paridad** — v2 reproduce las decisiones de v1 sobre el fixture.
+3. **Paridad** — v2 reproduce las decisiones del predecesor sobre el fixture.
 4. **Gates nuevas en verde** — alcanzabilidad (Anexo A), deriva prompt↔schema, mutaciones, journal.
 5. **Ninguna lección sin artefacto** — toda fila del mapa lección → artefacto tiene código que la respalda.
 
@@ -278,7 +280,20 @@ candidatos, el motor decide **igual**. La paridad de salidas requiere el mismo m
 - Aprendizaje (§9: templates, calibración, auditoría) → `# TODO: [MVP]`
 - QR (§4.2) → `# TODO: [MVP]`
 - Golden set → `# TODO: [MVP]` (circular si lo gradúa el mismo modelo)
-- `scripts/poc-flow/` no se modifica: v2 se construye al lado y v1 queda como referencia hasta el cierre
+
+## Cierre — el predecesor se retiró
+
+La migración se dio por cerrada y `scripts/poc-flow/` se eliminó; v2 es el reemplazo y ya no
+convive con una referencia al lado. La cláusula original —«v1 queda como referencia hasta el
+cierre»— se cumplió, y lo que quedaba vivo de v1 pasó a v2:
+
+- los artefactos de prompt y schema viven en `registry/` y se leen por K8 (`artifacts.py`);
+- la verificación de deriva prompt↔schema es `test_gates.py::test_registry_schema_and_prompt_agree`,
+  un test de build, no la herramienta suelta `tests/fixtures/verify_pocflow.py`, que se retiró
+  junto con el árbol que verificaba.
+
+Queda sin re-ejecutar la comparación por subproceso v1↔v2 (Ola C2): fue una verificación de una
+sola vez. Los invariantes que la sostenían siguen guardados por el harness de mutaciones.
 
 ## Cómo ejecutar
 
