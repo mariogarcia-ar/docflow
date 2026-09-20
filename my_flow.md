@@ -92,6 +92,60 @@ escalar(doc, lecturas_en_disputa, motivo)
   → aprender  (solo con campos_confirmados por humano — nunca con campos_frontier sin confirmar)
   
 
+  ## artefactos
+                          ┌─────────────┐
+                        │   prompt    │  qué buscar / cómo leerlo
+                        └──────┬──────┘
+                               │
+                        ┌─────────────┐
+                        │   schema    │  qué forma tiene la respuesta
+                        └──────┬──────┘
+                               │
+                               ▼
+                        extraer campos
+                               │
+                               ▼
+                        campos_extraidos (con forma validada por schema)
+                               │
+                               ▼
+                          validar campos
+                               │
+              ┌────────────────┴────────────────┐
+              │                                  │
+       ¿emisor conocido?                  emisor desconocido
+              │                                  │
+              ▼                                  ▼
+     ┌──────────────────┐              refutadores mecánicos
+     │  schema-visual    │              de siempre (sin chequeo
+     │  del emisor        │              posicional: no hay con
+     └────────┬───────────┘              qué comparar todavía)
+              │
+              ▼
+   ¿token extraído está en la
+   zona esperada por el schema-
+   visual de ESE emisor?
+              │
+    ┌─────────┴─────────┐
+    │                    │
+   sí                    no
+    │                    │
+    ▼                    ▼
+refutadores        refutador disparado
+mecánicos de       (posición no coincide
+siempre, además    con lo aprendido)
+    │                    │
+    ▼                    ▼
+ confirmado          corregible / escalar
+    │                (según si otro
+    │                 refutador dirime)
+    ▼
+ aprender
+    │
+    ▼
+actualizar schema-visual del emisor
+  (solo con campos_confirmados —
+   nunca con una lectura sin confirmar)
+
 --- 
 # notas
 
