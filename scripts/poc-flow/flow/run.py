@@ -29,7 +29,12 @@ from .config import DEFAULT_CONFIG, Config
 from .engine import DecisionContext, evaluate
 from .extract import Extraction, extract
 from .fields import DECISION_CONFIRMED, FieldResult
-from .hitl import pending_items, suggest
+from .hitl import (
+    HumanConfirmation,
+    apply_confirmations,
+    pending_items,
+    suggest,
+)
 from .material import TIER_DEGRADED, Material, read_material
 from .persist import WorkTree, document_digest, work_signature
 
@@ -44,6 +49,7 @@ def run(  # pylint: disable=too-many-arguments, too-many-locals, too-many-branch
     work_root: pathlib.Path | None = None,
     redo: bool = False,
     resolve: bool = False,
+    confirm: list[HumanConfirmation] | None = None,
 ) -> FieldResult:
     """Process one document and return the engine's per-field decisions.
 
@@ -69,6 +75,9 @@ def run(  # pylint: disable=too-many-arguments, too-many-locals, too-many-branch
         resolve: Ask the frontier model to suggest an answer for each field the
             engine could not confirm (§8). The suggestion is evidence, never a
             verdict; the queue is written either way.
+        confirm: A human's settled values for the pending fields (§8, I6). Only
+            a pending field may be confirmed; a confirmation for anything else
+            is refused with a reason. Written to the work root as ground truth.
 
     Returns:
         The decisions, the candidate trace and the confirmed extractions.
@@ -145,6 +154,23 @@ def run(  # pylint: disable=too-many-arguments, too-many-locals, too-many-branch
             f"{len(queued)} field(s) need human review: "
             f"{', '.join(item.field for item in queued)}"
         )
+
+    # --- HITL: a human's settled values, the only ground truth (I6, §9) ----
+    if confirm:
+        pending_by_field = {item.field: item for item in queued}
+        settled, refusals = apply_confirmations(confirm, pending_by_field)
+        if tree is not None:
+            # Only the accepted ones are ground truth; a refused confirmation is
+            # an out-of-band edit and must not leak into `confirmed.json`.
+            tree.save_confirmations([c for c in confirm if c.field in settled])
+        extracted.update(settled)
+        for refusal in refusals:
+            notes.append(f"confirmation refused: {refusal}")
+        if settled:
+            notes.append(
+                f"{len(settled)} field(s) settled by a human: "
+                f"{', '.join(sorted(settled))}"
+            )
 
     result = FieldResult(
         decisions=decisions,

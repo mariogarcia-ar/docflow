@@ -48,8 +48,10 @@ from .material import Material  # noqa: E402
 
 __all__: list[str] = [
     "SUGGESTION_SCHEMA",
+    "HumanConfirmation",
     "PendingItem",
     "Suggestion",
+    "apply_confirmations",
     "pending_items",
     "suggest",
 ]
@@ -129,6 +131,26 @@ class Suggestion:
         self.field = field
         self.suggested_value = suggested_value
         self.reason = reason
+
+
+class HumanConfirmation:
+    """One field's value, settled by a human.
+
+    This is the only ground truth the flow recognises (`my_flow.md` I6, I7): a
+    value here is what a person decided, after looking at the document and the
+    engine's candidates. It is **never** produced by a model.
+
+    Attributes:
+        field: The field name.
+        value: The confirmed value, exactly as entered.
+        note: Why, in the person's own words, or ``""``.
+
+    """
+
+    def __init__(self, field: str, value: str, note: str = "") -> None:
+        self.field = field
+        self.value = value
+        self.note = note
 
 
 def pending_items(
@@ -252,3 +274,42 @@ def suggest(
             )
         )
     return suggestions, ""
+
+
+def apply_confirmations(
+    confirmations: list[HumanConfirmation],
+    pending: Mapping[str, PendingItem],
+) -> tuple[dict[str, str], list[str]]:
+    """Fold a human's confirmations into a settled per-field answer.
+
+    Only a field that is **pending** may be confirmed (`my_flow.md` I6): a
+    value the engine already CONFIRMED was not queued, so a confirmation for it
+    is not a human decision — it is an out-of-band edit, and it is refused with
+    a reason rather than silently folded in.
+
+    Args:
+        confirmations: What the person decided.
+        pending: The queued fields, keyed by field name.
+
+    Returns:
+        The settled values (field to confirmed value), and the refusal notes for
+        confirmations that named a non-pending field.
+
+    """
+    settled: dict[str, str] = {}
+    refusals: list[str] = []
+    for confirmation in confirmations:
+        if confirmation.field not in pending:
+            refusals.append(
+                f"{confirmation.field!r} is not pending; a human may confirm "
+                "only a field the engine could not decide"
+            )
+            continue
+        if not confirmation.value.strip():
+            refusals.append(
+                f"{confirmation.field!r} was confirmed with an empty value, "
+                "which is not a decision"
+            )
+            continue
+        settled[confirmation.field] = confirmation.value
+    return settled, refusals

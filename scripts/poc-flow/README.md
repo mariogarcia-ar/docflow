@@ -51,6 +51,7 @@ extraction.json  the candidates and signals        (stage: extract)
 decision.json    the per-field decisions           (stage: decide)
 pending.json     the fields a human must review    (stage: hitl)
 resolution.json  the frontier's suggestions        (stage: hitl, with --resolve)
+confirmed.json   the human's settled values        (stage: hitl, with --confirm)
 journal.json     the signature, digest and stage marks
 ```
 
@@ -76,12 +77,27 @@ candidates the engine had. A CONFIRMED field is never queued.
 `--resolve` asks the frontier model to **suggest** an answer for each pending
 field, reading the original document (§8). Two boundaries are kept:
 
-- **A suggestion is evidence, not a verdict.** It is written to
-  `resolution.json` with a `human_confirmed` slot still empty; confirming it is
-  a human's act (`my_flow.md` I6).
+- **A suggestion is evidence, not a verdict.** It is written to `resolution.json`;
+  confirming it is a human's act (`my_flow.md` I6).
 - **No credential is a real state, not a failure.** Without `DOCFLOW_FRONTIER_KEY`
   the queue is still written and the refusal is noted; the frontier is not
   reached and nothing is invented.
+
+`--confirm FIELD=VALUE` is the human's act, and it is the **only ground truth**
+the flow recognises (`my_flow.md` I6, I7). It is written to `confirmed.json` and
+folded into the result's `extracted`. Two refusals are enforced, never silent:
+
+- a confirmation for a field the engine already **CONFIRMED** is refused — that
+  field was never queued, so settling it is an out-of-band edit, not a review;
+- an empty value is refused — a blank is not a decision.
+
+Only accepted confirmations reach `confirmed.json`; a refused one is reported in
+`notes` and dropped.
+
+```bash
+python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> \
+    --confirm importe_total_facturado=17898.30
+```
 
 ## The one premise
 
@@ -288,9 +304,9 @@ at the site where it belongs.
 
 - **Resolver → engine loop (§7).** No re-entry, no 2-loop cap, no
   `ESC_NO_NEW_EVIDENCE`.
-- **The human act itself (§8).** The queue is written and the frontier suggests;
-  the `human_confirmed` slot in `resolution.json` is still empty — nothing
-  consumes a person's confirmation yet, and nothing learns from it (§9).
+- **Learning from the confirmations (§9).** `confirmed.json` is written as ground
+  truth, but nothing consumes it yet: no template activation, no threshold
+  calibration, no audit sampling.
 - **Lane-on-demand (§6.5).** The Anexo A ladder — run the vision lane when the gate
   cannot close — is not wired.
 - **Learning and templates (§9).** No `LAYOUT_HISTORY`, no

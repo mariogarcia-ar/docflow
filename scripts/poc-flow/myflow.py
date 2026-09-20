@@ -50,6 +50,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="ask the frontier model to suggest a value for each field the "
         "engine could not confirm (needs --work-root)",
     )
+    parser.add_argument(
+        "--confirm",
+        action="append",
+        default=[],
+        metavar="FIELD=VALUE",
+        help="a human's settled value for a pending field, e.g. "
+        "--confirm total=12100.00 (repeatable); only pending fields may be "
+        "confirmed",
+    )
     parser.add_argument("--pretty", action="store_true", help="indent the JSON output")
     return parser
 
@@ -96,6 +105,15 @@ def main(argv: list[str] | None = None) -> int:
         "".join(ch for ch in cuit if ch.isdigit()) for cuit in args.own_cuit
     )
 
+    from flow.hitl import HumanConfirmation
+
+    confirmations: list[HumanConfirmation] = []
+    for entry in args.confirm:
+        if "=" not in entry:
+            parser.error(f"--confirm {entry!r} is not FIELD=VALUE")
+        field, value = entry.split("=", 1)
+        confirmations.append(HumanConfirmation(field=field, value=value))
+
     result = run(
         document,
         DEFAULT_CONFIG,
@@ -103,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         work_root=args.work_root,
         redo=args.redo,
         resolve=args.resolve,
+        confirm=confirmations or None,
     )
 
     payload = _serializable(result)

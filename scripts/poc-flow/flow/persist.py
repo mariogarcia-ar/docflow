@@ -56,7 +56,7 @@ from .fields import (  # noqa: E402
     FieldDecision,
     FieldResult,
 )
-from .hitl import PendingItem, Suggestion  # noqa: E402
+from .hitl import HumanConfirmation, PendingItem, Suggestion  # noqa: E402
 from .material import Material  # noqa: E402
 
 __all__: list[str] = [
@@ -88,6 +88,7 @@ EXTRACTION_NAME: Final[str] = "extraction.json"
 DECISION_NAME: Final[str] = "decision.json"
 PENDING_NAME: Final[str] = "pending.json"
 RESOLUTION_NAME: Final[str] = "resolution.json"
+CONFIRMED_NAME: Final[str] = "confirmed.json"
 
 #: Where the rendered pages live, for the vision lane. A text-only document has
 #: no images and therefore no directory.
@@ -367,10 +368,6 @@ def _resolution_to_dict(suggestions: list[Suggestion], note: str) -> dict[str, o
     return {
         "suggestions": [_suggestion_to_dict(s) for s in suggestions],
         "note": note,
-        # TODO: [MVP] A `human_confirmed` field is where a human's resolution
-        # will land; until §8's queue exists, the suggestion is the frontier's
-        # and confirmation is recorded by whoever consumes this artifact.
-        "human_confirmed": [],
     }
 
 
@@ -384,6 +381,22 @@ def _resolution_from_dict(
             _suggestion_from_dict(entry) for entry in raw if isinstance(entry, Mapping)
         ]
     return suggestions, str(data.get("note", ""))
+
+
+def _confirmation_to_dict(confirmation: HumanConfirmation) -> dict[str, object]:
+    return {
+        "field": confirmation.field,
+        "value": confirmation.value,
+        "note": confirmation.note,
+    }
+
+
+def _confirmation_from_dict(data: Mapping[str, object]) -> HumanConfirmation:
+    return HumanConfirmation(
+        field=str(data["field"]),
+        value=str(data["value"]),
+        note=str(data.get("note", "")),
+    )
 
 
 def _write_atomic(path: pathlib.Path, payload: bytes) -> None:
@@ -611,6 +624,37 @@ class WorkTree:
         except (OSError, json.JSONDecodeError):
             return [], ""
         return _resolution_from_dict(data)
+
+    def save_confirmations(self, confirmations: list[HumanConfirmation]) -> None:
+        """Write the human's confirmations, the only ground truth (§9).
+
+        These are what a person settled; unlike the engine's stages, they are
+        appended, never a resume mark — a confirmation is an input, not a stage
+        that produces output.
+        """
+        _write_atomic(
+            self.root / CONFIRMED_NAME,
+            json.dumps(
+                {"human_confirmed": [_confirmation_to_dict(c) for c in confirmations]},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+        )
+
+    def load_confirmations(self) -> list[HumanConfirmation]:
+        """Reconstruct the confirmations, or an empty list when absent."""
+        path = self.root / CONFIRMED_NAME
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        raw = data.get("human_confirmed")
+        if not isinstance(raw, list):
+            return []
+        return [
+            _confirmation_from_dict(entry)
+            for entry in raw
+            if isinstance(entry, Mapping)
+        ]
 
     def announce(self) -> None:
         """Print the resumption state to **stderr**, once, for the operator.
