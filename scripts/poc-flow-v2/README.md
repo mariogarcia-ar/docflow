@@ -16,13 +16,20 @@ python scripts/poc-flow-v2/myflow.py <document> --json     # el resultado, máqu
 python scripts/poc-flow-v2/myflow.py <document> --pretty   # el resultado, indentado
 ```
 
-## Estado actual — Fase A completa
+## Estado — migración cerrada
 
-La **Fase A** (el proceso `run`) está implementada y cerrada. Las fases **B**
-(migración del motor de decisión y adapters) y **C** (gates y paridad) están
-planificadas, no ejecutadas. Mientras tanto, los cuatro stages corren sobre
-**stubs** (`flow/stubs.py`) que devuelven valores fijos: el proceso es real, el
-motor es falso.
+Las tres fases del plan están ejecutadas:
+
+- **Fase A** — el proceso `run`: stages, journal, pause/resume/stop, trace, reporte.
+- **Fase B** — el motor de decisión portado y la plomería real: `read` y `extract`
+  llaman a los adapters, el prompt y el schema se leen del registry (K8), y `decide`
+  corre el motor.
+- **Fase C** — gates como tests de build (alcanzabilidad I8, deriva prompt↔schema,
+  journal) con prueba de mutación, y paridad del **motor** verificada contra v1.
+
+Queda diferido, declarado y no silencioso (`# TODO: [MVP]`): el split por rol/lane
+en el registry (review y vision lane) y `required_components` por `tipo_comprobante`.
+El detalle está en [`plan/README.md`](plan/README.md).
 
 ## Las tres preguntas que el run responde
 
@@ -141,9 +148,16 @@ print(render_report(path, outcome.result, outcome.steps))
 | `serial.py` | única serialización del contrato de datos | B.6, B.15 |
 | `run.py` | el proceso: corre/reusa, marca el journal, escribe el record | B.3, B.4 |
 | `progress.py` | trace en vivo a stderr, switch único | B.4 |
-| `report.py` | el reporte del operador | B.1 |
-| `stubs.py` | los cuatro stages falsos de la Fase A | — |
-| `fields.py` | el contrato de datos (`FieldResult`, …), portado de v1 | — |
+| `report.py` | el reporte del operador, con columna `FAIL`/`UNKNOWN` | B.1, B.9 |
+| `fields.py` | el contrato de datos (`FieldResult`, `Extraction`, …) | — |
+| `config.py` | los diales: umbrales, severidades, puntos por familia | — |
+| `route.py` | la decisión de ruta, pura | B.13 |
+| `validators.py` | CUIT, fecha, aritmética — PASS / FAIL / UNKNOWN | I10 |
+| `engine.py` | el consenso MoE: merge, veto, score, gate | I2/I3/I4/I10 |
+| `material.py` | lee el documento a través de los adapters, por página | B.13 |
+| `extract.py` | candidatos: regexp + lane A (modelo local + registry) | B.10 |
+| `artifacts.py` | prompt y schema desde el registry (K8) | B.11, B.15 |
+| `hitl.py` | la cola de lo no confirmado, y las confirmaciones | I6 |
 
 ## Por qué el journal no reusa `_mirror`
 
@@ -157,26 +171,31 @@ pidiera lo común, habría que extraerlo (`# TODO: [MVP]`).
 ## Quality gates
 
 ```bash
-pytest tests/poc_flow_v2                      # los tests de la Fase A
+pytest tests/poc_flow_v2                      # proceso, invariantes y gates
+python -B tests/poc_flow_v2/mutation_invariants.py  # los invariantes fallan al mutar
 ruff check scripts/poc-flow-v2 tests/poc_flow_v2
 ruff format --check scripts/poc-flow-v2 tests/poc_flow_v2
 pylint scripts/poc-flow-v2/flow scripts/poc-flow-v2/myflow.py tests/poc_flow_v2
 ```
 
-Los tests de la Fase A (`tests/poc_flow_v2/test_process.py`) ejercitan el proceso
-sobre stubs, nunca sobre un adapter: un test de proceso que necesitara un modelo
-probaría el modelo, no el proceso. Cubren artefactos por stage, reuso, `redo`,
-`pause`, `resume`, `stop`, el record derivado, el artifact faltante que derrota al
-journal, y el input cambiado que descarta el journal.
+Tres suites cubren las tres capas:
 
-## Qué falta (Fase B y C)
+- `test_process.py` — el proceso: artefactos por stage, reuso, `redo`, `pause`,
+  `resume`, `stop`, el record derivado, el artifact faltante que derrota al
+  journal, y el input cambiado que descarta el journal.
+- `test_invariants.py` — I2 (merge por valor), I3 (veto), I4 (tope por familia),
+  I10 (`UNKNOWN` no puntúa ni veta).
+- `test_gates.py` — alcanzabilidad del Anexo A (I8), deriva prompt↔schema (B.11)
+  y journal (B.5); cada una demostrada roja al romper su fuente (B.16).
 
-- **Fase B** — portar el motor de decisión (`fields`, `validators`, `engine`,
-  `config`, `route`) y reescribir la plomería (`artifacts` desde el registry,
-  `material` por página, `extract` con lane-on-demand, `validators` con
-  `required_components`), reemplazando los stubs uno a uno.
-- **Fase C** — gates como tests de build (alcanzabilidad del Anexo A, deriva
-  prompt↔schema, mutaciones de invariantes) y el smoke run con **paridad** contra
-  v1.
+Los tests de proceso corren sobre entradas ilegibles (bytes que ningún adapter
+lee), así que degradan rápido y no pagan modelos: un test de proceso que
+necesitara un modelo probaría el modelo, no el proceso.
 
-El detalle está en [`plan/README.md`](plan/README.md).
+## Paridad con v1
+
+Dado el mismo set de candidatos, el motor de v2 produce **las mismas decisiones,
+scores y códigos de razón** que v1 (verificado por subproceso). La paridad de
+salidas no se persigue: el modelo local `deepseek-r1:1.5b` no es determinístico,
+y dos corridas devuelven valores distintos (`my_flow.md` B.7). La paridad que se
+garantiza es la del motor, que es lo que v2 migró.
