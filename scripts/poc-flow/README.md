@@ -90,6 +90,31 @@ extract: loaded from work root
 The stages marked `==` are the ones executed; a plain line is a detail of the
 stage above it.
 
+**At the end a summary prints the path the run took, in order**, so you can
+check it was the intended flow:
+
+```
+== summary
+ 1. read      ran     66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf
+ 2. extract   ran     2493 chars of text
+ 3. decide    ran     23 field(s)
+ 4. hitl      ran     21 field(s) pending
+```
+
+A resumed run shows which stages were reused instead of executed:
+
+```
+== summary
+ 1. read      reused  texto_nativo
+ 2. extract   reused  23 field(s)
+ 3. decide    ran     23 field(s)
+ 4. hitl      ran     21 field(s) pending
+```
+
+The summary's `ran` vs `reused` is the same distinction as the live lines: a
+stage that ran its adapter is `ran`; one whose artifact came from the work root
+is `reused`.
+
 ## Resuming a failed run
 
 The flow runs `read → extract → decide → hitl`, and the two model steps are the

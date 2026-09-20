@@ -49,7 +49,7 @@ from .persist import (
     document_digest,
     work_signature,
 )
-from .progress import configure, emit, step
+from .progress import configure, emit, reused, step, summary
 
 __all__: list[str] = [
     "STAGE_DECIDE",
@@ -91,7 +91,7 @@ def _ensure_material(
     if tree is not None and tree.done(STAGE_READ):
         material = tree.load_material()
         if material is not None:
-            emit("read: loaded from work root")
+            reused("read", material.tier)
     if material is None:
         step("read", path.name)
         material = read_material(path, config)
@@ -115,7 +115,7 @@ def _ensure_extraction(
     if tree is not None and tree.done(STAGE_EXTRACT):
         extraction = tree.load_extraction()
         if extraction is not None:
-            emit("extract: loaded from work root")
+            reused("extract", f"{len(extraction.candidates)} field(s)")
     if extraction is None:
         step("extract", f"{len(material.text or '')} chars of text")
         extraction = extract(material, config, artifacts)
@@ -304,7 +304,7 @@ def run(  # pylint: disable=too-many-arguments
     if work_root is not None:
         tree = _open_tree(path, work_root, config, own_cuits, artifacts, redo=redo)
 
-    return _run_hitl(
+    result = _run_hitl(
         path,
         config,
         artifacts,
@@ -313,6 +313,8 @@ def run(  # pylint: disable=too-many-arguments
         resolve=resolve,
         confirm=confirm,
     )
+    summary()
+    return result
 
 
 def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
@@ -389,12 +391,14 @@ def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
 
     if stage == STAGE_READ:
         material = _run_read(path, config, tree)
+        summary()
         return FieldResult(
             decisions={}, trace={}, extracted={}, notes=list(material.notes)
         )
 
     if stage == STAGE_EXTRACT:
         extraction = _run_extract(path, config, artifacts, tree)
+        summary()
         return FieldResult(
             decisions={},
             trace=extraction.candidates,
@@ -404,10 +408,11 @@ def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
 
     if stage == STAGE_DECIDE:
         result, _material = _run_decide(path, config, artifacts, own_cuits, tree)
+        summary()
         return result
 
     # stage == STAGE_HITL
-    return _run_hitl(
+    result = _run_hitl(
         path,
         config,
         artifacts,
@@ -416,3 +421,5 @@ def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
         resolve=resolve,
         confirm=confirm,
     )
+    summary()
+    return result
