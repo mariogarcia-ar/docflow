@@ -68,6 +68,7 @@ tier == escaneado_ocr
               (una lectura sucia no vota; no promedies con la limpia)
 
 --- 
+# notas
 
 campos:
 - nombre
