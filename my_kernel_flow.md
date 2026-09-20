@@ -1,8 +1,9 @@
 # me estoy olvidando de la calidad 
 
 - si es un pdf que se extrae el texto. la confianza es alta
-- es un pdf convertido a imagen, y luego extraer ocr, confianza es mas baja
-- 
+- es un pdf convertido a imagen, confianza es mas baja
+- si es imagen , extaer ocr , confianza es mas baja 
+- hay que ver el tema de legibilidad
 
 # Kernels: primitivas reutilizables
 
