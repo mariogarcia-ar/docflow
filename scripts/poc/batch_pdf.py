@@ -606,6 +606,7 @@ def main(argv: list[str] | None = None) -> int:
         out_root,
         "batch_pdf",
         redo=args.redo,
+        saving=save,
         engine="pdf",
         pages=args.pages,
         dpi=dpi,
@@ -699,9 +700,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(refused)} document(s) produced nothing; see the notes above.")
     if not problems and not refused:
         print("every PDF was walked and the tree mirrors exactly.")
-        resume.flush(save)
+        resume.flush()
         return 0
-    resume.flush(save)
+    resume.flush()
     return len(problems) + len(refused)
 
 

@@ -34,12 +34,14 @@ a driver imports it before `docflow` is on `sys.path`.
 from __future__ import annotations
 
 import argparse
+import atexit
 import contextlib
 import dataclasses
 import hashlib
 import io
 import json
 import pathlib
+import time
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Final
 
@@ -274,7 +276,9 @@ class Resume:
     entries: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
     reused: int = 0
     stale: bool = False
+    saving: bool = True
     _unflushed: int = 0
+    _opened_at: float = dataclasses.field(default_factory=time.monotonic)
 
     @classmethod
     def open(
@@ -354,23 +358,40 @@ class Resume:
         self.entries[relative] = {"digest": digest, **facts}
         self._unflushed += 1
 
-    def flush_if_due(self, every: int = 100) -> None:
-        """Write the journal once every `every` recorded files.
+    def flush_if_due(self, every: int = 50, seconds: float = 30.0) -> None:
+        """Write the journal when enough files **or** enough time have gone by.
 
-        Rewriting it per file would cost O(n) bytes per file, which on an 11k-document
-        corpus is a quadratic amount of writing for a bookkeeping file. Waiting until
-        the end would lose the entire record to one Ctrl-C - and losing it is exactly
-        what this exists to prevent. The middle of those two is a periodic flush.
+        **Both triggers are needed, and the count alone is not enough - that was a
+        real defect, found by interrupting a walk of `tests/fixtures/` and finding no
+        journal at all.** Two failure modes with different shapes:
+
+        - A count threshold alone is *unreachable on a short walk*. Measured: 20
+          images read, `^C`, no journal - because the threshold was 100 and the run
+          never got there. The files it finished were lost exactly as they were
+          before this journal existed.
+        - A time threshold alone is *coarse on a fast walk*. `batch_image.py` measures
+          a file in milliseconds, so a few seconds is thousands of entries.
+
+        Together they bound the loss to *whatever happened in the last 30 seconds*,
+        which on this corpus is a handful of files rather than the whole run. Writing
+        once per file would instead cost O(n) bytes per file - on 11k documents that
+        is gigabytes of writing for a bookkeeping file.
 
         Args:
             every: How many records may accumulate before a write. ``0`` disables the
-                periodic write, leaving only the final one.
+                count trigger.
+            seconds: How long may pass before a write. ``0`` disables the time
+                trigger.
 
         """
-        if every > 0 and self._unflushed >= every:
+        if not self.saving:
+            return
+        due_count = every > 0 and self._unflushed >= every
+        due_time = seconds > 0 and (time.monotonic() - self._opened_at) >= seconds
+        if due_count or due_time:
             self.flush()
 
-    def flush(self, saving: bool = True) -> pathlib.Path | None:
+    def flush(self) -> pathlib.Path | None:
         """Write the journal, atomically enough that a kill cannot truncate it.
 
         A run that is killed half way leaves a journal covering the files it did
@@ -381,17 +402,17 @@ class Resume:
         **A `--no-save` run writes nothing, and this is where that is enforced.** The
         flag means *do not write output*, and a journal is output: a dry run that
         left one would make the next real run skip exactly the files the dry run
-        declined to write. Enforcing it here rather than at each of the six callers
-        is why the callers have no `if` around it.
-
-        Args:
-            saving: Whether this run writes output at all - i.e. ``not --no-save``.
+        declined to write. Enforcing it in the object - rather than at each of the six
+        call sites - is why the callers have no `if` around it, and why `saving` is a
+        **field** instead of a parameter: there is one answer per journal, and a
+        caller that passed the wrong one at one of two call sites would defeat the
+        other.
 
         Returns:
             The path written, or ``None`` when the run is not saving.
 
         """
-        if not saving:
+        if not self.saving:
             return None
         payload = {
             "driver": self.driver,
@@ -406,6 +427,7 @@ class Resume:
         )
         staging.replace(self.path)
         self._unflushed = 0
+        self._opened_at = time.monotonic()
         return self.path
 
     def footer(self) -> str:
@@ -445,18 +467,30 @@ class Resume:
         driver: str,
         *,
         redo: bool,
+        saving: bool = True,
         **settings: object,
     ) -> Resume:
-        """Open this run's journal and announce a discarded one, in one call.
+        """Open this run's journal, announce it, and arm the exit flush.
 
-        The two steps always happen together - a caller that opened a journal and
-        forgot to mention it was stale would hide the fact from the operator - so
-        they are one call rather than two the six drivers must remember to pair.
+        Three steps that always happen together - a caller that opened a journal and
+        forgot to mention it was stale would hide the fact from the operator - so they
+        are one call rather than three the six drivers must remember to pair.
+
+        **The `atexit` hook is what makes an interrupt cheap.** Measured: a walk of
+        `tests/fixtures/` interrupted with `^C` after 20 images left **no journal at
+        all**, because the periodic write had not come due - the finished work was lost
+        exactly as it was before this existed. Python runs `atexit` handlers when a
+        `KeyboardInterrupt` propagates out, so an operator's Ctrl-C now costs only the
+        file in flight. It does **not** run on `SIGKILL`, which is what the periodic
+        trigger in `flush_if_due` covers: one mechanism per failure mode, and neither
+        replaces the other.
 
         Args:
             out_root: The output root the run writes into.
             driver: The driver's own name.
             redo: ``True`` when the caller asked for every file again.
+            saving: Whether this run writes output - ``--no-save`` passes ``False``,
+                and then neither the exit hook nor the periodic write touches disk.
             **settings: Everything that decides what this run's output *means*; see
                 `signature_of`.
 
@@ -465,8 +499,22 @@ class Resume:
 
         """
         resume = cls.open(out_root, driver, signature_of(**settings), redo=redo)
+        resume.saving = saving
         resume.announce()
+        if saving:
+            atexit.register(resume.flush_at_exit)
         return resume
+
+    def flush_at_exit(self) -> None:
+        """Write the journal as the interpreter leaves, never taking exit with it.
+
+        A failure to write a bookkeeping file must not change the process's exit
+        status: the run's own answer is already on stdout, and an exception here would
+        replace it with a traceback about the journal.
+
+        """
+        with contextlib.suppress(OSError):
+            self.flush()
 
 
 def add_resume_flag(parser: argparse.ArgumentParser) -> None:

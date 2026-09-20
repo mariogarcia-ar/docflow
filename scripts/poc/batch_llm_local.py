@@ -611,6 +611,7 @@ def main(argv: list[str] | None = None) -> int:
         out_root,
         "batch_llm_local",
         redo=args.redo,
+        saving=save,
         model=model,
         mode=args.mode,
         schema=schema,
@@ -720,9 +721,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if not problems and not refused and not truncated:
         print("every document was extracted and the tree mirrors exactly.")
-        resume.flush(save)
+        resume.flush()
         return 0
-    resume.flush(save)
+    resume.flush()
     return len(problems) + len(refused) + len(truncated)
 
 

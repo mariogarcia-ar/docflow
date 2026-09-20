@@ -1013,6 +1013,10 @@ def main(argv: list[str] | None = None) -> int:
         out_root,
         "batch",
         redo=args.redo,
+        # This driver has no `--no-save`: every file it walks is meant to produce
+        # output. The parameter is named anyway because the journal's contract is
+        # shared with the five drivers that do have the flag.
+        saving=True,
         field_model=FIELD_MODEL,
         assets=assets,
         render_dpi=RENDER_DPI,

@@ -824,6 +824,7 @@ def main(argv: list[str] | None = None) -> int:
         out_root,
         "batch_image",
         redo=args.redo,
+        saving=save,
         engine="pillow",
         target_dpi=target_dpi,
         region=args.region,
@@ -940,9 +941,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(refused)} image(s) produced no measurement; see the notes above.")
     if not problems and not refused:
         print("every image was walked and the tree mirrors exactly.")
-        resume.flush(save)
+        resume.flush()
         return 0
-    resume.flush(save)
+    resume.flush()
     return len(problems) + len(refused)
 
 

@@ -605,6 +605,7 @@ def main(argv: list[str] | None = None) -> int:
         out_root,
         "batch_llm_frontier",
         redo=args.redo,
+        saving=save,
         model=model,
         mode=args.mode,
     )
@@ -686,9 +687,9 @@ def main(argv: list[str] | None = None) -> int:
         return len(problems) + len(missing) + len(refused)
     if not problems and not missing and not refused:
         print("every document was contrasted and the tree mirrors exactly.")
-        resume.flush(save)
+        resume.flush()
         return 0
-    resume.flush(save)
+    resume.flush()
     return len(problems) + len(missing) + len(refused)
 
 

@@ -208,13 +208,21 @@ already answered, by this driver, under these settings?*
 | a changed setting re-does the work | `signature_of(**settings)` — model, schema, prompt, page selection, target DPI, region, render DPI, page cap, registry assets. Any change discards the **whole** journal and says so on the console |
 | a changed input re-does the work | the entry carries the file's own sha256 (`digest_of`) |
 | a refusal is retried, always | **only a produced output is recorded**. A dry run with no frontier key, a protected PDF, an illegible scan or a `region` K3 rejects leave no entry — otherwise a transient condition would become permanent, and a later credentialed run would skip the whole corpus and report success |
-| a dry run leaves nothing behind | `--no-save` writes no journal (`Resume.flush(saving=)`), so a dry run cannot make the next real run skip what it declined to write |
-| a kill does not lose the record | the journal is re-written every 100 recorded files (`flush_if_due`) and each write is a rename, so an interrupted run keeps everything it finished |
+| a dry run leaves nothing behind | `--no-save` writes no journal (`Resume.saving`), so a dry run cannot make the next real run skip what it declined to write |
+| a kill does not lose the record | three triggers, one per failure mode: every **50** recorded files, every **30 s**, and an **`atexit`** hook. The hook covers `^C` (Python runs it as a `KeyboardInterrupt` propagates out); the periodic write covers `SIGKILL`, which the hook cannot. Each write is a rename, so an interrupted run keeps everything it finished |
 | two drivers in one output root do not collide | the journal names its `driver`, and its entries are keyed by the input's relative path |
 | the journal is not walked as a document | `_mirror.walk` excludes `JOURNAL_NAME` by name — an output root is a legitimate *input* for the next driver |
 
 `--redo` ignores the journal and processes everything again. It is declared once, by
 `_mirror.add_resume_flag`, so all six drivers accept the same spelling.
+
+**The flush threshold was a real defect, and the measurement is why there are three
+triggers.** A single "every 100 files" rule is *unreachable on a short walk*: a run of
+`tests/fixtures/` (76 images) interrupted with `^C` left **no journal at all**, so the
+finished work was lost exactly as it was before the journal existed. A time threshold
+alone is the opposite problem — `batch_image.py` measures a file in milliseconds, so a
+few seconds is thousands of entries. Together they bound the loss to whatever happened
+in the last 30 seconds.
 
 A second run then reads:
 

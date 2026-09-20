@@ -482,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         out_root,
         "batch_ocr",
         redo=args.redo,
+        saving=save,
         engine="docling",
         lang=lang,
         pages=args.pages,
@@ -580,9 +581,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{len(refused)} image(s) could not be read; see the notes above.")
     if not problems and not refused:
         print("every image was walked and the tree mirrors exactly.")
-        resume.flush(save)
+        resume.flush()
         return 0
-    resume.flush(save)
+    resume.flush()
     return len(problems) + len(refused)
 
 
