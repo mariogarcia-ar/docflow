@@ -14,6 +14,7 @@ what produced the value inside it.
 from __future__ import annotations
 
 import dataclasses
+import time
 
 from .fields import (
     DECISION_CONFIRMED,
@@ -25,6 +26,7 @@ from .fields import (
 )
 
 __all__: list[str] = [
+    "STUB_LATENCY_SECONDS",
     "STUB_RESULT",
     "StubContext",
     "stub_decide",
@@ -121,6 +123,20 @@ def _build_result() -> FieldResult:
 STUB_RESULT: FieldResult = _build_result()
 
 
+#: How long each stub waits before answering, so an interrupt or pause test has
+#: a real window to act in. Fase B removes the wait together with the stub.
+STUB_LATENCY_SECONDS: float = 0.5
+
+
+def _simulate_work() -> None:
+    """Block briefly, standing in for the real stage's adapter call.
+
+    The wait exists only so a run can be interrupted or paused mid-stage — it
+    models the latency of the read/extract/decide work, not any of its result.
+    """
+    time.sleep(STUB_LATENCY_SECONDS)
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class StubContext:
     """What a stub stage needs, recorded so a test can assert the hand-off.
@@ -142,6 +158,7 @@ def stub_read(context: StubContext) -> object:
     adapter's type, and the run process must not depend on its shape. Fase B
     replaces this with the real `Material`.
     """
+    _simulate_work()
     return {
         "kind": "pdf",
         "tier": "texto_nativo",
@@ -154,6 +171,7 @@ def stub_read(context: StubContext) -> object:
 
 def stub_extract(context: StubContext) -> object:
     """Stage `extract`: return a fixed extraction over the material."""
+    _simulate_work()
     return {
         "candidates": {"cuit_emisor": ["20-12345678-3"], "total": ["17.898,30"]},
         "values": {"subtotal": "15.000,00", "iva": "2.898,30", "total": "17.898,30"},
@@ -168,6 +186,7 @@ def stub_decide(context: StubContext) -> FieldResult:
     result is returned whatever document the process hands it — which is the
     point of a stub (Fase A drives the process, not the engine).
     """
+    _simulate_work()
     del context
     return STUB_RESULT
 
@@ -177,6 +196,7 @@ def stub_hitl(context: StubContext) -> list[dict[str, object]]:
 
     The context is unused by design, for the same reason as `stub_decide`.
     """
+    _simulate_work()
     del context
     return [
         {
