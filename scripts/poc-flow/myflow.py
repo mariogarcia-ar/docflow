@@ -59,6 +59,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "--confirm total=12100.00 (repeatable); only pending fields may be "
         "confirmed",
     )
+    parser.add_argument(
+        "--stage",
+        choices=["read", "extract", "decide", "hitl"],
+        default=None,
+        help="run only this stage; dependencies are produced first unless "
+        "--no-deps is given",
+    )
+    parser.add_argument(
+        "--no-deps",
+        action="store_true",
+        help="with --stage: refuse to run missing dependencies instead of "
+        "producing them",
+    )
     parser.add_argument("--pretty", action="store_true", help="indent the JSON output")
     return parser
 
@@ -77,8 +90,12 @@ def _serializable(result: object) -> object:
     return result
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-locals
     """Run the flow over one document and print the JSON verdict.
+
+    The local count is the argument surface itself — document, dials, stage,
+    confirmations — and each feeds one branch; splitting it would move the same
+    count one frame away without making the dispatch clearer.
 
     Args:
         argv: The command-line arguments, or ``None`` for ``sys.argv``.
@@ -98,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     # import must happen once this file's directory is the working directory
     # (`python scripts/poc-flow/myflow.py …`). A top-level import would fail
     # when run as a script.  pylint: disable=import-outside-toplevel
-    from flow import run
+    from flow import run, run_stage
     from flow.config import DEFAULT_CONFIG
 
     own_cuits = frozenset(
@@ -114,15 +131,27 @@ def main(argv: list[str] | None = None) -> int:
         field, value = entry.split("=", 1)
         confirmations.append(HumanConfirmation(field=field, value=value))
 
-    result = run(
-        document,
-        DEFAULT_CONFIG,
-        own_cuits=own_cuits,
-        work_root=args.work_root,
-        redo=args.redo,
-        resolve=args.resolve,
-        confirm=confirmations or None,
-    )
+    common = {
+        "config": DEFAULT_CONFIG,
+        "own_cuits": own_cuits,
+        "work_root": args.work_root,
+        "redo": args.redo,
+        "resolve": args.resolve,
+        "confirm": confirmations or None,
+    }
+
+    if args.stage is not None:
+        try:
+            result = run_stage(
+                args.stage,
+                document,
+                with_dependencies=not args.no_deps,
+                **common,
+            )
+        except LookupError as exc:
+            parser.error(str(exc))
+    else:
+        result = run(document, **common)
 
     payload = _serializable(result)
     print(

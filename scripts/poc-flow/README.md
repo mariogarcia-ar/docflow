@@ -25,6 +25,11 @@ python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc>  # resum
 
 # queue the unconfirmed fields for a human, and ask the frontier to suggest:
 python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --resolve
+
+# run ONE stage (dependencies are produced first):
+python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --stage extract
+python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --stage decide --no-deps
+python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --stage hitl --redo
 ```
 
 `tests/fixtures/` is the corpus of record for a smoke run:
@@ -33,6 +38,28 @@ python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --resolv
 python scripts/poc-flow/myflow.py \
     tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf --pretty
 ```
+
+## Running one stage
+
+`--stage <name>` runs a single stage instead of the whole chain. The four names
+are `read`, `extract`, `decide`, `hitl`, and each stage's **inputs** are the
+previous stage's artifacts (`STAGE_DEPENDENCIES` in `persist.py`):
+
+| Stage | Needs | Produces |
+|---|---|---|
+| `read` | — | `material.json`, `images/` |
+| `extract` | `read` | `extraction.json` |
+| `decide` | `extract` | `decision.json` |
+| `hitl` | `decide` | `pending.json`, `resolution.json`, `confirmed.json` |
+
+By default a missing input is produced first — `--stage decide` on a fresh work
+root runs `read`, then `extract`, then `decide`. `--no-deps` flips that: a
+missing input is an error (exit 2), never a silent re-run, so a stage can only
+run when its inputs are already on disk.
+
+`--stage X --redo` re-runs **only** X and invalidates everything downstream of
+it: a re-run of `extract` marks the old `decision` and `hitl` as stale, so they
+are never trusted against the new candidates.
 
 ## Resuming a failed run
 
@@ -141,9 +168,12 @@ is a **refusal reported in `notes`**, never a silent fallback to a different one
 | `engine.py` | the MoE consensus: merge, veto, score, gate | §6 |
 | `hitl.py` | the queue of unconfirmed fields, and the frontier suggestion | §8 |
 | `persist.py` | the work tree: intermediate artifacts, the resume journal | — |
-| `run.py` | `run(path, config, own_cuits=…)` — read → extract → decide → queue | §1 |
+| `run.py` | `run(...)` the whole chain, `run_stage(stage, ...)` one stage | §1 |
 
-`run` is the entry point. It returns a `FieldResult`:
+`run` and `run_stage` are the entry points. `run_stage` returns a `FieldResult`
+for the requested stage — `read`/`extract` return an empty decision set (their
+artifacts are intermediate), `decide` returns the per-field verdicts, `hitl`
+returns the final result with confirmations folded in.
 
 ```python
 from flow import run

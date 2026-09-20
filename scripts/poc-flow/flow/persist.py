@@ -62,6 +62,7 @@ from .material import Material  # noqa: E402
 __all__: list[str] = [
     "STAGES",
     "STAGE_DECIDE",
+    "STAGE_DEPENDENCIES",
     "STAGE_EXTRACT",
     "STAGE_HITL",
     "STAGE_READ",
@@ -78,6 +79,17 @@ STAGE_EXTRACT: Final[str] = "extract"
 STAGE_DECIDE: Final[str] = "decide"
 STAGE_HITL: Final[str] = "hitl"
 STAGES: Final[tuple[str, ...]] = (STAGE_READ, STAGE_EXTRACT, STAGE_DECIDE, STAGE_HITL)
+
+#: What each stage needs before it can run. A stage's dependencies are its
+#: *inputs*: `extract` reads the material, `decide` reads the candidates,
+#: `hitl` reads the decisions. Running a stage on demand must first satisfy
+#: these, in order.
+STAGE_DEPENDENCIES: Final[dict[str, tuple[str, ...]]] = {
+    STAGE_READ: (),
+    STAGE_EXTRACT: (STAGE_READ,),
+    STAGE_DECIDE: (STAGE_EXTRACT,),
+    STAGE_HITL: (STAGE_DECIDE,),
+}
 
 #: The journal's filename, inside a work root.
 JOURNAL_NAME: Final[str] = "journal.json"
@@ -457,9 +469,27 @@ class WorkTree:
         """Whether a previous run already produced this stage's artifact."""
         return self._stages.get(stage, False)
 
+    def clear_from(self, stage: str) -> None:
+        """Mark a stage and every later one as not done, atomically.
+
+        Re-running an intermediate stage invalidates its own artifact and
+        everything downstream of it: a fresh `extract` makes the old `decision`
+        and `hitl` stale. The artifacts themselves are not deleted — the journal
+        simply stops trusting them, so a crash after clearing still resumes
+        safely rather than reading half-invalidated state.
+        """
+        index = STAGES.index(stage)
+        for later in STAGES[index:]:
+            self._stages[later] = False
+        self._write_journal()
+
     def _mark(self, stage: str) -> None:
         """Record one stage as done and persist the journal atomically."""
         self._stages[stage] = True
+        self._write_journal()
+
+    def _write_journal(self) -> None:
+        """Persist the stage marks, without changing them."""
         payload = {
             "signature": self.signature,
             "digest": self.digest,

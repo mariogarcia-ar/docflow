@@ -12,14 +12,32 @@ flow of `my_flow.md` on top of the `docflow` adapters, reusing the lessons from
 - the score belongs to the candidate, and candidates with the same
   `normalized_value` merge before scoring (`my_flow.md` I2).
 
-The public entry point is :func:`flow.run`. `myflow.py` next to this package is
-one thin caller of it.
+The public entry points are :func:`flow.run` (the whole chain) and
+:func:`flow.run_stage` (one named stage). `myflow.py` next to this package is
+one thin caller of them.
 """
 
 from __future__ import annotations
 
 from .config import DEFAULT_CONFIG, Config
 from .fields import FieldResult
-from .run import run
+from .run import (
+    STAGE_DECIDE,
+    STAGE_EXTRACT,
+    STAGE_HITL,
+    STAGE_READ,
+    run,
+    run_stage,
+)
 
-__all__: list[str] = ["DEFAULT_CONFIG", "Config", "FieldResult", "run"]
+__all__: list[str] = [
+    "DEFAULT_CONFIG",
+    "STAGE_DECIDE",
+    "STAGE_EXTRACT",
+    "STAGE_HITL",
+    "STAGE_READ",
+    "Config",
+    "FieldResult",
+    "run",
+    "run_stage",
+]

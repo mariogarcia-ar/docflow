@@ -1,22 +1,25 @@
-"""The top-level flow: read, extract, decide.
+"""The top-level flow: read, extract, decide — as separable stages.
 
-This is the one function a caller needs. It wires the three stages in
-`my_flow.md` §1:
+`my_flow.md` §1 names the chain:
 
-    read material (§2) → extract candidates (§4) → decide fields (§6)
+    read material (§2) → extract candidates (§4) → decide fields (§6) → queue (§8)
 
-Each stage's artifact is written to a work root as it completes, so a run that
-fails at any point can be **resumed** at the first unfinished stage instead of
-re-paying for the language-model calls. The journal and the intermediate
-artifacts are owned by :mod:`.persist`.
+This module exposes **one function per stage** plus two entry points:
+
+- :func:`run` — the whole chain, the existing API, unchanged.
+- :func:`run_stage` — run **one** named stage, resolving its dependencies first
+  from the work root when they are missing, or forcing a re-run when asked.
+
+The separation is what makes a single stage callable: the stages were already
+the units the work root persists; this module only stops gluing them into one
+function. Each stage's inputs are the previous stage's artifacts, so a stage on
+its own either loads what it needs or runs what it needs first — which is what
+:data:`~.persist.STAGE_DEPENDENCIES` declares.
 
 What it deliberately does **not** do yet, marked for the next step:
 
 - the resolver → engine loop (§7) and its 2-loop cap;
-- the frontier escalation (§8) — an ESCALATE decision is returned as-is;
 - learning, templates and audit sampling (§9).
-
-Each of those is a TODO below, tagged exactly where it belongs.
 """
 
 from __future__ import annotations
@@ -24,7 +27,7 @@ from __future__ import annotations
 import pathlib
 
 from ._bootstrap import ensure_docflow_importable
-from .artifacts import load_artifacts
+from .artifacts import Artifacts, load_artifacts
 from .config import DEFAULT_CONFIG, Config
 from .engine import DecisionContext, evaluate
 from .extract import Extraction, extract
@@ -36,94 +39,122 @@ from .hitl import (
     suggest,
 )
 from .material import TIER_DEGRADED, Material, read_material
-from .persist import WorkTree, document_digest, work_signature
+from .persist import (
+    STAGE_DECIDE,
+    STAGE_DEPENDENCIES,
+    STAGE_EXTRACT,
+    STAGE_HITL,
+    STAGE_READ,
+    WorkTree,
+    document_digest,
+    work_signature,
+)
 
-__all__: list[str] = ["run"]
+__all__: list[str] = [
+    "STAGE_DECIDE",
+    "STAGE_EXTRACT",
+    "STAGE_HITL",
+    "STAGE_READ",
+    "run",
+    "run_stage",
+]
 
 
-def run(  # pylint: disable=too-many-arguments, too-many-locals, too-many-branches
+def _open_tree(  # pylint: disable=too-many-arguments, too-many-positional-arguments
     path: pathlib.Path,
-    config: Config = DEFAULT_CONFIG,
+    work_root: pathlib.Path,
+    config: Config,
+    own_cuits: frozenset[str],
+    artifacts: Artifacts,
     *,
-    own_cuits: frozenset[str] = frozenset(),
-    work_root: pathlib.Path | None = None,
-    redo: bool = False,
-    resolve: bool = False,
-    confirm: list[HumanConfirmation] | None = None,
-) -> FieldResult:
-    """Process one document and return the engine's per-field decisions.
+    redo: bool,
+) -> WorkTree:
+    """Open the work tree, announcing what a previous run left behind."""
+    tree = WorkTree(
+        work_root,
+        work_signature(config, own_cuits, artifacts),
+        document_digest(path),
+        redo=redo,
+    )
+    tree.announce()
+    return tree
 
-    The local count is the pipeline itself — read, extract, decide, queue — and
-    each stage's inputs are the previous stage's outputs; splitting it into
-    helpers would move the same count one frame away while hiding the order that
-    matters, the same shape `extract.extract` documents.
 
-    When ``work_root`` is given, each stage's artifact is written there as it
-    completes and a second run resumes at the first unfinished stage. The
-    journal covers the document's own bytes and the run's settings, so a changed
-    input or a changed dial discards the journal rather than trusting it.
-
-    Args:
-        path: The document to process (PDF or image).
-        config: The run's dials.
-        own_cuits: The business's own CUITs (digits only), for the fixed
-            own-CUIT-as-emisor veto. Empty means *not configured*, which the
-            validator reports as UNKNOWN rather than a silent PASS.
-        work_root: Where the intermediate artifacts and the journal live. When
-            ``None``, nothing is persisted and the flow is a single pass.
-        redo: Ignore the journal and re-run every stage.
-        resolve: Ask the frontier model to suggest an answer for each field the
-            engine could not confirm (§8). The suggestion is evidence, never a
-            verdict; the queue is written either way.
-        confirm: A human's settled values for the pending fields (§8, I6). Only
-            a pending field may be confirmed; a confirmation for anything else
-            is refused with a reason. Written to the work root as ground truth.
-
-    Returns:
-        The decisions, the candidate trace and the confirmed extractions.
-
-    """
-    ensure_docflow_importable()
-    artifacts = load_artifacts()
-
-    tree: WorkTree | None = None
-    if work_root is not None:
-        tree = WorkTree(
-            work_root,
-            work_signature(config, own_cuits, artifacts),
-            document_digest(path),
-            redo=redo,
-        )
-        tree.announce()
-
+def _ensure_material(
+    path: pathlib.Path,
+    config: Config,
+    tree: WorkTree | None,
+) -> Material:
+    """Read the material, loading it from the work root when already done."""
     material: Material | None = None
-    if tree is not None and tree.done("read"):
+    if tree is not None and tree.done(STAGE_READ):
         material = tree.load_material()
-
     if material is None:
         material = read_material(path, config)
         if tree is not None:
             tree.save_material(material)
+    return material
 
-    if material.tier == TIER_DEGRADED:
-        # Nothing was read, so there is nothing to decide. Every field the
-        # caller might have asked about is answered with the degraded reason.
-        return FieldResult(
-            decisions={},
-            trace={},
-            extracted={},
-            notes=list(material.notes) or ["the document could not be read"],
-        )
 
+def _ensure_extraction(
+    material: Material,
+    config: Config,
+    artifacts: Artifacts,
+    tree: WorkTree | None,
+) -> Extraction:
+    """Extract candidates, loading them from the work root when already done."""
     extraction: Extraction | None = None
-    if tree is not None and tree.done("extract"):
+    if tree is not None and tree.done(STAGE_EXTRACT):
         extraction = tree.load_extraction()
-
     if extraction is None:
         extraction = extract(material, config, artifacts)
         if tree is not None:
             tree.save_extraction(extraction)
+    return extraction
 
+
+def _run_read(
+    path: pathlib.Path,
+    config: Config,
+    tree: WorkTree | None,
+) -> Material:
+    """Stage 1: read the document into material."""
+    return _ensure_material(path, config, tree)
+
+
+def _run_extract(
+    path: pathlib.Path,
+    config: Config,
+    artifacts: Artifacts,
+    tree: WorkTree | None,
+) -> Extraction:
+    """Stage 2: produce candidates from the material (reading it first)."""
+    material = _ensure_material(path, config, tree)
+    return _ensure_extraction(material, config, artifacts, tree)
+
+
+def _run_decide(  # pylint: disable=too-many-arguments, too-many-positional-arguments
+    path: pathlib.Path,
+    config: Config,
+    artifacts: Artifacts,
+    own_cuits: frozenset[str],
+    tree: WorkTree | None,
+) -> tuple[FieldResult, Material]:
+    """Stage 3: score candidates into per-field decisions (extracting first)."""
+    material = _ensure_material(path, config, tree)
+    if material.tier == TIER_DEGRADED:
+        # Nothing was read, so there is nothing to decide.
+        return (
+            FieldResult(
+                decisions={},
+                trace={},
+                extracted={},
+                notes=list(material.notes) or ["the document could not be read"],
+            ),
+            material,
+        )
+
+    extraction = _ensure_extraction(material, config, artifacts, tree)
     ctx = DecisionContext(config=config, tier=material.tier, own_cuits=own_cuits)
     decisions = evaluate(extraction.candidates, ctx, extraction.values)
 
@@ -133,10 +164,33 @@ def run(  # pylint: disable=too-many-arguments, too-many-locals, too-many-branch
         if decision.decision == DECISION_CONFIRMED and decision.winner is not None
     }
 
-    notes: list[str] = list(extraction.notes)
+    result = FieldResult(
+        decisions=decisions,
+        trace=extraction.candidates,
+        extracted=extracted,
+        notes=list(extraction.notes),
+    )
+    if tree is not None:
+        tree.save_result(result)
+    return result, material
 
-    # --- HITL (§8): queue the fields the engine could not confirm ---------
-    queued = pending_items(decisions)
+
+def _run_hitl(  # pylint: disable=too-many-arguments, too-many-positional-arguments, too-many-locals
+    path: pathlib.Path,
+    config: Config,
+    artifacts: Artifacts,
+    own_cuits: frozenset[str],
+    tree: WorkTree | None,
+    *,
+    resolve: bool,
+    confirm: list[HumanConfirmation] | None,
+) -> FieldResult:
+    """Stage 4: queue the unconfirmed fields, suggest, and settle by a human."""
+    result, material = _run_decide(path, config, artifacts, own_cuits, tree)
+
+    queued = pending_items(result.decisions)
+    notes: list[str] = list(result.notes)
+
     if tree is not None:
         tree.save_pending(queued)
         if queued and resolve:
@@ -155,7 +209,7 @@ def run(  # pylint: disable=too-many-arguments, too-many-locals, too-many-branch
             f"{', '.join(item.field for item in queued)}"
         )
 
-    # --- HITL: a human's settled values, the only ground truth (I6, §9) ----
+    extracted = dict(result.extracted)
     if confirm:
         pending_by_field = {item.field: item for item in queued}
         settled, refusals = apply_confirmations(confirm, pending_by_field)
@@ -172,14 +226,162 @@ def run(  # pylint: disable=too-many-arguments, too-many-locals, too-many-branch
                 f"{', '.join(sorted(settled))}"
             )
 
-    result = FieldResult(
-        decisions=decisions,
-        trace=extraction.candidates,
+    final = FieldResult(
+        decisions=result.decisions,
+        trace=result.trace,
         extracted=extracted,
         notes=notes,
     )
-
     if tree is not None:
-        tree.save_result(result)
+        tree.save_result(final)
+    return final
 
-    return result
+
+def run(  # pylint: disable=too-many-arguments
+    path: pathlib.Path,
+    config: Config = DEFAULT_CONFIG,
+    *,
+    own_cuits: frozenset[str] = frozenset(),
+    work_root: pathlib.Path | None = None,
+    redo: bool = False,
+    resolve: bool = False,
+    confirm: list[HumanConfirmation] | None = None,
+) -> FieldResult:
+    """Process one document and return the engine's per-field decisions.
+
+    The whole chain — read, extract, decide, queue — the same surface as
+    before. When ``work_root`` is given, each stage's artifact is written there
+    as it completes and a second run resumes at the first unfinished stage.
+
+    Args:
+        path: The document to process (PDF or image).
+        config: The run's dials.
+        own_cuits: The business's own CUITs (digits only), for the fixed
+            own-CUIT-as-emisor veto.
+        work_root: Where the intermediate artifacts and the journal live. When
+            ``None``, nothing is persisted and the flow is a single pass.
+        redo: Ignore the journal and re-run every stage.
+        resolve: Ask the frontier model to suggest an answer for each pending
+            field (§8). The suggestion is evidence, never a verdict.
+        confirm: A human's settled values for the pending fields (§8, I6).
+
+    Returns:
+        The decisions, the candidate trace and the confirmed extractions.
+
+    """
+    ensure_docflow_importable()
+    artifacts = load_artifacts()
+
+    tree: WorkTree | None = None
+    if work_root is not None:
+        tree = _open_tree(path, work_root, config, own_cuits, artifacts, redo=redo)
+
+    return _run_hitl(
+        path,
+        config,
+        artifacts,
+        own_cuits,
+        tree,
+        resolve=resolve,
+        confirm=confirm,
+    )
+
+
+def run_stage(  # pylint: disable=too-many-arguments, too-many-locals
+    stage: str,
+    path: pathlib.Path,
+    config: Config = DEFAULT_CONFIG,
+    *,
+    own_cuits: frozenset[str] = frozenset(),
+    work_root: pathlib.Path | None = None,
+    redo: bool = False,
+    resolve: bool = False,
+    confirm: list[HumanConfirmation] | None = None,
+    with_dependencies: bool = True,
+) -> FieldResult:
+    """Run **one** named stage and return its result.
+
+    A stage's dependencies are its inputs. With ``with_dependencies=True`` (the
+    default), a missing input is produced first — running ``decide`` on a fresh
+    work root first runs ``read`` then ``extract``. With
+    ``with_dependencies=False``, a missing input raises instead of a silent
+    re-run.
+
+    Args:
+        stage: One of ``read``, ``extract``, ``decide``, ``hitl``.
+        path: The document to process.
+        config: The run's dials.
+        own_cuits: The business's own CUITs, for the own-CUIT veto.
+        work_root: Where the artifacts and the journal live.
+        redo: Re-run the requested stage even when its artifact exists, and
+            invalidate everything downstream of it.
+        resolve: For the ``hitl`` stage: ask the frontier to suggest.
+        confirm: For the ``hitl`` stage: a human's settled values.
+        with_dependencies: Produce missing inputs first. When ``False``, a
+            missing dependency raises.
+
+    Returns:
+        The result of the requested stage. For ``read`` and ``extract`` this is
+        a :class:`FieldResult` with an empty decision set, because the material
+        and the candidates are intermediate, not final.
+
+    Raises:
+        ValueError: If ``stage`` is not one of the four names.
+        LookupError: If ``with_dependencies=False`` and an input is missing.
+
+    """
+    ensure_docflow_importable()
+    if stage not in STAGE_DEPENDENCIES:
+        raise ValueError(
+            f"unknown stage {stage!r}; choose from {list(STAGE_DEPENDENCIES)}"
+        )
+
+    artifacts = load_artifacts()
+    tree: WorkTree | None = None
+    if work_root is not None:
+        tree = _open_tree(path, work_root, config, own_cuits, artifacts, redo=redo)
+
+    # Re-running an intermediate stage invalidates its own artifact and
+    # everything downstream, so a stale `decision.json` is never trusted.
+    if tree is not None and redo:
+        tree.clear_from(stage)
+
+    if not with_dependencies:
+        if tree is None:
+            raise LookupError(f"stage {stage!r} without dependencies needs a work root")
+        for dependency in STAGE_DEPENDENCIES[stage]:
+            if not tree.done(dependency):
+                raise LookupError(
+                    f"stage {stage!r} needs {dependency!r}, which is not done; "
+                    "run with dependencies, or run the dependency first"
+                )
+
+    if stage == STAGE_READ:
+        material = _run_read(path, config, tree)
+        return FieldResult(
+            decisions={}, trace={}, extracted={}, notes=list(material.notes)
+        )
+
+    if stage == STAGE_EXTRACT:
+        extraction = _run_extract(path, config, artifacts, tree)
+        return FieldResult(
+            decisions={},
+            trace=extraction.candidates,
+            extracted={},
+            notes=list(extraction.notes),
+        )
+
+    if stage == STAGE_DECIDE:
+        result, _material = _run_decide(path, config, artifacts, own_cuits, tree)
+        return result
+
+    # stage == STAGE_HITL
+    return _run_hitl(
+        path,
+        config,
+        artifacts,
+        own_cuits,
+        tree,
+        resolve=resolve,
+        confirm=confirm,
+    )
