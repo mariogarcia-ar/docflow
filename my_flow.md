@@ -1,194 +1,187 @@
-# Flujos
+# Flujo de extracción de comprobantes fiscales
 
-## principal
+## 0. Artefactos de entrada (fijos, no dependen del documento puntual)
+
+```
+┌─────────────┐
+│   prompt    │  qué buscar / cómo leerlo (reglas de negocio, correcciones de OCR)
+└──────┬──────┘
+       │
+┌─────────────┐
+│   schema    │  qué forma tiene la respuesta (campos, tipo, formato, reglas de validación)
+└──────┬──────┘
+       │
+┌──────────────────┐
+│  schema-visual    │  dónde debería estar cada campo — CONDICIONAL:
+│  (por emisor)     │  solo existe si el emisor ya fue aprendido
+└───────────────────┘
+```
+
+El prompt y el schema los edita un humano. El schema-visual lo actualiza el propio sistema (paso 7, "aprender"), pero solo a partir de extracciones ya confirmadas.
+
+---
+
+## 1. Flujo principal (vista de alto nivel)
+
+```
 documento
   → rutear (tipo de material + legibilidad)
+  → clasificar (¿es comprobante?)
   → extraer campos
   → validar campos
-       ├─ ok → confirmar → aprender
-       ├─ corregible con evidencia → corregir → validar (loop) → confirmar → aprender
-       └─ no corregible / material degradado → escalar (cola) → [no aprende de esto todavía]
+       ├─ ok                                  → confirmar → aprender
+       ├─ corregible con evidencia            → corregir → validar (loop) → confirmar → aprender
+       └─ no corregible / material degradado  → escalar (cola) → [no aprende de esto todavía]
+```
 
+---
 
-## rutear
+## 2. Rutear
 
+### 2.1 Tipo de fuente → confianza de partida
+
+| Fuente          | Confianza | Por qué |
+|---|---|---|
+| texto plano     | alta      | es el string real, no hay interpretación de por medio |
+| pdf con texto   | alta      | la capa de texto es el string real del PDF |
+| pdf sin texto (imagen) | media | depende de OCR |
+| imagen (foto/escaneo)  | media | depende de OCR |
+
+### 2.2 Gate
+
+```
 documento
-  → ¿tiene capa de texto? 
-       ├─ sí  → texto_nativo   (confianza alta, sin OCR de por medio)
+  → ¿tiene capa de texto (o es texto plano)?
+       ├─ sí  → texto_nativo    (confianza alta, sin OCR de por medio)
        └─ no  → ¿es imagen o PDF sin texto?
-                 → rasterizar si hace falta
+                 → convertir: si es pdf_imagen, exportar a imagen
+                 → preprocesar: ¿es pesada / DPI excesivo? → redimensionar
                  → chequear legibilidad (sharpness)
-                      ├─ legible     → escaneado_ocr   (confianza media, depende de OCR)
+                      ├─ legible     → escaneado_ocr   (confianza media)
                       └─ no legible  → degradado        → escalar directo
+```
 
-## extraer campos
-documento (con tier ya definido por el ruteo)
+*Cuidado ya señalado: "¿tiene capa de texto?" no es lo mismo que "el texto sirve" — un PDF con texto vacío o de una sola línea de metadata debería caer a `escaneado_ocr`, no clasificarse como `texto_nativo` solo por tener algo en la capa.*
 
+### 2.3 Extracción de texto (según fuente, sin modelo todavía)
+
+| Fuente | Método |
+|---|---|
+| texto plano | ninguna operación |
+| pdf con texto | `pdftotext -layout` o similar |
+| imagen / pdf rasterizado | OCR (docling o similar) |
+
+---
+
+## 3. Clasificar (¿es comprobante?)
+
+Gate barato, corre **antes** de gastar en extracción de campos completa:
+
+```
+texto_nativo      → reglas sobre el texto extraído (pdftotext) para determinar si es comprobante
+escaneado_ocr     → reglas sobre el texto del OCR, o reglas de elementos visuales, para determinar si es comprobante
+       │
+       ├─ no es comprobante → descartar (fast-fail, no llega a "extraer campos")
+       └─ es comprobante    → sigue el flujo
+```
+
+---
+
+## 4. Extraer campos
+
+```
 tier == texto_nativo
-  → extraer texto de la capa del PDF (sin modelo, es el string real)
-  → correr LLM local sobre ese texto → campos_A
-  → correr LLM local otra vez, mismo texto → campos_B (pero preguntando si los campos son correctos, esto es 1er validacion)
-       ├─ campos_A == campos_B → campos_texto  (listo para validar)
-       └─ difieren               → inestable → escalar
- no hay lectura de vision acá: no hay frontera OCR que aislar
-
-tier == escaneado_ocr
-  → OCR sobre el render → texto_ocr (usando docling o similar)
-  → correr LLM local sobre texto_ocr → campos_A
-  → correr LLM local otra vez, mismo texto_ocr → campos_B (pero preguntando si los campos son correctos, esto es 2da validacion)
+  → extraer campos con regexp donde el formato es fijo
+      (CUIT, fecha, tipo de comprobante, nro_comprobante)
+  → correr LLM local sobre el texto → campos_A
+  → correr LLM local otra vez sobre el mismo texto,
+    pidiéndole que revise si sus propios campos son correctos → campos_B
        ├─ campos_A == campos_B → campos_texto
        └─ difieren               → inestable → escalar
-  →  correr LLM local vision sobre el render → campos_vision
-
-  salida: campos_texto + campos_vision   (los dos, sin fusionar todavía —
-          eso lo decide "validar", no "extraer")
-
-## validar campos 
-tier == texto_nativo
-  campos_texto (ya estable, viene de "extraer")
-  → refutadores mecánicos sobre campos_texto vs. documento
-       (etiqueta↔evidencia, trazabilidad al prompt, aritmética, ventana de contexto)
-       ├─ sin violaciones → confirmado
-       └─ con violaciones → ¿la violación señala un valor correcto?
-              ├─ sí (ej: aritmética indica cuál de dos lecturas cierra)
-              │      → corregible → corregir
-              └─ no (ej: fabricación sin evidencia de reemplazo)
-                     → escalar
+  → cruzar campos por regexp vs. campos_texto en los campos que ambos cubren
+      (refutador extra, gratis)
+  # no hay lectura de vision acá: no hay frontera OCR que aislar
 
 tier == escaneado_ocr
-  campos_texto + campos_vision (dos lecturas separadas, de "extraer")
+  → correr LLM local sobre texto_ocr → campos_A
+  → correr LLM local otra vez, mismo texto_ocr, pidiendo autorrevisión → campos_B
+       ├─ campos_A == campos_B → campos_texto
+       └─ difieren               → inestable → escalar
+  → (en paralelo) correr LLM local vision sobre el render → campos_vision
+
+  salida: campos_texto + campos_vision, SIN fusionar
+          (la fusión es responsabilidad de "validar", no de "extraer")
+```
+
+> **Nota abierta:** pedirle al mismo modelo, sobre el mismo texto, que revise si sus propios campos son correctos ("campos_B") es útil para detectar **inestabilidad** (el modelo se contradice a sí mismo), pero no es una validación independiente — comparte el mismo texto y el mismo modelo que campos_A, así que hereda cualquier error de lectura que ambos compartan. Vale la pena no llamarlo "1ª/2ª validación" para no confundirlo con los refutadores mecánicos o con el cruce texto×vision, que sí son independientes.
+
+---
+
+## 5. Validar campos
+
+```
+tier == texto_nativo
+  campos_texto (ya estable)
+  → refutadores mecánicos vs. documento
+      (etiqueta↔evidencia, trazabilidad al prompt, aritmética, ventana de contexto)
+       ├─ sin violaciones → confirmado
+       └─ con violaciones → ¿la violación señala un valor correcto?
+              ├─ sí → corregible → corregir
+              └─ no → escalar
+
+tier == escaneado_ocr
+  campos_texto + campos_vision
   → refutadores mecánicos sobre cada lectura por separado
        ├─ ambas limpias → comparar campo a campo
        │      ├─ coinciden → confirmado
-       │      └─ difieren  → ¿aritmética u otro refutador dirime cuál vale?
+       │      └─ difieren  → ¿algún refutador dirime cuál vale?
        │             ├─ sí → corregible → corregir
        │             └─ no → escalar
        └─ una o ambas con violaciones → escalar
               (una lectura sucia no vota; no promedies con la limpia)
 
-## verificacion
-escalar(doc, lecturas_en_disputa, motivo)
-  → llm_frontier lee el documento original (multimodal, la imagen/PDF, no el texto ya extraído)
-      → campos_frontier + justificación por campo
-  → refutadores mecánicos también sobre campos_frontier
-       (frontier no está exento: caro no es sinónimo de correcto)
+en ambos tiers, si hay emisor conocido:
+  → chequeo posicional adicional con schema-visual
+      ¿el token extraído está en la zona esperada para ESE emisor?
+       ├─ sí → suma a "confirmado"
+       └─ no → refutador disparado → corregible / escalar
+```
 
-  → comparar campos_frontier contra las lecturas que originaron el escalamiento
-       ├─ frontier coincide con una de las lecturas en disputa
-       │     → mostrar al humano: 1 valor candidato + qué lectura lo respalda + evidencia
-       │       (el humano confirma con un click, no relee el comprobante desde cero)
-       └─ frontier no coincide con ninguna
-             → mostrar al humano las lecturas en disputa + la de frontier + evidencia de cada una
-             → decide el humano, frontier no arbitra solo
+---
+
+## 6. Verificación (escalamiento: frontier + HITL)
+
+```
+escalar(doc, lecturas_en_disputa, motivo)
+  → llm_frontier lee el DOCUMENTO ORIGINAL (multimodal — no el texto ya extraído)
+      → campos_frontier + justificación por campo
+  → refutadores mecánicos también sobre campos_frontier (frontier no está exento)
+
+  → comparar campos_frontier contra las lecturas en disputa
+       ├─ coincide con una         → mostrar al humano 1 candidato + evidencia (confirma con un click)
+       └─ no coincide con ninguna  → mostrar todas las lecturas + evidencia; decide el humano
 
   → humano resuelve → campos_confirmados
 
-  → ¿este motivo de escalamiento ya se repitió N veces? (mismo emisor / mismo patrón de error)
-       ├─ sí → llm_frontier propone una regla candidata
-       │        (ej: "cuit conocido como propio → nunca es cuit_emisor")
-       │        → regla queda pendiente de aprobación humana, no se activa sola
-       └─ no → se registra el caso nomás, sin proponer regla todavía
+  → ¿este motivo de escalamiento ya se repitió N veces (mismo emisor/patrón)?
+       ├─ sí → llm_frontier propone una regla candidata → pendiente de aprobación humana
+       └─ no → se registra el caso, sin proponer regla todavía
+```
 
-  → aprender  (solo con campos_confirmados por humano — nunca con campos_frontier sin confirmar)
-  
+---
 
-  ## artefactos
-                          ┌─────────────┐
-                        │   prompt    │  qué buscar / cómo leerlo
-                        └──────┬──────┘
-                               │
-                        ┌─────────────┐
-                        │   schema    │  qué forma tiene la respuesta
-                        └──────┬──────┘
-                               │
-                               ▼
-                        extraer campos
-                               │
-                               ▼
-                        campos_extraidos (con forma validada por schema)
-                               │
-                               ▼
-                          validar campos
-                               │
-              ┌────────────────┴────────────────┐
-              │                                  │
-       ¿emisor conocido?                  emisor desconocido
-              │                                  │
-              ▼                                  ▼
-     ┌──────────────────┐              refutadores mecánicos
-     │  schema-visual    │              de siempre (sin chequeo
-     │  del emisor        │              posicional: no hay con
-     └────────┬───────────┘              qué comparar todavía)
-              │
-              ▼
-   ¿token extraído está en la
-   zona esperada por el schema-
-   visual de ESE emisor?
-              │
-    ┌─────────┴─────────┐
-    │                    │
-   sí                    no
-    │                    │
-    ▼                    ▼
-refutadores        refutador disparado
-mecánicos de       (posición no coincide
-siempre, además    con lo aprendido)
-    │                    │
-    ▼                    ▼
- confirmado          corregible / escalar
-    │                (según si otro
-    │                 refutador dirime)
-    ▼
- aprender
-    │
-    ▼
-actualizar schema-visual del emisor
-  (solo con campos_confirmados —
-   nunca con una lectura sin confirmar)
+## 7. Aprender
 
---- 
-# notas
+Solo con `campos_confirmados` (post-refutadores o post-humano). Nunca con una lectura cruda o con `campos_frontier` sin confirmar.
 
-campos:
-- nombre
-- tipo y formato
-- reglas de validacion
+Actualiza:
+- el perfil del emisor (formato de campos esperado)
+- el `schema-visual` del emisor (zona donde aparece cada campo)
 
+---
 
-Fuente:
-- texto: confianza alta 
-- pdf_texto / pdf_imagen: confianza alta, confianza media
-- imagen: confianza media
+## Notas / pendientes de definir
 
-
-convertir:
-- pdf_imagen: exportar a imagen
-
-preprocesamiento de imagenes:
-- imagen: es legible? > rechazar imagen
-- imagen: es pesada o pesada dpi? > redimensionar imagen
-
-extraccion texto:
-- texto: no realizar operacion
-- pdf_texto: usar pdftotext layout o similar 
-- imagen: usar ocr (docling o similar)
-
-clasificar, es comprobante:
-- texto: en base a la extraccion de texto (pdftotext, ocr) aplicar reglas para determinar si es un comprobante
-- imagen: en base a reglas de elementos (visual) determinar si es comprobante
-
-
-confianza texto
-- alta: regexp, llm_local
-- media: llm_local 
-
-
-extraccion campso?
-- texto usando regexp
-- texto usando llm_local modelo razonamiento
-- imagen usando llm_local modelo visual
-- imagen usando llm_frontier modelo multimodal 
-
-
-
-
+- **Umbral de comparación campo a campo** (paso 5): ¿diff exacto de string o tolerancia por campo? (ej. una fecha con formato distinto pero mismo valor no debería contar como diferencia).
+- **Tasa de escalamiento esperada al frontier** — no medida todavía; condiciona si el diseño de costos del paso 6 es sostenible a volumen.
+- **Regla determinística para el blind spot emisor/receptor**: si el CUIT/razón social devuelto coincide con un CUIT propio conocido, está en el campo equivocado — puede vivir como refutador mecánico fijo, sin depender de schema-visual ni de HITL.
