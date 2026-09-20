@@ -1,534 +1,245 @@
-# Validación cruzada por paso: cómo determinar la extracción real y en qué orden
+# Validación cruzada: construir la extracción real, y en qué orden
 
-Este documento responde dos preguntas:
-
-1. **¿Cómo se determina la extracción real?** No eligiendo la respuesta que más confía,
-   sino ubicando **en qué paso** se rompió la cadena, con evidencia.
-2. **¿Cuál es la mejor secuencia?** La que refuta más por menos dinero, y que deja el
-   paso caro (vision del frontier) para cuando ya sirve para algo.
-
-Todo lo que sigue está medido en `scripts/poc/`, no propuesto. El caso de trabajo es
+Todo lo de acá está medido en `scripts/poc/`, no propuesto. Caso de trabajo:
 `var/run/pdf_escaneados/9b7a423c-…-p1.png` (factura A, La Anónima), donde el modelo
 local falló de tres formas distintas y el frontier acertó.
 
 ---
 
-## 0. La tesis, en una línea
+## La tesis, en una línea
 
-**Una sola lectura segura no es evidencia de nada.** Lo único que detecta un error
-silencioso son **dos lecturas que no comparten nada** y que se contradicen
-(`prd.md`, `sad.md` §4). Por eso la estrategia no es "sumar validadores": es
-**construir lecturas independientes y conservar la independencia**.
-
-### La regla que se deriva, y que es la que decide el diseño
+**Una sola lectura segura no es evidencia de nada.** Un error silencioso solo lo detecta
+**otra lectura que no comparta con la primera más que el documento**.
 
 > **La independencia es una propiedad del prefijo compartido, no del paso.**
 
-Dos lecturas que parten del mismo texto OCR **no son independientes**: comparten el
-error de OCR. Si el OCR se comió una línea, las dos leen un documento incompleto y
-las dos coinciden — y coincidir se reporta como "verificado".
+Dos lecturas del mismo texto OCR no son independientes: comparten el error de OCR. Si el
+OCR se comió una línea, las dos leen un documento incompleto y **coincidir se reporta
+como "verificado"**.
 
-Corolario, y es el motivo por el que el paso caro existe:
+De ahí el corolario que decide el diseño:
 
-> **`judge` NO PUEDE detectar un error de OCR**, porque califica la transcripción, y
-> la transcripción **es** la salida del OCR. Medido por introspección:
-> `inspect.signature(FrontierEngine.judge)` no tiene parámetro `images`, su cuerpo no
-> nombra `images`, y delega en `structured`. Califica un guion.
+> **`judge` no puede detectar un error de OCR.** Califica la transcripción, y la
+> transcripción *es* la salida del OCR. Medido por introspección:
+> `inspect.signature(FrontierEngine.judge)` no tiene parámetro `images`. Califica un guion.
 
-Así que la comparación que sí tiene poder de refutación es:
+La comparación con poder de refutación es entonces **campos derivados del texto (OCR) ×
+campos derivados de los píxeles (vision)**: comparten solo el documento, y todo lo demás
+—ruteo, DPI, motor, modelo, tokenizador— es distinto.
 
-**campos derivados del texto (OCR) × campos derivados de los píxeles (vision).**
-
-Ese par comparte **solo el documento**. Todo lo demás — ruteo, DPI, motor de OCR,
-modelo, tokenizador — es distinto. Esa es la comparación que el usuario propuso, y es
-la correcta. El resto de este documento es cómo llegar ahí sin gastar de más y cómo
-**localizar** el problema cuando aparece.
-
----
-
-## 1. Qué artefacto deja cada paso
-
-Cada frontera tiene que dejar un artefacto, porque una validación que no puede leer
-lo que el paso anterior produjo no valida nada.
-
-| # | Paso | Operación | Artefacto | Aísla |
-|---|---|---|---|---|
-| 1 | Cortar / contar | K2 `probe` | `page_count` (en `measurements`) | — |
-| 2 | Clasificar por página | K2 `classify` | `shape` ∈ {text, image, mixed, blank} | — |
-| 3 | Rutear | `pdf.route_page` / `decide.decide` | nombre de ruta + razón | la decisión |
-| 4a | Texto | K2 `layout_text` | `.txt` con `\f` por página | motor de texto |
-| 4b | Píxeles | K2 `render` | `.png` | DPI efectivo |
-| 5 | OCR | K4 `layout` (texto) + `read` (censo) | `.txt` + `.ocr.json` | motor de OCR |
-| 6 | Legibilidad | K3 `legibility` | `sharpness` vs umbral | calidad de imagen |
-| 7 | Campos desde texto | K5 `structured` | `<stem>.fields.json` | el **modelo** |
-| 8 | Campos desde píxeles | K5 `vision` (`qwen2.5vl`) | `<stem>.fields.json` | el **ruteo/OCR** |
-| 9 | Campos desde píxeles (frontier) | K6 `vision` | ver §3 | modelo + material |
-| 10 | Veredicto sobre los campos | K6 `judge` | `<stem>.frontier.json` | consistencia **interna** |
-| 11 | Contraste mecánico | `hitl.py` | `review.json` | emparejamiento |
-
-Los pasos 4b→5 y 7→8 son las dos fronteras donde nace un error silencioso. Todo lo
-demás es barato.
-
-**El espejo es la infraestructura que hace posible comparar**: `batch_*.py` replica la
-estructura de carpetas, así que emparejar dos corridas es una operación de ruta
-relativa, no una heurística de nombres. Sin espejo, comparar es adivinar.
-
-**Trampa medida:** un archivo *saltado* se escribe `<stem>.skipped.json`, **nunca**
-`<stem>.json`. Un registro de salto no es una extracción vacía, y un consumidor que
-haga glob de `*.json` leería "saltado" como "no encontró nada". Al comparar, contar las
-dos cosas por separado.
+Cada paso tiene que dejar un artefacto legible por el siguiente, y `batch_*.py` replica el
+árbol de carpetas (espejo) para que emparejar dos corridas sea una ruta relativa y no una
+heurística de nombres. Y un archivo *saltado* se escribe `<stem>.skipped.json`, **nunca**
+`<stem>.json`: contarlo como extracción infla el denominador.
 
 ---
 
-## 2. Los refutadores mecánicos (sin modelo, costo ≈ 0)
-
-Estos van **primero**, siempre. Refutan gratis lo que un modelo cobraría por descubrir.
-
-### 2.1 El número contradice su propia etiqueta
-
-Un `reason.code` que no coincide con el `evidence` es un defecto del adaptador, no del
-documento. Caso medido: `pdf.classify` de una página en blanco devuelve `value=None`
-con `reason=blank_page`, **pero** `evidence.observed["shape"] == "blank"`. Leer la
-forma solo cuando hay valor colapsa *en blanco* con *no medible* — dos afirmaciones
-distintas.
-
-Y al revés: `blank_page` en un **archivo de imagen** es un defecto del motor. Medido:
-K2 abre un `.jpg` como documento de 1 página, y `page.get_images()` devuelve **0**
-mientras `get_image_info()` devuelve **1**. Dos APIs del mismo motor se contradicen
-dentro de una sola medición.
-
-### 2.2 El valor es trazable al prompt, no al documento
-
-**El refutador más rentable que encontramos, y no necesita ningún modelo.**
-
-Implementación: para cada valor devuelto `v`, comprobar
-`v in texto_del_prompt and v not in texto_del_documento`.
-
-Medido en este ticket con `deepseek-r1:1.5b` y el prompt del registry:
-
-| Campo | Valor devuelto | Origen real |
-|---|---|---|
-| `cuit_emisor` | `"20-1"` | el ejemplo de la **regla 3** del prompt |
-| `razon_social_emisor` | `"ROSARI0"` | el ejemplo de la **regla 2** |
-| `tipo_comprobante` | `"A \| B \| C \| 090 \| 099"` | la **lista de claves** leída como valor |
-| `importe_total_facturado` | `"17.898,30"` | el ejemplo de la **regla 4** |
-
-Ninguna de esas cadenas está en el documento. **El modelo recibió el prompt y devolvió
-el prompt.** Un verificador que solo mire "¿el valor es plausible?" no lo ve: `"20-1"`
-es un CUIT plausible, `"17.898,30"` es un importe plausible.
-
-Costo: `in` sobre dos cadenas. Refuta fabricaciones enteras sin tocar un proveedor.
-
-### 2.3 La aritmética del comprobante
-
-El lector independiente más barato que existe, y el único que no es un modelo.
+## La secuencia, ordenada por poder de refutación por dólar
 
 ```
-Σ renglones impresos              == subtotal impreso
-subtotal × alícuota_dominante     == IVA impreso
-subtotal + IVA + percepciones     == total impreso
+   PDF con imagen ──┬─ 0. el harness arranca        (gratis)
+   (una página)     ├─ 1. etiqueta ↔ evidencia      (gratis)
+                    ├─ 2. valor trazable al prompt  (gratis)  ← el mejor retorno
+                    ├─ 3. aritmética del comprobante(gratis)
+                    ├─ 4. el prompt entró completo  (gratis)
+                    ├─ 5. estabilidad: N corridas del local        (barato)
+                    ├─ 6. cross-modelo sobre el MISMO texto        (medio)
+                    ├─ 7. local-vision sobre el píxel              (caro)
+                    └─ 8. FRONTIER-VISION sobre el píxel           (el más caro)
+                           └─ × local-texto → comparte solo el documento
+                                 ├─ coinciden → confirmado
+                                 └─ difieren  → escalar a HITL
 ```
 
-Medido en este ticket, cierra exacto:
+**Por qué este orden.** Los pasos 0–4 no cuestan nada y juntos habrían atrapado, sin un
+dólar, las fabricaciones del local: pagar primero por el frontier para descubrir que el
+local copió el prompt es pagar por información que ya se tenía. El 6 va antes que el 7
+porque es más barato y ya aísla el modelo. El 8 va al final porque es el único que comparte
+solo el documento, o sea el único que puede refutar un error de OCR.
 
-| Chequeo | Calculado | Impreso |
+**Qué aísla cada par:**
+
+| Par | Comparte | Aísla |
 |---|---|---|
-| Σ 9 ítems | **60 535.54** | 60 535.54 |
-| ×21% | **12 712.46** | 12 712.46 |
-| +242.14 +1 816.07 | **75 306.21** | 75 306.21 |
+| local-texto × local-texto (N veces) | todo | inestabilidad del **modelo** |
+| local-texto × frontier-texto | el texto OCR | el **modelo** |
+| local-texto × local-vision | el documento | el **material** (OCR/ruteo) |
+| **local-texto × frontier-vision** | **solo el documento** | **todo a la vez** |
+| cualquiera × `judge` | el material | **nada del material** |
 
-Dos consecuencias, y son distintas:
+**Los costos que justifican el orden:** refutadores mecánicos → milisegundos, costo cero;
+OCR ~8–10 s por llamada (recarga ONNX, no hay camino caliente); local texto ~4–11 s; local
+vision ~3 s; **frontier ~180–300 s por lectura, 20 700 tokens para dos campos** — dos
+órdenes de magnitud más que todo lo demás junto.
 
-- **Valida el documento**, no la extracción. Cuando cierra, *cualquier* campo que lo
-  contradiga queda refutado por aritmética, sin gastar un token.
-- **Cuando no cierra, el problema puede ser el OCR**, no el modelo. Un dígito mal
-  reconocido rompe la suma y la cadena entera queda sospechosa desde el paso 4.
+---
 
-### 2.4 El prompt entró completo
+## Los refutadores mecánicos (sin modelo, costo ≈ 0)
 
-Medido: el prompt del registry son ~2 400 caracteres; la llamada completa en este
-ticket fue de **5 945 caracteres → 2 249 tokens evaluados contra un presupuesto de
-2 048** (`num_ctx=4096`, el prompt toma la mitad). `done_reason: 'stop'`, valor
-plausible, **y nada en la respuesta lo dice**.
+Van primero, siempre. Refutan gratis lo que un modelo cobraría por descubrir. El más
+rentable no necesita ningún modelo:
 
-- El detector es por llamada: `evaluated_tokens >= num_ctx * 0.5`
-  (`PROMPT_WINDOW_SHARE` en `batch_llm_local.py`).
-- Arreglo verificado: `DOCFLOW_OLLAMA_NUM_CTX=8192` → `truncated 0`.
-- **Ojo con el modelo**: `deepseek-r1:1.5b` **falla ruidosamente** ante un prompt
-  oversize (`HTTP 400 exceed_context_size_error`, con `n_prompt_tokens` y `n_ctx`);
-  `smollm2` lo **descarta en silencio** con `done_reason: 'stop'`. La elección de
-  modelo cambia qué es detectable: con `smollm2`, la única evidencia es el detector
-  por llamada.
+```python
+# ¿el valor está en el prompt y NO en el documento?
+v in texto_del_prompt and v not in texto_del_documento
+```
 
-### 2.5 Ninguna corrida respondió una pregunta distinta
+Medido con `deepseek-r1:1.5b`: `cuit_emisor="20-1"` (el ejemplo de la regla 3),
+`razon_social_emisor="ROSARI0"` (regla 2), `importe_total="17.898,30"` (regla 4),
+`tipo_comprobante="A | B | C | 090 | 099"` (la lista de claves leída como valor). **El
+modelo recibió el prompt y devolvió el prompt.** Un chequeo de "¿es plausible?" no lo ve:
+`"20-1"` es un CUIT plausible.
 
-Antes de comparar dos árboles hay que probar que **contestan lo mismo**. La firma de
+Los otros tres:
+
+- **Etiqueta ↔ evidencia.** Un `reason.code` que no coincide con su `evidence` es defecto
+  del *adaptador*, no del documento. Medido: página en blanco devuelve `value=None` con
+  `reason=blank_page` **pero** `evidence.observed["shape"] == "blank"` — *en blanco* y *no
+  medible* son dos afirmaciones distintas, y leer la forma solo cuando hay valor las
+  colapsa.
+- **Aritmética.** El único lector independiente que no es un modelo. Medido: Σ 9 ítems
+  `60 535.54`, ×21% `12 712.46`, +percepciones `75 306.21`, todo exacto. Cuando cierra,
+  valida el **documento** y refuta por aritmética cualquier campo que lo contradiga *sin
+  gastar un token*; cuando no cierra, el sospechoso puede ser el **OCR**.
+- **Ventana de contexto.** Detector por llamada: `evaluated_tokens >= num_ctx * 0.5`.
+  Medido: 5 945 caracteres → 2 249 tokens contra 2 048, `done_reason: 'stop'`, valor
+  plausible, **y nada en la respuesta lo dice**. `deepseek-r1:1.5b` falla ruidosamente
+  (HTTP 400) ante un prompt oversize; `smollm2` lo **descarta en silencio**. Arreglo:
+  `DOCFLOW_OLLAMA_NUM_CTX=8192` → `truncated 0`.
+
+Antes de comparar dos árboles hay que probar que **contestan lo mismo**: la firma de
 `_mirror.Resume` cubre modelo, esquema y **texto del prompt**, y está hasheada por eso
-mismo: comparar una corrida con otro prompt es comparar dos preguntas, y el resultado
-parece un desacuerdo cuando en realidad es un cambio de instrumento.
+mismo — comparar corridas con prompts distintos parece un desacuerdo y es un cambio de
+instrumento.
 
-### 2.6 El harness arranca y no miente
-
-Dos defectos reales encontrados hoy en `batch_llm_frontier.py`, y son la razón de que
-este paso exista:
-
-- **El driver no arrancaba**: declaraba `--out` dos veces → `argparse.ArgumentError` en
-  *cada* invocación. Nunca se había podido correr, así que no había nada que verificar.
-- **`gates()` mentía**: exigía que *todos* los nombres de credencial estuvieran seteados,
-  y los nombres de credencial son **alternativas**. Con `DOCFLOW_FRONTIER_DEEPSEEK_KEY`
-  configurada anunciaba *"no credential: dry run"* **en la misma corrida donde acababa
-  de evaluar el documento**.
-
-Un harness que no arranca reporta **silencio**, y el silencio se lee como "limpio".
-Validar el validador es el paso 0.
+Y el paso 0 es **validar el validador**: un harness que no arranca reporta silencio, y el
+silencio se lee "limpio". Medido en `batch_llm_frontier.py`: declaraba `--out` dos veces (no
+arrancaba nunca, así que no había nada que verificar) y `gates()` exigía *todos* los nombres
+de credencial, que son **alternativas** — anunciaba *"no credential: dry run"* en la misma
+corrida donde acababa de evaluar el documento.
 
 ---
 
-## 3. Las lecturas independientes, y qué aísla cada par
-
-| Par | Comparte | Aísla | Costo |
-|---|---|---|---|
-| local-texto × local-texto (N veces) | todo | **inestabilidad del modelo** | N × local |
-| local-texto × frontier-texto | el **texto OCR** | **el modelo** | 1 × frontier |
-| local-texto × local-vision | el **documento** | **el material** (OCR/ruteo) | 1 × local-vision |
-| **local-texto × frontier-vision** | **solo el documento** | **todo a la vez** | 1 × frontier-vision |
-| cualquiera × `judge` | el material | nada del material | 1 × frontier |
-
-La última fila es la trampa: **`judge` se ve como la comparación definitiva y no lo
-es.** Califica la consistencia de los campos contra un guion; un OCR incompleto le
-llega como un guion consistente.
-
-### El `judge` sigue sirviendo, para otra cosa
-
-Detecta **inconsistencias internas y fabricaciones**: campos con formato imposible,
-valores que son el nombre del campo, listas de opciones copiadas del prompt. Medido en
-este ticket: 23 veredictos por campo, marcó exactamente los 7 que correspondían,
-incluidos los tres que el refutador 2.2 había encontrado.
-
-**Pero tiene un defecto abierto y grave:** `GRADE_SCHEMA` declara `supported` y
-DeepSeek devolvió `plausible`. Un consumidor que lea `supported` obtiene `None` en los
-23 campos y **concluye "ninguna refutación" en silencio**. Hay que fijar la clave con
-el esquema o normalizarla antes de consumir el veredicto.
-
----
-
-## 4. La secuencia óptima
-
-Ordenada por **poder de refutación por dólar**, que es distinto de por poder de
-refutación.
-
-```
-                        ┌─ 0. el harness arranca (gratis)
-                        ├─ 1. etiqueta ↔ evidencia        (gratis)
-                        ├─ 2. valor trazable al prompt    (gratis)  ← el mejor retorno
-   PDF con imagen ──────┼─ 3. aritmética del comprobante  (gratis)
-   (una página)         ├─ 4. el prompt entró completo    (gratis)
-                        │
-                        ├─ 5. estabilidad: N corridas del local      (barato)
-                        ├─ 6. cross-modelo sobre el MISMO texto      (medio)
-                        │      └─ local-texto × frontier-texto  → aísla el MODELO
-                        │
-                        ├─ 7. local-vision (qwen2.5vl) sobre el píxel (caro)
-                        │      └─ × local-texto → aísla el MATERIAL
-                        │
-                        └─ 8. FRONTIER-VISION sobre el píxel         (el más caro)
-                               └─ × local-texto  → comparte solo el documento
-                                     ├─ coinciden    → extracción confirmada
-                                     └─ difieren     → escalar a HITL
-```
-
-### Por qué este orden y no otro
-
-- **Los pasos 0–4 no cuestan nada y refutan los errores que más nos costaron hoy.**
-  Los cuatro juntos habrían atrapado las fabricaciones del local sin gastar un dólar.
-  Pagar primero por el frontier para descubrir que el local copió el prompt es pagar
-  por información que ya se tenía.
-- **El paso 6 antes del 7** porque es más barato y ya aísla el modelo. Si el texto y el
-  cross-modelo coinciden, el campo es sólido y el píxel no agrega nada.
-- **El paso 8 al final porque es el único que comparte solo el documento**, y es lo
-  único que puede refutar un error de OCR. Es el que compra la garantía real, y por eso
-  se gasta solo cuando los baratos no cerraron el caso.
-
-### La secuencia, sobre el caso concreto: PDF con imagen
-
-```bash
-# --- 1. Ruteo ---------------------------------------------------------
-python scripts/poc/batch_pdf.py <carpeta> --out var/run
-#   deja <stem>.pages.json  -> shape, route, measured_dpi, rendered_dpi
-#   y <stem>-pN.png         -> el bitmap, con el DPI medido (nunca upscale)
-
-# --- 2. OCR -----------------------------------------------------------
-python scripts/poc/batch_ocr.py var/run/<sub> --lang es --out var/run2/<sub>
-#   <stem>-pN.txt      -> texto ordenado (layout)
-#   <stem>-pN.ocr.json -> censo por página (read/blank/unreadable)
-
-# --- 3. Campos desde texto (local) ------------------------------------
-DOCFLOW_OLLAMA_NUM_CTX=8192 python scripts/poc/batch_llm_local.py <texto> \
-    --schema registry/schemas/extraction/invoice.json \
-    --prompt "$(cat registry/prompts/extraction/invoice.txt)" \
-    --out var/ticket/local
-#   <stem>.fields.json
-
-# --- 4. Campos desde píxeles (local vision) ---------------------------
-DOCFLOW_OLLAMA_NUM_CTX=8192 python scripts/poc/batch_llm_local.py <imagen> \
-    --mode vision --schema registry/schemas/extraction/invoice.json \
-    --out var/ticket/local_vision
-
-# --- 5. El frontier LEYENDO el píxel (el paso decisivo) ---------------
-python scripts/poc/batch_llm_frontier.py <imagen> \
-    --fields var/ticket/local --out var/ticket/frontier_vision --mode vision \
-    --schema registry/schemas/extraction/invoice.json
-#   OJO: exige un proveedor con supports_vision=True. DeepSeek lo tiene en False.
-
-# --- 6. Contraste mecánico --------------------------------------------
-python scripts/poc/hitl.py <carpeta> --out var/ticket
-#   review.json -> diferencias, pareadas por ruta relativa
-```
-
-### La restricción que cambia la secuencia
-
-**`deepseek` tiene `supports_vision: False` y lo dice antes de la llamada**, con un
-`unsupported_format` tipado. Medido: `batch_llm_frontier.py --mode vision` con DeepSeek
-**se rehúsa, no falla** — y eso es lo correcto (una respuesta plausible a una pregunta
-que no puede contestar es peor que una negativa).
-
-Consecuencia práctica: **si el único proveedor configurado es DeepSeek, el paso 8 no
-existe**. El lector de píxeles disponible es `qwen2.5vl:3b` local, o sea el paso 7, que
-comparte el ruteo con el paso 3. En esa configuración la garantía más fuerte alcanzable
-es *material × modelo*, **no** *solo documento*. La estrategia tiene que decir cuál de
-las dos está dando, no asumir la más fuerte.
-
----
-
-## 5. Cómo localizar el problema cuando las lecturas difieren
-
-Cuando el par decisivo (8 × 3) difiere, el paso 6 dice **dónde mirar**:
-
-| paso 6 (texto vs texto, mismo material) | Diagnóstico | Qué revisar |
-|---|---|---|
-| **Coinciden entre sí** | el material está bien; el problema es el **píxel o el modelo de visión** | DPI, legibilidad, `qwen2.5vl` |
-| **Difieren entre sí** | el problema es el **modelo** o el **texto** | el prompt (2.2/2.4), el OCR |
-
-Si coinciden texto×texto pero el de píxeles difiere → **el OCR perdió o inventó algo**
-y hay que ir al paso 4b/5: ¿el DPI pedido superó el medido? ¿la legibilidad estaba bajo
-el umbral? ¿el censo dijo `blank` en alguna página?
-
-**Y el caso que no tiene diagnóstico automático, medido:** hay un fixture escaneado
-(`3ac5a2ec`) que el OCR lee como `blank` **en todos los DPI** aunque tiene tinta. La
-medición que lo discrimina es `span_x` (fracción de columnas con tinta): `0.28` en el
-que falla, contra **0.75–1.00** en los cuatro que leen bien. Nótese que un fixture que
-sí lee tiene **menos** tinta (`0.0055` vs `0.0112`): es la *concentración*, no la
-cantidad. Es decir: "el OCR no devolvió nada" **no siempre es un defecto del documento**,
-y no se detecta mirando la salida del OCR.
-
----
-
-## 6. El caso del ticket, con los errores que aparecieron
-
-Tres lecturas, mismo documento, tres resultados distintos:
+## El caso del ticket: tres lecturas, tres resultados
 
 | Campo | local-texto (1.5B) | local-vision (qwen2.5vl) | frontier-texto (v4-pro) | Verdad |
 |---|---|---|---|---|
 | `cuit_emisor` | `"20-1"` ← *del prompt* | `30582215703` ← **el del cliente** | `30-50673003-8` | `30-50673003-8` |
-| `razon_social_emisor` | `"ROSARI0"` ← *del prompt* | `CVC SOCIEDAD ANONIMA` ← **el cliente** | `LA ANONIMA S.A. …` | `LA ANONIMA …` |
+| `razon_social_emisor` | `"ROSARI0"` ← *del prompt* | `CVC SOCIEDAD ANONIMA` ← **el cliente** | `LA ANONIMA …` | `LA ANONIMA …` |
 | `importe_total_facturado` | `"17.898,30"` ← *del prompt* | `$ 12712.46` (el IVA) | `75306.21` | `75 306.21` |
-| `subtotal` | `null` | `>60535.54` | `60535.54` | `60 535.54` |
-| `tipo_comprobante` | `"A \| B \| C \| 090 \| 099"` ← *la lista* | `"FACTURA"` | `A` | `A` |
+| `fecha_emision` | `10/07/1996` ← **inicio de actividad** | `2026-08-29` (vence el CAE) | `19-08-26` | `19-08-26` |
 | `comprobante_valido` | `"comprobante_valido"` ← *el nombre del campo* | `"S"` | `true` | `true` |
-| `nro_comprobante` | `04928-00054475` | `04928-00054475` | `04928-00054475` | `04928-00054475` |
-| `fecha_emision` | `10/07/1996` ← **la fecha de inicio de actividad** | `2026-08-29` (el vencimiento del CAE) | `19-08-26` | `19-08-26` |
 
-Lo que enseña, y son las tres razones por las que esta estrategia tiene la forma que
-tiene:
+1. **El local no falla por un motivo, falla por tres.** Copia el prompt, elige la fecha
+   equivocada y devuelve el nombre del campo como valor. Tres corridas, tres respuestas.
+   **Un validador de "¿es plausible?" aprueba los tres errores.**
+2. **El vision local no es una segunda opinión gratuita.** Trae la *misma* confusión
+   emisor/receptor que el texto y devuelve el CUIT del cliente. **Coincidir en el error no
+   es coincidir**: por eso la independencia tiene que estar en el material, no en la
+   herramienta.
+3. **El frontier acierta y es estable:** dos corridas, 14 de 15 campos idénticos, y los
+   valores son los que la aritmética predice.
 
-1. **El local no falla por un motivo, falla por tres**: copia el prompt, elige la fecha
-   equivocada (la de inicio de actividad en lugar de la de emisión) y devuelve el nombre
-   del campo como valor. Tres corridas dieron tres respuestas distintas. **Un validador
-   de "¿es plausible?" aprueba los tres errores.**
-2. **El vision local no es una segunda opinión gratuita**: trae la *misma* confusión
-   emisor/receptor que el texto — y el impacto es que devuelve el CUIT del cliente.
-   Coincidir en el error no es coincidir. **Por eso la lectura tiene que ser
-   independiente en el material, no solo en la herramienta.**
-3. **El frontier acierta y es estable**: dos corridas, 14 de 15 campos idénticos, y los
-   valores que devuelve son exactamente los que la aritmética predice. La única
-   diferencia entre las dos corridas fue el orden de las palabras en la razón social.
+**El límite semántico, que ningún modelo arregla.** El comprobante imprime *su* CUIT
+(`30-50673003-8`) y el del cliente (`CVC SOCIEDAD ANONIMA`, `30582215703`). Ambos modelos
+devolvieron el del cliente. No es error de OCR ni de modelo: **el prompt no distingue emisor
+de receptor** y no hay un `cuit_receptor` donde poner el segundo. Ninguna validación cruzada
+lo detecta, porque **las dos lecturas se equivocan igual**. Es el techo del método, y hay
+que decirlo en vez de esconderlo detrás de "2 de 2 coinciden".
 
-### El límite semántico, que ningún modelo arregla
-
-El comprobante imprime **su** CUIT (`30-50673003-8`) y **el del cliente**
-(`CVC SOCIEDAD ANONIMA`, `30582215703`). Ambos modelos devolvieron el del cliente. No
-es un error de OCR ni de modelo: **es que el prompt no distingue emisor de receptor**, y
-la lista de campos no tiene un `cuit_receptor` donde poner el segundo.
-
-Ninguna validación cruzada detecta esto, porque las lecturas no se contradicen: **las
-dos se equivocan igual.** Es el techo del método, y hay que decirlo en vez de esconderlo
-detrás de "2 de 2 coinciden".
+**Y el caso sin diagnóstico automático, medido:** un fixture escaneado (`3ac5a2ec`) que el
+OCR lee como `blank` **en todos los DPI** aunque tiene tinta. La medición que lo discrimina
+es `span_x` (fracción de columnas con tinta): `0.28` en el que falla, contra **0.75–1.00** en
+los cuatro que leen bien — y uno que *sí* lee tiene **menos** tinta (`0.0055` vs `0.0112`):
+es la *concentración*, no la cantidad. "El OCR no devolvió nada" no siempre es un defecto
+del documento.
 
 ---
 
-## 7. El orden de los pasos es también la política de costos
+## La restricción que cambia la secuencia
 
-Medido, para no elegir a ojo:
+**`deepseek` tiene `supports_vision: False` y lo dice antes de la llamada**, con un
+`unsupported_format` tipado: `--mode vision` con DeepSeek **se rehúsa, no falla**, y eso es
+lo correcto — una respuesta plausible a una pregunta que no puede contestar es peor que una
+negativa.
 
-| Paso | Costo medido |
-|---|---|
-| Aritmética / trazabilidad al prompt / etiqueta↔evidencia | milisegundos, $0 |
-| OCR (K4 `read`) | **~8–10 s cada llamada** (recarga ONNX; no hay camino caliente entre procesos) |
-| Local texto (`deepseek-r1:1.5b`) | ~4–11 s |
-| Local texto (`smollm2`) | 0.5–3.6 s, **pero corre desbocado 1 de 5 veces** |
-| Local vision (`qwen2.5vl:3b`) | ~3 s, 1.79 M caracteres de prompt |
-| **Frontier (DeepSeek v4-pro)** | **~180–300 s por lectura**, y gastó **20 700 tokens** para dos campos |
-
-El frontier cuesta dos órdenes de magnitud más que todo lo demás junto. Un documento
-deliberadamente razona antes de contestar; con `MAX_TOKENS=16384` **truncó** y no
-contestó nada. **Cualquier cosa que se pueda refutar sin el frontier tiene que
-refutarse antes.**
+Consecuencia práctica: **si el único proveedor configurado es DeepSeek, el paso 8 no
+existe**, y la garantía más fuerte alcanzable es *material × modelo*, **no** *solo
+documento*. La estrategia tiene que declarar cuál de las dos está dando, no asumir la más
+fuerte.
 
 ---
 
-## 8. Qué escala a HITL, y qué no
+## Qué escala a HITL, y qué no
 
-**Escala:** un campo donde las lecturas independientes **difieren** y **ningún
-refutador mecánico disparó**. Ahí hay una decisión que ningún programa puede tomar.
+**Escala:** un campo donde las lecturas independientes **difieren** y **ningún refutador
+mecánico disparó**. Ahí hay una decisión que ningún programa puede tomar.
 
-**No escala:**
+**No escala:** un campo ya refutado por un refutador mecánico (el programa sabe la
+respuesta); un campo donde las lecturas **coinciden en el error** (falta una regla, no una
+revisión); un documento donde falló el paso 0–4 (es un defecto del harness: se arregla, no
+se revisa a mano).
 
-- Un campo donde los refutadores mecánicos ya refutaron (2.2, aritmética) — el programa
-  sabe la respuesta.
-- Un campo donde las lecturas **coinciden en el error** (§6) — la cola no ayuda, porque
-  lo que falta es una regla, no una revisión.
-- Un documento donde el paso 0–4 falló — eso es un defecto del harness, se arregla, no
-  se revisa a mano.
-
-**Y la regla que hace que la cola signifique algo:** `review.json` tiene que registrar
-**cuál de las dos lecturas** produjo cada valor, y con qué modelo. Un veredicto sin el
-registro de quién lo produjo es una afirmación que nadie puede revisar — que es
-exactamente lo que este proyecto existe para evitar.
+**`review.json` tiene que registrar cuál de las dos lecturas produjo cada valor, y con qué
+modelo.** Un veredicto sin el registro de quién lo produjo es una afirmación que nadie puede
+revisar.
 
 ---
 
-## 9. Las cuatro trampas que ya nos costaron tiempo
-
-1. **Comparar dos corridas hechas con prompts distintos.** Parece un desacuerdo entre
-   modelos y es un cambio de instrumento. La firma de `Resume` cubre prompt, esquema y
-   modelo: verificar que coincidan **antes** de comparar.
-2. **Leer el veredicto con la clave equivocada.** `GRADE_SCHEMA` declara `supported`;
-   el modelo devolvió `plausible`. Leer `supported` da `None` × 23 y se reporta
-   *"sin refutaciones"*. Un resultado vacío y un resultado limpio se ven igual.
-3. **Contar un `.skipped.json` como extracción.** Infla el denominador y hace que un
-   documento no procesado participe del contraste.
-4. **Creer que `judge` validó el material.** No lo hizo ni puede: califica la
-   transcripción. Es un chequeo de consistencia interna presentado como chequeo de
-   contenido, y es la trampa más cara de las cuatro porque *da la sensación de haber
-   cerrado el circuito*.
-
----
-
-## 10. Resumen ejecutivo
-
-- La extracción real no se **elige**, se **construye**: una lectura desde el texto y
-  otra desde los píxeles, que no compartan nada más que el documento.
-- El orden es **gratis → barato → caro**: etiqueta, trazabilidad-al-prompt, aritmética,
-  ventana; estabilidad; cross-modelo sobre el mismo texto; vision local; **vision del
-  frontier al final**.
-- `judge` **no** es la comparación decisiva: califica un guion.
-- El refutador de mejor retorno es el más tonto: **¿este valor está en el prompt y no en
-  el documento?** Atrapó las tres fabricaciones del modelo local sin gastar un token.
-- La aritmética es el único lector independiente que no es un modelo, y además dice si
-  el problema está aguas arriba (OCR) o aguas abajo (modelo).
-- Con un solo proveedor sin visión configurado, **la garantía más fuerte es
-  material × modelo, no solo-documento**. La estrategia tiene que declarar cuál está
-  dando.
-- Queda un error que ninguna validación cruzada detecta: **cuando las dos lecturas se
-  equivocan igual** (emisor vs receptor). Eso no es un problema de validación, es una
-  regla que falta.
-
----
-
-## 11. El documento, en pseudocódigo (lenguaje natural)
-
-Mismo recorrido, guiado por `procesar_documento`. Las referencias (§n) apuntan a la
-sección de arriba de la que sale cada línea.
+## El documento, en pseudocódigo (lenguaje natural)
 
 ```text
 # ─────────────────────────────────────────────────────────────────────────────
-# 0. Validar el validador  (§2.6, §9.1)  — gratis, y va primero
+# 0. Validar el validador — gratis, y va primero.
 #    Un harness que no arranca reporta SILENCIO, y el silencio se lee "limpio".
 # ─────────────────────────────────────────────────────────────────────────────
 verificar_harness():
     asegurar( el driver arranca )            # un --out declarado dos veces = error en CADA invocación
-    asegurar( gates() no miente )            # los nombres de credencial son ALTERNATIVAS, no un AND:
-                                             # "no credential: dry run" no se anuncia en una corrida que sí evaluó
-    asegurar( ambas corridas respondieron la MISMA pregunta )   # §2.5
-        # firma de _mirror.Resume = modelo + esquema + TEXTO DEL PROMPT, hasheada por eso mismo.
-        # Comparar corridas con prompts distintos no mide desacuerdo: mide un cambio de instrumento.
+    asegurar( gates() no miente )            # los nombres de credencial son ALTERNATIVAS, no un AND
+    asegurar( ambas corridas respondieron la MISMA pregunta )
+        # firma de _mirror.Resume = modelo + esquema + TEXTO DEL PROMPT, hasheada por eso mismo
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Camino principal — orden por poder de refutación por dólar (§4, §7, §10)
-# ─────────────────────────────────────────────────────────────────────────────
 def procesar_documento(doc):
 
     # === 1. Confianza de partida, antes de cualquier LLM ===
-    tier, material = rutear(doc)          # texto_nativo | rasterizado | escaneado   (§1 paso 3)
-    # La confianza NO se declara ni se elige: se deriva del tier y la refutan los pasos de abajo.
+    tier, material = rutear(doc)          # texto_nativo | rasterizado | escaneado
+    # La confianza no se declara ni se elige: se deriva del tier y la refutan los pasos de abajo.
 
     if tier != TEXTO_NATIVO:
-        legible = chequear_legibilidad(material)          # K3.legibility: sharpness vs umbral
+        legible = chequear_legibilidad(material)   # sharpness vs umbral, y span_x si el OCR no devuelve nada
         if not legible:
             return encolar(doc, motivo="material_degradado", fields=None)
             # no tiene sentido cross-validar algo que ya se sabe poco confiable
-            # — pero ojo (§5): "el OCR no devolvió nada" NO siempre es defecto del documento.
-            #   La medición que lo discrimina es span_x (fracción de columnas con tinta):
-            #   0.28 en el fixture que falla, contra 0.75–1.00 en los cuatro que leen bien.
-            #   Es la CONCENTRACIÓN, no la cantidad (uno que lee bien tiene menos tinta).
 
     # === 2. Extracción(es) según el tier ===
-    texto = obtener_texto(material, tier)     # K2.layout_text (texto nativo) o K4.layout (OCR)
+    texto = obtener_texto(material, tier)     # texto nativo del PDF, u OCR si no lo es
 
     fields_texto, corridas = correr_local_estable(prompt=PROMPT_EXTRACCION, texto=texto, n=2)
     estable = corridas_coinciden(corridas)
-    # §3: este par aísla solo la INESTABILIDAD DEL MODELO, no el material.
-    # Medido (§6): 3 corridas → 3 respuestas distintas, y un validador de
-    # "¿es plausible?" aprueba las tres. Descarta ruido ANTES de sospechar del modelo.
+    # este par aísla solo la INESTABILIDAD DEL MODELO, no el material:
+    # descarta ruido antes de sospechar del modelo
 
-    # === 3. Refutadores mecánicos: corren siempre, cuestan ~0 (§2, §7) ===
+    # === 3. Refutadores mecánicos, corren siempre, cuestan ~0 ===
     violaciones = []
-    violaciones += chequear_etiqueta_evidencia( fields_texto, material )
-        # §2.1: un reason.code que no coincide con evidence es defecto del ADAPTADOR, no del documento.
-        # Medido: classify de página en blanco devuelve value=None + reason=blank_page,
-        # pero evidence.observed["shape"] == "blank" → en blanco y no-medible NO son lo mismo.
-        # Y al revés: en un .jpg, K2 abre 1 página, get_images()=0 y get_image_info()=1:
-        # dos APIs del mismo motor se contradicen dentro de una sola medición.
+    violaciones += chequear_etiqueta_evidencia(fields_texto, material)
+        # un reason.code que no coincide con evidence es defecto del ADAPTADOR:
+        # en blanco y no-medible no son lo mismo
 
-    violaciones += chequear_trazabilidad_al_prompt( fields_texto, PROMPT_EXTRACCION, texto )
-        # §2.2 — EL REFUTADOR MÁS RENTABLE, y no necesita ningún modelo:
-        #     para cada valor v:  v in texto_del_prompt  AND  v not in texto_del_documento
-        # Medido con deepseek-r1:1.5b: "20-1" (ejemplo de la regla 3), "ROSARI0" (regla 2),
-        # "A | B | C | 090 | 099" (lista de claves leída como valor), "17.898,30" (regla 4).
-        # El modelo recibió el prompt y devolvió el prompt: un chequeo de plausibilidad no lo ve.
-        # Costo: un `in` sobre dos cadenas.
+    violaciones += chequear_trazabilidad_al_prompt(fields_texto, PROMPT_EXTRACCION, texto)
+        # EL MÁS RENTABLE, sin ningún modelo:  v in prompt  AND  v not in documento
+        # el modelo recibió el prompt y devolvió el prompt
 
-    violaciones += chequear_aritmetica( fields_texto )     # §2.3
-        #   Σ renglones impresos          == subtotal impreso        (medido: 60 535.54)
-        #   subtotal × alícuota_dominante == IVA impreso             (medido: 12 712.46)
-        #   subtotal + IVA + percepciones == total impreso           (medido: 75 306.21)
-        # Es el único lector independiente que NO es un modelo.
-        # Si cierra → valida el DOCUMENTO y refuta por aritmética cualquier campo que lo contradiga.
-        # Si no cierra → el culpable puede ser el OCR: la sospecha empieza en el paso 4, no en el modelo.
+    violaciones += chequear_aritmetica(fields_texto)
+        # Σítems == subtotal · subtotal×alícuota == IVA · subtotal+IVA+percepciones == total
+        # el único lector independiente que no es un modelo
 
-    violaciones += chequear_ventana_contexto( texto, PROMPT_EXTRACCION, NUM_CTX )   # §2.4
-        # Detector por llamada: evaluated_tokens >= num_ctx * PROMPT_WINDOW_SHARE (0.5).
-        # Medido: prompt ~2 400 chars, llamada 5 945 chars → 2 249 tokens contra 2 048,
-        # done_reason 'stop', valor plausible, y NADA en la respuesta lo dice.
-        # La elección de modelo cambia qué es detectable: deepseek falla ruidoso
-        # (HTTP 400 exceed_context_size_error); smollm2 lo descarta en SILENCIO.
-        # Arreglo verificado: DOCFLOW_OLLAMA_NUM_CTX=8192 → truncated 0.
+    violaciones += chequear_ventana_contexto(texto, PROMPT_EXTRACCION, NUM_CTX)
+        # evaluated_tokens >= num_ctx * PROMPT_WINDOW_SHARE(0.5); done_reason 'stop' no lo delata
 
     if violaciones:
         return encolar(doc, motivo="refutador_disparado", fields=fields_texto, detalle=violaciones)
         # fabricación o inconsistencia detectada gratis: no pagues vision para confirmar
-        # algo que ya está refutado. Los pasos 0–4 juntos habrían atrapado, sin un dólar,
-        # los errores que hoy costaron el paso caro.
+        # algo que ya está refutado
 
     # === 4. Si el material puede fallar por OCR, buscá el par que lo aísla ===
     if tier == TEXTO_NATIVO:
@@ -538,24 +249,16 @@ def procesar_documento(doc):
         else:
             return encolar(doc, motivo="inestable_sin_frontera_ocr", fields=fields_texto)
     else:
-        # --- 4.a cross-modelo sobre el MISMO texto: aísla el MODELO (§3, §4 paso 6) ---
-        # va antes que la vision porque es más barato. Si el texto y el cross-modelo
-        # coinciden, el campo es sólido y el píxel no agrega nada.
-        # (comparte el texto OCR, así que NO puede refutar un error de OCR)
-
-        # --- 4.b el par decisivo: texto × vision, que comparte SOLO el documento (§3, §4 pasos 7–8) ---
+        # 4.a cross-modelo sobre el MISMO texto: aísla el MODELO, y va antes por barato.
+        #     No puede refutar un error de OCR: comparte el texto.
+        # 4.b el par decisivo: local-texto × vision, que comparte SOLO el documento.
         fields_vision = correr_local_vision(material)      # qwen2.5vl:3b → aísla el MATERIAL
-        # ...y, si hay proveedor con supports_vision=True, frontier-vision sobre el píxel.
-        # Medido (§4): deepseek lo tiene en False y SE REHÚSA con un unsupported_format tipado.
-        # Rehusarse es correcto: una respuesta plausible a una pregunta que no puede
-        # contestar es peor que una negativa.
+        # ...y frontier-vision si hay proveedor con supports_vision=True (DeepSeek lo tiene en False)
 
         diffs = comparar_campo_a_campo(fields_texto, fields_vision)
 
         if not diffs and estable:
             fields_final = fields_texto   # coinciden compartiendo solo el documento
-            # (la garantía es "material × modelo", NO "solo documento", si el único
-            #  proveedor configurado no tiene visión — la estrategia debe DECIR cuál está dando)
         else:
             return encolar(doc, motivo="texto_vs_vision_difieren",
                            fields={"texto": fields_texto, "vision": fields_vision},
@@ -566,10 +269,7 @@ def procesar_documento(doc):
     # === 5. Regla explícita para el blind spot conocido (emisor/receptor) ===
     fields_final = corregir_si_es_receptor_conocido(fields_final, CUITS_PROPIOS)
     # gratis y determinístico: no depende de que ninguna validación cruzada lo note,
-    # porque ambas lecturas se equivocan igual y nunca lo iban a notar.
-    # El comprobante imprime su CUIT (30-50673003-8) y el del cliente (30582215703);
-    # los dos modelos devolvieron el del cliente. No es error de OCR ni de modelo:
-    # falta una regla y falta un campo `cuit_receptor` donde poner el segundo.
+    # porque ambas lecturas se equivocan igual y nunca lo iban a notar
 
     return CONFIRMADO(fields_final, tier=tier, estable=estable)
 
@@ -577,31 +277,24 @@ def procesar_documento(doc):
 # ─────────────────────────────────────────────────────────────────────────────
 # Lo que NO entra en el camino decisivo
 # ─────────────────────────────────────────────────────────────────────────────
-judge(fields, guion):                       # §3, §9.4
+judge(fields, guion):
     # NO valida el material y no puede: califica la transcripción, y la transcripción
-    # ES la salida del OCR. Medido por introspección: inspect.signature(...judge)
-    # no tiene parámetro `images` y delega en `structured`. Califica un guion.
-    # Sigue sirviendo para consistencia INTERNA y fabricaciones: marcó exactamente
-    # los 7 campos que correspondían.
+    # ES la salida del OCR. Sirve para consistencia INTERNA y fabricaciones.
     # Defecto abierto: GRADE_SCHEMA declara `supported` y el modelo devolvió `plausible`
     # → leer `supported` da None × 23 y se reporta "sin refutaciones" EN SILENCIO.
     normalizar_clave(veredicto) antes de consumir
 
-emparejar_saltados():                       # §1, §9.3
-    # un archivo saltado se escribe <stem>.skipped.json, NUNCA <stem>.json.
-    # Contarlo como extracción infla el denominador y hace participar del contraste
-    # a un documento que no se procesó. Contarlos por separado.
-    # El emparejamiento entre corridas es por RUTA RELATIVA (el espejo de batch_*.py),
-    # no una heurística de nombres.
+emparejar(a, b):                            # el espejo de batch_*.py
+    # emparejar por RUTA RELATIVA, nunca por heurística de nombres;
+    # contar <stem>.skipped.json APARTE: un salto no es una extracción vacía
 
-localizar_el_problema(fields_texto, fields_cross, fields_vision):    # §5
-    # Cuando el par decisivo difiere, el paso 6 dice DÓNDE mirar:
+localizar_el_problema(fields_texto, fields_cross, fields_vision):
+    # cuando el par decisivo difiere, el cross-modelo dice DÓNDE mirar:
     if fields_texto coincide_con fields_cross:
         → el material está bien; el problema es el PÍXEL o el MODELO DE VISIÓN
           → revisar DPI efectivo, legibilidad, qwen2.5vl
     else:
-        → el problema es el MODELO o el TEXTO
-          → revisar el prompt (trazabilidad §2.2, ventana §2.4) y el OCR
+        → el problema es el MODELO o el TEXTO → revisar el prompt y el OCR
 
 
 def encolar(doc, motivo, fields, detalle=None):
@@ -611,26 +304,13 @@ def encolar(doc, motivo, fields, detalle=None):
         "doc": doc, "motivo": motivo, "fields_por_fuente": fields,
         "detalle": detalle, "asistencia_disponible": ["frontier_vision", "humano"]
     })
-    # Un veredicto sin el registro de quién lo produjo es una afirmación que nadie
-    # puede revisar — exactamente lo que este proyecto existe para evitar.
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Política de costos: el orden ES la política (§7)
-# ─────────────────────────────────────────────────────────────────────────────
-#   refutadores mecánicos  → milisegundos, $0
-#   OCR (K4.read)          → ~8–10 s por llamada (recarga ONNX, no hay camino caliente)
-#   local texto 1.5B       → ~4–11 s        | smollm2: 0.5–3.6 s, pero desbocado 1 de 5
-#   local vision 3B        → ~3 s
-#   FRONTIER               → ~180–300 s por lectura, 20 700 tokens para dos campos
-#   El frontier cuesta DOS ÓRDENES DE MAGNITUD más que todo lo demás junto
-#   (con MAX_TOKENS=16384 truncó y no contestó nada).
-#   → Cualquier cosa refutable sin el frontier se refuta ANTES.
-
-escala_a_hitl():                            # §8
-    SÍ  → un campo donde las lecturas independientes DIFIEREN y
-          ningún refutador mecánico disparó (ahí hay una decisión que ningún programa toma)
-    NO  → un campo ya refutado por un refutador mecánico (el programa sabe la respuesta)
+escala_a_hitl():
+    SÍ  → un campo donde las lecturas independientes DIFIEREN y ningún refutador disparó
+    NO  → un campo ya refutado por un refutador mecánico
     NO  → un campo donde las lecturas COINCIDEN EN EL ERROR (falta una regla, no una revisión)
-    NO  → un documento donde falló el paso 0–4 (es un defecto del harness: se arregla, no se revisa)
+    NO  → un documento donde falló el paso 0–4 (defecto del harness: se arregla)
 ```
+
+**El orden es la política de costos:** todo lo refutable sin el frontier se refuta antes de
+tocarlo.
