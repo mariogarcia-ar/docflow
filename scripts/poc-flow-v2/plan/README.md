@@ -212,6 +212,8 @@ tres preguntas de §Lo más importante sin mirar el código.
       `suggest` (frontier) es B2, no se finge
 - [x] Reemplazar los stubs de `decide` / `hitl` por los módulos portados
 - [x] Probar cada invariante con valores construidos (I2, I3, I4, I10)
+- [x] Prueba de mutación de cada invariante (`tests/poc_flow_v2/mutation_invariants.py`):
+      rompe I2/I3/I4/I10 en la fuente y observa que su test se pone rojo (B.16)
 
 **Aceptación**: los módulos puros pasan `pytest` sin adapters, y cada test de invariante
 **falla al mutar** la fuente (B.16).
