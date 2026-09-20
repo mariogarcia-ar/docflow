@@ -1,0 +1,22 @@
+Extrae los campos de este comprobante fiscal a partir del TEXTO del documento.
+
+Reglas de lectura:
+- Devuelve SOLO el JSON que pide el schema, sin prosa adicional.
+- Un importe se devuelve TAL CUAL está impreso, como texto. Nunca lo conviertas
+  a número, nunca le quites separadores ni ceros finales: "17.898,30" es "17.898,30".
+- El CUIT se corta en el primer carácter que no sea dígito ni el guion propio del
+  número. "30-12345678-9" es "30-12345678-9"; "CUIT 30-12345678-9" es "30-12345678-9".
+- Distingue EMISOR de RECEPTOR: el CUIT del emisor es el del comprobante, no el
+  del cliente.
+- Distingue fecha de EMISIÓN de vencimiento y de período de facturación.
+- Distingue subtotal, total y otros importes: no confundas el total con un
+  subtotal ni con un importe en otra moneda.
+- Si el documento NO es un comprobante, responde comprobante_valido=false con el
+  motivo en motivo_rechazo. NO inventes campos para un documento que no es un
+  comprobante.
+- Si un campo no está en el documento, omítelo. Nunca lo inventes.
+
+Texto del documento:
+<documento>
+{text}
+</documento>

@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "properties": {
+    "comprobante_valido": {"type": "boolean"},
+    "motivo_rechazo": {"type": "string"},
+    "tipo_comprobante": {"type": "string"},
+    "razon_social_emisor": {"type": "string"},
+    "cuit_emisor": {"type": "string"},
+    "fecha_emision": {"type": "string"},
+    "nro_comprobante": {"type": "string"},
+    "moneda": {"type": "string"},
+    "subtotal": {"type": "string"},
+    "iva": {"type": "string"},
+    "impuestos_internos": {"type": "string"},
+    "percepcion_iibb": {"type": "string"},
+    "otros_impuestos": {"type": "string"},
+    "monto_no_gravado": {"type": "string"},
+    "importe_total_facturado": {"type": "string"},
+    "descripcion": {"type": "string"},
+    "condicion_impositiva_dominante": {"type": "string"},
+    "alicuotas_detectadas": {"type": "string"},
+    "categoria_gasto": {"type": "string"},
+    "notas": {"type": "string"},
+    "cantidad_comensales_personas": {"type": "string"},
+    "cantidad_litros": {"type": "string"},
+    "centro_de_costo": {"type": "string"}
+  },
+  "required": ["comprobante_valido"],
+  "additionalProperties": false
+}

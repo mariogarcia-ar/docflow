@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "properties": {
+    "reviewer": {"type": "string"},
+    "extractor_reviewed": {"type": "string"},
+    "field_verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {"type": "string"},
+          "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain"]},
+          "reason": {"type": ["string", "null"]},
+          "suggested_value": {"type": ["string", "null"]}
+        },
+        "required": ["field", "verdict"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["reviewer", "extractor_reviewed", "field_verdicts"],
+  "additionalProperties": false
+}
