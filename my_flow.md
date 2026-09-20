@@ -1,4 +1,4 @@
-# Flujo de extracción de comprobantes fiscales (v5)
+# Flujo de extracción de comprobantes fiscales (v6)
 
 > Ningún modelo determina por sí solo la verdad del documento. La confianza surge de la
 > combinación entre evidencia documental, validaciones determinísticas, consistencia
@@ -18,9 +18,10 @@ No son parámetros configurables. Una implementación que viole alguno deja de s
 | I4 | **Sin doble conteo.** Máximo una señal por familia de evidencia. Una señal que fue *input* de un extractor (p. ej. el schema-visual usado como hint) no cuenta como corroboración de su *output*. | §6.2 |
 | I5 | **B lee la fuente.** El revisor recibe el documento original, no solo el JSON de A. | §4.1 |
 | I6 | **Score ≠ verdad.** Lo que confirma el motor es `SYSTEM_CONFIRMED`. Solo la confirmación humana es ground truth. | §9 |
-| I7 | **El histórico no se confirma a sí mismo.** Una observación no alimenta el schema-visual si solo se confirmó gracias al schema-visual. | §9 |
-| I8 | **Alcanzabilidad.** Todo par (campo, tier) tiene un camino a CONFIRMADO o una escalera de escalamiento explícita. Se verifica automáticamente cada vez que cambian puntajes o umbrales. | Anexo A |
+| I7 | **Solo la confirmación humana activa lo aprendido.** Una señal de scoring aprendida (template de layout, perfil de emisor) se activa únicamente desde `HUMAN_CONFIRMED`. `SYSTEM_CONFIRMED` alimenta estadísticas en sombra sin efecto en el score ni en la calibración: un error sistemático de todos los modelos no puede enseñarse a sí mismo. | §9 |
+| I8 | **Alcanzabilidad.** Todo par (campo, tier) tiene un camino a CONFIRMADO o una escalera de escalamiento explícita. Un test automático corre cada vez que cambian puntajes, umbrales, gates o señales disponibles, y **falla el build/la configuración** si algún par válido queda sin camino. | Anexo A |
 | I9 | **Nada se pisa en silencio.** `resolver` deriva candidatos con traza y siempre vuelven al motor. | §7 |
+| I10 | **La falta de información no es un error.** Todo validador responde `PASS` / `FAIL` / `UNKNOWN`. `UNKNOWN` no puntúa, no penaliza y nunca veta. | §6.2 |
 
 ---
 
@@ -48,8 +49,9 @@ Un mismo emisor puede tener Factura A, Factura B, notas de crédito, sucursales 
 ERP antiguos y nuevos: con un schema por emisor, un layout legítimo distinto se lee
 como anomalía. Por eso la clave incluye tipo y huella de layout (§9).
 
-El prompt y los schemas los edita un humano. El schema-visual lo actualiza el propio
-sistema (§9), solo desde observaciones que cumplan I6 e I7.
+El prompt y los schemas los edita un humano. El schema-visual lo propone el propio sistema
+en sombra (§9), pero un template solo entra en juego (señal `LAYOUT_HISTORY`) después de
+confirmación humana (I7).
 
 ### `review_schema`
 
@@ -97,28 +99,29 @@ documento
   → extraer (regexp, LLM, vision y QR producen candidatos + evidencia)
   → normalizar y agrupar candidatos (por normalized_value)
   → motor de decisión (§6: señales por familia, vetos, margen, gate)
-       ├─ CONFIRMADO        → SYSTEM_CONFIRMED → aprender (solo bajo I6/I7)
-       ├─ REVISAR/RESOLVER  → resolver (§7) → motor (loop, máx. 2 vueltas)
+       ├─ CONFIRMADO        → SYSTEM_CONFIRMED → estadísticas en sombra (§9)
+       ├─ REVISAR/RESOLVER  → resolver (§7) → motor (solo si hay novedad; máx. 2 vueltas)
        │                        └─ sin refutador → lane faltante a demanda → motor
        │                                             └─ sigue sin cerrar → frontier (§8)
        └─ ESCALAR (score bajo / todo vetado / material degradado) → frontier (§8)
                                                   └→ humano → HUMAN_CONFIRMED → aprender
 ```
 
-**Cambios vs. v4:**
+**Cambios vs. v5:**
 
-- Se agregan los **invariantes** y las **familias de evidencia** con tope por familia (§6.2).
-- El **gate de campos críticos** pasa de "cruce de lanes o determinístico" a un concepto
-  de *evidencia fuerte* por severidad, para no escalar PDFs nativos perfectos (§6.5).
-- **Refutaciones duras** (veto) separadas de las blandas (§6.3).
-- **Margen** entre primer y segundo candidato además del score absoluto (§6.5).
-- **Umbrales por severidad y tier**, elegidos para ser alcanzables (Anexo A).
-- Evidencia dividida en **ubicación** y **contenido**; el +2 exige verificación mecánica (§4.2).
-- `regexp` y **QR** entran como productores de candidatos (§4.2, §6.1).
-- **schema-visual** por emisor + tipo + layout (§0, §9).
-- **SYSTEM_CONFIRMED vs. HUMAN_CONFIRMED** (§9).
-- Escalera con **lane a demanda** antes del frontier (§1, §8).
-- Ejemplo aritmético corregido y **tolerancia explícita** (§7).
+- Todos los validadores responden **PASS / FAIL / UNKNOWN**; `UNKNOWN` no puntúa ni veta (I10, §6.2).
+- Un veto aritmético exige que la regla declare tener **todos sus componentes**; si no, es `UNKNOWN` (§6.3, §6.4).
+- Se elimina la refutación blanda por "evidencia insuficiente": la falta de evidencia ya se
+  expresa como puntos que no se cobran (§6.2).
+- El QR pasa a describirse como **extracción determinística de una fuente embebida**, no
+  como verdad del comprobante (§4.2, §6.2).
+- El aprendizaje se separa en dos canales: **SYSTEM_CONFIRMED** solo alimenta estadísticas en
+  sombra; templates, calibración y reglas solo desde **HUMAN_CONFIRMED**. Se agrega el ciclo
+  de vida de templates (I7, §9).
+- El loop resolver → motor solo reingresa si hay candidato o evidencia **nuevos** (§7).
+- **Códigos de razón** estándar para cada decisión (§6.5).
+- Auditoría por riesgo y métricas nuevas del revisor y de la independencia entre lanes (§9, Notas).
+- El test de alcanzabilidad **falla el build** (I8, Anexo A).
 
 ---
 
@@ -213,7 +216,7 @@ tier == escaneado_ocr
     extract_B (Granite-Vision 2B), recibe render + campos_vision_A, mismo framing adversarial
 
 cualquier tier con render disponible
-  → decodificar QR, si hay (ver abajo) → candidatos + señal determinística
+  → decodificar QR, si hay (ver abajo) → candidatos por extracción determinística
 
   salida: candidatos de cada lane con su veredicto de B, SIN fusionar entre lanes;
           eso lo resuelve el motor de decisión (§6)
@@ -222,10 +225,16 @@ cualquier tier con render disponible
 **QR de comprobante electrónico (si los comprobantes son argentinos con CAE).** Las
 facturas electrónicas traen un QR de ARCA cuyo payload incluye fecha, CUIT del emisor,
 punto de venta, tipo y número de comprobante, importe, moneda, tipo y número de documento
-del receptor, y código de autorización. Decodificarlo es determinístico y no depende de
-ningún LLM ni de OCR: cubre justo los campos críticos y distingue emisor de receptor por
-construcción. Un desacuerdo QR ↔ texto impreso **no se resuelve por puntaje**: fuerza
-REVISAR o escalar (puede ser un error de lectura o un comprobante inconsistente).
+del receptor, y código de autorización. Es una **extracción determinística de una fuente
+embebida**: la decodificación es exacta y no depende de ningún LLM ni de OCR, pero eso no
+vuelve al payload la verdad del comprobante (la autenticidad del CAE se valida con una
+consulta a ARCA, ver Notas). Lo que aporta es una segunda lectura del mismo dato con modos
+de falla distintos a los del OCR y los LLM; por eso su **coincidencia** con el valor
+impreso puntúa como `DETERMINISTIC`, y por eso cubre justo los campos críticos y distingue
+emisor de receptor por construcción. Un desacuerdo QR ↔ texto impreso **no se resuelve por
+puntaje**: activa `conflicto_qr` y fuerza REVISAR o escalar. No es una discrepancia entre
+modelos sino entre dos representaciones del documento (error de lectura, comprobante
+inconsistente o alterado, QR incorrecto).
 
 **Dos ejes de refutación, no uno solo:**
 - **Dentro de cada lane** (A/B, mismo material, modelos distintos) → refuta errores de
@@ -233,10 +242,13 @@ REVISAR o escalar (puede ser un error de lectura o un comprobante inconsistente)
 - **Entre lanes** (texto vs. vision) → el único par que puede refutar un error de
   *OCR/material*. El chequeo A/B no lo reemplaza, lo complementa.
 
-**Límite de la independencia entre lanes.** Ambas lanes parten del mismo render y del
-mismo preprocesado (§2). En escaneos degradados los errores pueden estar correlacionados.
-Mitigación recomendada: que la lane vision use una resolución o preprocesado distinto al
-del OCR, o al menos que el chequeo de legibilidad sea estricto.
+**Límite de la independencia entre lanes.** Ambas lanes parten del mismo documento y, por
+defecto, del mismo render y preprocesado (§2). En escaneos degradados los errores pueden
+estar correlacionados. Diseño recomendado: *mismo documento, pipelines de transformación
+distintos, familias de modelo distintas*. Por ejemplo, OCR sobre imagen en escala de grises,
+con deskew y DPI alto; vision sobre el render original o con un resize alternativo. La
+suposición de independencia no se da por buena: se mide con `cross_modal_correlated_error_rate`
+(Notas).
 
 **Terminología:** `cross_model_agreement` reemplaza a `extraction_consistent`. Es más
 fuerte que dos corridas del mismo modelo, pero sigue sin ser prueba: A y B comparten el
@@ -300,10 +312,10 @@ campo se fusionan en **un** candidato con múltiples señales. Sin esto, `"125.3
       "normalized_value": "125340.50",
       "producers": ["extractor_llm_texto", "regexp", "vision_A"],
       "signals": [
-        { "family": "DETERMINISTIC",    "rule": "VAL_TOTAL_002", "points": 3 },
-        { "family": "DOCUMENT_CONTENT", "verified": true,       "points": 2 },
-        { "family": "CROSS_MODAL",                              "points": 2 },
-        { "family": "SAME_MATERIAL",    "detail": "B agree + regexp", "points": 1 }
+        { "family": "DETERMINISTIC",    "rule": "VAL_TOTAL_002", "result": "PASS", "points": 3 },
+        { "family": "DOCUMENT_CONTENT", "verified": true,       "result": "PASS", "points": 2 },
+        { "family": "CROSS_MODAL",                              "result": "PASS", "points": 2 },
+        { "family": "SAME_MATERIAL",    "detail": "B agree + regexp", "result": "PASS", "points": 1 }
       ],
       "hard_refutations": [],
       "score": 8
@@ -311,8 +323,11 @@ campo se fusionan en **un** candidato con múltiples señales. Sin esto, `"125.3
     {
       "normalized_value": "125840.50",
       "producers": ["vision_B_sugerido"],
-      "signals": [ { "family": "DOCUMENT_CONTENT", "verified": false, "points": 0 } ],
-      "hard_refutations": [ { "rule": "VAL_TOTAL_002", "reason": "combinación subtotal+IVA+total inconsistente" } ],
+      "signals": [ { "family": "DOCUMENT_CONTENT", "verified": false, "result": "UNKNOWN", "points": 0 } ],
+      "hard_refutations": [
+        { "rule": "VAL_TOTAL_002", "result": "FAIL", "required_components_present": true,
+          "reason": "combinación subtotal+IVA+total inconsistente" }
+      ],
       "score": null,
       "status": "vetado"
     }
@@ -320,7 +335,8 @@ campo se fusionan en **un** candidato con múltiples señales. Sin esto, `"125.3
 }
 ```
 
-(`SAME_MATERIAL` suma +1 aunque coincidan B y regexp: tope por familia, §6.2.)
+(`SAME_MATERIAL` suma +1 aunque coincidan B y regexp: tope por familia, §6.2. Cada señal registra
+su `result`; las `UNKNOWN` se conservan en la traza con 0 puntos.)
 
 ---
 
@@ -338,7 +354,7 @@ en un puntaje por candidato, en vez de contar votos.
 | Extractor LLM | produce candidatos semánticos | extract_A, §4 |
 | Reviewer / Critic | refuta candidatos; sus `suggested_value` son candidatos nuevos | extract_B, §4 |
 | Modelo visual | produce candidatos desde la imagen | extract_A vision, §4 |
-| QR | produce candidatos y señal determinística | §4.2 |
+| QR | produce candidatos por extracción determinística de una fuente embebida; su coincidencia con el valor impreso es señal `DETERMINISTIC` | §4.2 |
 | Validadores determinísticos | apoyan o refutan | refutadores mecánicos |
 | Histórico / schema-visual | contexto de posición por (emisor, tipo, layout) | §0, §9 |
 
@@ -350,15 +366,30 @@ regla fiscal e histórico que aprendió esa misma regla, no pueden inflar el sco
 
 | Familia | Señal | Pts | Cuenta solo si |
 |---|---|---|---|
-| `DETERMINISTIC` | validación fuerte: aritmética (con tolerancia explícita, §7), checksum, regla fiscal, coincidencia con QR | **+3** | la regla declara contra qué evidencia refuta |
+| `DETERMINISTIC` | resultado `PASS` de una validación fuerte: aritmética (con tolerancia explícita, §7), checksum, regla fiscal, coincidencia con el QR | **+3** | la regla declara contra qué evidencia refuta **y que dispone de todos sus componentes**; si no, `UNKNOWN` |
 | `DOCUMENT_CONTENT` | **ancla verificada**: el contenido en la ubicación coincide con `raw_value` y la etiqueta/contexto es compatible con el campo | **+2** | `verified: true` (§4.2); tener bbox no alcanza |
 | `CROSS_MODAL` | texto-lane final y vision-lane final coinciden en `normalized_value` | **+2** | corrieron ambas lanes (distinto material, I1) |
 | `SAME_MATERIAL` | B no refuta (`agree`) en el mismo lane; o regexp coincide con A | **+1** (tope 1 aunque ocurran ambas) | mismo lane: nunca puntúa como +2 |
-| `LAYOUT_HISTORY` | posición coincide con un template conocido (emisor + tipo + layout) | **+1** | el template existe; el schema-visual no fue input del extractor; no se apoya en la misma regla que ya dio +3 |
-| Refutación blanda | reviewer `disagree`, mismatch de layout contra template conocido, evidencia insuficiente | **−2** | uno por familia |
+| `LAYOUT_HISTORY` | posición coincide con un template **activo** (emisor + tipo + layout, §9) | **+1** | el template está activo; el schema-visual no fue input del extractor; no se apoya en la misma regla que ya dio +3 |
+| Refutación blanda | reviewer `disagree`; layout `MISMATCH` contra un template **activo**; validador en `FAIL` que no está en la lista de vetos (§6.3) | **−2** | uno por familia |
 | Evidencia directa en contra | el documento apunta a otro valor para ese campo | **−3** | verificada mecánicamente |
 
 `uncertain` de B es neutro. Los puntajes son punto de partida, no medidos.
+
+**Resultado de los validadores (I10).** Todo validador responde en tres estados. La falta
+de información nunca se convierte en error:
+
+| Estado | Efecto | Ejemplos |
+|---|---|---|
+| `PASS` | suma los puntos de su familia | checksum válido; la aritmética cierra; el QR coincide; el layout coincide con un template activo |
+| `FAIL` | veto si está en la lista de §6.3; si no, refutación blanda (−2) | checksum inválido; la aritmética no cierra *con todos los componentes presentes*; el layout no coincide con un template activo |
+| `UNKNOWN` | 0 puntos, sin penalización, nunca veta | aritmética sin todos los componentes; sin template activo; documento sin QR; capa de texto dudosa |
+
+Cada validador puede exponer su vocabulario propio (MATCH / MISMATCH, MATCH / CONFLICT /
+NOT_AVAILABLE) mapeado a estos tres estados. El `CONFLICT` del QR es un caso aparte: no
+veta ni resta a ningún candidato, activa el flag `conflicto_qr` (§6.5). La ausencia de
+evidencia se expresa como puntos que no se cobran, no como un −2 adicional; por eso v6
+elimina la refutación por "evidencia insuficiente".
 
 ### 6.3 Refutaciones duras (veto)
 
@@ -371,7 +402,9 @@ Lista cerrada (todo lo que no esté acá es blando):
 - **CUIT propio como `cuit_emisor`** (regla fija desde el día uno, no depende de aprendizaje;
   requiere la lista de CUIT propios como configuración).
 - Fecha inexistente, o valor que no parsea contra el schema.
-- Inconsistencia aritmética fuera de la tolerancia declarada (ver 6.4).
+- Inconsistencia aritmética fuera de la tolerancia declarada, **solo si la regla declara que
+  dispone de todos los componentes** requeridos para esa clase de comprobante (ver 6.4). Si
+  falta alguno, el resultado es `UNKNOWN`, no `FAIL`.
 
 Si todos los candidatos de un campo quedan vetados → `resolver` (§7) o escalar.
 
@@ -380,9 +413,17 @@ Si todos los candidatos de un campo quedan vetados → `resolver` (§7) o escala
 Las reglas aritméticas no refutan un campo aislado sino una **combinación** de candidatos:
 `{subtotal, IVA, otros tributos, total}`. El motor evalúa combinaciones; si exactamente una
 es consistente, esa recibe el +3 y las demás quedan vetadas; si hay más de una consistente,
-o ninguna, se escala. El `tipo_comprobante` determina qué campos se esperan (una Factura C
-no discrimina IVA). Los ítems de línea quedan fuera de alcance en v5, salvo como insumo de
-la suma que valida el subtotal.
+o ninguna, se escala (`ESC_NO_UNIQUE_ARITHMETIC_COMBINATION`).
+
+**Precondición de completitud.** Cada regla declara sus `required_components` según el
+`tipo_comprobante` (neto, IVA por alícuota, percepciones, retenciones, otros tributos,
+bonificaciones, redondeo; una Factura C no discrimina IVA). Solo si todos están presentes
+con candidato la regla puede dar `PASS` o `FAIL`. Si falta alguno, da `UNKNOWN`: no puntúa,
+no veta, y el campo queda en la situación "sin determinístico aplicable" del Anexo A. Un
+modelo de ecuación incompleto no puede producir un veto.
+
+Los ítems de línea quedan fuera de alcance en esta versión, salvo como insumo de la suma
+que valida el subtotal.
 
 ### 6.5 Decisión
 
@@ -439,6 +480,27 @@ señales → vetos → ganador/margen → gate
    └─ ESCALAR           → escalar (§8), directo al frontier
 ```
 
+**Códigos de razón.** Cada decisión de campo registra uno o más códigos estables. Son el
+`motivo` de `escalar(...)` en §8 (el conteo de motivos repetidos por emisor/patrón sale de
+acá) y la base de métricas, dashboards, análisis de escalamiento y explicación al humano.
+
+| Código | Resultado | Cuándo |
+|---|---|---|
+| `CONF_SCORE_MARGIN_GATE` | CONFIRMADO | score ≥ T, margen y gate cumplidos |
+| `REV_SCORE_MID` | REVISAR | score entre 2 y T |
+| `REV_CLOSE_MARGIN` | REVISAR | margen insuficiente frente al segundo candidato |
+| `REV_GATE_UNMET` | REVISAR | score suficiente pero sin evidencia fuerte |
+| `REV_REVIEWER_CONFLICT` | REVISAR | B en `disagree` con `suggested_value` en disputa |
+| `REV_QR_CONFLICT` | REVISAR | QR distinto del valor impreso |
+| `ESC_LOW_SCORE` | ESCALAR | ganador con score < 2 |
+| `ESC_ALL_VETOED` | ESCALAR | todos los candidatos vetados y `resolver` no aporta uno |
+| `ESC_NO_UNIQUE_ARITHMETIC_COMBINATION` | ESCALAR | cero o más de una combinación aritmética consistente |
+| `ESC_MISSING_STRONG_EVIDENCE` | ESCALAR | tras correr la lane a demanda sigue sin cumplirse el gate |
+| `ESC_QR_CONFLICT` | ESCALAR | el conflicto con el QR persiste tras resolver |
+| `ESC_NO_NEW_EVIDENCE` | ESCALAR | `resolver` no cambió candidatos ni señales (§7) |
+| `ESC_LOOP_LIMIT` | ESCALAR | se agotaron las 2 vueltas |
+| `ESC_DEGRADED_MATERIAL` | ESCALAR | material no legible (§2) |
+
 El objetivo no es sumar modelos, es combinar expertos con errores poco correlacionados.
 Un tercer LLM que lee el mismo texto no mueve el score en ninguna categoría de +2;
 solo el cruce texto/vision y las reglas determinísticas mueven la aguja.
@@ -471,14 +533,17 @@ Reglas:
 - El valor resuelto es un **candidato nuevo** (I9): arranca su propio puntaje y depende de
   que subtotal e IVA tengan su propio respaldo (§6.4). Si hay más de una combinación
   consistente, se escala.
-- El loop resolver → motor tiene tope de **2 vueltas**; después escala.
+- El loop resolver → motor solo reingresa si **cambió el conjunto de candidatos o el de
+  señales** (comparados por `normalized_value` y por (familia, resultado)). Si no cambió
+  nada, escala directo (`ESC_NO_NEW_EVIDENCE`): repetir el motor sobre la misma evidencia no
+  puede dar un resultado distinto. Además tiene tope de **2 vueltas** (`ESC_LOOP_LIMIT`).
 
 ---
 
 ## 8. Verificación (frontier + HITL)
 
 ```
-escalar(doc, lecturas_en_disputa, motivo)
+escalar(doc, lecturas_en_disputa, motivo)     # motivo = código de razón (§6.5)
   → (si falta una lane y el motivo es material: correrla a demanda antes de subir)
   → llm_frontier lee el documento original (multimodal)
       → campos_frontier + justificación por campo
@@ -508,29 +573,62 @@ perímetro hacia un frontier externo es una decisión de diseño pendiente (ver 
 
 | Estado | Origen | Uso |
 |---|---|---|
-| `SYSTEM_CONFIRMED` | el motor lo confirmó (§6.5) | procesamiento automático; **no es ground truth** |
-| `HUMAN_CONFIRMED` | resolvió un humano (§8) o una muestra de auditoría | ground truth; dataset de calibración |
+| `SYSTEM_CONFIRMED` | el motor lo confirmó (§6.5) | procesamiento automático y estadísticas en sombra; **no es ground truth** |
+| `HUMAN_CONFIRMED` | resolvió un humano (§8) o una muestra de auditoría | ground truth: activa lo aprendido, calibra umbrales, entrena cualquier meta-modelo futuro |
 
-**Qué alimenta el aprendizaje** (perfil del emisor y schema-visual):
+**Dos canales de aprendizaje separados (I7):**
 
-- Siempre desde `HUMAN_CONFIRMED`.
-- Desde `SYSTEM_CONFIRMED` solo si el candidato **habría alcanzado el umbral sin la señal
-  `LAYOUT_HISTORY`** (I7). Así el histórico nunca refuerza un patrón que él mismo confirmó.
-- Nunca desde una lectura cruda, desde `campos_frontier` sin confirmar, ni desde un
-  `resolved` que no volvió a pasar por el motor.
+| Canal | Qué alimenta | Fuente permitida |
+|---|---|---|
+| Estadísticas operativas **en sombra** | frecuencias por emisor/tipo, posiciones observadas, conteos, distribución de scores, detección de drift | `SYSTEM_CONFIRMED` y `HUMAN_CONFIRMED`. **Sin efecto en el score.** |
+| Aprendizaje **con efecto** | templates activos, perfil de emisor usado como señal, umbrales, reglas candidatas (§8), meta-modelos | solo `HUMAN_CONFIRMED` |
 
-**Clave del schema-visual:** `(emisor, tipo_comprobante, layout_fingerprint)`. El
-fingerprint es una huella tolerante de posiciones normalizadas de etiquetas ancla y logo.
-Sin template coincidente no hay señal `LAYOUT_HISTORY` (ni positiva ni negativa): un
-layout nuevo de un emisor conocido no es una anomalía. Un mismatch cuenta −2 solo cuando
-el fingerprint coincide con un template conocido pero la posición difiere. Un template
-nuevo se crea a partir de confirmaciones humanas.
+La razón: bloquear que el histórico confirme lo que él mismo enseñó no alcanza. Si todos los
+modelos leen mal el mismo campo de un template y el documento supera el umbral sin usar
+layout, esa lectura entraría como aprendizaje, y `LAYOUT_HISTORY` reforzaría el error en los
+documentos siguientes. Un error sistemático y correlacionado solo lo detecta un humano.
 
-**Calibración:** el backtest y los umbrales se calibran con `HUMAN_CONFIRMED` más una
-**muestra aleatoria auditada por un humano de los `SYSTEM_CONFIRMED`** (tasa inicial alta,
-p. ej. 10–20 %, a reducir con evidencia). Sin esa muestra la calibración es circular: se
-mediría el motor contra sus propias confirmaciones y no habría forma de estimar la tasa de
-falsos confirmados.
+Nunca se aprende de una lectura cruda, de `campos_frontier` sin confirmar, ni de un
+`resolved` que no volvió a pasar por el motor.
+
+**Clave del schema-visual:** `(emisor, tipo_comprobante, layout_fingerprint)`. El fingerprint
+es una huella tolerante de posiciones normalizadas de etiquetas ancla y logo.
+
+**Ciclo de vida de un template:**
+
+```
+shadow → active → stale → retired
+```
+
+| Estado | Condición | Efecto en el score |
+|---|---|---|
+| `shadow` | se vio un fingerprint nuevo; se acumulan estadísticas en sombra. Sus primeros documentos entran a auditoría con prioridad (inicial: los primeros 3) para acelerar la activación | ninguno |
+| `active` | k observaciones `HUMAN_CONFIRMED` consistentes entre sí y con las estadísticas en sombra (k inicial = 3, sin medir) | `LAYOUT_HISTORY`: MATCH +1; MISMATCH −2 |
+| `stale` | no visto en N días (a definir), o mismatches recientes que un humano confirmó como layout nuevo | señal `UNKNOWN`: nunca MISMATCH, hasta re-confirmar |
+| `retired` | reemplazado por un template nuevo del mismo emisor, o descartado | ninguno |
+
+Cada template guarda `first_seen`, `last_seen`, `sample_count_human`, `sample_count_shadow`
+y `state`. Un layout nuevo de un emisor conocido no es una anomalía: mientras no haya
+template activo coincidente, la señal es `UNKNOWN`, ni positiva ni negativa. Un decaimiento
+continuo de confianza queda como mejora posible; con estados discretos alcanza para empezar.
+Como `LAYOUT_HISTORY` vale solo +1 y el Anexo A se sostiene sin ella, exigir activación
+humana cuesta poco score y evita el error sistemático.
+
+**Calibración y auditoría por riesgo:** el backtest y los umbrales se calibran con
+`HUMAN_CONFIRMED` más una **muestra aleatoria auditada de los `SYSTEM_CONFIRMED`**. Sin esa
+muestra la calibración es circular: se mediría el motor contra sus propias confirmaciones y
+no habría forma de estimar la tasa de falsos confirmados. La tasa de auditoría se define por
+severidad, por campo confirmado (valores iniciales, a reducir cuando haya evidencia):
+
+| Severidad | Tasa inicial de auditoría |
+|---|---|
+| crítica | 20 % |
+| alta | 10 % |
+| media | 5 % |
+| baja | 2 % |
+
+Estratificar además por tier y por template (`shadow` o emisor nuevo), porque los errores se
+concentran ahí.
 
 ---
 
@@ -548,9 +646,19 @@ falsos confirmados.
   críticos. Optimizar por costo del error, no por accuracy global.
 - **Métricas del revisor B** (requieren `HUMAN_CONFIRMED`):
   `critic_disagreement_rate`; `critic_useful_disagreement_rate` (A estaba mal y B tenía
-  razón); tasa de falsa alarma (B disputa un A correcto). B es más débil que A en ambos
-  lanes (gemma3 vs. deepseek-r1; Granite 2B vs. qwen2.5vl): vigilar que no genere ruido
+  razón); `critic_false_alarm_rate` (B disputa un A correcto); y
+  **`critic_missed_error_rate`** (A estaba mal y B dijo `agree`), probablemente la más
+  importante: mide cuánto vale realmente el +1 de `SAME_MATERIAL`. B es más débil que A en
+  ambos lanes (gemma3 vs. deepseek-r1; Granite 2B vs. qwen2.5vl): vigilar que no genere ruido
   que sature REVISAR.
+- **Independencia entre lanes**: `cross_modal_correlated_error_rate`, la proporción de casos
+  en que texto y vision coinciden en un valor que `HUMAN_CONFIRMED` marca como incorrecto.
+  Si es alta, el +2 de `CROSS_MODAL` está sobrevalorado y hay que diversificar más los
+  pipelines (§4.2).
+- **Tamaño de la muestra de auditoría**: con cero errores en n muestras auditadas, la cota
+  superior al 95 % de la tasa de falsos confirmados es aproximadamente 3/n (regla del tres).
+  Para sostener una meta cercana a 1 % en un campo crítico hacen falta del orden de 300
+  campos auditados sin error, antes de bajar la tasa de auditoría.
 - **Trade-off aceptado en el patrón A/B (§4):** que B vea la respuesta de A introduce
   sesgo de anclaje. Es más barato que una segunda extracción a ciegas, pero más débil. Si
   en producción B rara vez discrepa (posible rubber-stamping), medir cuánto cambia el
@@ -559,27 +667,34 @@ falsos confirmados.
   (sintácticos, aritméticos, de evidencia, de posición, de reglas de negocio) a medida que
   se agreguen; alcanza con que cada uno declare contra qué evidencia refuta.
 - **Fuentes determinísticas opcionales**: constatación del comprobante contra ARCA
-  (validador a nivel documento) y consulta de razón social por CUIT en el padrón (daría a
+  (validador a nivel documento; responde si el comprobante es auténtico, no si se leyó
+  bien, que es lo que mide el QR) y consulta de razón social por CUIT en el padrón (daría a
   un campo de severidad media una señal `DETERMINISTIC`). Ambas dependen de conectividad y
   credenciales.
 - **Frontier y datos sensibles**: definir qué campos o documentos pueden salir del
   perímetro local. Los modelos de extracción son locales; §8 introduce un componente que
   quizá no lo sea.
-- **Ítems de línea**: fuera de alcance de v5 (§6.4); definir cómo se puntúan si se
+- **Ítems de línea**: fuera de alcance de esta versión (§6.4); definir cómo se puntúan si se
   necesitan como salida.
+- **Siguiente entregable**: este documento cierra el diseño del flujo. Lo que falta es el
+  contrato de datos de runtime: `FieldCandidate`, `EvidenceSignal` (con `result`),
+  `FieldDecision` (con códigos de razón) y `DecisionTrace`, más el pseudocódigo exacto del
+  Decision Engine. El modelo de datos sale casi literal de §5 y §6.5.
 
 ---
 
 ## Anexo A. Alcanzabilidad de CONFIRMADO (verificación de I8)
 
 Máximo score posible, con **todas** las señales positivas aplicables presentes y sin
-señales negativas. "Emisor nuevo" = sin template de layout; "template" = con `LAYOUT_HISTORY`.
-`CROSS_MODAL` solo existe si corrieron ambas lanes.
+señales negativas. "Emisor nuevo" = sin template **activo**; "template" = con `LAYOUT_HISTORY`.
+`CROSS_MODAL` solo existe si corrieron ambas lanes. Como los templates se activan por
+confirmación humana (§9), la columna "emisor nuevo" es la que rige al comienzo y para todo
+emisor con pocos documentos confirmados.
 
-| Campo | Tier | ¿Determinístico disponible? | T | Máx. emisor nuevo | Máx. con template | ¿Alcanza? |
+| Campo | Tier | ¿Determinístico aplicable? | T | Máx. emisor nuevo | Máx. con template | ¿Alcanza? |
 |---|---|---|---|---|---|---|
-| total, IVA | texto_nativo | sí (aritmética / QR) | 5 | 6 | 7 | sí |
-| total, IVA | texto_nativo | no | 5 | 3 | 4 | **no** → lane vision a demanda |
+| total, IVA | texto_nativo | sí (aritmética completa / QR) | 5 | 6 | 7 | sí |
+| total, IVA | texto_nativo | no (aritmética `UNKNOWN`, sin QR) | 5 | 3 | 4 | **no** → lane vision a demanda |
 | total, IVA | nativo + vision a demanda | no | 5 | 5 | 6 | sí |
 | total, IVA | escaneado_ocr | sí | 5 | 8 | 9 | sí |
 | total, IVA | escaneado_ocr | no | 5 | 5 | 6 | sí |
@@ -592,8 +707,9 @@ señales negativas. "Emisor nuevo" = sin template de layout; "template" = con `L
 | descripción, categoría | texto_nativo | no | 3 | 3 | 4 | sí |
 | descripción, categoría | escaneado_ocr | no | 4 | 5 | 6 | sí |
 
-La única celda inalcanzable es intencional: total/IVA en texto nativo *sin* ningún
-determinístico aplicable (sin subtotal, ítems ni QR) no puede confirmarse con una sola
+"Aplicable" significa que la regla tiene todos sus componentes (resultado `PASS`/`FAIL`, no
+`UNKNOWN`, §6.4) o que hay QR. La única celda inalcanzable es intencional: total/IVA en texto
+nativo *sin* ningún determinístico aplicable (componentes faltantes y sin QR) no puede confirmarse con una sola
 lane; la escalera corre la lane vision a demanda antes de subir al frontier.
 
 **Por qué existe este anexo.** Con los parámetros de v4 (umbral 6 para todo, sin
