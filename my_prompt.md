@@ -14,6 +14,7 @@ entrada > proceso > salida
 rm -rf var
 python scripts/poc/batch_pdf.py  tests/fixtures/ --out var/run
 python scripts/poc/batch_ocr.py  tests/fixtures/ --out var/run
+python scripts/poc/batch_ocr.py  var/run --out var/run2
 
 
 

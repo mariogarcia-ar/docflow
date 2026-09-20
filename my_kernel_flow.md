@@ -1,3 +1,9 @@
+# me estoy olvidando de la calidad 
+
+- si es un pdf que se extrae el texto. la confianza es alta
+- es un pdf convertido a imagen, y luego extraer ocr, confianza es mas baja
+- 
+
 # Kernels: primitivas reutilizables
 
 **Concepto base:** primitivas usables por componentes/pipelines, cada una ejecutable también por línea de comandos para poder probarlas de forma aislada antes de integrarlas.

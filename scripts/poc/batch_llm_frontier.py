@@ -221,24 +221,46 @@ def gates() -> bool:
     """Report whether a frontier request can be attempted at all.
 
     Returns:
-        ``True`` when every gating variable is set. `HOST` has a documented default
-        address and is reported without gating, which is the same reading
-        `llm_frontier.py` makes.
+        ``True`` when a credential **and** the response ceiling are present.
 
     """
-    ready = True
     print("the gate chain, in the order the adapter reads it:")
     for name in frontier_driver.GATES:
         present = bool(os.environ.get(name))
-        note = "" if present or name.endswith("HOST") else "  <- blocks every call"
+        # `HOST` has a documented default address and never gates; a credential name
+        # is *one way* to satisfy the credential, so the verdict below counts them
+        # rather than marking each one.
+        note = "" if present or name.endswith("HOST") else "  <- not set"
         print(f"  {name:30} {'set' if present else 'unset'}{note}")
-        if not present and not name.endswith("HOST"):
-            ready = False
+
+    # **The credential names are ALTERNATIVES, not a list that must all be set.**
+    # This loop used to require every name, so a working provider-specific setup
+    # (`DOCFLOW_FRONTIER_DEEPSEEK_KEY` set, the shared fallback unset) reported *no
+    # credential* - measured: the run assessed the document and still announced a dry
+    # run. `llm_frontier.py::report_gates()` already counts them; this is the same
+    # reading, taken from the provider, or the header is a second opinion about a fact
+    # the adapter owns.
+    provider = frontier_driver.PROVIDER
+    credential = bool(provider and provider.key_variable(os.environ))
+    ceiling = bool(os.environ.get("DOCFLOW_FRONTIER_MAX_TOKENS"))
+    ready = credential and ceiling
+
+    print()
     if not ready:
+        missing = (
+            "credential"
+            if not credential
+            else "response ceiling (DOCFLOW_FRONTIER_MAX_TOKENS)"
+        )
         print(
-            "\nevery request below will refuse with `provider_unavailable`. The run\n"
-            "is still a dry run with a real report: it says which documents it would\n"
-            "have assessed, and the one reason it assessed none.\n"
+            f"No {missing}. Every request below will refuse with "
+            "`provider_unavailable`, and\nthe run is a dry run with a real report: it "
+            "says which documents it would have\nassessed, and the one reason it "
+            "assessed none.\n"
+        )
+    else:
+        print(
+            f"Configured: {frontier_driver.MODEL} via {provider.key_variable(os.environ)}\n"
         )
     return ready
 
@@ -532,12 +554,11 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="the output root `batch_llm_local.py` wrote (required)",
     )
-    parser.add_argument(
-        "--out",
-        type=pathlib.Path,
-        default=None,
-        help="the output root (default: var/poc/batch_llm_frontier)",
-    )
+    # `--out` is NOT declared here: `_mirror.batch_parser` above already does, and a
+    # second declaration is an `argparse` conflict that kills the driver at startup
+    # (`ArgumentError: argument --out: conflicting option string: --out`). Measured -
+    # the driver could not be run at all. The shared parser is the one owner of the
+    # walk's flags, exactly as `batch_ocr.py`/`batch_pdf.py`/`batch_image.py` treat it.
     parser.add_argument(
         "--model",
         default=None,
