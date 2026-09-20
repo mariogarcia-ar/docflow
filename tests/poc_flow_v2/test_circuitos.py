@@ -97,6 +97,22 @@ def test_c4_verified_requires_the_value_at_the_location() -> None:
     assert _present_at_location("18.898,30", text) is False
 
 
+def test_c4_a_value_inside_a_longer_number_is_not_verified() -> None:
+    """`17.898,30` inside `117.898,301` is a slice, not a reading.
+
+    This is the false positive the digit boundary check exists to kill: the
+    substring test alone would read a truncated number as verified.
+    """
+    text = "Total: $117.898,301"
+    assert _present_at_location("17.898,30", text) is False
+
+
+def test_c4_a_free_text_value_uses_a_plain_occurrence() -> None:
+    """A non-numeric value (razón social) is checked by occurrence, no digit guard."""
+    text = "Razón social: AIMARO JAVIER ANGEL"
+    assert _present_at_location("AIMARO JAVIER ANGEL", text) is True
+
+
 def test_c4_an_unverified_anchor_is_unknown_not_pass() -> None:
     """A candidate whose content is not at the location scores nothing."""
     candidate = FieldCandidate(

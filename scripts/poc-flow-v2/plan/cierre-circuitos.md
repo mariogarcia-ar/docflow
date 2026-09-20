@@ -109,12 +109,16 @@ no está pulled — la lane se niega con nota, no se finge.
 
 ### Ola 1.4 — C4: `verified` real
 
-- [ ] Evidencia `location` (bbox/offset) + `content`; `verified` lo calcula el
-      sistema releyendo el contenido en la ubicación declarada
-- [x] `_present_at_location` reemplaza el stand-in como helper; la verificación
-      por **ubicación declarada** (bbox) queda pendiente de los tokens del adapter
-- [x] Test: un bbox autodeclarado sin contenido verificado no puntúa
-      `DOCUMENT_CONTENT` (`test_c4_*`)
+- [x] `_present_at_location` verifica el contenido con **fronteras de dígito**:
+      un valor numérico solo se da por presente si es un número completo, no la
+      cola de uno más largo (el falso positivo del stand-in por subcadena)
+- [x] `DOCUMENT_CONTENT` usa el check por fronteras; un valor que no está en su
+      lugar puntúa `UNKNOWN`, nunca `PASS` (B.10)
+- [x] Test: `test_c4_*` — ubicación, valor dentro de un número más largo, texto
+      libre por ocurrencia; con prueba de mutación (quitar la frontera → rojo)
+- [ ] La verificación por **bbox declarado** (releer el recorte) sigue pendiente:
+      el extractor no declara un box hoy; `PdfEngine.tokens` provee `Token.bbox`
+      para el texto nativo → `# TODO: [MVP]`
 
 **Aceptación**: un ancla no verificada es `UNKNOWN`, nunca `PASS` (B.10).
 

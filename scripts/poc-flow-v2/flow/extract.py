@@ -113,19 +113,40 @@ def _present_in_text(raw: str, text: str) -> bool:
 
 
 def _present_at_location(raw: str, text: str) -> bool:
-    """Whether the value is present at its declared location in the text.
+    """Whether the value is present as a **whole** token at its location.
 
-    C4's mechanical check, in the form the text lane can supply today: the value
-    (normalized) appears in the text (normalized). The full bbox re-read is the
-    OCR-lane form (`# TODO: [MVP]`).
+    C4's mechanical check. The stand-in's defect is a substring false positive:
+    `"17.898,30"` matches inside `"117.898,301"` and reads as verified while
+    being the tail of a different number. A numeric value is verified only when
+    it appears with **digit boundaries** on both sides — a complete number, not
+    a slice of a longer one. Free-text values (razón social, description) have
+    no digit to guard, so a plain occurrence is the check that applies.
+
+    The full bbox re-read (`location` + `content`, §4.2) is the OCR-lane form
+    and stays `# TODO: [MVP]`: the extractor does not declare a box today.
     """
-    return _present_in_text(raw, text)
+    value = normalize(raw)
+    if not value:
+        return False
+    haystack = normalize(text)
+    if not value.isdigit():
+        return value in haystack
+    index = haystack.find(value)
+    while index != -1:
+        before = haystack[index - 1] if index > 0 else ""
+        after = (
+            haystack[index + len(value)] if index + len(value) < len(haystack) else ""
+        )
+        if not before.isdigit() and not after.isdigit():
+            return True
+        index = haystack.find(value, index + 1)
+    return False
 
 
 def _content_signal(raw: str, text: str | None, points: int) -> EvidenceSignal:
     """The DOCUMENT_CONTENT signal: PASS when the anchor is verified, UNKNOWN
     otherwise (`my_flow.md` §6.2: an unverified bbox does not score)."""
-    verified = text is not None and _present_in_text(raw, text)
+    verified = text is not None and _present_at_location(raw, text)
     return EvidenceSignal(
         "DOCUMENT_CONTENT",
         PASS if verified else UNKNOWN,
