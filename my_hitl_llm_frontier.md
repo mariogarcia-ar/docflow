@@ -27,19 +27,18 @@ documento (con tier ya definido por el ruteo)
 tier == texto_nativo
   → extraer texto de la capa del PDF (sin modelo, es el string real)
   → correr LLM local sobre ese texto → campos_A
-  → correr LLM local otra vez, mismo texto → campos_B
+  → correr LLM local otra vez, mismo texto → campos_B (pero preguntando si los campos son correctos, esto es 1er validacion)
        ├─ campos_A == campos_B → campos_texto  (listo para validar)
        └─ difieren               → inestable → escalar
  no hay lectura de vision acá: no hay frontera OCR que aislar
 
 tier == escaneado_ocr
-  → OCR sobre el render → texto_ocr
+  → OCR sobre el render → texto_ocr (usando docling o similar)
   → correr LLM local sobre texto_ocr → campos_A
-  → correr LLM local otra vez, mismo texto_ocr → campos_B
+  → correr LLM local otra vez, mismo texto_ocr → campos_B (pero preguntando si los campos son correctos, esto es 2da validacion)
        ├─ campos_A == campos_B → campos_texto
        └─ difieren               → inestable → escalar
-  → (en paralelo, no depende del resultado anterior)
-    correr LLM local vision sobre el render → campos_vision
+  →  correr LLM local vision sobre el render → campos_vision
 
   salida: campos_texto + campos_vision   (los dos, sin fusionar todavía —
           eso lo decide "validar", no "extraer")
@@ -66,6 +65,32 @@ tier == escaneado_ocr
        │             └─ no → escalar
        └─ una o ambas con violaciones → escalar
               (una lectura sucia no vota; no promedies con la limpia)
+
+## verificacion
+escalar(doc, lecturas_en_disputa, motivo)
+  → llm_frontier lee el documento original (multimodal, la imagen/PDF, no el texto ya extraído)
+      → campos_frontier + justificación por campo
+  → refutadores mecánicos también sobre campos_frontier
+       (frontier no está exento: caro no es sinónimo de correcto)
+
+  → comparar campos_frontier contra las lecturas que originaron el escalamiento
+       ├─ frontier coincide con una de las lecturas en disputa
+       │     → mostrar al humano: 1 valor candidato + qué lectura lo respalda + evidencia
+       │       (el humano confirma con un click, no relee el comprobante desde cero)
+       └─ frontier no coincide con ninguna
+             → mostrar al humano las lecturas en disputa + la de frontier + evidencia de cada una
+             → decide el humano, frontier no arbitra solo
+
+  → humano resuelve → campos_confirmados
+
+  → ¿este motivo de escalamiento ya se repitió N veces? (mismo emisor / mismo patrón de error)
+       ├─ sí → llm_frontier propone una regla candidata
+       │        (ej: "cuit conocido como propio → nunca es cuit_emisor")
+       │        → regla queda pendiente de aprobación humana, no se activa sola
+       └─ no → se registra el caso nomás, sin proponer regla todavía
+
+  → aprender  (solo con campos_confirmados por humano — nunca con campos_frontier sin confirmar)
+  
 
 --- 
 # notas
