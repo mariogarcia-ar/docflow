@@ -8,20 +8,58 @@
 
 ## 0. Artefactos de entrada (fijos, no dependen del documento puntual)
 
+Con el patrón A/B de §4, los artefactos se bifurcan por **rol** (extraer / revisar) y,
+en el caso del prompt, también por **lane** (texto / vision). El schema de extracción
+y el schema-visual **no** se multiplican — siguen siendo compartidos entre A y B.
+
 ```
-┌─────────────┐
-│   prompt    │  qué buscar / cómo leerlo
-└──────┬──────┘
-┌─────────────┐
-│   schema    │  qué forma tiene la respuesta
-└──────┬──────┘
-┌──────────────────┐
-│  schema-visual    │  dónde debería estar cada campo — solo existe si el emisor ya fue aprendido
-└───────────────────┘
+extraction_prompt_texto     ─┐
+extraction_prompt_vision    ─┤→ qué buscar / cómo leerlo (uno por lane, ya existían)
+review_prompt_texto         ─┤→ NUEVO: buscar errores en campos_A, no re-extraer
+review_prompt_vision        ─┘  (framing adversarial, ver §4.1)
+
+extraction_schema            → qué forma tiene una factura (compartido texto/vision,
+                                 no cambia: invoice.json)
+review_schema                → NUEVO: qué forma tiene un veredicto de B (no una factura)
+
+schema-visual (por emisor)   → sin cambios: uno solo, lo consumen A y B por igual
 ```
 
-El prompt y el schema los edita un humano. El schema-visual lo actualiza el propio
-sistema (paso 8), solo a partir de extracciones confirmadas.
+El prompt y los dos schemas los edita un humano. El schema-visual lo actualiza el
+propio sistema (paso 8), solo a partir de extracciones confirmadas.
+
+### `review_schema` (nuevo)
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "reviewer": { "type": "string" },
+    "extractor_reviewed": { "type": "string" },
+    "field_verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": { "type": "string" },
+          "verdict": { "type": "string", "enum": ["agree", "disagree", "uncertain"] },
+          "reason": { "type": ["string", "null"] },
+          "suggested_value": { "type": ["string", "null"] }
+        },
+        "required": ["field", "verdict"]
+      }
+    }
+  },
+  "required": ["reviewer", "extractor_reviewed", "field_verdicts"]
+}
+```
+
+`suggested_value` es un candidato, no un reemplazo automático — como cualquier
+desacuerdo entre lecturas, necesita un refutador mecánico que lo dirima antes de
+pasar a `resolver` (§7); la opinión de B por sí sola no alcanza para pisar el valor
+de A, por la misma razón por la que la opinión del frontier tampoco alcanza sola en
+§8.
+
 
 ---
 
