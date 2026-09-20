@@ -22,6 +22,9 @@ python scripts/poc-flow/myflow.py <document> --own-cuit 30-12345678-9
 # with intermediate artifacts and a resume journal:
 python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc>
 python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc>  # resumes
+
+# queue the unconfirmed fields for a human, and ask the frontier to suggest:
+python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc> --resolve
 ```
 
 `tests/fixtures/` is the corpus of record for a smoke run:
@@ -33,10 +36,11 @@ python scripts/poc-flow/myflow.py \
 
 ## Resuming a failed run
 
-The flow runs `read → extract → decide`, and the two model steps are the expensive
-ones. With `--work-root`, each stage's artifact is written as it completes and a
-journal records how far the run got, so a failure anywhere resumes at the first
-unfinished stage instead of re-paying for the OCR and the generations.
+The flow runs `read → extract → decide → hitl`, and the two model steps are the
+expensive ones. With `--work-root`, each stage's artifact is written as it
+completes and a journal records how far the run got, so a failure anywhere
+resumes at the first unfinished stage instead of re-paying for the OCR and the
+generations.
 
 A work root holds:
 
@@ -45,6 +49,8 @@ material.json    the read text, tier and route     (stage: read)
 images/pageN.png the rendered pages, for vision    (stage: read)
 extraction.json  the candidates and signals        (stage: extract)
 decision.json    the per-field decisions           (stage: decide)
+pending.json     the fields a human must review    (stage: hitl)
+resolution.json  the frontier's suggestions        (stage: hitl, with --resolve)
 journal.json     the signature, digest and stage marks
 ```
 
@@ -59,6 +65,23 @@ The resumption rules are the ones `scripts/poc/_mirror.py::Resume` taught:
 
 A resumed run announces what it skipped on **stderr** — never on stdout, which is
 the JSON verdict's surface. `--redo` ignores the journal and re-runs everything.
+
+## The queue: what needs a human
+
+The engine confirms a field only when it passes its rules or two readings of
+**different material** agree. Everything else is **pending**, and `pending.json`
+is the queue: one entry per field, with its severity, its reason codes and the
+candidates the engine had. A CONFIRMED field is never queued.
+
+`--resolve` asks the frontier model to **suggest** an answer for each pending
+field, reading the original document (§8). Two boundaries are kept:
+
+- **A suggestion is evidence, not a verdict.** It is written to
+  `resolution.json` with a `human_confirmed` slot still empty; confirming it is
+  a human's act (`my_flow.md` I6).
+- **No credential is a real state, not a failure.** Without `DOCFLOW_FRONTIER_KEY`
+  the queue is still written and the refusal is noted; the frontier is not
+  reached and nothing is invented.
 
 ## The one premise
 
@@ -100,8 +123,9 @@ is a **refusal reported in `notes`**, never a silent fallback to a different one
 | `validators.py` | CUIT checksum, date, arithmetic — PASS / FAIL / UNKNOWN | §6.2–§6.4 |
 | `extract.py` | the candidate producers: regexp, lane A, lane B, cross-modal | §4 |
 | `engine.py` | the MoE consensus: merge, veto, score, gate | §6 |
+| `hitl.py` | the queue of unconfirmed fields, and the frontier suggestion | §8 |
 | `persist.py` | the work tree: intermediate artifacts, the resume journal | — |
-| `run.py` | `run(path, config, own_cuits=…)` — read → extract → decide | §1 |
+| `run.py` | `run(path, config, own_cuits=…)` — read → extract → decide → queue | §1 |
 
 `run` is the entry point. It returns a `FieldResult`:
 
@@ -115,8 +139,12 @@ result.trace  # {field: [FieldCandidate]} — every signal kept, including UNKNO
 result.notes  # refused calls, missing lanes, fields named for escalation
 
 # with intermediate artifacts, so a failed run resumes:
-result = run(path, own_cuits=frozenset({"30123456789"}),
-             work_root=pathlib.Path("var/work/doc"), redo=False)
+result = run(
+    path,
+    own_cuits=frozenset({"30123456789"}),
+    work_root=pathlib.Path("var/work/doc"),
+    redo=False,
+)
 ```
 
 ## What the engine actually does
@@ -260,8 +288,9 @@ at the site where it belongs.
 
 - **Resolver → engine loop (§7).** No re-entry, no 2-loop cap, no
   `ESC_NO_NEW_EVIDENCE`.
-- **Frontier escalation (§8).** `ESCALATE` is *reported* in `notes`; nothing is sent
-  to a frontier model and there is no HITL queue.
+- **The human act itself (§8).** The queue is written and the frontier suggests;
+  the `human_confirmed` slot in `resolution.json` is still empty — nothing
+  consumes a person's confirmation yet, and nothing learns from it (§9).
 - **Lane-on-demand (§6.5).** The Anexo A ladder — run the vision lane when the gate
   cannot close — is not wired.
 - **Learning and templates (§9).** No `LAYOUT_HISTORY`, no

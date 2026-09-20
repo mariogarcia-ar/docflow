@@ -56,12 +56,14 @@ from .fields import (  # noqa: E402
     FieldDecision,
     FieldResult,
 )
+from .hitl import PendingItem, Suggestion  # noqa: E402
 from .material import Material  # noqa: E402
 
 __all__: list[str] = [
     "STAGES",
     "STAGE_DECIDE",
     "STAGE_EXTRACT",
+    "STAGE_HITL",
     "STAGE_READ",
     "WorkTree",
     "document_digest",
@@ -69,11 +71,13 @@ __all__: list[str] = [
 ]
 
 #: The four stages in the order they run. `my_flow.md` §1 names them; the
-#: journal marks how far a run got, one entry per stage.
+#: journal marks how far a run got, one entry per stage. The HITL stage is
+#: terminal: it queues the fields the engine could not confirm (§8).
 STAGE_READ: Final[str] = "read"
 STAGE_EXTRACT: Final[str] = "extract"
 STAGE_DECIDE: Final[str] = "decide"
-STAGES: Final[tuple[str, ...]] = (STAGE_READ, STAGE_EXTRACT, STAGE_DECIDE)
+STAGE_HITL: Final[str] = "hitl"
+STAGES: Final[tuple[str, ...]] = (STAGE_READ, STAGE_EXTRACT, STAGE_DECIDE, STAGE_HITL)
 
 #: The journal's filename, inside a work root.
 JOURNAL_NAME: Final[str] = "journal.json"
@@ -82,6 +86,8 @@ JOURNAL_NAME: Final[str] = "journal.json"
 MATERIAL_NAME: Final[str] = "material.json"
 EXTRACTION_NAME: Final[str] = "extraction.json"
 DECISION_NAME: Final[str] = "decision.json"
+PENDING_NAME: Final[str] = "pending.json"
+RESOLUTION_NAME: Final[str] = "resolution.json"
 
 #: Where the rendered pages live, for the vision lane. A text-only document has
 #: no images and therefore no directory.
@@ -322,6 +328,64 @@ def _result_from_dict(data: Mapping[str, object]) -> FieldResult:
     )
 
 
+def _pending_to_dict(item: PendingItem) -> dict[str, object]:
+    return {
+        "field": item.field,
+        "severity": item.severity,
+        "decision": item.decision,
+        "reason_codes": list(item.reason_codes),
+        "winner": (
+            _candidate_to_dict(item.winner) if item.winner is not None else None
+        ),
+        "runner_up": (
+            _candidate_to_dict(item.runner_up) if item.runner_up is not None else None
+        ),
+    }
+
+
+def _suggestion_to_dict(suggestion: Suggestion) -> dict[str, object]:
+    return {
+        "field": suggestion.field,
+        "suggested_value": suggestion.suggested_value,
+        "reason": suggestion.reason,
+    }
+
+
+def _suggestion_from_dict(data: Mapping[str, object]) -> Suggestion:
+    return Suggestion(
+        field=str(data["field"]),
+        suggested_value=(
+            None
+            if data.get("suggested_value") is None
+            else str(data["suggested_value"])
+        ),
+        reason=str(data.get("reason", "")),
+    )
+
+
+def _resolution_to_dict(suggestions: list[Suggestion], note: str) -> dict[str, object]:
+    return {
+        "suggestions": [_suggestion_to_dict(s) for s in suggestions],
+        "note": note,
+        # TODO: [MVP] A `human_confirmed` field is where a human's resolution
+        # will land; until §8's queue exists, the suggestion is the frontier's
+        # and confirmation is recorded by whoever consumes this artifact.
+        "human_confirmed": [],
+    }
+
+
+def _resolution_from_dict(
+    data: Mapping[str, object],
+) -> tuple[list[Suggestion], str]:
+    raw = data.get("suggestions")
+    suggestions: list[Suggestion] = []
+    if isinstance(raw, list):
+        suggestions = [
+            _suggestion_from_dict(entry) for entry in raw if isinstance(entry, Mapping)
+        ]
+    return suggestions, str(data.get("note", ""))
+
+
 def _write_atomic(path: pathlib.Path, payload: bytes) -> None:
     """Write bytes via a temp name then rename, so a kill cannot truncate."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -473,6 +537,80 @@ class WorkTree:
         except (OSError, json.JSONDecodeError):
             return None
         return _result_from_dict(data)
+
+    # --- hitl (§8) -------------------------------------------------------
+
+    def save_pending(self, items: list[PendingItem]) -> None:
+        """Write the queue of fields the engine could not confirm, and mark the
+        HITL stage done.
+
+        The queue is the deliverable of §8's mechanical half: it is written even
+        when the frontier cannot be reached, because *which fields need a human*
+        is a fact of the document, not of the frontier's availability.
+        """
+        _write_atomic(
+            self.root / PENDING_NAME,
+            json.dumps(
+                {"pending": [_pending_to_dict(i) for i in items]},
+                ensure_ascii=False,
+            ).encode("utf-8"),
+        )
+        self._mark(STAGE_HITL)
+
+    def load_pending(self) -> list[PendingItem]:
+        """Reconstruct the queue, or an empty list when absent or empty."""
+        path = self.root / PENDING_NAME
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        raw = data.get("pending")
+        if not isinstance(raw, list):
+            return []
+        items: list[PendingItem] = []
+        for entry in raw:
+            if not isinstance(entry, Mapping):
+                continue
+            winner = entry.get("winner")
+            runner_up = entry.get("runner_up")
+            items.append(
+                PendingItem(
+                    field=str(entry["field"]),
+                    severity=str(entry["severity"]),
+                    decision=str(entry["decision"]),
+                    reason_codes=list(entry["reason_codes"]),
+                    winner=(
+                        _candidate_from_dict(winner)
+                        if isinstance(winner, Mapping)
+                        else None
+                    ),
+                    runner_up=(
+                        _candidate_from_dict(runner_up)
+                        if isinstance(runner_up, Mapping)
+                        else None
+                    ),
+                )
+            )
+        return items
+
+    def save_resolution(self, suggestions: list[Suggestion], note: str) -> None:
+        """Write the frontier's suggestions alongside the queue."""
+        _write_atomic(
+            self.root / RESOLUTION_NAME,
+            json.dumps(
+                _resolution_to_dict(suggestions, note),
+                ensure_ascii=False,
+            ).encode("utf-8"),
+        )
+
+    def load_resolution(self) -> tuple[list[Suggestion], str]:
+        """Reconstruct the suggestions, or an empty list with no note."""
+        path = self.root / RESOLUTION_NAME
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return [], ""
+        return _resolution_from_dict(data)
 
     def announce(self) -> None:
         """Print the resumption state to **stderr**, once, for the operator.

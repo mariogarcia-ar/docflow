@@ -28,22 +28,29 @@ from .artifacts import load_artifacts
 from .config import DEFAULT_CONFIG, Config
 from .engine import DecisionContext, evaluate
 from .extract import Extraction, extract
-from .fields import DECISION_CONFIRMED, DECISION_ESCALATE, FieldResult
+from .fields import DECISION_CONFIRMED, FieldResult
+from .hitl import pending_items, suggest
 from .material import TIER_DEGRADED, Material, read_material
 from .persist import WorkTree, document_digest, work_signature
 
 __all__: list[str] = ["run"]
 
 
-def run(
+def run(  # pylint: disable=too-many-arguments, too-many-locals, too-many-branches
     path: pathlib.Path,
     config: Config = DEFAULT_CONFIG,
     *,
     own_cuits: frozenset[str] = frozenset(),
     work_root: pathlib.Path | None = None,
     redo: bool = False,
+    resolve: bool = False,
 ) -> FieldResult:
     """Process one document and return the engine's per-field decisions.
+
+    The local count is the pipeline itself — read, extract, decide, queue — and
+    each stage's inputs are the previous stage's outputs; splitting it into
+    helpers would move the same count one frame away while hiding the order that
+    matters, the same shape `extract.extract` documents.
 
     When ``work_root`` is given, each stage's artifact is written there as it
     completes and a second run resumes at the first unfinished stage. The
@@ -59,6 +66,9 @@ def run(
         work_root: Where the intermediate artifacts and the journal live. When
             ``None``, nothing is persisted and the flow is a single pass.
         redo: Ignore the journal and re-run every stage.
+        resolve: Ask the frontier model to suggest an answer for each field the
+            engine could not confirm (§8). The suggestion is evidence, never a
+            verdict; the queue is written either way.
 
     Returns:
         The decisions, the candidate trace and the confirmed extractions.
@@ -115,16 +125,25 @@ def run(
     }
 
     notes: list[str] = list(extraction.notes)
-    escalated = [
-        field
-        for field, decision in decisions.items()
-        if decision.decision == DECISION_ESCALATE
-    ]
-    if escalated:
-        # TODO: [MVP] `my_flow.md` §8: an ESCALATE decision should run the
-        # resolver → lane-on-demand → frontier chain here, not just be named.
+
+    # --- HITL (§8): queue the fields the engine could not confirm ---------
+    queued = pending_items(decisions)
+    if tree is not None:
+        tree.save_pending(queued)
+        if queued and resolve:
+            suggestions, note = suggest(queued, material, config, path.name)
+            tree.save_resolution(suggestions, note)
+            if note:
+                notes.append(f"frontier: {note}")
+            elif suggestions:
+                notes.append(
+                    f"frontier suggested {len(suggestions)} value(s); confirmation "
+                    "is still a human's"
+                )
+    elif queued:
         notes.append(
-            f"fields to escalate to the frontier: {', '.join(sorted(escalated))}"
+            f"{len(queued)} field(s) need human review: "
+            f"{', '.join(item.field for item in queued)}"
         )
 
     result = FieldResult(

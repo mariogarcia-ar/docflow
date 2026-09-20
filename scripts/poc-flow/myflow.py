@@ -44,6 +44,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="ignore the journal and re-run every stage",
     )
+    parser.add_argument(
+        "--resolve",
+        action="store_true",
+        help="ask the frontier model to suggest a value for each field the "
+        "engine could not confirm (needs --work-root)",
+    )
     parser.add_argument("--pretty", action="store_true", help="indent the JSON output")
     return parser
 
@@ -96,6 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         own_cuits=own_cuits,
         work_root=args.work_root,
         redo=args.redo,
+        resolve=args.resolve,
     )
 
     payload = _serializable(result)
