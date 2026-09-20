@@ -121,6 +121,11 @@ def _text_files(directory: pathlib.Path, suffix: str) -> dict[str, str]:
 def _json_files(directory: pathlib.Path) -> dict[str, Mapping[str, object]]:
     """Read every ``*.json`` file in a directory, keyed by its stem.
 
+    Files whose stem starts with ``_`` are **placeholders, not assets**: they
+    document the shape a real entry must have and apply to nothing yet, so they
+    are never loaded as a key. A ``_template.json`` in `schema-visual/` is the
+    shape of a `(emisor, tipo, fingerprint)` entry, not an entry itself.
+
     Args:
         directory: The directory to read.
 
@@ -137,6 +142,8 @@ def _json_files(directory: pathlib.Path) -> dict[str, Mapping[str, object]]:
         raise FileNotFoundError(f"artifact directory missing: {directory}")
     loaded: dict[str, Mapping[str, object]] = {}
     for path in sorted(directory.glob("*.json")):
+        if path.stem.startswith("_"):
+            continue
         raw = path.read_text(encoding="utf-8")
         parsed: Any = json.loads(raw)
         if not isinstance(parsed, dict):

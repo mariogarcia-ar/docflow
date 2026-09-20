@@ -97,7 +97,7 @@ invariants are enforced in code, not in prose:
 
 | Family | Worth | Earned when |
 |---|---|---|
-| `DETERMINISTIC` | +3 | a strong rule passes: CUIT checksum, a date that exists, `subtotal + IVA == total` within tolerance, QR agreement |
+| `DETERMINISTIC` | +3 | a strong rule passes: CUIT checksum, a date that exists, `subtotal + IVA == importe_total_facturado` within tolerance, QR agreement |
 | `DOCUMENT_CONTENT` | +2 | the value is mechanically present in the text (`verified`) |
 | `CROSS_MODAL` | +2 | the text lane and the vision lane agree on the same normalized value |
 | `SAME_MATERIAL` | +1 | the reviewer says `agree` — capped at 1 even when regexp agrees too |
@@ -116,7 +116,7 @@ CUITS_CHECKSUM_INVALID   CUITS_OWN_AS_EMISOR   DATE_NONEXISTENT   ARITHMETIC_INC
 ```
 
 **An incomplete equation cannot veto.** `arithmetic_signal` answers `UNKNOWN` when
-`subtotal`, `iva` or `total` is missing or unparseable — the prime cost of a
+`subtotal`, `iva` or `importe_total_facturado` is missing or unparseable — the prime cost of a
 missing component is exactly what an inconsistency looks like, so the flow is not
 allowed to confuse them (§6.4).
 
@@ -130,7 +130,7 @@ REVIEW     otherwise
 
 | Severity | Fields | T native | T OCR | Margin | Gate requires |
 |---|---|---|---|---|---|
-| `critica` | `total`, `iva` | 5 | 5 | ≥ 2 | `DETERMINISTIC` or `CROSS_MODAL` |
+| `critica` | `importe_total_facturado`, `iva` | 5 | 5 | ≥ 2 | `DETERMINISTIC` or `CROSS_MODAL` |
 | `alta` | `cuit_emisor`, `fecha_emision` | 3 | 5 | ≥ 2 | `DETERMINISTIC`, `CROSS_MODAL` or `NATIVE_ANCHOR` |
 | `media` | `razon_social_emisor` | 3 | 4 | ≥ 1 | — |
 | `baja` | `descripcion`, `categoria_gasto`, and anything unnamed | 3 | 4 | ≥ 1 | — |
@@ -164,10 +164,25 @@ Three rules the artifacts obey:
   people for different reasons; one file would force two edits into one diff.
 - **`schema-visual` is never injected into a prompt.** By **I4**, a signal that was
   an *input* of an extractor cannot count as corroboration of its *output*.
+- **Every field is required and `null`-valued when absent.** The model declares
+  what it did *not* find instead of silently omitting it; a partial answer would
+  read as a document that lacks the field rather than as a model that stopped
+  early.
+- **The reviewer receives the proposal.** The review prompts carry `{proposal}`
+  and the vision reviewer receives the page. A review prompt that names a proposal
+  but carries no placeholder asks a model to grade something it was never shown —
+  the exact `judge` pattern `my_flow.md` §4.1 rejects.
 
 Loading is **load-or-refuse**: an absent or invalid artifact raises. A prompt that
 arrived from nowhere would make the flow answer about a different document while
 reporting success.
+
+The prompt↔schema agreement is checked by `tests/fixtures/verify_pocflow.py`, the
+port of `tests/kernels/test_committed_registry.py`'s agreement rules to this tree:
+
+```bash
+python tests/fixtures/verify_pocflow.py
+```
 
 ## Why the pieces are shaped this way
 
@@ -222,11 +237,10 @@ at the site where it belongs.
   assumes the net-plus-VAT combination and answers `UNKNOWN` when a component is
   missing. A Factura C does not discriminate IVA and would be judged wrong by this
   assumption.
-- **Field-name alignment.** The engine's severities and the arithmetic validator
-  use `total` / `iva` (the names `my_flow.md` uses in §5 and §6), while
-  `extraction.json` declares `importe_total_facturado`. A schema field with no
-  severity entry is treated as `baja`, which is safe but not yet correct for the
-  total.
+
+Field names now match the schema: the engine's severities and the arithmetic
+validator use `importe_total_facturado`, not `total` — the schema and the registry
+are the downstream contract, and the engine adapts to them.
 
 ## Conventions this package follows
 
@@ -251,6 +265,7 @@ at the site where it belongs.
 ruff check scripts/poc-flow          # clean
 ruff format --check scripts/poc-flow # clean
 pylint scripts/poc-flow/flow scripts/poc-flow/myflow.py   # exit 0
+python tests/fixtures/verify_pocflow.py                     # artifacts agree
 ```
 
 `scripts/poc-flow/` is **not** in `pytest`'s `testpaths`, so the project's own
@@ -273,3 +288,6 @@ print(cuit_signal('30-71548265-3', own_cuits=frozenset(), family_points=FAMILY_P
 - `scripts/poc/README.md` — the per-kernel probes, and the measured findings this
   package's design decisions come from.
 - `docs/artifacts/` — `prd.md`, `sad.md`, `wbs.md`: the decisions that predate both.
+- `registry/prompts/extraction/invoice.txt` and
+  `registry/schemas/extraction/invoice.json` — the downstream contract the
+  `poc-flow` artifacts are ported from.

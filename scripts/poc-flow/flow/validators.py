@@ -39,13 +39,6 @@ CUITS_OWN_AS_EMISOR: Final[str] = "CUITS_OWN_AS_EMISOR"
 DATE_NONEXISTENT: Final[str] = "DATE_NONEXISTENT"
 ARITHMETIC_INCONSISTENT: Final[str] = "ARITHMETIC_INCONSISTENT"
 
-#: The field names the arithmetic validator combines (`my_flow.md` §6.4):
-#: ``{subtotal, IVA, otros tributos, total}``. The combination is what is
-#: refuted, never a field in isolation.
-_SUBTOTAL_FIELD: Final[str] = "subtotal"
-_IVA_FIELD: Final[str] = "iva"
-_TOTAL_FIELD: Final[str] = "total"
-
 #: TODO: [MVP] The ``required_components`` per ``tipo_comprobante`` (`my_flow.md`
 #: §6.4) is not modelled: this version assumes the net-plus-VAT combination and
 #: reports UNKNOWN whenever a component is missing.

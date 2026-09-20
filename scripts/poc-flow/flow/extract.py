@@ -20,6 +20,7 @@ from __future__ import annotations
 # imports must follow `ensure_docflow_importable()`. The order is load-bearing,
 # not cosmetic — the same rule `scripts/poc/` documents for its drivers.
 # pylint: disable=wrong-import-order, wrong-import-position
+import json
 import re
 from collections.abc import Mapping
 from typing import Final
@@ -35,7 +36,10 @@ from .artifacts import Artifacts  # noqa: E402
 from .config import Config  # noqa: E402
 from .fields import (  # noqa: E402
     FAIL,
+    IVA_FIELD,
     PASS,
+    SUBTOTAL_FIELD,
+    TOTAL_FIELD,
     UNKNOWN,
     EvidenceSignal,
     FieldCandidate,
@@ -52,6 +56,27 @@ __all__: list[str] = ["Extraction", "extract"]
 
 #: Where the document's text is substituted into the prompts.
 TEXT_PLACEHOLDER: Final[str] = "{text}"
+
+#: Where A's extraction is substituted into the review prompts. The reviewer
+#: must receive the proposal to review (I5, §4.1): a review prompt that names a
+#: proposal but carries no placeholder is asking a model to grade something it
+#: was never shown.
+PROPOSAL_PLACEHOLDER: Final[str] = "{proposal}"
+
+#: Fields that are **derived** rather than printed: a boolean or a classification
+#: has no physical anchor in the document, so it never earns ``DOCUMENT_CONTENT``.
+#: Asking for a content anchor on such a field is asking for a signal that
+#: cannot exist (`comprobante_valido` normalises to `"True"`, which is never in
+#: the text).
+_DERIVED_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "comprobante_valido",
+        "motivo_rechazo",
+        "condicion_impositiva_dominante",
+        "categoria_gasto",
+        "centro_de_costo",
+    }
+)
 
 #: The fixed-format patterns regexp produces candidates for. A regexp candidate
 #: is a candidate, never a decision (§6.1).
@@ -147,6 +172,10 @@ def _fields_to_candidates(
         raw = str(value).strip()
         if not raw:
             continue
+        if field in _DERIVED_FIELDS:
+            # A derived field has no anchor: no DOCUMENT_CONTENT signal, ever.
+            candidates[field] = [_candidate(raw, producer)]
+            continue
         signals = [_content_signal(raw, text, points)] if text is not None else []
         candidates[field] = [_candidate(raw, producer, signals)]
     return candidates
@@ -199,9 +228,21 @@ def _review_verdicts(
     model: str,
     prompt: str,
     schema: Mapping[str, object],
+    *,
+    images: list[Bytes] | None = None,
 ) -> list[Mapping[str, object]]:
-    """Run one review call and return its per-field verdicts, or an empty list."""
-    answered = _call_structured(engine, model, prompt, schema)
+    """Run one review call and return its per-field verdicts, or an empty list.
+
+    Args:
+        images: When given, the call is `vision` so the reviewer sees the page
+            (I5); when ``None``, it is `structured` and grades the transcript.
+            The text reviewer reads text, the vision reviewer reads pixels.
+
+    """
+    if images is not None:
+        answered = _call_vision(engine, model, prompt, images, schema)
+    else:
+        answered = _call_structured(engine, model, prompt, schema)
     if answered is None:
         return []
     verdicts = answered.get("field_verdicts")
@@ -341,13 +382,19 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
             )
             for field, produced in text_fields.items():
                 candidates.setdefault(field, []).extend(produced)
-            for field in ("subtotal", "iva", "total"):
+            for field in (SUBTOTAL_FIELD, IVA_FIELD, TOTAL_FIELD):
                 if field in answered and answered[field] is not None:
                     values[field] = str(answered[field])
 
     # --- Lane B, text (reviewer) -----------------------------------------
     if text and text_fields:
-        review_prompt = review_text_prompt.replace(TEXT_PLACEHOLDER, text)
+        proposal = json.dumps(
+            {field: produced[0].raw_value for field, produced in text_fields.items()},
+            ensure_ascii=False,
+        )
+        review_prompt = review_text_prompt.replace(TEXT_PLACEHOLDER, text).replace(
+            PROPOSAL_PLACEHOLDER, proposal
+        )
         verdicts = _review_verdicts(
             engine, config.text_model_b, review_prompt, review_schema
         )
@@ -374,8 +421,17 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
 
     # --- Lane B, vision (reviewer) ---------------------------------------
     if config.vision_model_b and material.images and vision_fields:
+        proposal = json.dumps(
+            {field: produced[0].raw_value for field, produced in vision_fields.items()},
+            ensure_ascii=False,
+        )
+        review_prompt = review_vision_prompt.replace(PROPOSAL_PLACEHOLDER, proposal)
         verdicts = _review_verdicts(
-            engine, config.vision_model_b, review_vision_prompt, review_schema
+            engine,
+            config.vision_model_b,
+            review_prompt,
+            review_schema,
+            images=material.images,
         )
         _apply_review(candidates, verdicts, config)
 

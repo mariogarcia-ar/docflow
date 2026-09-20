@@ -30,7 +30,10 @@ from .fields import (
     DECISION_ESCALATE,
     DECISION_REVIEW,
     FAIL,
+    IVA_FIELD,
     PASS,
+    SUBTOTAL_FIELD,
+    TOTAL_FIELD,
     EvidenceSignal,
     FieldCandidate,
     FieldDecision,
@@ -118,18 +121,18 @@ def _attach_arithmetic(
     values: Mapping[str, str],
     ctx: DecisionContext,
 ) -> list[EvidenceSignal]:
-    """The arithmetic signal for the total/IVA/subtotal combination.
+    """The arithmetic signal for the subtotal/IVA/total combination.
 
     The rule refutes a combination, not a field (`my_flow.md` §6.4): when the
     three values are all present and consistent, the total and the IVA each get
     the +3; when they are all present and inconsistent, the combination is
     vetoed. A missing component yields UNKNOWN.
     """
-    if field not in {"total", "iva"}:
+    if field not in {TOTAL_FIELD, IVA_FIELD}:
         return []
-    sub = values.get("subtotal", "")
-    tax = values.get("iva", "")
-    tot = values.get("total", "")
+    sub = values.get(SUBTOTAL_FIELD, "")
+    tax = values.get(IVA_FIELD, "")
+    tot = values.get(TOTAL_FIELD, "")
     # Only the candidate that matches the chosen total gets the signal; the
     # others are left to the ordinary scoring.
     if candidate.raw_value != values.get(field, ""):

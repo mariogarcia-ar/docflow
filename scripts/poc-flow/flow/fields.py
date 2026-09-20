@@ -26,8 +26,11 @@ __all__: list[str] = [
     "DECISION_REVIEW",
     "FAIL",
     "FIELD_SEVERITY",
+    "IVA_FIELD",
     "PASS",
     "REASON_CODES",
+    "SUBTOTAL_FIELD",
+    "TOTAL_FIELD",
     "UNKNOWN",
     "EvidenceSignal",
     "FieldCandidate",
@@ -50,10 +53,19 @@ DECISION_CONFIRMED: Final[str] = "CONFIRMED"
 DECISION_REVIEW: Final[str] = "REVIEW"
 DECISION_ESCALATE: Final[str] = "ESCALATE"
 
+#: The three fields the arithmetic validator combines (`my_flow.md` §6.4).
+#: The names are the schema's — `importe_total_facturado`, not `total` — because
+#: the schema and the registry are the downstream contract and the engine adapts
+#: to them. A single owner keeps the triple consistent across `engine`,
+#: `extract` and `validators`.
+SUBTOTAL_FIELD: Final[str] = "subtotal"
+IVA_FIELD: Final[str] = "iva"
+TOTAL_FIELD: Final[str] = "importe_total_facturado"
+
 #: Which severity each field belongs to (`my_flow.md` §6.5). Everything else is
 #: ``baja`` — an unknown field must not be silently treated as critical.
 FIELD_SEVERITY: Final[dict[str, str]] = {
-    "total": "critica",
+    "importe_total_facturado": "critica",
     "iva": "critica",
     "cuit_emisor": "alta",
     "fecha_emision": "alta",

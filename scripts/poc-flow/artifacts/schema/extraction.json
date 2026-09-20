@@ -1,30 +1,124 @@
 {
+  "$comment": "The 23 fields the registry's extraction prompt declares, as a JSON Schema the provider constrains generation with. It is a SEPARATE artifact from the prompt on purpose (two artifacts, one per concern): the prompt says what to look for and how to read it, the schema says what shape the answer must have. Field names, values and reading rules are ported from registry/prompts/extraction/invoice.txt and registry/schemas/extraction/invoice.json, which are the downstream contract. Every field is required and null-valued when absent, so a model declares what it did NOT find instead of silently omitting it.",
   "type": "object",
   "properties": {
-    "comprobante_valido": {"type": "boolean"},
-    "motivo_rechazo": {"type": "string"},
-    "tipo_comprobante": {"type": "string"},
-    "razon_social_emisor": {"type": "string"},
-    "cuit_emisor": {"type": "string"},
-    "fecha_emision": {"type": "string"},
-    "nro_comprobante": {"type": "string"},
-    "moneda": {"type": "string"},
-    "subtotal": {"type": "string"},
-    "iva": {"type": "string"},
-    "impuestos_internos": {"type": "string"},
-    "percepcion_iibb": {"type": "string"},
-    "otros_impuestos": {"type": "string"},
-    "monto_no_gravado": {"type": "string"},
-    "importe_total_facturado": {"type": "string"},
-    "descripcion": {"type": "string"},
-    "condicion_impositiva_dominante": {"type": "string"},
-    "alicuotas_detectadas": {"type": "string"},
-    "categoria_gasto": {"type": "string"},
-    "notas": {"type": "string"},
-    "cantidad_comensales_personas": {"type": "string"},
-    "cantidad_litros": {"type": "string"},
-    "centro_de_costo": {"type": "string"}
+    "comprobante_valido": {
+      "type": "string",
+      "description": "'true' when the document is a readable receipt, 'false' when it is not"
+    },
+    "motivo_rechazo": {
+      "type": "string",
+      "description": "why the document was rejected, or 'null'"
+    },
+    "tipo_comprobante": {
+      "type": "string",
+      "description": "A | B | C | 090 | 099"
+    },
+    "razon_social_emisor": {
+      "type": "string",
+      "description": "the emitter's name"
+    },
+    "cuit_emisor": {
+      "type": "string",
+      "description": "the emitter's CUIT, digits and its own hyphens only"
+    },
+    "fecha_emision": {
+      "type": "string",
+      "description": "the emission date as printed"
+    },
+    "nro_comprobante": {
+      "type": "string",
+      "description": "the number as printed, with its hyphen if it has one"
+    },
+    "moneda": {
+      "type": "string",
+      "description": "ARS | USD"
+    },
+    "subtotal": {
+      "type": "string",
+      "description": "the net taxed amount, or the total when the receipt does not discriminate"
+    },
+    "iva": {
+      "type": "string",
+      "description": "the sum of the discriminated rates, or '0'"
+    },
+    "impuestos_internos": {
+      "type": "string",
+      "description": "as printed, or '0'"
+    },
+    "percepcion_iibb": {
+      "type": "string",
+      "description": "as printed, or '0'"
+    },
+    "otros_impuestos": {
+      "type": "string",
+      "description": "as printed, or '0'"
+    },
+    "monto_no_gravado": {
+      "type": "string",
+      "description": "as printed, or '0'"
+    },
+    "importe_total_facturado": {
+      "type": "string",
+      "description": "the total as printed, with no adjustment"
+    },
+    "descripcion": {
+      "type": "string",
+      "description": "one short lowercase phrase of what was bought or the service rendered, or 'null'"
+    },
+    "condicion_impositiva_dominante": {
+      "type": "string",
+      "description": "21 | 10_5 | 27 | 2_5 | exento_no_gravado | null"
+    },
+    "alicuotas_detectadas": {
+      "type": "string",
+      "description": "every rate found, separated by '|'"
+    },
+    "categoria_gasto": {
+      "type": "string",
+      "description": "Restaurante | Supermercado | Hospedaje | Combustible | Movilidad/Pasajes | Peajes | Herramientas | Otros | null"
+    },
+    "notas": {
+      "type": "string",
+      "description": "observations, or 'null'"
+    },
+    "cantidad_comensales_personas": {
+      "type": "string",
+      "description": "only when the receipt mentions people/covers, or 'null'"
+    },
+    "cantidad_litros": {
+      "type": "string",
+      "description": "only when it details exact litres, or 'null'"
+    },
+    "centro_de_costo": {
+      "type": "string",
+      "description": "always 'null' at extraction: filled by a later classification step"
+    }
   },
-  "required": ["comprobante_valido"],
+  "required": [
+    "comprobante_valido",
+    "motivo_rechazo",
+    "tipo_comprobante",
+    "razon_social_emisor",
+    "cuit_emisor",
+    "fecha_emision",
+    "nro_comprobante",
+    "moneda",
+    "subtotal",
+    "iva",
+    "impuestos_internos",
+    "percepcion_iibb",
+    "otros_impuestos",
+    "monto_no_gravado",
+    "importe_total_facturado",
+    "descripcion",
+    "condicion_impositiva_dominante",
+    "alicuotas_detectadas",
+    "categoria_gasto",
+    "notas",
+    "cantidad_comensales_personas",
+    "cantidad_litros",
+    "centro_de_costo"
+  ],
   "additionalProperties": false
 }
