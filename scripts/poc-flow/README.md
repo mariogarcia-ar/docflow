@@ -18,6 +18,10 @@ from the evidence, adversarially framed review. The code is new.
 python scripts/poc-flow/myflow.py <document>            # one JSON verdict
 python scripts/poc-flow/myflow.py <document> --pretty    # indented
 python scripts/poc-flow/myflow.py <document> --own-cuit 30-12345678-9
+
+# with intermediate artifacts and a resume journal:
+python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc>
+python scripts/poc-flow/myflow.py <document> --work-root var/work/<doc>  # resumes
 ```
 
 `tests/fixtures/` is the corpus of record for a smoke run:
@@ -26,6 +30,35 @@ python scripts/poc-flow/myflow.py <document> --own-cuit 30-12345678-9
 python scripts/poc-flow/myflow.py \
     tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf --pretty
 ```
+
+## Resuming a failed run
+
+The flow runs `read → extract → decide`, and the two model steps are the expensive
+ones. With `--work-root`, each stage's artifact is written as it completes and a
+journal records how far the run got, so a failure anywhere resumes at the first
+unfinished stage instead of re-paying for the OCR and the generations.
+
+A work root holds:
+
+```
+material.json    the read text, tier and route     (stage: read)
+images/pageN.png the rendered pages, for vision    (stage: read)
+extraction.json  the candidates and signals        (stage: extract)
+decision.json    the per-field decisions           (stage: decide)
+journal.json     the signature, digest and stage marks
+```
+
+The resumption rules are the ones `scripts/poc/_mirror.py::Resume` taught:
+
+| Rule | How it is guaranteed |
+|---|---|
+| a stage is recorded only when its artifact is written | `_mark` runs **after** the atomic write; a refusal or an exception leaves no `done` |
+| a changed input re-does the work | the journal carries the document's own sha256 |
+| a changed setting discards the journal | the signature covers the dials, the own-CUIT list and a digest of every prompt/schema |
+| a kill cannot truncate an artifact | every write is a temp-then-rename |
+
+A resumed run announces what it skipped on **stderr** — never on stdout, which is
+the JSON verdict's surface. `--redo` ignores the journal and re-runs everything.
 
 ## The one premise
 
@@ -67,6 +100,7 @@ is a **refusal reported in `notes`**, never a silent fallback to a different one
 | `validators.py` | CUIT checksum, date, arithmetic — PASS / FAIL / UNKNOWN | §6.2–§6.4 |
 | `extract.py` | the candidate producers: regexp, lane A, lane B, cross-modal | §4 |
 | `engine.py` | the MoE consensus: merge, veto, score, gate | §6 |
+| `persist.py` | the work tree: intermediate artifacts, the resume journal | — |
 | `run.py` | `run(path, config, own_cuits=…)` — read → extract → decide | §1 |
 
 `run` is the entry point. It returns a `FieldResult`:
@@ -79,6 +113,10 @@ result.extracted  # {field: raw_value} — CONFIRMED fields only
 result.decisions  # {field: FieldDecision} — decision, reason codes, score, margin
 result.trace  # {field: [FieldCandidate]} — every signal kept, including UNKNOWN
 result.notes  # refused calls, missing lanes, fields named for escalation
+
+# with intermediate artifacts, so a failed run resumes:
+result = run(path, own_cuits=frozenset({"30123456789"}),
+             work_root=pathlib.Path("var/work/doc"), redo=False)
 ```
 
 ## What the engine actually does

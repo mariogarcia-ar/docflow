@@ -32,6 +32,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="a CUIT of the business itself (repeatable); the own-CUIT-as-"
         "emissor veto is fixed from day one",
     )
+    parser.add_argument(
+        "--work-root",
+        type=pathlib.Path,
+        default=None,
+        help="directory for the intermediate artifacts and the resume journal; "
+        "when given, a second run resumes at the first unfinished stage",
+    )
+    parser.add_argument(
+        "--redo",
+        action="store_true",
+        help="ignore the journal and re-run every stage",
+    )
     parser.add_argument("--pretty", action="store_true", help="indent the JSON output")
     return parser
 
@@ -78,7 +90,13 @@ def main(argv: list[str] | None = None) -> int:
         "".join(ch for ch in cuit if ch.isdigit()) for cuit in args.own_cuit
     )
 
-    result = run(document, DEFAULT_CONFIG, own_cuits=own_cuits)
+    result = run(
+        document,
+        DEFAULT_CONFIG,
+        own_cuits=own_cuits,
+        work_root=args.work_root,
+        redo=args.redo,
+    )
 
     payload = _serializable(result)
     print(

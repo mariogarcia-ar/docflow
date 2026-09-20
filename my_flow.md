@@ -1,3 +1,29 @@
+# Versión simplificada
+
+**Idea central:** un valor solo se acepta solo si lo respalda evidencia *independiente*. Si no, lo decide un humano. Y el sistema solo aprende de lo que un humano confirmó.
+
+```
+documento → leer → extraer candidatos → validar con reglas → decidir
+                                                              ├─ confirmado
+                                                              └─ revisión humana
+```
+
+## Los 4 pasos
+
+1. **Leer.** Si el PDF tiene texto, se usa. Si no, OCR y también lectura visual de la imagen.
+2. **Extraer.** Cada campo sale de varias fuentes (regex, un LLM y, si existe, el QR de la factura). Un segundo modelo revisa el resultado buscando errores.
+3. **Validar con reglas duras.** Checksum del CUIT, subtotal + IVA = total, el CUIT propio nunca es el emisor, la fecha existe. Si una regla falla, el valor se descarta, aunque todos los modelos coincidan.
+4. **Decidir por campo.**
+   - **Confirmado** si pasa las reglas o si dos lecturas *de material distinto* coinciden (texto vs. imagen), y no hay otro valor compitiendo de cerca.
+   - **Dudoso** va a un humano, con un modelo más potente sugiriendo la respuesta.
+
+## Lo único que hay que recordar
+
+- **Dos modelos leyendo el mismo texto no son dos pruebas.** Solo cuentan las reglas determinísticas y el cruce texto/imagen.
+- **Los campos críticos** (total, IVA, CUIT, fecha) exigen una de esas dos pruebas. Los menos importantes (razón social, descripción) aceptan una lectura bien anclada que el revisor no refute.
+- **Un valor descartado por regla no se rescata por votos.**
+
+
 # Flujo de extracción de comprobantes fiscales (v6)
 
 > Ningún modelo determina por sí solo la verdad del documento. La confianza surge de la
