@@ -26,6 +26,10 @@
       "type": "string",
       "description": "as printed, or '0'. Not the same as 'exento': a non-taxed amount is outside the IVA base, an exempt one is inside it and taxed at 0%"
     },
+    "importe_total_facturado": {
+      "type": "string",
+      "description": "the total as printed, with no adjustment. It lives HERE, and not in the base step, because the arithmetic rule that can CONFIRM it is the subtotal-plus-IVA combination (§6.4): a field whose only strong evidence is a combination belongs with that combination's other terms, and the step that holds them is the step that can settle it"
+    },
     "condicion_impositiva_dominante": {
       "type": "string",
       "enum": [
@@ -50,6 +54,7 @@
     "percepcion_iibb",
     "otros_impuestos",
     "monto_no_gravado",
+    "importe_total_facturado",
     "condicion_impositiva_dominante",
     "alicuotas_detectadas"
   ],

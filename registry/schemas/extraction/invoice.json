@@ -1,5 +1,5 @@
 {
-  "$comment": "The 23 fields `legacy/prompts/11-extraction_key_value_invoice_prompt.yaml` declares, as a JSON Schema the provider constrains generation with. It is a SEPARATE artifact from the prompt on purpose (two artifacts, one per concern): the prompt says what to look for and how to read it, the schema says what shape the answer must have. They are kept in step by `test_the_schema_and_the_prompt_agree_on_the_fields` rather than by being generated from one another.",
+  "$comment": "STEP 1 of the layered extraction — the base reading. Nine fields, all read off the printed document without needing a domain judgement: is this a receipt, and who issued it. The other three steps are RESERVED artifacts (`desglose`, `rubro`, `clasificacion`); `test_the_extraction_steps_partition_every_field` proves the four together cover every field of the original 23-field contract exactly once. It carries no critical-severity field on purpose — the one field of group 1 that could only be CONFIRMED through an arithmetic combination (`importe_total_facturado`) moved to the step that holds that combination. The schema is a SEPARATE artifact from the prompt on purpose: the prompt says what to look for and how to read it, the schema says what shape the answer must have.",
   "type": "object",
   "properties": {
     "comprobante_valido": {
@@ -34,75 +34,8 @@
       "enum": ["ARS", "USD"],
       "description": "the currency the document shows; 'ARS' when it shows none"
     },
-    "subtotal": {
-      "type": "string",
-      "description": "as printed - never reformatted into a number"
-    },
-    "iva": {
-      "type": "string"
-    },
-    "impuestos_internos": {
-      "type": "string"
-    },
-    "percepcion_iibb": {
-      "type": "string"
-    },
-    "otros_impuestos": {
-      "type": "string"
-    },
-    "monto_no_gravado": {
-      "type": "string"
-    },
-    "importe_total_facturado": {
-      "type": "string",
-      "description": "the total as printed, with no adjustment"
-    },
-    "descripcion": {
-      "type": "string"
-    },
-    "condicion_impositiva_dominante": {
-      "type": "string",
-      "enum": [
-        "Responsable Inscripto",
-        "Monotributo",
-        "Exento",
-        "No Categorizado",
-        "Consumidor Final",
-        "null"
-      ],
-      "description": "the EMITTER's IVA condition, as the document declares it (RG 259/98 legends), or 'null' when it declares none. Never an alícuota — rates belong in alicuotas_detectadas"
-    },
-    "alicuotas_detectadas": {
-      "type": "string",
-      "description": "every IVA rate printed on the document, as AFIP codes separated by '|': 0, 2_5, 5, 10_5, 21, 27"
-    },
-    "categoria_gasto": {
-      "type": "string",
-      "enum": [
-        "Restaurante",
-        "Supermercado",
-        "Hospedaje",
-        "Combustible",
-        "Movilidad/Pasajes",
-        "Peajes",
-        "Herramientas",
-        "Otros",
-        "null"
-      ],
-      "description": "inferred from the emitter's line of business, or 'null' when there is no clear indication"
-    },
     "notas": {
       "type": "string"
-    },
-    "cantidad_comensales_personas": {
-      "type": "string"
-    },
-    "cantidad_litros": {
-      "type": "string"
-    },
-    "centro_de_costo": {
-      "type": "string",
-      "description": "always 'null' at extraction: filled by a later classification step"
     }
   },
   "required": [
@@ -114,21 +47,7 @@
     "fecha_emision",
     "nro_comprobante",
     "moneda",
-    "subtotal",
-    "iva",
-    "impuestos_internos",
-    "percepcion_iibb",
-    "otros_impuestos",
-    "monto_no_gravado",
-    "importe_total_facturado",
-    "descripcion",
-    "condicion_impositiva_dominante",
-    "alicuotas_detectadas",
-    "categoria_gasto",
-    "notas",
-    "cantidad_comensales_personas",
-    "cantidad_litros",
-    "centro_de_costo"
+    "notas"
   ],
   "additionalProperties": false
 }

@@ -26,8 +26,15 @@ Claves, todas al mismo nivel:
   percepcion_iibb               el importe impreso, o "0"
   otros_impuestos               el importe impreso, o "0"
   monto_no_gravado              el importe impreso, o "0"
+  importe_total_facturado       el total tal como figura impreso, sin ajustes
   condicion_impositiva_dominante  la condición del emisor (ver regla 3), o "null"
   alicuotas_detectadas          las alícuotas impresas, separadas por "|" (ver regla 4)
+
+Los cuatro importes del desglose se leen juntos y del mismo modo. "subtotal",
+"iva" e "importe_total_facturado" forman además un grupo de consistencia: el motor
+verifica que subtotal + IVA = total, y por eso viven en el mismo paso. No es una
+comodidad de presentación: un campo que solo puede confirmarse por esa combinación
+pertenece al paso que la evalúa.
 
 Reglas:
 1. Los montos se devuelven **tal como están impresos**, como texto. Un importe

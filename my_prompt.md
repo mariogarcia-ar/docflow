@@ -1,3 +1,13 @@
+se aplico para 
+registry/prompts/extraction/invoice.txt
+pero falto 
+registry/prompts/extraction/vision.txt
+
+revisar si cambio el objetivo ... creeria que no oprque el run es agnostico a los prompts 
+
+
+
+
 revisar que introducimos y rompimos ocn el modelo 
 
 script.sh > cli > kernel > port > adapter 

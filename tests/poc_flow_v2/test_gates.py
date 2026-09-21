@@ -159,20 +159,22 @@ def test_registry_schema_and_prompt_agree() -> None:
     lane never names is the same silent drift, just in one lane.
     """
     artifacts = load_artifacts()
-    schema = artifacts.extraction_schema
-    required = set(schema["required"])
-    properties = set(schema["properties"])
+    prompts = _extraction_prompt_texts(artifacts)
 
-    for role in ("extract_texto", "extract_vision"):
-        prompt = artifacts.prompts[role]
-        missing = sorted(name for name in required if name not in prompt)
-        undeclared = sorted(name for name in properties if name not in prompt)
-        assert not missing, (
-            f"{role}: schema requires {missing} that the prompt never names"
-        )
-        assert not undeclared, (
-            f"{role}: schema declares {undeclared} that the prompt never names"
-        )
+    for step, schema in _extraction_step_schemas().items():
+        required = set(schema["required"])
+        properties = set(schema["properties"])
+        for role, prompt in prompts.items():
+            if role not in _STEP_PROMPT_ROLES[step]:
+                continue
+            missing = sorted(name for name in required if name not in prompt)
+            undeclared = sorted(name for name in properties if name not in prompt)
+            assert not missing, (
+                f"{step}/{role}: schema requires {missing} that the prompt never names"
+            )
+            assert not undeclared, (
+                f"{step}/{role}: schema declares {undeclared} that the prompt never names"
+            )
 
 
 def test_a_closed_vocabulary_field_declares_a_real_enum() -> None:
@@ -200,6 +202,15 @@ def test_a_closed_vocabulary_field_declares_a_real_enum() -> None:
         }
     )
     schema = load_artifacts().extraction_schema
+
+    # The base step's schema is the one loaded; the closed-vocabulary fields that
+    # moved to a reserved step are checked against THEIR step's schema, so the rule
+    # follows the field rather than the loaded artifact.
+    reserved = _extraction_step_schemas()
+    for name, step_schema in reserved.items():
+        if name == "base":
+            continue
+        schema["properties"] = {**schema["properties"], **step_schema["properties"]}
 
     missing = sorted(
         field
@@ -296,7 +307,7 @@ def test_the_condition_field_declares_afip_legends_not_rates() -> None:
     was never captured. A vocabulary that mixes two questions gets the wrong
     answer to both.
     """
-    schema = load_artifacts().extraction_schema
+    schema = _extraction_step_schemas()["desglose"]
     enum = schema["properties"]["condicion_impositiva_dominante"]["enum"]
 
     rates = [option for option in enum if re.fullmatch(r"\d+(_\d+)?", option)]
@@ -316,7 +327,7 @@ def test_the_rate_field_declares_the_real_afip_rates() -> None:
     described the field as "every rate found" and the prompts listed only four,
     so a 5% line — a real rate for certain goods — had no name to be read into.
     """
-    schema = load_artifacts().extraction_schema
+    schema = _extraction_step_schemas()["desglose"]
     description = schema["properties"]["alicuotas_detectadas"]["description"]
 
     for rate in ("2_5", "5", "10_5", "21", "27"):
@@ -348,40 +359,25 @@ def test_every_receipt_code_the_prompt_names_is_in_the_enum() -> None:
         )
 
 
-# `xfail` with `strict=True`: the overlap it reports is the *expected* state until
-# step 3 trims `invoice.json`, and `strict` means the marker must be removed the
-# moment the partition becomes clean — an `xpass` would otherwise go unnoticed.
-@pytest.mark.xfail(
-    strict=True,
-    reason="step 3 pending: invoice.json still carries all 23 fields",
-)
 def test_the_extraction_steps_partition_every_field() -> None:
     """The four extraction steps together cover the contract, with no overlap.
 
-    `invoice.json` is the single-pass contract: 23 fields. The layered implementation
-    splits them across four artifacts — base reading, tax breakdown, line-of-business
-    detail and classification — which are **declared but not loaded** yet, per
-    `cierre-circuitos.md` §«Enfoque en capas», step 1.
+    The **single-pass contract** is the 23 fields the original one-shot extraction
+    declared; it is named here because after the split no single artifact holds it.
+    The layered implementation distributes it across four artifacts — base reading,
+    tax breakdown, line-of-business detail and classification — and this test is what
+    makes the distribution a property rather than a promise. Without it, "we will
+    split the extraction" is a note; with it, dropping a field while partitioning
+    fails the build.
 
-    This test is what makes the split a property rather than a promise. Without it,
-    "we will split the extraction" is a note; with it, dropping a field while
-    partitioning fails the build. It reads the four schemas from the registry, so it
-    also proves the reservations are declared and their files are valid JSON the
-    provider could constrain on.
+    It reads the four schemas from the registry, so it also proves the reservations
+    are declared and that their files are valid JSON the provider could constrain on.
 
     The partition must be:
-    - **complete**, every field of the single-pass contract lands in exactly one step;
+    - **complete**, every field of the contract lands in exactly one step;
     - **disjoint**, no field is claimed by two steps, because two steps claiming one
       field is two answers for one value.
-
-    Until step 3 runs, this test fails on the overlap and that is the honest state:
-    the four artifacts exist and are declared, while `invoice.json` still carries all
-    23 fields. It is marked `xfail` on purpose — a `skip` would hide that the work is
-    outstanding, and an unmarked failure would block the suite on a known state.
-    Remove the marker when `invoice.json` is trimmed to the base step.
     """
-    artifacts = load_artifacts()
-    contract = set(artifacts.extraction_schema["properties"])
     steps = _extraction_step_properties()
 
     assert set(steps) == set(_EXTRACTION_STEPS), (
@@ -397,13 +393,46 @@ def test_the_extraction_steps_partition_every_field() -> None:
             )
             claimed[field] = name
 
-    lost = sorted(contract - set(claimed))
+    lost = sorted(_SINGLE_PASS_CONTRACT - set(claimed))
     assert not lost, f"the partition drops these fields from the contract: {lost}"
 
-    extra = sorted(set(claimed) - contract)
+    extra = sorted(set(claimed) - _SINGLE_PASS_CONTRACT)
     assert not extra, (
         f"the partition invents fields the contract does not declare: {extra}"
     )
+
+
+#: The 23 fields the single-pass extraction declared, before the layered split. This
+#: is the contract the partition must conserve — a transcription, not a derivation:
+#: after the split no single artifact holds the full list, so naming it here is what
+#: keeps "no field was lost" checkable.
+_SINGLE_PASS_CONTRACT: frozenset[str] = frozenset(
+    {
+        "comprobante_valido",
+        "motivo_rechazo",
+        "tipo_comprobante",
+        "razon_social_emisor",
+        "cuit_emisor",
+        "fecha_emision",
+        "nro_comprobante",
+        "moneda",
+        "subtotal",
+        "iva",
+        "impuestos_internos",
+        "percepcion_iibb",
+        "otros_impuestos",
+        "monto_no_gravado",
+        "importe_total_facturado",
+        "descripcion",
+        "condicion_impositiva_dominante",
+        "alicuotas_detectadas",
+        "categoria_gasto",
+        "notas",
+        "cantidad_comensales_personas",
+        "cantidad_litros",
+        "centro_de_costo",
+    }
+)
 
 
 #: The extraction steps a layered implementation runs, in order, and the registry
@@ -435,6 +464,53 @@ def _extraction_step_properties() -> dict[str, set[str]]:
         parsed = json.loads(asset.content.decode("utf-8"))
         steps[name] = set(parsed["properties"])
     return steps
+
+
+def _extraction_step_schemas() -> dict[str, dict]:
+    """Each extraction step's parsed schema, read from the registry's assets."""
+    loaded = load_registry(REGISTRY_ROOT)
+    assert loaded.value is not None, "the registry must load for these gates to mean"
+    assets = loaded.value.assets
+    return {
+        name: json.loads(assets[key].content.decode("utf-8"))
+        for name, key in _EXTRACTION_STEPS.items()
+    }
+
+
+def _extraction_prompt_texts(artifacts: object) -> dict[str, str]:
+    """Each extraction lane prompt, loaded and reserved alike.
+
+    The base prompts come from `Artifacts` (the flow loads those); the reserved ones
+    are read straight from the registry, because the flow does not load them yet.
+    """
+    texts = dict(artifacts.prompts)
+    loaded = load_registry(REGISTRY_ROOT)
+    assert loaded.value is not None, "the registry must load for these gates to mean"
+    for role, key in _STEP_PROMPT_KEYS.items():
+        asset = loaded.value.assets.get(key)
+        assert asset is not None, f"{role} prompt {key!r} is not declared"
+        texts[role] = asset.content.decode("utf-8")
+    return texts
+
+
+#: The prompt role that belongs to each extraction step. `extract_vision` shares the
+#: base step's field list; the reserved steps have one prompt each and no vision
+#: counterpart yet.
+_STEP_PROMPT_ROLES: dict[str, frozenset[str]] = {
+    "base": frozenset({"extract_texto", "extract_vision"}),
+    "desglose": frozenset({"extract_desglose"}),
+    "rubro": frozenset({"extract_rubro"}),
+    "clasificacion": frozenset({"extract_clasificacion"}),
+}
+
+#: The registry keys of the reserved steps' prompts, keyed by the role this suite
+#: speaks. Named here rather than imported from `flow`, so the gate reads what the
+#: manifest declares instead of what the loader happens to expose.
+_STEP_PROMPT_KEYS: dict[str, str] = {
+    "extract_desglose": "prompts/extraction/desglose.txt",
+    "extract_rubro": "prompts/extraction/rubro.txt",
+    "extract_clasificacion": "prompts/extraction/clasificacion.txt",
+}
 
 
 def test_every_enum_option_is_declared_in_the_prompt() -> None:
