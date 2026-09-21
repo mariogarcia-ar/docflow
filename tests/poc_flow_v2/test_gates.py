@@ -21,7 +21,6 @@ import json
 import pathlib
 import re
 
-import pytest
 from flow import run
 from flow._bootstrap import REGISTRY_ROOT, ensure_docflow_importable
 from flow.artifacts import load_artifacts
@@ -173,7 +172,8 @@ def test_registry_schema_and_prompt_agree() -> None:
                 f"{step}/{role}: schema requires {missing} that the prompt never names"
             )
             assert not undeclared, (
-                f"{step}/{role}: schema declares {undeclared} that the prompt never names"
+                f"{step}/{role}: schema declares {undeclared} that the prompt "
+                "never names"
             )
 
 
@@ -511,6 +511,66 @@ _STEP_PROMPT_KEYS: dict[str, str] = {
     "extract_rubro": "prompts/extraction/rubro.txt",
     "extract_clasificacion": "prompts/extraction/clasificacion.txt",
 }
+
+
+def test_no_prompt_asks_for_a_field_its_schema_does_not_declare() -> None:
+    """The reverse direction: a prompt must not request an undeclared key.
+
+    The field-name gate above asks *does the prompt name everything the schema
+    requires*. That direction cannot see the failure this guards: a prompt left
+    asking for keys its schema no longer declares. Measured: after the layered split
+    trimmed `invoice.txt` and `invoice.json` to the base step, `vision.txt` still
+    listed all 23 keys — 14 of them absent from the schema — and **every gate passed**,
+    because the 9 declared fields were all named.
+
+    A prompt asking for an undeclared key wastes the model's attention on an answer
+    the grammar will drop, and contradicts the schema's own claim that the two
+    artifacts are kept in step.
+
+    The comparison is over the keys the prompt's `Claves:` block lists, not over the
+    whole text: a rule may mention a field's name while explaining it (`"iva" es el
+    importe…`), and flagging that would be a false positive. The block is the place
+    where a prompt *asks for a key*.
+    """
+    prompts = _extraction_prompt_texts(load_artifacts())
+    schemas = _extraction_step_schemas()
+
+    for step, schema in schemas.items():
+        declared = set(schema["properties"])
+        for role in _STEP_PROMPT_ROLES[step]:
+            asked = _declared_keys(prompts[role])
+            extra = sorted(asked - declared)
+            assert not extra, (
+                f"{step}/{role}: the prompt asks for {extra}, which its schema does "
+                "not declare: the model would spend attention on an answer the "
+                "grammar drops"
+            )
+
+
+def _declared_keys(prompt: str) -> set[str]:
+    """The field names a prompt's `Claves:` block asks the model to answer with.
+
+    Reads only the block between `Claves, todas al mismo nivel:` and the first blank
+    line after it, where each line is `  key   description`. Returns an empty set for a
+    prompt without that block, so a shape change fails the assertions that read the
+    result rather than raising on a parse.
+    """
+    _, _, tail = prompt.partition(_KEYS_HEADER)
+    if not tail:
+        return set()
+    block = tail.split("\n\n", 1)[0]
+    keys: set[str] = set()
+    for line in block.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        keys.add(stripped.split()[0])
+    return keys
+
+
+#: The heading that opens a prompt's key list. Spelled once so every reader of the
+#: block agrees on where it starts.
+_KEYS_HEADER: str = "Claves, todas al mismo nivel:"
 
 
 def test_every_enum_option_is_declared_in_the_prompt() -> None:

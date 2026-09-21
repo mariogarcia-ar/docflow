@@ -441,6 +441,62 @@ Los cuatro gates de deriva iteran el schema activo, y dos de ellos buscan campos
 re-apuntarlos al esquema `desglose`. Es el único acoplamiento fuera de `registry/` que el
 split exige resolver — el resto del flujo no cambia, porque pide claves por nombre.
 
+### El paso 3, ejecutado — y los cuatro artefactos que declaraban el paso base
+
+Recortar `invoice.json` y `invoice.txt` **no alcanzó**, y el resultado lo mostró: el paso
+base quedó declarado en **cuatro** artefactos, no en dos.
+
+| Artefacto | Antes | Ahora |
+|---|---|---|
+| `schemas/extraction/invoice.json` | 23 campos | **9** |
+| `prompts/extraction/invoice.txt` | 23 claves | **9** |
+| `prompts/extraction/vision.txt` | **23 claves** | **9** |
+
+Las reglas del grupo 2 que `vision.txt` todavía traía —la de condición impositiva y la de
+alícuotas, con `2_5` sin el 5 %— se quitaron: **ya viven en `desglose.txt`**. Lo que se movió
+fue el documento, no el conocimiento.
+
+**`vision.txt` era el que faltaba.** Se recortó al final, cuando el pedido fue *"revisar que
+`vision.txt` tiene el mismo problema"*, y lo tenía: seguía pidiendo las 23 claves contra un
+schema de 9. Peor: **ningún gate podía verlo**, porque el gate preguntaba en una sola
+dirección —*¿el prompt nombra lo que el schema requiere?*— y una clave de más no rompe esa
+pregunta. Los 14 sobrantes eran invisibles.
+
+También había **reglas numeradas duplicadas** en `vision.txt` (dos `10` y dos `11`), y el
+error factual de `090/099` seguía en su regla 7 aunque `invoice.txt` ya lo tenía corregido.
+Los cuatro artefactos derivaron a ritmos distintos porque nada los comparaba entre sí.
+
+### El gate de la dirección inversa
+
+`test_no_prompt_asks_for_a_field_its_schema_does_not_declare` compara las claves del bloque
+`Claves:` de cada prompt contra los campos de **su** schema. Compara el bloque y no el texto
+entero a propósito: una regla puede nombrar un campo al explicarlo (`"iva" es el importe…`)
+y marcarlo sería un falso positivo; el bloque es donde un prompt *pide* una clave.
+
+**Verificado en las dos direcciones:** mutar cualquiera de los cinco prompts para reponer una
+clave ajena lo pone en rojo, y reponer las 14 claves originales de `vision.txt` **también** —
+o sea, el gate habría atrapado este defecto la primera vez.
+
+### El acoplamiento que faltaba: el banco de kernels
+
+Fuera del flujo, `tests/kernels/test_committed_registry.py` también leía los importes desde
+`invoice.json`:
+
+```python
+schema = json.loads(loaded[SCHEMA_KEY].content.decode("utf-8"))
+for name in ("subtotal", "iva", ...):
+    schema["properties"][name]["type"]
+```
+
+Seis de los siete importes se fueron a `desglose`, así que el test falló con `KeyError` —
+**y era la señal correcta**: la regla "los importes son `string`" es del contrato, no de un
+archivo. Ahora busca el campo en **todos los esquemas de extracción** del registry, y falla
+si un importe del contrato no lo declara ningún paso.
+
+**Partición final, 9 + 9 + 2 + 3 = 23**, sin repetir ni perder ninguno, verificada por el
+gate de partición y por el de dirección inversa. Los cinco prompts suman lo mismo que los
+cuatro schemas.
+
 ---
 
 1. **Nueve circuitos con test** — cada C1…C9 tiene un test que falla si el

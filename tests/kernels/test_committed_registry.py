@@ -124,8 +124,11 @@ def test_the_amounts_are_strings_because_numbering_loses_the_printed_value(
     the mistake is easy to reintroduce on a field-by-field basis and a single sample
     would not catch the next one.
 
+    The fields are looked up across **every extraction step's schema**, not only the
+    base one: the layered split moved six of the seven amounts into the tax-breakdown
+    step, and reading only `invoice.json` would assert on the one that stayed — passing
+    while the six that moved went unchecked. The rule follows the field, not the file.
     """
-    schema = json.loads(loaded[SCHEMA_KEY].content.decode("utf-8"))
     amounts = [
         "subtotal",
         "iva",
@@ -135,13 +138,34 @@ def test_the_amounts_are_strings_because_numbering_loses_the_printed_value(
         "monto_no_gravado",
         "importe_total_facturado",
     ]
+    properties = _every_extraction_property(loaded)
 
     for name in amounts:
-        assert schema["properties"][name]["type"] == "string", (
-            f"{name!r} is declared "
-            f"{schema['properties'][name]['type']!r}; a number drops the printed "
+        assert name in properties, (
+            f"{name!r} is not declared by any extraction step: an amount the contract "
+            "names but no schema carries cannot be constrained"
+        )
+        declared = properties[name]["type"]
+        assert declared == "string", (
+            f"{name!r} is declared {declared!r}; a number drops the printed "
             "decimal separator and the trailing zeros"
         )
+
+
+def _every_extraction_property(loaded) -> dict[str, dict]:
+    """Every property of every extraction schema in the registry, merged.
+
+    Merged rather than concatenated because the question here is *does the field
+    exist and what type is it* — which step declares it is settled by the partition
+    gate in `tests/poc_flow_v2/test_gates.py`, not by this one.
+    """
+    merged: dict[str, dict] = {}
+    for key, asset in loaded.items():
+        if not key.startswith("schemas/extraction/"):
+            continue
+        parsed = json.loads(asset.content.decode("utf-8"))
+        merged.update(parsed.get("properties", {}))
+    return merged
 
 
 def test_the_prompt_carries_the_placeholder_the_driver_substitutes(loaded) -> None:
