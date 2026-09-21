@@ -21,9 +21,42 @@ python scripts/poc-flow-v2/myflow.py <document> --pretty   # el resultado, inden
 prompt, qué dice el modelo local*:
 
 ```bash
+# el prompt y el schema del registry, sin más flags que el documento
+python scripts/poc-flow-v2/myllmlocal.py <document>
+
+# un prompt propio — tiene que contener {text}
 python scripts/poc-flow-v2/myllmlocal.py <document> --prompt var/prompt.txt
-python scripts/poc-flow-v2/myllmlocal.py <document> --prompt p.txt --schema s.json
+
+# un schema propio, conservando el prompt del registry
+python scripts/poc-flow-v2/myllmlocal.py <document> --schema var/fields.json
+
+# los dos, que es lo que hace la corrida independiente del registry
+python scripts/poc-flow-v2/myllmlocal.py <document> \
+  --prompt var/prompt.txt --schema var/fields.json
+
+# otro modelo, tal como lo nombra el runtime
+python scripts/poc-flow-v2/myllmlocal.py <document> --model gemma3:1b
+
+# un prompt del registry por ruta — el que usa la propia lane de texto
+python scripts/poc-flow-v2/myllmlocal.py <document> \
+  --prompt registry/prompts/extraction/invoice.txt
+
+# la ruta la elige el tipo de documento, así que no lleva flag
+python scripts/poc-flow-v2/myllmlocal.py tests/fixtures-txt/casos/<doc>.txt
+python scripts/poc-flow-v2/myllmlocal.py tests/fixtures/casos/<doc>.pdf
+python scripts/poc-flow-v2/myllmlocal.py tests/fixtures/casos/<doc>.jpg
+
+# leer la respuesta con jq, porque stdout es un solo objeto JSON
+python scripts/poc-flow-v2/myllmlocal.py <document> --pretty | jq .answer
+python scripts/poc-flow-v2/myllmlocal.py <document> | jq -r .call.refusal
+
+# una ventana más grande: el flujo declara 8192 y un valor exportado gana
+DOCFLOW_OLLAMA_NUM_CTX=16384 python scripts/poc-flow-v2/myllmlocal.py <document>
 ```
+
+`--model` y la ventana son los dos únicos *diales*; `--prompt` y `--schema` son
+*entradas*, y la diferencia importa. `--pretty` cambia sólo la indentación — el
+reporte es el mismo objeto en los dos casos.
 
 La ruta del documento a texto es la del flujo, nunca un segundo lector: un `.txt`
 se lee tal cual, un PDF con capa de texto pasa por `pdftotext -layout`, una página

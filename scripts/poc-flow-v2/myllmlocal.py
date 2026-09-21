@@ -21,7 +21,42 @@ a probe that sent pixels would be answering a different question.
 
 Run:
 
+    # The registry's own prompt and schema — no flags but the document:
+    python scripts/poc-flow-v2/myllmlocal.py <document>
+
+    # A caller's prompt. It must contain {text}:
     python scripts/poc-flow-v2/myllmlocal.py <document> --prompt var/prompt.txt
+
+    # A caller's schema, keeping the registry's prompt:
+    python scripts/poc-flow-v2/myllmlocal.py <document> --schema var/fields.json
+
+    # Both, which is what makes a run independent of the registry:
+    python scripts/poc-flow-v2/myllmlocal.py <document> \\
+        --prompt var/prompt.txt --schema var/fields.json
+
+    # Another model, as the runtime names it:
+    python scripts/poc-flow-v2/myllmlocal.py <document> --model gemma3:1b
+
+    # A registry prompt by path, which is what the text lane itself uses:
+    python scripts/poc-flow-v2/myllmlocal.py <document> \\
+        --prompt registry/prompts/extraction/invoice.txt
+
+    # The document's route is chosen from its kind, so these need no flag:
+    python scripts/poc-flow-v2/myllmlocal.py tests/fixtures-txt/casos/<doc>.txt
+    python scripts/poc-flow-v2/myllmlocal.py tests/fixtures/casos/<doc>.pdf
+    python scripts/poc-flow-v2/myllmlocal.py tests/fixtures/casos/<doc>.jpg
+
+    # Read the answer with jq, since stdout is one JSON object:
+    python scripts/poc-flow-v2/myllmlocal.py <document> --pretty | jq .answer
+    python scripts/poc-flow-v2/myllmlocal.py <document> | jq -r .call.refusal
+
+    # A bigger context window. The flow declares 8192 and an exported value
+    # wins, because the environment is where an operator tunes a run:
+    DOCFLOW_OLLAMA_NUM_CTX=16384 python scripts/poc-flow-v2/myllmlocal.py <document>
+
+`--model` and the window are the only two dials here; a prompt and a schema are
+*inputs*, and the difference matters. `--pretty` changes the indentation and
+nothing else — the report is the same object either way.
 
 Stdout is one JSON object — the model's answer with the call's own numbers beside
 it, so `| jq` works. The route and the provenance go to stderr, because a run
@@ -236,8 +271,27 @@ def _build_parser() -> _Parser:
     """Build the argument parser: the document and what to ask about it."""
     parser = _Parser(
         description=__doc__.splitlines()[0],
-        epilog="exit codes: 0 a value, 2 a typed refusal, "
-        "3 a precondition, 4 a malformed invocation",
+        epilog=(
+            "examples:\n"
+            "  myllmlocal <document>\n"
+            "      the registry's own prompt and schema\n"
+            "  myllmlocal <document> --prompt var/prompt.txt\n"
+            "      a caller's prompt; it must contain '{text}'\n"
+            "  myllmlocal <document> --schema var/fields.json\n"
+            "      a caller's schema, keeping the registry's prompt\n"
+            "  myllmlocal <document> --prompt p.txt --schema s.json\n"
+            "      both, which makes the run independent of the registry\n"
+            "  myllmlocal <document> --model gemma3:1b\n"
+            "      another model, as the runtime names it\n"
+            "  myllmlocal <document> --pretty | jq .answer\n"
+            "      stdout is one JSON object, so jq reads it\n"
+            "  DOCFLOW_OLLAMA_NUM_CTX=16384 myllmlocal <document>\n"
+            "      a bigger window; an exported value wins over the flow's 8192\n"
+            "\n"
+            "exit codes: 0 a value, 2 a typed refusal, "
+            "3 a precondition, 4 a malformed invocation"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
         "document",

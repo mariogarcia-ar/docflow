@@ -15,6 +15,16 @@ si el archivo es usar los metodos existente en scripts/poc-flow-v2/flow
 - imagen: usar ocr (doclint) y enviar texto 
 
 
+```bash
+# es factura
+python scripts/poc-flow-v2/myllmlocal.py \
+  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
+  --prompt 'registry/prompts/extraction/invoice.txt'
+  
+
+
+```
+
 
 
 revisar que introducimos y rompimos ocn el modelo 
