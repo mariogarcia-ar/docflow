@@ -163,6 +163,37 @@ def test_registry_schema_and_prompt_agree() -> None:
         )
 
 
+def test_every_configured_local_model_name_is_tagged() -> None:
+    """A configured model name carries its tag, or the runtime cannot invoke it.
+
+    Measured against this Ollama runtime: ``POST /api/chat {"model": "gemma3"}``
+    answers ``404 model not found`` even though ``gemma3:1b`` is pulled and
+    answers ``200``. Ollama resolves a bare name **only** when it matches
+    exactly, so a tagless name is not *the family* — it is a name that dies at
+    the call.
+
+    The lane that died this way reported ``no review verdicts``, which reads the
+    same as a reviewer that agreed with everything. This test is what makes the
+    configuration a checked fact rather than a string nobody validated
+    (`my_flow.md` §4.1 names the family; the tag is what makes it reachable).
+    """
+    untagged = [
+        name
+        for name in (
+            DEFAULT_CONFIG.text_model_a,
+            DEFAULT_CONFIG.text_model_b,
+            DEFAULT_CONFIG.vision_model_a,
+            DEFAULT_CONFIG.vision_model_b,
+        )
+        if name is not None and ":" not in name
+    ]
+
+    assert not untagged, (
+        f"these configured models carry no tag, so the runtime cannot invoke "
+        f"them: {untagged}. Name the pulled model exactly, e.g. `gemma3:1b`."
+    )
+
+
 def test_registry_amounts_are_strings() -> None:
     """Every amount field is a string, so a printed amount survives as text."""
     schema = load_artifacts().extraction_schema

@@ -32,6 +32,9 @@ imagen : con comprobante
 tests/fixtures/casos/66e6e0ea-e910-41f4-9037-13f0309812c1.jpg
 
 
+analizar si esta funcionando segun la especificacion de my_flow.md.
+
+
 
 ```bash
 #!/bin/bash

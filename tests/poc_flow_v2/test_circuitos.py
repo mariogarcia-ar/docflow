@@ -19,7 +19,13 @@ import numpy as np
 from flow.classify import classify
 from flow.config import DEFAULT_CONFIG, FAMILY_POINTS
 from flow.engine import DecisionContext, _family_score, evaluate
-from flow.extract import _apply_review, _cross_modal, _present_at_location
+from flow.extract import (
+    _apply_review,
+    _call_structured,
+    _cross_modal,
+    _present_at_location,
+    _review_verdicts,
+)
 from flow.fields import (
     CLASSIFY_NOT_A_RECEIPT,
     DECISION_CONFIRMED,
@@ -47,6 +53,8 @@ from flow.qr import qr_candidates, qr_conflict, qr_deterministic
 from flow.resolve import resolver_loop
 from flow.run import ladder_step
 from flow.validators import arithmetic_signal, required_components_for
+
+from docflow.kernels.types import Bytes
 
 
 def _answer(**observed: object):
@@ -325,6 +333,165 @@ def test_c2_a_reviewer_disagree_produces_a_new_candidate() -> None:
     produced = candidates["importe_total_facturado"]
     assert len(produced) == 2
     assert any(p.producers == ["reviewer_suggested"] for p in produced)
+
+
+def test_c2_a_verdict_naming_no_reviewed_field_is_counted() -> None:
+    """A malformed verdict is reported, not silently dropped (B.9).
+
+    Measured: `gemma3:1b` answers `{"field": "agree", "verdict": "agree"}` —
+    the verdict echoed into the field slot. No candidate is named "agree", so
+    the loop skipped it and the lane looked like a reviewer with nothing to say.
+    """
+    candidates = {
+        "importe_total_facturado": [
+            FieldCandidate("1789830", "17.898,30", ["extractor_llm_texto"], [], [])
+        ]
+    }
+    verdicts = [{"field": "agree", "verdict": "agree"}]
+
+    unmatched = _apply_review(candidates, verdicts, DEFAULT_CONFIG)
+
+    assert unmatched == 1
+    # ``== []`` (not ``not signals``) asserts the list is exactly empty — the
+    # real defect, since a malformed verdict must add nothing at all.
+    assert candidates["importe_total_facturado"][0].signals == (  # pylint: disable=use-implicit-booleaness-not-comparison
+        []
+    )
+
+
+def test_c2_a_well_formed_verdict_counts_as_matched() -> None:
+    """The control: a real verdict reports zero unmatched, so the counter is not
+    a constant."""
+    candidates = {
+        "importe_total_facturado": [
+            FieldCandidate("1789830", "17.898,30", ["extractor_llm_texto"], [], [])
+        ]
+    }
+    verdicts = [{"field": "importe_total_facturado", "verdict": "agree"}]
+
+    unmatched = _apply_review(candidates, verdicts, DEFAULT_CONFIG)
+
+    assert unmatched == 0
+    assert any(
+        s.family == "SAME_MATERIAL"
+        for s in candidates["importe_total_facturado"][0].signals
+    )
+
+
+def test_c2_a_refused_review_carries_the_adapters_reason_code() -> None:
+    """A lane that could not run reports **why**, not just that it had no verdicts.
+
+    The adapter already typed the refusal (`model_not_pulled`, `engine_unavailable`,
+    …) and the flow discarded it, collapsing *the reviewer is missing* into *the
+    reviewer agreed with nothing* (`my_flow.md` B.9). Measured: the configured
+    reviewer was absent, the note said only `no review verdicts`, and the missing
+    `SAME_MATERIAL` signal was unattributable.
+    """
+
+    class _RefusingEngine:
+        """An engine whose call is refused, shaped like the adapter's result."""
+
+        # `too-few-public-methods`: the double exists for its one refusal.
+        # pylint: disable=too-few-public-methods
+
+        def structured(self, model, prompt, schema):  # pylint: disable=unused-argument
+            """Refuse the call with a typed reason."""
+            return SimpleNamespace(
+                value=None,
+                reason=SimpleNamespace(code="model_not_pulled", message="absent"),
+            )
+
+    verdicts, code = _review_verdicts(
+        _RefusingEngine(), "gemma3", "p", {"type": "object"}
+    )
+
+    assert verdicts == []
+    assert code == "model_not_pulled"
+
+
+def test_c2_a_successful_call_reports_no_refusal_code() -> None:
+    """The control: an answered call returns an empty code, not a constant.
+
+    Asserts against the **call helper**, not `_review_verdicts`: the latter
+    discards the code whenever a value came back, so it would pass even if the
+    helper invented one on every success.
+    """
+
+    class _AnsweringEngine:
+        """An engine that answers with one verdict."""
+
+        # pylint: disable=too-few-public-methods
+
+        def structured(self, model, prompt, schema):  # pylint: disable=unused-argument
+            """Answer with a single reviewer verdict."""
+            return SimpleNamespace(
+                value={"field_verdicts": [{"field": "iva", "verdict": "agree"}]},
+                reason=None,
+            )
+
+    answered, code = _call_structured(
+        _AnsweringEngine(), "gemma3", "p", {"type": "object"}
+    )
+
+    assert answered is not None and "field_verdicts" in answered
+    assert code == ""
+
+
+def test_c2_a_refused_vision_review_carries_its_code() -> None:
+    """The vision path reports its refusal the same way the text path does.
+
+    Both paths reach the same reviewer role, so a code dropped on only one of
+    them is the same silent loss — and it is the one that would go unnoticed,
+    because the vision lane runs least often.
+    """
+
+    class _RefusingVisionEngine:
+        """A vision engine whose call is refused."""
+
+        # pylint: disable=too-few-public-methods
+
+        def vision(self, model, prompt, images, schema):  # pylint: disable=unused-argument
+            """Refuse the call with a typed reason."""
+            return SimpleNamespace(
+                value=None,
+                reason=SimpleNamespace(code="unsupported_format", message="no pixels"),
+            )
+
+    verdicts, code = _review_verdicts(
+        _RefusingVisionEngine(),
+        "granite-vision:2b",
+        "p",
+        {"type": "object"},
+        images=[Bytes(b"png", "image/png")],
+    )
+
+    assert verdicts == []
+    assert code == "unsupported_format"
+
+
+def test_c2_a_reviewer_without_a_verdict_list_is_not_a_success() -> None:
+    """An answer missing `field_verdicts` is a refusal, not an empty review.
+
+    A model that answers `{}` produced no review at all; reporting it as an
+    empty verdict list would make it indistinguishable from a reviewer that read
+    the document and found nothing to dispute (`my_flow.md` B.9).
+    """
+
+    class _ShapelessEngine:
+        """An engine that answers without the verdict list."""
+
+        # pylint: disable=too-few-public-methods
+
+        def structured(self, model, prompt, schema):  # pylint: disable=unused-argument
+            """Answer with an object that carries no verdicts."""
+            return SimpleNamespace(value={"reviewer": "gemma3"}, reason=None)
+
+    verdicts, code = _review_verdicts(
+        _ShapelessEngine(), "gemma3", "p", {"type": "object"}
+    )
+
+    assert verdicts == []
+    assert code, "a missing verdict list must be reported, not read as success"
 
 
 # --- C5: arithmetic consistency (combinations + required components) --------

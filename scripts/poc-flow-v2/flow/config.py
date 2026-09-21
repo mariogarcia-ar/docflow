@@ -102,10 +102,36 @@ VETO_CODES: Final[frozenset[str]] = frozenset(
 #: (`my_flow.md` §4.1: primary extractor). The reviewer model differs, which is
 #: what makes the A/B contrast meaningful.
 TEXT_MODEL_A: Final[str] = "deepseek-r1:1.5b"
-TEXT_MODEL_B: Final[str] = "gemma3"
+
+#: The text reviewer (`my_flow.md` §4.1: `gemma3`), **tagged**.
+#:
+#: The tag is not decoration. Measured against this runtime, Ollama answers
+#: ``404 model not found`` for a bare name even when a model of that family is
+#: pulled, and ``200`` for the tagged one:
+#:
+#: ```
+#: POST /api/chat {"model": "gemma3"}     -> 404 {"error": "model 'gemma3' not found"}
+#: POST /api/chat {"model": "gemma3:1b"}  -> 200
+#: ```
+#:
+#: So a tagless name here is not *gemma3 in general* — it is a name the runtime
+#: cannot resolve, and the lane dies with the reviewer absent. Only the tag makes
+#: the lane reachable; §4.1 still names the family, and `gemma3:1b` is that family.
+TEXT_MODEL_B: Final[str] = "gemma3:1b"
 
 #: The vision lane models (`my_flow.md` §4.1). ``None`` means *no local vision
 #: model is configured*: the lane is then skipped rather than silently faked.
+#:
+#: `vision_model_b` names **Granite-Vision 2B** because §4.1 does, and it is
+#: deliberately left named although this runtime does not hold it: the lane then
+#: refuses with ``model_not_pulled`` and a remedy, which is a fact an operator can
+#: act on. Setting it to ``None`` would erase that fact — the lane would be skipped
+#: silently, and *not configured* would read the same as *configured and missing*.
+#:
+#: This runtime holds `granite3.1-moe:1b`, which is **not** a substitute: measured,
+#: it declares ``capabilities: ['completion', 'tools']`` and no ``vision``. A text
+#: model answering about pixels is the plausible-looking wrong answer this project
+#: exists to catch, so no stand-in is chosen here.
 VISION_MODEL_A: Final[str] = "qwen2.5vl:3b"
 VISION_MODEL_B: Final[str] = "granite-vision:2b"
 

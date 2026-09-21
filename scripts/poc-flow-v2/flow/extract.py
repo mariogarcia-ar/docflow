@@ -203,12 +203,23 @@ def _regexp_candidates(text: str) -> dict[str, list[FieldCandidate]]:
 
 def _call_structured(
     engine: OllamaEngine, model: str, prompt: str, schema: Mapping[str, object]
-) -> Mapping[str, object] | None:
-    """One structured call; ``None`` on refusal, never an exception."""
+) -> tuple[Mapping[str, object] | None, str]:
+    """One structured call.
+
+    Returns:
+        The parsed answer (or ``None``) and the refusal's reason code: ``""``
+        when the call succeeded, otherwise the adapter's own code. The code is
+        returned rather than logged because the caller is the only place that can
+        say which lane it belonged to — and a lane that did not run must say
+        **why** (`my_flow.md` B.9): a bare "no verdicts" reads the same whether the
+        model is missing, the runtime is down, or the reviewer simply agreed with
+        nothing to add.
+
+    """
     result = engine.structured(model, prompt, schema)
     if result.value is None:
-        return None
-    return dict(result.value)
+        return None, (result.reason.code if result.reason else "no_reason")
+    return dict(result.value), ""
 
 
 def _call_vision(
@@ -217,14 +228,14 @@ def _call_vision(
     prompt: str,
     images: list[Bytes],
     schema: Mapping[str, object],
-) -> Mapping[str, object] | None:
-    """One vision call; ``None`` on refusal or when there are no images."""
+) -> tuple[Mapping[str, object] | None, str]:
+    """One vision call; ``(None, code)`` on refusal, or when there are no images."""
     if not images:
-        return None
+        return None, "no images to read"
     result = engine.vision(model, prompt, images, schema)
     if result.value is None:
-        return None
-    return dict(result.value)
+        return None, (result.reason.code if result.reason else "no_reason")
+    return dict(result.value), ""
 
 
 def _review_verdicts(
@@ -234,32 +245,38 @@ def _review_verdicts(
     schema: Mapping[str, object],
     *,
     images: list[Bytes] | None = None,
-) -> list[Mapping[str, object]]:
-    """Run one review call and return its per-field verdicts, or an empty list.
+) -> tuple[list[Mapping[str, object]], str]:
+    """Run one review call and return its verdicts and the refusal code.
 
     Args:
         images: When given, the call is `vision` so the reviewer sees the page
             (I5); when ``None``, it is `structured` and grades the transcript.
             The text reviewer reads text, the vision reviewer reads pixels.
 
+    Returns:
+        The per-field verdicts (possibly empty) and the refusal code, which is
+        ``""`` only when the model actually answered. A model that answered with
+        an empty verdict list is **not** a refusal and returns ``""`` — the two
+        are different facts and the caller reports them differently.
+
     """
     if images is not None:
-        answered = _call_vision(engine, model, prompt, images, schema)
+        answered, code = _call_vision(engine, model, prompt, images, schema)
     else:
-        answered = _call_structured(engine, model, prompt, schema)
+        answered, code = _call_structured(engine, model, prompt, schema)
     if answered is None:
-        return []
+        return [], code
     verdicts = answered.get("field_verdicts")
     if not isinstance(verdicts, list):
-        return []
-    return [v for v in verdicts if isinstance(v, Mapping)]
+        return [], "the reviewer answered without a field_verdicts list"
+    return [v for v in verdicts if isinstance(v, Mapping)], ""
 
 
 def _apply_review(
     candidates: dict[str, list[FieldCandidate]],
     verdicts: list[Mapping[str, object]],
     config: Config,
-) -> None:
+) -> int:
     """Fold a reviewer's verdicts into the candidates it reviewed.
 
     The family points come from the run's config, never from a literal here: a
@@ -271,13 +288,24 @@ def _apply_review(
       candidate from ``suggested_value`` that starts from zero (`my_flow.md`
       §6.2);
     - ``uncertain`` → neutral.
+
+    Returns:
+        How many verdicts named a field this document produced **no candidate
+        for**. A verdict whose ``field`` is a value rather than a field name
+        (measured: ``gemma3:1b`` answers ``{"field": "agree", "verdict":
+        "agree"}``) can never be applied, and silently dropping it makes a
+        reviewer that answered nothing look like a reviewer with nothing to say
+        (`my_flow.md` B.9).
+
     """
     same_material = config.family_points["SAME_MATERIAL"]
     soft = config.family_points["SOFT_REFUTATION"]
+    unmatched = 0
     for verdict in verdicts:
         field = str(verdict.get("field", ""))
         state = verdict.get("verdict")
         if field not in candidates:
+            unmatched += 1
             continue
         produced = candidates[field]
         if not produced:
@@ -297,6 +325,7 @@ def _apply_review(
             suggested = verdict.get("suggested_value")
             if suggested is not None and str(suggested).strip():
                 produced.append(_candidate(str(suggested), "reviewer_suggested", []))
+    return unmatched
 
 
 def _cross_modal(candidates: dict[str, list[FieldCandidate]], config: Config) -> None:
@@ -329,6 +358,41 @@ def _cross_modal(candidates: dict[str, list[FieldCandidate]], config: Config) ->
                         "text and vision lanes agree",
                     )
                 )
+
+
+def _reviewer_note(
+    lane: str, model: str, verdicts: int, refusal: str, unmatched: int
+) -> str:
+    """What to say about a reviewer lane, or ``""`` when it did its job.
+
+    The three outcomes are different facts and must not collapse into one string
+    (`my_flow.md` B.9): a reviewer that **could not be asked** (a refusal names
+    the adapter's own code), one that answered something unusable (a verdict
+    naming no reviewed field), and one that answered with **no verdicts at all**.
+    A missing reviewer and an agreeing one read the same otherwise, and the absent
+    `SAME_MATERIAL` signal becomes unattributable.
+
+    Args:
+        lane: Which lane, for the message: ``"text"`` or ``"vision"``.
+        model: The model the lane was configured with.
+        verdicts: How many usable verdicts came back.
+        refusal: The adapter's reason code, ``""`` when the call succeeded.
+        unmatched: Verdicts naming a field this document produced no candidate for.
+
+    Returns:
+        The note, or ``""`` when the reviewer answered usefully.
+
+    """
+    if refusal:
+        return f"{lane} lane B ({model}) refused: {refusal}; no SAME_MATERIAL signal"
+    if unmatched:
+        return (
+            f"{lane} lane B ({model}) answered {unmatched} verdict(s) naming no "
+            "reviewed field; discarded"
+        )
+    if not verdicts:
+        return f"{lane} lane B ({model}) answered with no field verdicts"
+    return ""
 
 
 def extract(  # pylint: disable=too-many-locals, too-many-branches
@@ -374,11 +438,11 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
     text_fields: dict[str, list[FieldCandidate]] = {}
     if text:
         prompt = extract_text_prompt.replace(TEXT_PLACEHOLDER, text)
-        answered = _call_structured(
+        answered, refusal = _call_structured(
             engine, config.text_model_a, prompt, extraction_schema
         )
         if answered is None:
-            notes.append("text lane A refused; no text candidates")
+            notes.append(f"text lane A refused ({refusal}); no text candidates")
         else:
             text_fields = _fields_to_candidates(
                 answered, "extractor_llm_texto", text, config
@@ -398,17 +462,20 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
         review_prompt = review_text_prompt.replace(TEXT_PLACEHOLDER, text).replace(
             PROPOSAL_PLACEHOLDER, proposal
         )
-        verdicts = _review_verdicts(
+        verdicts, refusal = _review_verdicts(
             engine, config.text_model_b, review_prompt, review_schema
         )
-        _apply_review(candidates, verdicts, config)
-        if not verdicts:
-            notes.append("text lane B produced no review verdicts")
+        unmatched = _apply_review(candidates, verdicts, config)
+        note = _reviewer_note(
+            "text", config.text_model_b, len(verdicts), refusal, unmatched
+        )
+        if note:
+            notes.append(note)
 
     # --- Lane A, vision ---------------------------------------------------
     vision_fields: dict[str, list[FieldCandidate]] = {}
     if config.vision_model_a and material.images:
-        answered = _call_vision(
+        answered, refusal = _call_vision(
             engine,
             config.vision_model_a,
             extract_vision_prompt,
@@ -416,7 +483,7 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
             extraction_schema,
         )
         if answered is None:
-            notes.append("vision lane A refused; no vision candidates")
+            notes.append(f"vision lane A refused ({refusal}); no vision candidates")
         else:
             vision_fields = _fields_to_candidates(answered, "vision", None, config)
             for field, produced in vision_fields.items():
@@ -429,14 +496,19 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
             ensure_ascii=False,
         )
         review_prompt = review_vision_prompt.replace(PROPOSAL_PLACEHOLDER, proposal)
-        verdicts = _review_verdicts(
+        verdicts, refusal = _review_verdicts(
             engine,
             config.vision_model_b,
             review_prompt,
             review_schema,
             images=material.images,
         )
-        _apply_review(candidates, verdicts, config)
+        unmatched = _apply_review(candidates, verdicts, config)
+        note = _reviewer_note(
+            "vision", config.vision_model_b, len(verdicts), refusal, unmatched
+        )
+        if note:
+            notes.append(note)
 
     # --- Cross-modal agreement -------------------------------------------
     _cross_modal(candidates, config)
