@@ -62,7 +62,7 @@ def _signal(family: str, points: int, *, verified: bool = False) -> EvidenceSign
 
 def _decide(field: str, tier: str, raw: str, signals: list[EvidenceSignal]) -> object:
     ctx = DecisionContext(config=DEFAULT_CONFIG, tier=tier, own_cuits=frozenset())
-    return decide_field(field, [_candidate(raw, signals)], ctx, {})
+    return decide_field(field, [_candidate(raw, signals)], ctx)
 
 
 # --- 1. Reachability (I8) -------------------------------------------------

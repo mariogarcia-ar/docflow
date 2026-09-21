@@ -36,6 +36,7 @@ ensure_docflow_importable()
 from docflow.adapters.ollama import OllamaEngine  # noqa: E402
 from docflow.kernels.types import Bytes  # noqa: E402
 
+from .amounts import read_amount_columns  # noqa: E402
 from .artifacts import RESERVED_EXTRACTION_STEPS, Artifacts  # noqa: E402
 from .config import Config  # noqa: E402
 from .fields import (  # noqa: E402
@@ -220,20 +221,64 @@ def _fields_to_candidates(
     return candidates
 
 
-def _regexp_candidates(text: str) -> dict[str, list[FieldCandidate]]:
-    """The fixed-format candidates regexp produces, from the document text."""
+def _regexp_candidates(text: str, config: Config) -> dict[str, list[FieldCandidate]]:
+    """The fixed-format candidates regexp produces, from the document text.
+
+    Three fields, all of them **format** rather than comprehension: the CUIT,
+    the date, and the labeled amount row. The amounts were added after a
+    measurement: the `desglose` step returned invented figures on five runs out
+    of five on a perfectly legible row (`amounts.py` states the measurement), and
+    a totals row is two lines of fixed columns — the case §4.2 assigns to
+    `regexp`, which *produces candidates and never decides*.
+
+    Every candidate carries its :func:`_content_signal` anchor, and for this
+    producer the anchor is **stronger** than for a model's answer: the raw value
+    is a slice of `text` itself, so "is it present where it claims to be" is not
+    an inference. A producer that returned a value without saying it was in the
+    document is the one thing §5's `producers` list are all shown with —
+    measured, leaving it off cost the critical amount its `DOCUMENT_CONTENT +2`,
+    and with it its only route to `CONFIRMED`.
+    """
+    points = config.family_points["DOCUMENT_CONTENT"]
     candidates: dict[str, list[FieldCandidate]] = {}
     cuit = _CUIT_RE.search(text)
     if cuit:
-        candidates["cuit_emisor"] = [_candidate(cuit.group(0), "regexp")]
-    date_match = _ISO_DATE_RE.search(text) or _PRINTED_DATE_RE.search(text)
-    if date_match:
-        raw = date_match.group(0)
-        if "/" in raw:
-            day, month, year = raw.split("/")
-            raw = f"{year}-{int(month):02d}-{int(day):02d}"
-        candidates["fecha_emision"] = [_candidate(raw, "regexp")]
+        candidates["cuit_emisor"] = [_regexp_candidate(cuit.group(0), text, points)]
+    printed_date = _PRINTED_DATE_RE.search(text)
+    iso_date = _ISO_DATE_RE.search(text)
+    if iso_date:
+        candidates["fecha_emision"] = [
+            _regexp_candidate(iso_date.group(0), text, points)
+        ]
+    elif printed_date:
+        # Normalised to ISO for the report, anchored on the form the document
+        # actually prints: the derived string is not a substring of the page, so
+        # anchoring it would report `no verified anchor` for a date that is
+        # plainly there.
+        day, month, year = printed_date.groups()
+        candidates["fecha_emision"] = [
+            _regexp_candidate(
+                f"{year}-{int(month):02d}-{int(day):02d}",
+                text,
+                points,
+                anchor=printed_date.group(0),
+            )
+        ]
+    for field, printed in read_amount_columns(text).items():
+        candidates[field] = [_regexp_candidate(printed, text, points)]
     return candidates
+
+
+def _regexp_candidate(
+    raw: str, text: str, points: int, *, anchor: str | None = None
+) -> FieldCandidate:
+    """One `regexp` candidate carrying the anchor its own value earns.
+
+    The anchor is verified against the string as **found** in the document, which
+    is `raw` unless the caller derived it (`anchor`).
+    """
+    printed = anchor if anchor is not None else raw
+    return _candidate(raw, "regexp", [_content_signal(printed, text, points)])
 
 
 def _call_structured(
@@ -646,7 +691,7 @@ def extract(  # pylint: disable=too-many-branches
     text = material.text or ""
 
     # --- regexp: fixed-format candidates, never decisions -----------------
-    for field, produced in _regexp_candidates(text).items():
+    for field, produced in _regexp_candidates(text, config).items():
         candidates.setdefault(field, []).extend(produced)
 
     # --- Lane A, text -----------------------------------------------------

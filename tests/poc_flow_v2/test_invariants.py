@@ -13,7 +13,12 @@ import dataclasses
 import pathlib
 
 from flow.config import DEFAULT_CONFIG, FAMILY_POINTS
-from flow.engine import DecisionContext, _resolve_arithmetic, decide_field
+from flow.engine import (
+    DecisionContext,
+    _resolve_arithmetic,
+    _values_for,
+    decide_field,
+)
 from flow.fields import (
     FAIL,
     PASS,
@@ -108,7 +113,6 @@ def test_i3_a_vetoed_candidate_never_wins() -> None:
         "cuit_emisor",
         [vetoed],
         _ctx(),
-        {"subtotal": "", "iva": "", "importe_total_facturado": ""},
     )
 
     assert decision.decision == "ESCALATE"
@@ -124,7 +128,7 @@ def test_i4_two_passes_in_one_family_score_once() -> None:
         "20-22087601-3", _pass("DETERMINISTIC", 3), _pass("DETERMINISTIC", 3)
     )
 
-    decision = decide_field("cuit_emisor", [candidate], _ctx(), {})
+    decision = decide_field("cuit_emisor", [candidate], _ctx())
 
     assert decision.score == 3  # one deterministic +3, not two
 
@@ -136,7 +140,7 @@ def test_i10_unknown_scores_nothing() -> None:
     """An UNKNOWN signal contributes zero points, whatever its family."""
     candidate = _candidate("20-22087601-3", _unknown("DETERMINISTIC"))
 
-    decision = decide_field("cuit_emisor", [candidate], _ctx(), {})
+    decision = decide_field("cuit_emisor", [candidate], _ctx())
 
     # The validator re-runs over the CUIT and PASSes its checksum; the point is
     # that the *unknown* input signal alone would not have scored anything.
@@ -239,6 +243,186 @@ def test_all_components_are_amounts_rejects_the_measured_junk() -> None:
         assert all_components_are_amounts("1.234,56", junk, "1.234,56") is False, junk
 
 
+def test_i2_the_arithmetic_alternatives_are_deduplicated_by_value() -> None:
+    """Two printed forms of one amount are **one** alternative, not two (I2).
+
+    The defect this guards, measured on a real run: `regexp` read the total as
+    `'17.898,30'` and the model returned `'17898.30'`. They are the same number —
+    both normalize to `1789830` — and the cross-product counted them as two, so
+    "exactly one consistent combination" became two and the critical amount
+    escalated with `ESC_NO_UNIQUE_ARITHMETIC_COMBINATION`.
+
+    **The motive was false**, which is the part that matters: the page prints one
+    total, not two. `I2` already said producers reaching the same
+    `normalized_value` are one candidate; this is the same rule one level lower,
+    where the alternatives are enumerated.
+
+    The control is the pair that must *stay* distinct: a genuinely different
+    amount is a second alternative, and a resolution of two is then honest.
+    """
+    alternatives = _values_for(
+        {"importe_total_facturado": [_candidate("17.898,30"), _candidate("17898.30")]},
+        "importe_total_facturado",
+        {},
+    )
+
+    assert alternatives == ["17.898,30"], (
+        "the two spellings of one amount must collapse to one alternative; "
+        f"got {alternatives}"
+    )
+
+    distinct = _values_for(
+        {"subtotal": [_candidate("14.791,98"), _candidate("12.345,60")]},
+        "subtotal",
+        {},
+    )
+    assert len(distinct) == 2, "two different amounts are two alternatives"
+
+
+def test_i2_the_resolution_is_unique_when_a_producer_restates_an_amount() -> None:
+    """The end-to-end form: the resolution the engine reaches, not the helper.
+
+    Asserted on `_resolve_arithmetic` because that is what the decision reads. A
+    gate on `_values_for` alone would pass while a caller still compared raw
+    strings somewhere else.
+    """
+    cands = {
+        "subtotal": [_candidate("14.791,98")],
+        "iva": [_candidate("3.106,32")],
+        # The model's restatement of the same total, in a different spelling.
+        "importe_total_facturado": [_candidate("17.898,30"), _candidate("17898.30")],
+    }
+    ctx = DecisionContext(
+        config=DEFAULT_CONFIG, tier="texto_nativo", own_cuits=frozenset()
+    )
+
+    _resolve_arithmetic(ctx, cands, {})
+
+    assert ctx.arithmetic_resolution == "consistent", (
+        "one total is printed, so exactly one combination adds up: "
+        f"got {ctx.arithmetic_resolution!r}"
+    )
+
+
+def test_the_validated_combination_is_the_signal_the_field_earns() -> None:
+    """The +3 goes to the total that was **in** the validated combination.
+
+    Measured on a real run, and it cost the critical amount its confirmation: the
+    resolver found `14.791,98 + 3.106,32 == 17.898,30` from the candidates, and
+    the signal was then rebuilt from the document *values*, where the model's own
+    subtotal (`'12.356,12'`) and IVA (`'21%: 6.178,08'` — a rate and an amount run
+    together, `B.7`) did not add up. The validated combination was discarded and a
+    junk one judged in its place, so the field stopped at `REVIEW` with
+    `REV_GATE_UNMET` while its value was printed on the page twice.
+
+    Two assertions, and both were needed: a gate that only checked
+    `arithmetic_resolution == "consistent"` passed on the broken code, because the
+    resolution was right and the **attachment** was wrong.
+    """
+    cands = {
+        "subtotal": [_candidate("14.791,98"), _candidate("12.356,12")],
+        "iva": [_candidate("3.106,32"), _candidate("21%: 6.178,08")],
+        "importe_total_facturado": [_candidate("17.898,30"), _candidate("17898,30")],
+    }
+    ctx = DecisionContext(
+        config=DEFAULT_CONFIG, tier="texto_nativo", own_cuits=frozenset()
+    )
+    _resolve_arithmetic(ctx, cands, {})
+
+    decision = decide_field(
+        "importe_total_facturado", cands["importe_total_facturado"][:1], ctx
+    )
+
+    families = {signal.family for signal in decision.winner.signals}
+    assert "DETERMINISTIC" in families, (
+        "the arithmetic rule validated a combination containing this total, so "
+        f"it earns DETERMINISTIC +3: got {sorted(families)}"
+    )
+    assert decision.score == 3, f"expected the +3, got {decision.score}"
+
+    # The other spelling of the *same* amount earns it too. The combination
+    # keeps the first spelling its producer used, and a producer that restated
+    # the number differently is still the number the equation used — which is the
+    # half a raw-value comparison gets wrong, and the reason this assertion is
+    # here rather than a comment about it.
+    other = decide_field(
+        "importe_total_facturado", cands["importe_total_facturado"][1:], ctx
+    )
+    assert "DETERMINISTIC" in {signal.family for signal in other.winner.signals}, (
+        "'17898,30' and '17.898,30' are one amount to `normalize`, so both are "
+        "the total the equation used"
+    )
+
+
+def test_a_total_in_the_combination_confirms_once_its_anchor_is_present() -> None:
+    """The end of the chain: the critical amount reaches CONFIRMED.
+
+    Measured, this is the state the flow never reached before: `critica` requires
+    `t_native=5` **and** a strong family, and the two arrive from different
+    producers — `DOCUMENT_CONTENT +2` from the text anchor, `DETERMINISTIC +3`
+    from the equation. Measured with both: `CONFIRMED score=5
+    ['CONF_SCORE_MARGIN_GATE']`.
+
+    The assertion is on the decision, not on the score, because §6.5's thresholds
+    are the thing that has to hold; a future dial change that broke the reach
+    should fail here rather than pass on a number that no longer means confirmation.
+    """
+    anchored = _candidate(
+        "17.898,30",
+        EvidenceSignal(
+            "DOCUMENT_CONTENT",
+            PASS,
+            FAMILY_POINTS["DOCUMENT_CONTENT"],
+            "value present in the text",
+            verified=True,
+        ),
+    )
+    cands = {
+        "subtotal": [_candidate("14.791,98")],
+        "iva": [_candidate("3.106,32")],
+        "importe_total_facturado": [anchored],
+    }
+    ctx = DecisionContext(
+        config=DEFAULT_CONFIG, tier="texto_nativo", own_cuits=frozenset()
+    )
+    _resolve_arithmetic(ctx, cands, {})
+
+    decision = decide_field("importe_total_facturado", [anchored], ctx)
+
+    assert decision.decision == "CONFIRMED", (
+        "the anchored total of a validated equation is what §6.5 requires for a "
+        f"critical field: got {decision.decision} score={decision.score} "
+        f"{decision.reason_codes}"
+    )
+
+
+def test_a_total_outside_the_validated_combination_earns_nothing() -> None:
+    """The other direction: a candidate the equation did **not** use is not scored.
+
+    Without this, the gate above could be satisfied by attaching the +3 to every
+    total a field offers — which would confirm an invented figure on the strength
+    of a combination it was not part of.
+    """
+    cands = {
+        "subtotal": [_candidate("14.791,98")],
+        "iva": [_candidate("3.106,32")],
+        # Only the first is in the consistent combination; the second is not.
+        "importe_total_facturado": [_candidate("17.898,30"), _candidate("99999,99")],
+    }
+    ctx = DecisionContext(
+        config=DEFAULT_CONFIG, tier="texto_nativo", own_cuits=frozenset()
+    )
+    _resolve_arithmetic(ctx, cands, {})
+
+    decision = decide_field(
+        "importe_total_facturado", cands["importe_total_facturado"][1:], ctx
+    )
+
+    assert "DETERMINISTIC" not in {s.family for s in decision.winner.signals}, (
+        "a total the equation never used must not earn the equation's points"
+    )
+
+
 # --- The config is the only source of a dial -------------------------------
 
 
@@ -259,12 +443,11 @@ def test_the_escalate_floor_dial_decides_the_verdict() -> None:
     that only checked the default value would pass on the broken code.
     """
     candidate = _candidate("x", _pass("SAME_MATERIAL", 1))
-    fields = {"subtotal": "", "iva": "", "importe_total_facturado": ""}
 
     def decide(floor: int) -> object:
         config = dataclasses.replace(DEFAULT_CONFIG, escalate_floor=floor)
         ctx = DecisionContext(config=config, tier="texto_nativo", own_cuits=frozenset())
-        return decide_field("notas", [candidate], ctx, fields).decision
+        return decide_field("notas", [candidate], ctx).decision
 
     assert decide(2) == "ESCALATE", "score 1 is below a floor of 2"
     assert decide(0) == "REVIEW", (

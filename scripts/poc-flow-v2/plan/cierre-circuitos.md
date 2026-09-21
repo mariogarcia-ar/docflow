@@ -741,6 +741,241 @@ general reemplazado tras probar que su primera versión no guardaba nada.
 
 ---
 
+## Sexta ronda: los cuatro pendientes, aplicados (2026-09-21)
+
+La auditoría de la quinta ronda dejó cuatro pendientes. Aplicarlos destapó **una corrección a
+la auditoría misma** y **una guarda sin probar**.
+
+### Lo que la auditoría había reportado mal
+
+`registry/policies/thresholds.json` **no estaba muerto**. Lo consume `docflow-kernel`:
+`kernel_cli/commands/policy.py::policy_number` lo lee para `reader.min_chars`,
+`commands/image.py` para `image.legibility_threshold`. Mi grep buscaba en
+`scripts/poc-flow-v2/` y concluyó «nadie lo lee» — pero el consumidor estaba en `src/`.
+
+Y hay más: `ADR-009` / `NFR-06a` dicen que esos valores son **política de corpus** y **no
+admiten override** — ni flag ni variable de entorno, en ninguna etapa. `policy.py` lo escribe
+explícito: *"none of them may be a constructor default, a flag, or a constant in the
+composition root"*.
+
+**El defecto real era el inverso del que reporté.** El flujo v2 no ignoraba un archivo del
+registry: **duplicaba sus valores como constantes**, que es exactamente lo que la regla
+prohíbe. Y ya habían derivado en el **nombre**: `config.render_dpi` es la clave
+`diagnosis.min_dpi`, un **piso que una página debe alcanzar**, no una resolución objetivo —
+`_render_dpi` renderiza a `min(piso, píxeles de la página)`, que es el trabajo de un piso.
+
+**Arreglo:** `flow/policy.py::read_policy` lee del registry; las constantes de `config.py`
+quedan marcadas como **fallback declarado** (la librería debe correr sin registry en disco) y
+`POLICY_FALLBACKS` nombra la clave que cada una duplica, para que la duplicación sea
+greppable y un test la compare contra el asset. Un test encontró que el *nombre* había
+derivado, no el número.
+
+### El lector de importes
+
+`flow/amounts.py`. La medición que lo justifica: el paso `desglose` preguntaba a un modelo de
+1.5B por nueve importes y devolvió cifras inventadas en **5 de 5 corridas** sobre una fila
+perfectamente legible. Una fila de totales son dos líneas de columnas fijas, y `my_flow.md`
+§4.2 asigna el formato fijo a `regexp`, que *produce candidatos y nunca decide*.
+
+Lo que hizo falta medir: la fila de etiquetas trae **12 tokens para 9 columnas** (`IVA 10,5%`
+e `Imp. Int.` tienen espacios), así que zipar por whitespace empareja mal el número con el
+nombre — el primer prototipo hizo eso y devolvió nueve etiquetas destrozadas. La asignación
+por **columna** (cada token de etiqueta a la columna de valor más cercana, luego reagrupados)
+recupera las nueve.
+
+Resultado sobre el fixture real, contra lo que el documento imprime:
+
+| campo | el documento | el lector |
+|---|---|---|
+| `subtotal` | `14.791,98` | `14.791,98` |
+| `iva` (suma de alícuotas) | `3.106,32` | `3.106,32` |
+| `importe_total_facturado` | `17.898,30` | `17.898,30` |
+
+`all_components_are_amounts` → `True`; `arithmetic_consistent` → `True`. El crítico tiene
+ahora una ruta **DETERMINISTICA** a confirmar, que es la que el modelo nunca pudo dar.
+
+Dos detalles que la implementación obligó a resolver:
+
+- **La suma de alícuotas vuelve con la forma impresa.** El primer intento devolvió `'3106.32'`
+  — un float con ropa de string. `B.11` exige la forma impresa, y el separador es la evidencia
+  de que el campo se **leyó** y no se computó. `_printed()` lo devuelve como `'3.106,32'`.
+- **La percepción y los impuestos internos quedan fuera**, a propósito. Sus columnas existen en
+  el fixture, pero **nada en el contrato dice qué etiqueta impresa es cuál**, y elegir entre
+  ellas es el valor plausible pero equivocado que `B.10` señala. Los sigue leyendo el modelo.
+
+### Los otros dos
+
+| Pendiente | Qué se hizo |
+|---|---|
+| `own_cuits` inalcanzable | `--own-cuit`, reducido a dígitos, pasado como setting. El veto `CUITS_OWN_AS_EMISOR` estaba implementado y probado **y no se podía disparar**: la entrada llamaba `run(document, {})`. Una regla que solo los tests pueden activar es una regla que el producto no tiene |
+| `.env` | **No se tocó, y ahora está justificado.** `cli.py::resolve_setting` ya implementa la precedencia con `dotenv` como **parámetro inyectado** (una `.env` pertenece a un checkout). `flow/sampling.py` lee el entorno y no `.env` porque declara un default **en proceso**; no hay contradicción. Queda como observación, no como defecto |
+
+### La guarda que no estaba probada
+
+`_COLUMN_TOLERANCE` rechaza una etiqueta sin columna cerca. La mutación que la eliminaba
+**sobrevivió**: medido, la mayor distancia etiqueta-columna del fixture es **6.5 caracteres**
+contra una tolerancia de 20, así que ningún test sobre el recibo real puede tocar esa línea.
+
+El arreglo no fue re-apuntar la mutación sino **construir el input que la alcanza**: una
+etiqueta `Observaciones` a 32 caracteres. Con la guarda, el total se lee (`'17.898,30'`);
+sin ella, `Observaciones` se queda con la columna del total y **el crítico desaparece en
+silencio** — nada levanta, el campo simplemente no está. La tabla de las dos lecturas quedó en
+el docstring del test.
+
+### Verificación
+
+**1155 tests** (eran 1147), **15 mutaciones**, **las 15 falsadas**. Ocho gates nuevos en
+`test_pendientes.py`, un módulo propio porque el sujeto es el cableado, no el registry.
+
+### El defecto que la corrida real destapó
+
+Con el lector determinístico cableado, la corrida sobre el recibo real confirmó los importes
+**correctos** — `subtotal 14.791,98`, `iva 3.106,32`, `total 17.898,30` — y **el crítico
+volvió a escalar**, esta vez por `ESC_NO_UNIQUE_ARITHMETIC_COMBINATION`.
+
+Era un defecto real, y de la misma familia que los anteriores: **I2 violado un nivel más
+abajo**. Los candidatos que llegaron:
+
+```
+subtotal                  '14.791,98'  regexp        |  '12345.60'   extractor_desglose
+iva                       '3.106,32'   regexp        |  '21%'        extractor_desglose
+importe_total_facturado   '17.898,30'  regexp        |  '17898.30'   extractor_desglose
+```
+
+`'17.898,30'` y `'17898.30'` son **el mismo importe** — `normalize` da `1789830` en ambos —
+pero `_values_for` deduplicaba por `raw_value`, así que el cartesiano los contaba como dos
+totales y encontraba **dos** combinaciones consistentes en vez de una:
+
+| combinación | ¿suma? |
+|---|---|
+| `14.791,98 + 3.106,32 = 17.898,30` | **sí** |
+| `14.791,98 + 3.106,32 = 17898.30` | **sí** — el mismo número |
+
+Con dos, el motor responde `non_unique` y escala los dos campos críticos con un motivo
+**falso**: la página imprime un total, no dos. `I2` ya decía que dos productores que llegan al
+mismo `normalized_value` son **un** candidato; esto era la misma regla sin aplicar donde se
+enumeran las alternativas.
+
+**Arreglo:** `_values_for` deduplica por `normalize(raw_value)`, conservando la primera
+grafía y el orden. Medido después: `['17.898,30']` — una sola alternativa, una sola
+combinación, `resolución = consistent`.
+
+Dos gates, a dos niveles, porque el helper y el motor podrían divergir otra vez: uno sobre
+`_values_for` (con su control, dos importes **distintos** siguen siendo dos) y otro sobre
+`_resolve_arithmetic`, que es lo que la decisión lee. La mutación que vuelve a comparar
+`raw_value` pone los dos en rojo.
+
+### El segundo defecto aritmético, y por qué el primero lo tapaba
+
+Con la deduplicación arreglada, la corrida confirmó los importes correctos y el crítico volvió a
+escalar — ahora con `ESC_NO_UNIQUE` **ausente** y `REV_GATE_UNMET` en su lugar. Score 2, sin
+familia fuerte. La aritmética **sí** había resuelto. La señal de `+3` nunca llegó **a ese
+candidato**.
+
+Dos defectos, en la misma función de doce líneas:
+
+```python
+if candidate.raw_value != values.get(field, ""):  # (1) compara grafías
+    return []
+...
+sub, tax, tot = (values[SUBTOTAL], values[IVA], values[TOTAL])  # (2) recalcula
+```
+
+1. **La tercera instancia de I2.** El ganador era `'17.898,30'` (de `regexp`) y `values` tenía
+   `'17898,30'` (del modelo). `normalize` da `1789830` en ambos — **el mismo importe** — y la
+   guarda los veía distintos, así que la señal se descartaba.
+2. **La combinación validada se tiraba a la basura.** `_resolve_arithmetic` encontraba
+   `14.791,98 + 3.106,32 == 17.898,30` **a nivel de candidato**, y la señal se construía
+   después desde `values` — donde el subtotal del modelo (`'12.356,12'`) y su IVA
+   (`'21%: 6.178,08'`, alícuota e importe pegados, B.7) no suman. Se juzgaba una ecuación
+   distinta de la validada.
+
+**Arreglo:** `DecisionContext` guarda la combinación que se validó
+(`arithmetic_combination`), y la señal se construye **desde ella**, emparejando el candidato por
+`normalize`. Medido después, la cadena completa:
+
+```
+DOCUMENT_CONTENT +2 (ancla de texto)  +  DETERMINISTIC +3 (ecuación)  =  CONFIRMED score=5
+```
+
+`critica` exige `t_native=5` **y** una familia fuerte, y las dos llegan de productores
+distintos: el ancla del texto y la ecuación. Esa es la ruta que el campo nunca tuvo.
+
+**Por qué el primer arreglo lo tapaba:** con la deduplicación, la resolución pasaba de
+`non_unique` a `consistent`, y las dos mitades del segundo defecto quedaban inertes — la
+guarda no se evaluaba porque `values` y el candidato coincidían en grafía *en ese documento*, y
+el recálculo daba la misma suma por casualidad. Un defecto arreglado puede **esconder** al
+siguiente: la resolución cambió de valor y recién ahí la adjunción se volvió observable.
+
+**Y el parámetro `values` de `decide_field` quedó sin uso** — la firma declaraba un argumento
+que ya nadie leía, que es la misma clase de mentira que el dial decorativo de la quinta ronda.
+Se quitó, con sus doce llamadores.
+
+### Verificación
+
+**1160 tests** (eran 1157), **19 mutaciones**, **las 19 falsadas**. Tres gates nuevos para la
+adjunción: uno sobre `_values_for`, otro sobre la señal que el candidato gana, y el control
+—un total fuera de la combinación **no** cobra los puntos—. La mutación que vuelve a comparar
+por `raw_value` puso en rojo el primero.
+
+### El tercer defecto: el productor determinístico no decía dónde había leído
+
+Con la señal aritmética adjunta, el crítico pasó a `REVIEW score=3` — ya tenía su
+`DETERMINISTIC +3`. Le faltaban los `+2` del **ancla de contenido**, y no los tenía:
+
+```
+regexp:  cuit_emisor  fecha_emision  subtotal  iva  total   -> señales = []
+modelo:  subtotal  razon_social_emisor                     -> [DOCUMENT_CONTENT]
+```
+
+`_regexp_candidates` construía cada candidato con `_candidate(raw, "regexp")` — **sin señales**.
+Las lanes del modelo sí adjuntan el ancla. Y el ancla está **más** justificada para `regexp`
+que para un modelo: su `raw_value` es un **trozo literal del texto**, así que *"¿está donde
+dice estar?"* no es una inferencia. `my_flow.md` §5 muestra el campo `producers` con
+`["extractor_llm_texto", "regexp", "vision_A"]` — el productor determinístico está en la
+misma lista, sin excepción.
+
+**Arreglo:** cada candidato de `regexp` lleva su `_content_signal`. La fecha se ancla en su
+**forma impresa** (`07/08/2026`), no en la derivada (`2026-08-07`, que no es substring de la
+página) — anclar la derivada reportaría `no verified anchor` para una fecha que está a la
+vista.
+
+### Y una limitación medida del ancla, que no es un defecto de este arreglo
+
+Con las anclas puestas, medido:
+
+| campo | ancla |
+|---|---|
+| `importe_total_facturado` | `PASS +2` |
+| `subtotal` | **`UNKNOWN`** |
+| `iva` | **`UNKNOWN`** |
+
+`normalize` **borra todos los espacios**, así que una fila de columnas se concatena y los
+importes quedan pegados a sus vecinos:
+
+```
+'...TOTAL\n147919800000014791 98...'
+        ^^^^^^^ '1479198' con '000' del 0,00 siguiente
+```
+
+El total pasa porque **termina la fila** (le sigue un `\n`); una columna del medio no tiene
+borde. No es un defecto de haber puesto el ancla — es una limitación del ancla que el ancla
+**destapó**: antes, `regexp` no la usaba y el `UNKNOWN` no existía. Su arreglo real es
+geométrico (el `amounts.py` **ya sabe** que el valor está en la fila de totales, porque acaba
+de leerlo por columna), y queda declarado como el siguiente paso.
+
+**Lo importante es lo que el ancla hizo al fallar:** reportó `UNKNOWN`, no `PASS`, y no
+inventó un borde. `I10` en acción.
+
+### Verificación
+
+**1162 tests**, **20 mutaciones**, **las 20 falsadas**. Dos gates para el ancla: uno que exige
+que **todo** candidato determinístico declare una familia `DOCUMENT_CONTENT`, y otro que
+exige que un ancla no verificable se **registre** igual. El segundo es el que distingue *no
+hay ancla* de *no se afirmó nada* — `§6.2` los puntúa igual y `B.9` exige que se lean distinto.
+
+---
+
 1. **Nueve circuitos con test** — cada C1…C9 tiene un test que falla si el
    circuito no cierra (B.16).
 2. **El Anexo A no tiene celdas inalcanzables** salvo la intencional — lane-on-demand

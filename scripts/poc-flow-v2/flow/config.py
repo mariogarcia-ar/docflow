@@ -17,6 +17,7 @@ from typing import Final
 
 __all__: list[str] = [
     "DEFAULT_CONFIG",
+    "POLICY_FALLBACKS",
     "SEVERITY",
     "SEVERITY_ORDER",
     "Config",
@@ -146,14 +147,44 @@ VISION_MODEL_B: Final[str] = "granite-vision:2b"
 FRONTIER_MODEL: Final[str] = "deepseek:deepseek-v4-pro"
 
 #: Routing dials (`my_flow.md` §2). A text layer with fewer characters than the
-#: floor is not treated as content; a render is capped by the page's own
-#: measured resolution because the adapter refuses to upscale.
+#: Routing dials (`my_flow.md` §2): **fallbacks**, not the source.
+#:
+#: Both duplicate a key of `registry/policies/thresholds.json`, and that is a
+#: defect these comments exist to mark rather than hide: `ADR-009` / `NFR-06a`
+#: make those values corpus policy, which means the registry is their only source
+#: — a constant here changes a stage's output without entering the registry hash,
+#: and the ledger then records `done` about a result under a setting nothing
+#: recorded. `flow/policy.py::read_policy` reads the registry and wins whenever
+#: it is readable; these numbers keep the library usable with no registry on
+#: disk, which is the one case a reader cannot cover.
+#:
+#: The key each one mirrors is named at :data:`POLICY_FALLBACKS`, so the
+#: duplication is greppable from either side.
 MIN_CHARS: Final[int] = 40
+
+#: The floor a page's own resolution must reach to be worth rendering (`§2`).
+#:
+#: Named `render_dpi` for a while, and the name was wrong in a way that mattered:
+#: the registry calls it `diagnosis.min_dpi`, and it is a **floor a page must
+#: meet**, not the resolution to render at. `_render_dpi` renders at
+#: ``min(floor, page's own pixels)``, which is a floor's job. The config keeps
+#: the value; the name is corrected where it is read.
 RENDER_DPI: Final[int] = 150
 
 #: The sharpness an image must reach to be read (`my_flow.md` §2, `illegible`).
 #: Required with no default by the adapter, which is why it is a dial here.
 LEGIBILITY_THRESHOLD: Final[float] = 100.0
+
+#: Which registry key each routing fallback duplicates.
+#:
+#: A transcription, not a derivation: the registry's keys are dotted strings that
+#: a test asserts against the asset itself, so a policy that moves is caught
+#: instead of silently falling back to a number nobody chose.
+POLICY_FALLBACKS: Final[dict[str, str]] = {
+    "min_chars": "reader.min_chars",
+    "render_dpi": "diagnosis.min_dpi",
+    "legibility_threshold": "image.legibility_threshold",
+}
 
 #: The resolution OCR boxes are expressed at, and the row tolerance in **PDF
 #: points at 72 DPI** — the legacy's own unit, scaled by the DPI the boxes use.

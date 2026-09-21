@@ -22,6 +22,7 @@ import xml.etree.ElementTree as ET
 FLOW = pathlib.Path("scripts/poc-flow-v2/flow")
 SUITE = pathlib.Path("tests/poc_flow_v2/test_invariants.py")
 SAMPLING_SUITE = pathlib.Path("tests/poc_flow_v2/test_sampling.py")
+PENDING_SUITE = pathlib.Path("tests/poc_flow_v2/test_pendientes.py")
 
 #: (label, file, anchor, replacement, the tests that MUST fail)
 MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
@@ -75,6 +76,56 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
         {"test_an_operators_window_is_not_overwritten"},
     ),
     (
+        "I2: the arithmetic alternatives are deduplicated by raw value, not value",
+        FLOW / "engine.py",
+        "        key = normalize(raw)\n        if key and key not in seen:",
+        "        key = raw\n        if key and key not in seen:",
+        {
+            "test_i2_the_arithmetic_alternatives_are_deduplicated_by_value",
+            "test_i2_the_resolution_is_unique_when_a_producer_restates_an_amount",
+        },
+    ),
+    (
+        "amounts: the deterministic producer returns values with no anchor",
+        FLOW / "extract.py",
+        "[_content_signal(printed, text, points)]",
+        "[]",
+        {
+            "test_the_deterministic_producer_anchors_the_values_it_reads",
+            "test_the_anchor_is_reported_even_when_it_cannot_be_verified",
+        },
+    ),
+    (
+        "arithmetic: the signal is rebuilt from values instead of the combination",
+        FLOW / "engine.py",
+        "    sub, tax, tot = ctx.arithmetic_combination",
+        "    sub, tax, tot = ('', '', '')",
+        {
+            "test_the_validated_combination_is_the_signal_the_field_earns",
+            "test_a_total_in_the_combination_confirms_once_its_anchor_is_present",
+        },
+    ),
+    (
+        "arithmetic: a candidate is matched to the combination by raw value",
+        FLOW / "engine.py",
+        "    if normalize(candidate.raw_value) != normalize(expected):",
+        "    if candidate.raw_value != expected:",
+        {
+            "test_the_validated_combination_is_the_signal_the_field_earns",
+        },
+    ),
+    (
+        "arithmetic: the +3 is attached to every total the field offers",
+        FLOW / "engine.py",
+        "    expected = tax if field == IVA_FIELD else tot\n"
+        "    if normalize(candidate.raw_value) != normalize(expected):\n"
+        "        return []",
+        "    expected = tax if field == IVA_FIELD else tot",
+        {
+            "test_a_total_outside_the_validated_combination_earns_nothing",
+        },
+    ),
+    (
         "config: the escalate floor is a literal, so the dial is inert",
         FLOW / "engine.py",
         "    elif score < ctx.config.escalate_floor:",
@@ -88,6 +139,56 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
         "from .config import (\n    DEFAULT_CONFIG,\n    ESCALATE_FLOOR,\n"
         "    Config,\n    FieldDial,\n)",
         {"test_no_module_reaches_a_dial_by_importing_it"},
+    ),
+    (
+        "amounts: a label far from every column is paired with the nearest anyway",
+        FLOW / "amounts.py",
+        "_COLUMN_TOLERANCE: Final[int] = 20",
+        "_COLUMN_TOLERANCE: Final[int] = 10_000",
+        {"test_a_label_far_from_every_column_is_not_paired"},
+    ),
+    (
+        "amounts: the summed IVA leaves as a float, losing the printed form",
+        FLOW / "amounts.py",
+        "        amounts[IVA_FIELD] = _printed(sum(_as_float(rate) for rate in rates))",
+        "        amounts[IVA_FIELD] = str(sum(_as_float(rate) for rate in rates))",
+        {"test_the_reader_output_lets_the_arithmetic_rule_judge"},
+    ),
+    (
+        "amounts: an unidentifiable row yields whatever numbers it finds",
+        FLOW / "amounts.py",
+        "    if row is None:\n        return {}",
+        "    if row is None:\n        return {'subtotal': '0,00'}",
+        {"test_the_reader_refuses_a_row_it_cannot_identify"},
+    ),
+    (
+        "policy: a fallback drifts from the registry asset it mirrors",
+        FLOW / "config.py",
+        '    "render_dpi": "diagnosis.min_dpi",',
+        '    "render_dpi": "diagnosis.min_dpi_typo",',
+        {"test_every_policy_fallback_matches_the_registry_asset"},
+    ),
+    (
+        "policy: a missing key falls back instead of refusing",
+        FLOW / "policy.py",
+        "    if key not in values:\n        raise KeyError(",
+        "    if key not in values:\n        return 0.0\n    if False:\n"
+        "        raise KeyError(",
+        {"test_the_policy_reader_refuses_a_key_the_asset_does_not_declare"},
+    ),
+    (
+        "policy: a boolean policy is read as the number 0.0",
+        FLOW / "policy.py",
+        "    if isinstance(value, bool) or not isinstance(value, (int, float)):",
+        "    if not isinstance(value, (int, float)):",
+        {"test_the_policy_reader_refuses_a_non_numeric_policy"},
+    ),
+    (
+        "cli: the own-CUIT flag is parsed and then dropped",
+        pathlib.Path("scripts/poc-flow-v2/myflow.py"),
+        '        settings["own_cuits"] = [',
+        '        settings["owncuits"] = [',
+        {"test_the_own_cuit_flag_reaches_the_veto"},
     ),
 ]
 
@@ -109,6 +210,7 @@ def _run_suite() -> tuple[int, set[str]]:
             "pytest",
             str(SUITE),
             str(SAMPLING_SUITE),
+            str(PENDING_SUITE),
             "-q",
             "--tb=no",
             "--junitxml=/tmp/mutation_invariants.xml",

@@ -38,6 +38,7 @@ from .fields import (
     FieldCandidate,
     FieldDecision,
     merge_candidates,
+    normalize,
     severity_for,
 )
 from .validators import (
@@ -103,6 +104,19 @@ class DecisionContext:
         #: or ``"non_unique"`` (zero or many consistent combinations, which
         #: escalates).
         self.arithmetic_resolution: str | None = None
+        #: The one combination that added up, as ``(subtotal, iva, total)`` in
+        #: the spelling its producers used. ``None`` whenever the resolution is
+        #: not ``"consistent"``.
+        #:
+        #: It is stored rather than recomputed, and that is the point. Measured
+        #: on a real run: this resolution found `14.791,98 + 3.106,32 ==
+        #: 17.898,30` at the **candidate** level, and the signal was then built
+        #: from the document *values* — where the model's own reading of the
+        #: subtotal (`'12.356,12'`) and of the IVA (`'21%: 6.178,08'`, a rate and
+        #: an amount run together, `B.7`) did not add up. The validated
+        #: combination was thrown away and a different one judged, so the +3
+        #: never reached the field it belonged to.
+        self.arithmetic_combination: tuple[str, str, str] | None = None
 
 
 def _validator_signals(
@@ -135,7 +149,6 @@ def _validator_signals(
 def _attach_arithmetic(
     field: str,
     candidate: FieldCandidate,
-    values: Mapping[str, str],
     ctx: DecisionContext,
 ) -> list[EvidenceSignal]:
     """The arithmetic signal for the subtotal/IVA/total combination.
@@ -145,18 +158,26 @@ def _attach_arithmetic(
     the context: exactly one consistent combination gives the +3 to its total
     and IVA; zero or many escalates (`ESC_NO_UNIQUE_ARITHMETIC_COMBINATION`);
     no evaluable combination stays UNKNOWN.
+
+    The signal is built from the combination the resolver **validated**, not from
+    the document values, and the candidate is matched to it by
+    :func:`normalize`. Both halves of that were defects, measured on one run:
+
+    - the match compared ``raw_value``, so `'17.898,30'` (regexp) and
+      `'17898.30'` (the model) were *the same amount* to `normalize` and two
+      different ones here — the third place `I2` had been left unapplied;
+    - the equation was recomputed from ``values``, which is the model's own
+      reading of the row, so the combination that had actually been validated was
+      discarded and a junk one judged instead.
     """
     if field not in {TOTAL_FIELD, IVA_FIELD}:
         return []
-    if candidate.raw_value != values.get(field, ""):
+    if ctx.arithmetic_resolution != "consistent" or ctx.arithmetic_combination is None:
         return []
-    if ctx.arithmetic_resolution is None:
+    sub, tax, tot = ctx.arithmetic_combination
+    expected = tax if field == IVA_FIELD else tot
+    if normalize(candidate.raw_value) != normalize(expected):
         return []
-    if ctx.arithmetic_resolution == "non_unique":
-        return []
-    sub = values.get(SUBTOTAL_FIELD, "")
-    tax = values.get(IVA_FIELD, "")
-    tot = values.get(TOTAL_FIELD, "")
     signal = arithmetic_signal(sub, tax, tot, family_points=ctx.config.family_points)
     return [signal]
 
@@ -217,7 +238,6 @@ def decide_field(  # pylint: disable=too-many-locals
     field: str,
     candidates: list[FieldCandidate],
     ctx: DecisionContext,
-    values: Mapping[str, str],
 ) -> FieldDecision:
     """Decide one field from its candidates and the run's dials.
 
@@ -225,12 +245,17 @@ def decide_field(  # pylint: disable=too-many-locals
     step pushes the previous one out of scope, the same shape `docling.py::read`
     documents for its own ordered pipeline.
 
+    **No document values are needed here.** The arithmetic rule is resolved once,
+    before any field, and carried on the context (`_resolve_arithmetic`); this
+    function reads the combination it validated. A `values` parameter used to sit
+    in this signature and was not read after the resolution moved — measured, the
+    signal was being rebuilt from it instead, which is the defect the attachment
+    gate guards.
+
     Args:
         field: The field name.
         candidates: The unmerged candidates the producers handed in.
-        ctx: The run's dials.
-        values: The document-level values (subtotal, IVA, total), used only by
-            the arithmetic combination.
+        ctx: The run's dials, including the arithmetic resolution.
 
     Returns:
         The decision, with its reason codes and trace.
@@ -243,7 +268,7 @@ def decide_field(  # pylint: disable=too-many-locals
     merged = merge_candidates(candidates)
     for candidate in merged:
         candidate.signals.extend(_validator_signals(field, candidate, ctx))
-        candidate.signals.extend(_attach_arithmetic(field, candidate, values, ctx))
+        candidate.signals.extend(_attach_arithmetic(field, candidate, ctx))
 
     vetoed: list[FieldCandidate] = []
     live: list[FieldCandidate] = []
@@ -340,6 +365,7 @@ def _resolve_arithmetic(
     required = required_components_for(tipo)
     if not required:
         ctx.arithmetic_resolution = None
+        ctx.arithmetic_combination = None
         return
 
     subtotals = _values_for(candidates, SUBTOTAL_FIELD, values)
@@ -347,6 +373,7 @@ def _resolve_arithmetic(
     totals = _values_for(candidates, TOTAL_FIELD, values)
     if not (subtotals and taxes and totals):
         ctx.arithmetic_resolution = None
+        ctx.arithmetic_combination = None
         return
 
     # §6.4's precondition of completeness, applied before the equation is judged:
@@ -367,6 +394,7 @@ def _resolve_arithmetic(
         # The field keeps its other routes to CONFIRMED — UNKNOWN scores nothing
         # and vetoes nothing (§6.4, I10).
         ctx.arithmetic_resolution = None
+        ctx.arithmetic_combination = None
         return
 
     consistent = [
@@ -377,8 +405,10 @@ def _resolve_arithmetic(
 
     if len(consistent) == 1:
         ctx.arithmetic_resolution = "consistent"
+        ctx.arithmetic_combination = consistent[0]
     else:
         ctx.arithmetic_resolution = "non_unique"
+        ctx.arithmetic_combination = None
 
 
 def _tipo_comprobante(
@@ -396,14 +426,34 @@ def _values_for(
     field: str,
     values: Mapping[str, str],
 ) -> list[str]:
-    """The alternative raw values a field offers, deduplicated, stable order."""
+    """The alternative raw values a field offers, deduplicated by **value**.
+
+    `I2` states the rule: every producer that reaches the same
+    ``normalized_value`` is *one* candidate, because two printed forms of an
+    amount are one amount. This function had deduplicated by ``raw_value``
+    instead, which put the same invariant one level lower and broke it: measured,
+    `regexp` read the total as `'17.898,30'` and the model returned `'17898.30'`
+    — the same number, and both normalize to `1789830` — so the cross-product
+    held *two* combinations that satisfied `subtotal + IVA == total`. Exactly one
+    consistent combination had become two, and the critical amount escalated with
+    `ESC_NO_UNIQUE_ARITHMETIC_COMBINATION`: a false motive, since there was
+    never more than one total on the page (B.9, I10).
+
+    The first spelling of each value survives, and the order stays stable, so the
+    representative a caller reports does not depend on dictionary iteration.
+    """
     found: list[str] = []
-    for candidate in candidates.get(field, []):
-        if candidate.raw_value not in found:
-            found.append(candidate.raw_value)
-    doc_value = values.get(field, "")
-    if doc_value and doc_value not in found:
-        found.append(doc_value)
+    seen: set[str] = set()
+    for raw in (
+        *(candidate.raw_value for candidate in candidates.get(field, [])),
+        values.get(field, ""),
+    ):
+        if not raw:
+            continue
+        key = normalize(raw)
+        if key and key not in seen:
+            seen.add(key)
+            found.append(raw)
     return found
 
 
@@ -428,6 +478,6 @@ def evaluate(
     """
     _resolve_arithmetic(ctx, decisions, values)
     return {
-        field: decide_field(field, candidates, ctx, values)
+        field: decide_field(field, candidates, ctx)
         for field, candidates in decisions.items()
     }

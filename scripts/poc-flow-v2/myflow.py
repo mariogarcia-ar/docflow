@@ -74,6 +74,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "(needs --work-root)",
     )
     parser.add_argument(
+        "--own-cuit",
+        action="append",
+        default=[],
+        metavar="CUIT",
+        help="a CUIT of the business itself; a receipt whose emisor is one of "
+        "these is vetoed (CUITS_OWN_AS_EMISOR, repeatable)",
+    )
+    parser.add_argument(
         "--confirm",
         action="append",
         default=[],
@@ -96,6 +104,39 @@ def _serializable(value: object) -> object:
     return value
 
 
+def _settings(args: argparse.Namespace) -> dict[str, object]:
+    """The run settings the CLI knows how to set.
+
+    A setting is not a dial of the flow (`flow/config.py`) and not corpus policy
+    (`registry/policies/`, `ADR-009`): it is a fact about **this business** that
+    the flow cannot know on its own and must not default.
+
+    Only one so far, and it is the reason this function exists: `own_cuits`
+    feeds the `CUITS_OWN_AS_EMISOR` veto, which refuses a receipt the business
+    issued to itself. The validator was implemented and tested from the start —
+    and **unreachable**, because the entry point passed `{}` and the setting
+    therefore never held a value. A veto nothing can trigger is a rule that
+    exists only in the tests.
+
+    The values are reduced to digits here, so `20-22087601-3` and
+    `20220876013` are the same business: the validator compares digits, and a
+    caller who types the printed form must not get a veto that silently does not
+    fire.
+
+    Args:
+        args: The parsed command line.
+
+    Returns:
+        The settings mapping, empty when the CLI set nothing.
+    """
+    settings: dict[str, object] = {}
+    if args.own_cuit:
+        settings["own_cuits"] = [
+            "".join(ch for ch in value if ch.isdigit()) for value in args.own_cuit
+        ]
+    return settings
+
+
 def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-locals
     """Run the flow over one document and print the report or the JSON result."""
     parser = _build_parser()
@@ -109,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:  # pylint: disable=too-many-loca
 
     outcome = run(
         document,
-        {},
+        _settings(args),
         work_root=args.work_root,
         redo=args.redo,
         pause=args.pause,
