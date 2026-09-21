@@ -4,7 +4,7 @@
 |---|---|
 | Alcance | Completar los flujos de `my_flow.md` que la migración dejó abiertos, **como diseño** y no como nota |
 | Fuente | `my_flow.md` §3–§9 · `scripts/poc-flow-v2/` (estado actual) · el plan de migración (`README.md` en este mismo directorio) |
-| Estado | **Plan** — esperando aprobación antes de ejecutar |
+| Estado | **Ejecutado** — C1–C9 cerrados; los cuatro defectos de **cableado** de §«Hallazgos» corregidos el 2026-09-20 |
 | Prerrequisito | Migración A/B/C cerrada (proceso `run`, motor, gates) |
 
 ---
@@ -74,6 +74,8 @@ graph LR
       `extract_stage` antes de pagar el modelo
 - [x] Test: un documento no-comprobante termina `descartado` con razón, sin pagar
       el modelo (`test_c1_*`)
+- [x] El descarte deja un **código estable** (`CLASSIFY_NOT_A_RECEIPT`) además de la
+      prosa: un camino que no deja código no se puede contar (§6.5) — ver H4 abajo
 
 **Aceptación**: el fast-fail corre antes del modelo; un no-comprobante no llega a
 `extract`.
@@ -144,6 +146,9 @@ no está pulled — la lane se niega con nota, no se finge.
       gate no satisfecho necesitan la vision lane, y qué familias fuertes faltan
 - [x] Cableada en `decide_stage` dentro del resolver loop: los gates sin cerrar se
       reportan con nota honesta
+- [x] La escalera vive en `flow/run.py::ladder_step` (función de módulo, no closure):
+      una closure se alcanza **solo** por un `decide_stage` completo, y eso es lo que
+      dejó el cableado sin guarda — ver H1 abajo
 - [ ] El **render a demanda** sigue pendiente: un texto nativo no tiene páginas
       renderizadas hasta pedirlas, y ese adapter call no está → `# TODO: [MVP]`
 - [x] Test: `test_c6_*` — gate no satisfecho necesita lane, gate cerrado no
@@ -155,8 +160,9 @@ diferido, no silencioso.
 
 - [x] `flow/resolve.py::resolver_loop`: re-entra al motor solo con evidencia
       nueva; `same_decision_set` compara decisión/valor/razones, no el score
-- [x] `ESC_NO_NEW_EVIDENCE` cuando el resolver no aporta; `ESC_LOOP_LIMIT` al
-      agotar `max_loops=2`
+- [x] `ESC_NO_NEW_EVIDENCE` cuando el resolver **corre** y no aporta; `ESC_LOOP_LIMIT`
+      al agotar `max_loops=2`. Un resolver que **no aplica** responde `None` y no deja
+      código: un non-event no es un motivo — ver H1 abajo
 - [x] Cableado en `decide_stage` (el resolver actual es la escalera de C6)
 - [x] Test: `test_c7_*` — re-entra con evidencia nueva, se detiene sin novedad
 
@@ -199,6 +205,43 @@ ausentes.
 
 ---
 
+## Hallazgos de la verificación del cableado (2026-09-20)
+
+Una corrida de aceptación sobre un documento real destapó cuatro defectos. Ninguno
+cambiaba un veredicto; los cuatro estaban en **cómo se registra**.
+
+Se detectaron porque C1, C6 y C7 estaban marcados `[x]` con tests que probaban sus
+funciones **puras** (`classify`, `needs_vision_lane`, `resolver_loop`) y **nunca el
+llamador**: la integración en `run.py` no tenía un solo test. Es el criterio 3 de este
+plan violado en silencio — el circuito estaba «cerrado en el código», que es justo lo que
+la regla del plan prohíbe.
+
+| # | Defecto | Efecto medido | Arreglo |
+|---|---|---|---|
+| H1 | El resolver reportaba `ESC_NO_NEW_EVIDENCE` cuando la escalera **no aplicaba** | El código salía en el **100 %** de las corridas: un non-event contado como motivo de escalamiento (§6.5), tanto en un documento descartado como en uno con campos confirmados | Tercer estado en el contrato de `resolve`: `True` produjo / `False` corrió sin novedad / `None` no aplica. `None` no deja código (`resolve.py`, `run.py::ladder_step`) |
+| H2 | `ESC_DEGRADED_MATERIAL` declarado en el vocabulario y **sin productor** | Un PDF ilegible se reportaba «no es comprobante»: el gate de §3 contestaba sobre un texto que no existía. B.9 — *no se pudo leer* ≠ *no es comprobante* | Short-circuit por tier **antes** del gate (§2: degradado → escalar directo) |
+| H3 | La razón del `read` no llegaba al reporte ni a `run.json` | El paso decía el literal `read ran`, el fallback no medido; la razón quedaba solo en `material.json`, un artefacto que `read next` no nombra (B.12) | `_ran_detail` reporta tier y ruta reales, o `degraded: <razón>` |
+| H4 | El descarte del gate dejaba prosa, no código | Sin código no hay métrica; además la prosa listaba las señales **presentes** y se leía como si la última fuera la causa | `Decision.code` (`CLASSIFY_NOT_A_RECEIPT`) + el `reason` nombra el **faltante** (`1 of 2 required signals`) |
+
+**Verificación.** 11 tests nuevos (70 en `tests/poc_flow_v2`, 1115 en el repo). Siete
+mutaciones, una por propiedad, **las siete falsadas** por el test que la guarda; la
+regresión de H1 (colapsar los tres estados a un booleano) pone rojo los dos tests del loop.
+
+Dos lecciones del arnés, que son las que ya registra B.16:
+
+- **Una mutación sobrevivió y el hueco era real.** Apuntaba al camino degradado, pero el
+  escenario nunca llegaba ahí. El arreglo no fue re-apuntarla sino **sacar la escalera a
+  una función de módulo** para que el *cableado* fuera testeable: una closure se alcanza
+  solo por un stage completo, y así fue como la respuesta del llamador quedó sin guarda.
+- **Otra sobrevivió porque la mutación solo borraba comentarios.** Una mutación que no
+  cambia la semántica no prueba nada — la tercera vez que este repo paga esa lección.
+
+**Pendiente, no ausente:** `ESC_MISSING_STRONG_EVIDENCE` (`lane.py`) sigue **sin
+productor**. Es la contraparte de H2, pero depende del render a demanda, que es el
+`# TODO: [MVP]` de C6. Se deja señalado en vez de inventarle un emisor.
+
+---
+
 ## Criterio de cierre
 
 1. **Nueve circuitos con test** — cada C1…C9 tiene un test que falla si el
@@ -206,7 +249,8 @@ ausentes.
 2. **El Anexo A no tiene celdas inalcanzables** salvo la intencional — lane-on-demand
    y el resolver cubren la escalera.
 3. **Ningún §3–§9 queda como nota** — lo que no se implemente queda `# TODO: [MVP]`
-   declarado, no ausente.
+   declarado, no ausente. Un circuito tampoco está cerrado si su **llamador** no está
+   guardado: probar la función pura no prueba el cableado (§«Hallazgos»).
 4. **Gates en verde** — `pytest`, `ruff check`, `ruff format --check`, `pylint`
    sobre `scripts/poc-flow-v2` y `tests/poc_flow_v2`.
 

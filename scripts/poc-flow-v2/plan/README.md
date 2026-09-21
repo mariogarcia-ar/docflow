@@ -265,6 +265,20 @@ romper su invariante.
 candidatos, el motor decide **igual**. La paridad de salidas requiere el mismo modelo por
 `run.json` (B.1), no una corrida nueva.
 
+### Ola C3 — Verificación del cableado (2026-09-20)
+
+- [x] Corrida de aceptación sobre documentos reales, que destapó **cuatro defectos de
+      cableado**: el resolver reportaba un motivo de escalamiento cuando no aplicaba, el
+      código de material degradado no tenía productor, la razón del `read` no llegaba al
+      reporte, y el descarte del gate dejaba prosa sin código
+- [x] Los cuatro corregidos, con 11 tests nuevos y **siete mutaciones falsadas**
+- [x] La lección, que vale para toda la Fase B: los tests de C1/C6/C7 probaban sus
+      funciones puras y **nunca el llamador** — el cableado en `run.py` no tenía un test.
+      Un circuito «cerrado en el código» no es un circuito cerrado
+
+El detalle, los efectos medidos y los dos pendientes están en
+[`cierre-circuitos.md`](cierre-circuitos.md) §«Hallazgos de la verificación del cableado».
+
 ## Criterio de cierre
 
 1. **Proceso `run` probado sobre fakes** — journal, pause/resume/stop, trace `ran|reused`,
