@@ -18,54 +18,56 @@ python scripts/poc-flow-v2/myflow.py <document> --pretty   # el resultado, inden
 ```
 
 **Una sola pregunta, sin correr todo el pipeline** — *dado este documento y este
-prompt, qué dice el modelo local*:
+prompt, qué dice el modelo local*. `--prompt` es obligatorio; el schema es
+opcional y sin él la respuesta sólo tiene que ser un objeto, porque es el prompt
+el que pide la forma:
 
 ```bash
-# el prompt y el schema del registry, sin más flags que el documento
-python scripts/poc-flow-v2/myllmlocal.py <document>
-
-# un prompt propio — tiene que contener {text}
-python scripts/poc-flow-v2/myllmlocal.py <document> --prompt var/prompt.txt
-
-# un schema propio, conservando el prompt del registry
-python scripts/poc-flow-v2/myllmlocal.py <document> --schema var/fields.json
-
-# los dos, que es lo que hace la corrida independiente del registry
-python scripts/poc-flow-v2/myllmlocal.py <document> \
-  --prompt var/prompt.txt --schema var/fields.json
+# el documento y un prompt, que es toda la interfaz
+python scripts/poc-flow-v2/myllmlocal.py tests/fixtures-txt/casos/<doc>.txt \
+  --prompt registry/prompts/extraction/invoice_deteccion.txt
 
 # otro modelo, tal como lo nombra el runtime
-python scripts/poc-flow-v2/myllmlocal.py <document> --model gemma3:1b
+python scripts/poc-flow-v2/myllmlocal.py <document> --prompt <file> \
+  --model gemma3:1b
 
-# un prompt del registry por ruta — el que usa la propia lane de texto
-python scripts/poc-flow-v2/myllmlocal.py <document> \
-  --prompt registry/prompts/extraction/invoice.txt
+# un schema propio, cuando querés restringir la generación
+python scripts/poc-flow-v2/myllmlocal.py <document> --prompt <file> \
+  --schema registry/schemas/extraction/invoice_detection.json
 
 # la ruta la elige el tipo de documento, así que no lleva flag
-python scripts/poc-flow-v2/myllmlocal.py tests/fixtures-txt/casos/<doc>.txt
-python scripts/poc-flow-v2/myllmlocal.py tests/fixtures/casos/<doc>.pdf
-python scripts/poc-flow-v2/myllmlocal.py tests/fixtures/casos/<doc>.jpg
+python scripts/poc-flow-v2/myllmlocal.py tests/fixtures-txt/casos/<doc>.txt \
+  --prompt <file>
+python scripts/poc-flow-v2/myllmlocal.py tests/fixtures/casos/<doc>.pdf \
+  --prompt <file>
+python scripts/poc-flow-v2/myllmlocal.py tests/fixtures/casos/<doc>.jpg \
+  --prompt <file>
 
 # leer la respuesta con jq, porque stdout es un solo objeto JSON
-python scripts/poc-flow-v2/myllmlocal.py <document> --pretty | jq .answer
-python scripts/poc-flow-v2/myllmlocal.py <document> | jq -r .call.refusal
+python scripts/poc-flow-v2/myllmlocal.py <document> --prompt <file> --pretty \
+  | jq .answer
+python scripts/poc-flow-v2/myllmlocal.py <document> --prompt <file> \
+  | jq -r .refusal
 
 # una ventana más grande: el flujo declara 8192 y un valor exportado gana
-DOCFLOW_OLLAMA_NUM_CTX=16384 python scripts/poc-flow-v2/myllmlocal.py <document>
+DOCFLOW_OLLAMA_NUM_CTX=16384 python scripts/poc-flow-v2/myllmlocal.py <document> \
+  --prompt <file>
 ```
 
-`--model` y la ventana son los dos únicos *diales*; `--prompt` y `--schema` son
-*entradas*, y la diferencia importa. `--pretty` cambia sólo la indentación — el
-reporte es el mismo objeto en los dos casos.
+`--model` es el único *dial*; `--prompt` y `--schema` son *entradas*, y por eso
+ninguno se deriva del otro: emparejarlos acá sería este cliente decidiendo qué
+pregunta hizo el llamador. Sin `--prompt`/`--schema` **no** se lee el registry.
 
 La ruta del documento a texto es la del flujo, nunca un segundo lector: un `.txt`
 se lee tal cual, un PDF con capa de texto pasa por `pdftotext -layout`, una página
 sin capa se renderiza y va a OCR, y una imagen pasa por el filtro de legibilidad y
-OCR. Sólo se envía **texto** — la lane de visión es la de `myflow.py`. Sin
-`--prompt`/`--schema` usa el prompt y el schema del registry (`extract_texto`), por
-K8. `stdout` es **un** objeto JSON; la ruta, el modelo y la ventana van a `stderr`.
-Códigos de salida: `0` valor, `2` rechazo tipado, `3` precondición, `4` invocación
-mal formada.
+OCR. Sólo se envía **texto** — la lane de visión es la de `myflow.py`. `stdout` es
+**un** objeto JSON; la ruta, el modelo y la ventana van a `stderr`.
+Códigos de salida: `0` valor, `2` rechazo tipado, `4` invocación mal formada.
+
+**Qué NO hace**: no clasifica el documento (`flow.classify` decide si la *corrida*
+procede, y eso es una decisión del pipeline, no de una llamada al modelo) y no
+corre las lanes, el engine de decisión ni el resolver. Es un probe.
 
 **Ver cada circuito de `my_flow.md` en acción** — clasificar, las lanes, `verified`,
 la aritmética, lane-on-demand, el resolver, el frontier y el HITL, uno por uno con su

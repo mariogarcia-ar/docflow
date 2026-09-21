@@ -195,7 +195,7 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
     (
         "probe: a text file is routed to read_material, which calls it invalid",
         CLIENT,
-        "    if path.suffix.lower() in TEXT_SUFFIXES:",
+        "    if document.suffix.lower() in TEXT_SUFFIXES:",
         "    if False:",
         {"test_a_text_file_is_read_directly"},
     ),
@@ -216,22 +216,21 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
     (
         "probe: a whitespace-only document reaches the model instead of going aside",
         CLIENT,
-        "    if not text.strip():",
-        "    if not text:",
+        "    if text.body is None or not text.body.strip():",
+        "    if text.body is None:",
         {"test_a_document_with_no_text_never_reaches_a_model"},
     ),
     (
-        "probe: a degraded material is reported as a blank page",
+        "probe: a degraded read is reported as a blank page",
         CLIENT,
-        "    refused = ESC_DEGRADED_MATERIAL if material.tier == TIER_DEGRADED "
-        'else "blank_page"',
+        '    refused = ESC_DEGRADED_MATERIAL if text.body is None else "blank_page"',
         '    refused = "blank_page"',
-        {"test_a_degraded_material_names_its_own_reason"},
+        {"test_a_material_that_could_not_be_read_names_the_readers_own_reason"},
     ),
     (
         "probe: a typed refusal is reported as a value on the exit code",
         CLIENT,
-        '    return EXIT_OK if facts.get("refusal") is None else EXIT_REFUSED',
+        '    return EXIT_OK if report["refusal"] is None else EXIT_REFUSED',
         "    return EXIT_OK",
         {"test_a_refused_call_is_a_report_and_never_an_exception"},
     ),
@@ -241,6 +240,15 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
         '    return None if value is None else float(cast("float", value))',
         '    return 0.0 if value is None else float(cast("float", value))',
         {"test_an_unmeasured_number_stays_none_instead_of_becoming_zero"},
+    ),
+    (
+        "probe: the caller's prompt is paired with a schema nobody asked for",
+        CLIENT,
+        "            UNCONSTRAINED_SCHEMA if args.schema is None else "
+        "_read_schema(args.schema)",
+        '            {"type": "object", "properties": {"total": {"type": "string"}}} '
+        "if args.schema is None else _read_schema(args.schema)",
+        {"test_the_schema_is_an_object_when_the_caller_names_none"},
     ),
 ]
 
