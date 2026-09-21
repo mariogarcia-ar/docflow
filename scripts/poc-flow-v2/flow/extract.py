@@ -156,6 +156,28 @@ def _content_signal(raw: str, text: str | None, points: int) -> EvidenceSignal:
     )
 
 
+def _declared_absent(value: object) -> bool:
+    """Whether a producer declared *no value* for a field.
+
+    Three spellings mean the same thing and none of them is a value: JSON
+    ``null``, an empty string, and the **string** ``"null"``. Measured:
+    `deepseek-r1:1.5b` answers the string ``"null"`` — not the JSON token — for
+    every amount it cannot read.
+
+    One owner, used by the candidate builder **and** the document values. Two
+    callers each spelling *absent* for themselves is exactly how a declared
+    absence became an arithmetic component here: `_fields_to_candidates`
+    filtered it and the values loop did not, so ``values`` carried
+    ``'subtotal': 'null'`` and `_values_for` handed it to the rule as a
+    component (`my_flow.md` §6.4: a component the rule cannot read makes the
+    equation UNKNOWN, never a failed combination).
+    """
+    if value is None:
+        return True
+    text = str(value).strip()
+    return not text or text.lower() == "null"
+
+
 def _fields_to_candidates(
     fields: Mapping[str, object],
     producer: str,
@@ -172,11 +194,9 @@ def _fields_to_candidates(
     points = config.family_points["DOCUMENT_CONTENT"]
     candidates: dict[str, list[FieldCandidate]] = {}
     for field, value in fields.items():
-        if value is None:
+        if _declared_absent(value):
             continue
         raw = str(value).strip()
-        if not raw or raw.lower() == "null":
-            continue
         if field in _DERIVED_FIELDS:
             candidates[field] = [_candidate(raw, producer)]
             continue
@@ -360,6 +380,35 @@ def _cross_modal(candidates: dict[str, list[FieldCandidate]], config: Config) ->
                 )
 
 
+def document_values(answered: Mapping[str, object]) -> dict[str, str]:
+    """The document-level amounts the arithmetic rule needs (§6.4).
+
+    A named function rather than an inline loop for the reason the defect
+    existed: the rule was written inline at the call site, so a test could only
+    restate it — and a test that restates the implementation passes whether or
+    not the implementation is right. Here the rule has one address.
+
+    A declared absence is **not** a component. Measured: `deepseek-r1:1.5b`
+    answers the string ``"null"`` for the amounts it cannot read, and
+    ``values`` carried it straight into the arithmetic as a component.
+
+    Args:
+        answered: The lane's field mapping, as the model returned it.
+
+    Returns:
+        Only the components that carry a value. A field the model declared
+        absent is left out, so `_values_for` never offers it as a combination
+        term — which is what makes an unreadable component *absent* rather than
+        *inconsistent* (I10).
+
+    """
+    return {
+        field: str(answered[field])
+        for field in (SUBTOTAL_FIELD, IVA_FIELD, TOTAL_FIELD)
+        if field in answered and not _declared_absent(answered[field])
+    }
+
+
 def _reviewer_note(
     lane: str, model: str, verdicts: int, refusal: str, unmatched: int
 ) -> str:
@@ -449,9 +498,7 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
             )
             for field, produced in text_fields.items():
                 candidates.setdefault(field, []).extend(produced)
-            for field in (SUBTOTAL_FIELD, IVA_FIELD, TOTAL_FIELD):
-                if field in answered and answered[field] is not None:
-                    values[field] = str(answered[field])
+            values.update(document_values(answered))
 
     # --- Lane B, text (reviewer) -----------------------------------------
     if text and text_fields:

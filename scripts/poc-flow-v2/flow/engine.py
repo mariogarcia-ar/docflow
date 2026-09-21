@@ -42,6 +42,7 @@ from .fields import (
     severity_for,
 )
 from .validators import (
+    all_components_are_amounts,
     arithmetic_consistent,
     arithmetic_signal,
     cuit_signal,
@@ -347,12 +348,31 @@ def _resolve_arithmetic(
         ctx.arithmetic_resolution = None
         return
 
-    consistent: list[tuple[str, str, str]] = []
-    for sub in subtotals:
-        for tax in taxes:
-            for tot in totals:
-                if arithmetic_consistent(sub, tax, tot):
-                    consistent.append((sub, tax, tot))
+    # §6.4's precondition of completeness, applied before the equation is judged:
+    # a component that is not a plain amount is **not there**, so the combination
+    # is not judgeable at all — never "inconsistent". Measured: a junk `iva`
+    # (`'0,90 | 0'`, an alícuota, or a declared-absent `'null'`) alongside a
+    # correct subtotal and total produced `non_unique`, and escalated both
+    # critical fields with a motive that was simply untrue (I10, B.9).
+    judged = [
+        (sub, tax, tot)
+        for sub in subtotals
+        for tax in taxes
+        for tot in totals
+        if all_components_are_amounts(sub, tax, tot)
+    ]
+    if not judged:
+        # Every component is unreadable: no equation to judge, so no resolution.
+        # The field keeps its other routes to CONFIRMED — UNKNOWN scores nothing
+        # and vetoes nothing (§6.4, I10).
+        ctx.arithmetic_resolution = None
+        return
+
+    consistent = [
+        (sub, tax, tot)
+        for sub, tax, tot in judged
+        if arithmetic_consistent(sub, tax, tot)
+    ]
 
     if len(consistent) == 1:
         ctx.arithmetic_resolution = "consistent"

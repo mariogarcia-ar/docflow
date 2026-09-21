@@ -35,6 +35,7 @@ __all__: list[str] = [
     "CUITS_CHECKSUM_INVALID",
     "CUITS_OWN_AS_EMISOR",
     "DATE_NONEXISTENT",
+    "all_components_are_amounts",
     "arithmetic_consistent",
     "arithmetic_signal",
     "cuit_signal",
@@ -125,6 +126,25 @@ def required_components_for(tipo_comprobante: str) -> tuple[str, ...]:
     return (SUBTOTAL_FIELD, IVA_FIELD, TOTAL_FIELD)
 
 
+def all_components_are_amounts(subtotal: str, iva: str, total: str) -> bool:
+    """Whether every component is a plain amount the rule can judge.
+
+    §6.4's *precondition of completeness*, spelled out: the rule declares the
+    components it needs, and a component it cannot read as an amount is **not
+    there**. A component that is not an amount is a different fact from a
+    combination that does not add up, and collapsing the two is what made a
+    junk value manufacture `ESC_NO_UNIQUE_ARITHMETIC_COMBINATION` — an escalation
+    with a false motive (I10, B.9).
+
+    Measured cases this rejects: ``'0,90 | 0'`` (the model echoed a list),
+    ``'21,0%'`` (an alícuota is not an importe, B.7), ``'null'`` (a declared
+    absence that reached the rule).
+    """
+    return all(
+        _parse_amount(component) is not None for component in (subtotal, iva, total)
+    )
+
+
 def arithmetic_consistent(
     subtotal: str,
     iva: str,
@@ -135,9 +155,13 @@ def arithmetic_consistent(
     """Whether ``subtotal + IVA == total`` within tolerance.
 
     Pure predicate, exported so the engine can evaluate **combinations** (§6.4)
-    without reaching into the validator's signal vocabulary. Returns ``False``
-    when any component is unparseable — the caller decides whether that is
-    UNKNOWN (a single combination) or a non-unique resolution (many).
+    without reaching into the validator's signal vocabulary.
+
+    The caller must ask :func:`all_components_are_amounts` **first**: this
+    predicate answers *does this combination add up*, and ``False`` from it
+    means the combination is wrong. A component that is not an amount is not a
+    wrong combination — it is no combination at all — and returning ``False``
+    for it is what let a junk value escalate a field whose values were fine.
     """
     sub = _parse_amount(subtotal)
     tax = _parse_amount(iva)

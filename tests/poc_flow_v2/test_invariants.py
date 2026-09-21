@@ -9,7 +9,7 @@ invariant — a test that only passes when the code is correct proves nothing
 from __future__ import annotations
 
 from flow.config import DEFAULT_CONFIG, FAMILY_POINTS
-from flow.engine import DecisionContext, decide_field
+from flow.engine import DecisionContext, _resolve_arithmetic, decide_field
 from flow.fields import (
     FAIL,
     PASS,
@@ -18,7 +18,11 @@ from flow.fields import (
     FieldCandidate,
     merge_candidates,
 )
-from flow.validators import arithmetic_signal, cuit_signal
+from flow.validators import (
+    all_components_are_amounts,
+    arithmetic_signal,
+    cuit_signal,
+)
 
 
 def _candidate(raw: str, *signals: EvidenceSignal) -> FieldCandidate:
@@ -148,3 +152,79 @@ def test_i10_a_failed_checksum_is_a_veto_not_unknown() -> None:
 
     assert signal.result == FAIL
     assert signal.detail == "CUITS_CHECKSUM_INVALID"
+
+
+# --- I10 / §6.4: a component that is not an amount is ABSENT, not wrong -----
+
+
+def test_i10_a_component_that_is_not_an_amount_makes_the_equation_unknown() -> None:
+    """A non-amount component leaves no equation to judge — never `non_unique`.
+
+    §6.4: *"if any [component] is missing, it answers UNKNOWN: it scores nothing,
+    it vetoes nothing"*. A component the rule cannot read as an amount **is not
+    there**, and treating it as a failed combination is what escalated both
+    critical fields with a motive that was untrue (measured: a junk `iva` next to
+    a correct subtotal and total).
+
+    The four measured shapes of "not an amount": a list the model echoed, an
+    alícuota (B.7), a declared-absent `"null"`, and an empty string.
+    """
+    for junk in ("0,90 | 0", "21,0%", "null", ""):
+        cands = {
+            "subtotal": [_candidate("17.898,30")],
+            "iva": [_candidate(junk)],
+            "importe_total_facturado": [_candidate("17.898,30")],
+        }
+        ctx = DecisionContext(
+            config=DEFAULT_CONFIG, tier="texto_nativo", own_cuits=frozenset()
+        )
+        _resolve_arithmetic(ctx, cands, {})
+
+        assert ctx.arithmetic_resolution is None, (
+            f"iva={junk!r} is not an amount, so there is no equation to judge; "
+            f"got {ctx.arithmetic_resolution!r}"
+        )
+
+
+def test_i10_a_real_inconsistency_still_escalates() -> None:
+    """The control: readable amounts that do not add up are still `non_unique`.
+
+    Without this, collapsing every result to `None` would pass the test above
+    while removing the arithmetic rule's whole purpose.
+    """
+    cands = {
+        "subtotal": [_candidate("10.000,00")],
+        "iva": [_candidate("2.100,00")],
+        "importe_total_facturado": [_candidate("99.999,00")],
+    }
+    ctx = DecisionContext(
+        config=DEFAULT_CONFIG, tier="texto_nativo", own_cuits=frozenset()
+    )
+
+    _resolve_arithmetic(ctx, cands, {})
+
+    assert ctx.arithmetic_resolution == "non_unique"
+
+
+def test_i10_a_single_consistent_combination_is_still_found() -> None:
+    """The other control: a complete, consistent equation resolves to one."""
+    cands = {
+        "subtotal": [_candidate("10.000,00")],
+        "iva": [_candidate("2.100,00")],
+        "importe_total_facturado": [_candidate("12.100,00")],
+    }
+    ctx = DecisionContext(
+        config=DEFAULT_CONFIG, tier="texto_nativo", own_cuits=frozenset()
+    )
+
+    _resolve_arithmetic(ctx, cands, {})
+
+    assert ctx.arithmetic_resolution == "consistent"
+
+
+def test_all_components_are_amounts_rejects_the_measured_junk() -> None:
+    """The precondition is a rule of its own, so it is asserted on its own."""
+    assert all_components_are_amounts("1.234,56", "0", "1.234,56") is True
+    assert all_components_are_amounts("$ 1.234,56", "0", "1.234,56") is True
+    for junk in ("0,90 | 0", "21,0%", "null", "", "ABC"):
+        assert all_components_are_amounts("1.234,56", junk, "1.234,56") is False, junk

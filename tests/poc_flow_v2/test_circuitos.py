@@ -5,6 +5,11 @@ Each test guards one circuit: if the circuit stops closing, the test fails
 a circuit is proven by constructed inputs, not by a generation.
 """
 
+# `too-many-lines`: the module covers nine circuits (C1 to C9) and each one's
+# guards belong beside its circuit, so splitting the file would separate a test
+# from the rule it protects. Same reasoning as `tests/kernels/test_orchestrator.py`.
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import pathlib
@@ -23,8 +28,11 @@ from flow.extract import (
     _apply_review,
     _call_structured,
     _cross_modal,
+    _declared_absent,
+    _fields_to_candidates,
     _present_at_location,
     _review_verdicts,
+    document_values,
 )
 from flow.fields import (
     CLASSIFY_NOT_A_RECEIPT,
@@ -492,6 +500,66 @@ def test_c2_a_reviewer_without_a_verdict_list_is_not_a_success() -> None:
 
     assert verdicts == []
     assert code, "a missing verdict list must be reported, not read as success"
+
+
+# --- H7: one owner for the absence rule ------------------------------------
+
+
+def test_a_declared_absence_never_becomes_a_candidate() -> None:
+    """JSON `null`, `""` and the *string* `"null"` all mean no value.
+
+    Measured: `deepseek-r1:1.5b` answers the **string** `"null"` — not the JSON
+    token — for every amount it cannot read. A declared absence must not become
+    a candidate, because it would score as if the model had found a value.
+    """
+    for spelling in (None, "", "   ", "null", "NULL", "Null"):
+        assert _declared_absent(spelling) is True, spelling
+    for value in ("0", "ARS", "17.898,30", "false"):
+        assert _declared_absent(value) is False, value
+
+
+def test_a_declared_absence_is_filtered_from_candidates() -> None:
+    """The candidate builder applies the rule."""
+    produced = _fields_to_candidates(
+        {"total": "null", "moneda": "ARS", "iva": None, "otro": ""},
+        "extractor_llm_texto",
+        "ARS 17.898,30",
+        DEFAULT_CONFIG,
+    )
+
+    assert set(produced) == {"moneda"}, produced
+
+
+def test_a_declared_absence_is_filtered_from_the_document_values() -> None:
+    """The **other** consumer applies the same rule, which is the whole defect.
+
+    `_fields_to_candidates` filtered a declared absence and the values loop did
+    not, so `values` carried `'subtotal': 'null'` and `_values_for` handed it to
+    the arithmetic rule as a component. One spelling, two consumers, and the
+    second one is what turned a readable document into an escalated one.
+
+    Asserts against `document_values`, the function `extract` calls. An earlier
+    version of this test restated the loop inline, which made it pass whether or
+    not the caller filtered anything.
+    """
+    values = document_values(
+        {"subtotal": "null", "iva": "0.00", "importe_total_facturado": None}
+    )
+
+    assert values == {"iva": "0.00"}, values
+
+
+def test_the_document_values_keep_a_real_amount() -> None:
+    """The control: a readable amount survives, so the filter is not a blanket."""
+    values = document_values(
+        {"subtotal": "17.898,30", "iva": "0", "importe_total_facturado": "17.898,30"}
+    )
+
+    assert values == {
+        "subtotal": "17.898,30",
+        "iva": "0",
+        "importe_total_facturado": "17.898,30",
+    }
 
 
 # --- C5: arithmetic consistency (combinations + required components) --------
