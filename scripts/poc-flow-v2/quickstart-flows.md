@@ -44,6 +44,31 @@ On disk that is four stages, always in this order:
 
 ---
 
+## The six canonical examples (proposed fixture matrix)
+
+The intended set: one file per combination of **material** (text PDF / scanned PDF / image) × **outcome** (receipt / not a receipt).
+
+| # | Label asked for | File | ext | `pdf_type` | Agrees? |
+|---|---|---|---|---|---|
+| 1 | pdf texto · sin comprobante | `negativos/neg_2026-06_correo_liquidacion.pdf` | pdf | `pdf_texto` | yes |
+| 2 | pdf texto · con comprobante | `casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf` | pdf | `pdf_texto` | yes |
+| 3 | pdf imagen · sin comprobante | `negativos/neg_2026-10_pantalla_aprobacion.pdf` | pdf | `pdf_escaneado` | yes |
+| 4 | pdf imagen · con comprobante | `pdf_aptos_layout/36744cc6-2ed9-47e5-b4b8-66c31768164b.pdf` | pdf | **`pdf_texto`** | **no** |
+| 5 | imagen · sin comprobante | `negativos/neg_2026-06_correo_liquidacion.pdf` | **pdf** | **`pdf_texto`** | **no** |
+| 6 | imagen · con comprobante | `casos/66e6e0ea-e910-41f4-9037-13f0309812c1.jpg` | jpg | — (not a PDF) | yes |
+
+Two rows do not match their label. Not resolved here — recorded, with the evidence:
+
+- **Row 4.** `pdf_aptos_layout/` is the *text-layer* folder: all five of its PDFs are detected `pdf_texto`, and the fixture's own name says so. A scanned receipt lives in `pdf_escaneados/` instead (all five `pdf_escaneado`; `9b7a423c-189c-4b9b-8ab1-23b38d4518b4.pdf` carries an ARCA QR and is already used in Case 2). Using a text PDF here would make the "pdf imagen" row exercise Case 1 — the same branch as row 2.
+- **Row 5** is the *same file as row 1* (a copy-paste slip, not a choice): it is a PDF, so it cannot be the "imagen" row. Image candidates in the negative folder: `neg_2026-11_foto_pizarra.jpg`, `neg_2026-03_dni_dorso.jpg`, `neg_2026-02_gastos_varios.png`.
+
+Two facts about this table, kept apart on purpose:
+
+- The `pdf_type` column is **measured** — it is the committed value in `tests/fixtures/manifest.json`, written by `voucherflow`'s detector (`build_manifest.py`), not a label copied from the folder name.
+- The receipt / not-a-receipt half is the **curated folder naming** (`negativos/` = curated negative). It is *not* a `classify()` result: `classify` is a separate, weaker gate that runs inside `extract`, and its verdict for these files has not been measured here. A file can sit in `negativos/` and still pass `classify` — the folder is a human's judgement, `classify` is two cheap signals.
+
+---
+
 ## How to read a run
 
 ```
