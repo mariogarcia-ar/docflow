@@ -657,6 +657,90 @@ ya prefiere para formato fijo, y es la que hay que probar antes de tocar el mode
 
 ---
 
+## Quinta ronda: auditoría del cableado (2026-09-21)
+
+La pregunta fue *¿está completo el cableado?*, y una auditoría de «lo declarado contra lo
+consumido» encontró **un defecto nuevo, dos huecos y una clase entera sin guarda**.
+
+El método: enumerar lo que cada artefacto **declara** (manifest, `Config`, el contrato de 23
+campos, el vocabulario de códigos) y comprobar si existe quien lo **lea o lo emita**. No
+alcanza con que el nombre aparezca.
+
+### El defecto: un dial decorativo
+
+`Config.escalate_floor` se declara, se documenta en el `Config` y entra en la firma del
+journal. Y **`engine.py` no lo leía**: usaba la constante del módulo.
+
+```python
+elif score < ESCALATE_FLOOR:                      # el módulo, no la corrida
+    notes.append(f"... below the escalate floor {ESCALATE_FLOOR}")
+```
+
+A tres líneas de distancia, `family_points` **sí** se leía de `ctx.config`. Medido:
+
+| `Config.escalate_floor` | veredicto | score | código |
+|---|---|---:|---|
+| 2 (default) | ESCALATE | 1 | `ESC_LOW_SCORE` |
+| **0** | **ESCALATE** | 1 | `ESC_LOW_SCORE` |
+
+Idénticos. Un operador que lo bajara a 0 para que un campo de score 1 dejara de escalar
+**no habría cambiado nada**, y el mensaje de la escalada le habría confirmado el valor que él
+eligió — el reporte diciendo una cosa y el motor haciendo otra. Arreglado a
+`ctx.config.escalate_floor`; medido después: `floor=0` → `REVIEW`.
+
+**Por qué nadie lo vio.** Los dos valores **coinciden** (constante 2, default 2), y todos los
+tests usan `DEFAULT_CONFIG`. El dial solo se distingue de su constante cuando alguien
+construye un `Config` distinto, y nada lo hacía.
+
+### El gate general fue un falso negativo, y la mutación lo probó
+
+El primer gate general escaneaba los fuentes buscando `config.<dial>` y consideraba «leído» un
+acierto. La mutación que revertía el arreglo **lo dejó en verde**: el código roto seguía
+*mencionando* el nombre, en la línea del mensaje, justo después de la rama que había vuelto a
+la constante.
+
+> **Un gate que matchea una mención no es un gate sobre un uso.**
+
+La versión que quedó afirma el **mecanismo**: llegar a un dial sin un `Config` obliga a
+**importar** su constante, y el import es lo que la pone en alcance. Leerla por
+`ctx.config.<dial>` o por el parámetro `config` no necesita import. Se lee con `ast`, se
+excluyen los tres nombres que *son* la declaración (`Config`, `DEFAULT_CONFIG`, `FieldDial`), y
+la mutación que agrega `ESCALATE_FLOOR` al import **sí** falla.
+
+### Los dos huecos
+
+| Hueco | Estado |
+|---|---|
+| `myflow.py` llama `run(document, {}, …)` con settings **siempre vacío** | `own_cuits` nunca se llena, así que `CUITS_OWN_AS_EMISOR` **no puede dispararse** desde el CLI. El validador está cableado y probado; el dato que lo alimenta no llega. Es `# TODO: [MVP]` con flag (`--own-cuit`) |
+| `registry/policies/thresholds.json` está declarado en el manifest y **nunca se lee** | Sus 4 valores están duplicados en `config.py`. No es solo redundancia: `.env.example` explica que esos valores **se movieron al registry a propósito**, porque el hash del registry es término de la clave de caché. Al duplicarlos, el hash cubre un archivo que nadie consulta |
+
+**La invariante del gate, medida:** `flow/sampling.py` usa `os.environ` y **no** lee
+`.env`. El flujo depende del entorno del shell, no de un archivo. Funciona hoy (el
+`apply_sampling()` escribe el default en proceso), pero contradice la precedencia
+documentada —*entorno → `.env` → default*— y no está guardado por ningún test.
+
+### Lo que la auditoría confirmó sano
+
+- **Los 23 campos del contrato** tienen declarante en exactamente un artefacto: base 9,
+  `desglose` 9, `rubro` 2, `clasificacion` 3. Ninguno huérfano.
+- **Los 5 códigos** con productor (`ESC_DEGRADED_MATERIAL`, `ESC_NO_NEW_EVIDENCE`,
+  `ESC_LOOP_LIMIT`, `CLASSIFY_NOT_A_RECEIPT`, `ESC_NO_UNIQUE_ARITHMETIC`).
+- **Los 4 stages** con función y dependencias resueltas por el journal.
+- **Los 16 diales** restantes se leen vía `Config`.
+
+### Verificación
+
+**1147 tests** (eran 1145), **8 mutaciones**, **las 8 falsadas**. Dos gates nuevos; el
+general reemplazado tras probar que su primera versión no guardaba nada.
+
+**Pendientes, no ausentes** (ordenados por lo que habilitan):
+1. `own_cuits` por flag, para que el veto de CUIT propio sea alcanzable.
+2. Leer `thresholds.json` **o** borrarlo del manifest: hoy el hash cubre un archivo muerto.
+3. `.env` real, o borrar su mención como fuente de precedencia.
+4. El lector de importes (quinta ronda anterior): `regexp` antes que cambiar el modelo.
+
+---
+
 1. **Nueve circuitos con test** — cada C1…C9 tiene un test que falla si el
    circuito no cierra (B.16).
 2. **El Anexo A no tiene celdas inalcanzables** salvo la intencional — lane-on-demand

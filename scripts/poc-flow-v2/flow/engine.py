@@ -22,7 +22,6 @@ from typing import Final
 
 from .config import (
     DEFAULT_CONFIG,
-    ESCALATE_FLOOR,
     Config,
     FieldDial,
 )
@@ -286,10 +285,12 @@ def decide_field(  # pylint: disable=too-many-locals
         reason_codes.append(ESC_NO_UNIQUE_ARITHMETIC)
         decision = DECISION_ESCALATE
         notes.append("zero or more than one arithmetic combination is consistent")
-    elif score < ESCALATE_FLOOR:
+    elif score < ctx.config.escalate_floor:
         reason_codes.append("ESC_LOW_SCORE")
         decision = DECISION_ESCALATE
-        notes.append(f"score {score} below the escalate floor {ESCALATE_FLOOR}")
+        notes.append(
+            f"score {score} below the escalate floor {ctx.config.escalate_floor}"
+        )
     elif score >= threshold and margin >= dial.margin and gate:
         reason_codes.append("CONF_SCORE_MARGIN_GATE")
         decision = DECISION_CONFIRMED

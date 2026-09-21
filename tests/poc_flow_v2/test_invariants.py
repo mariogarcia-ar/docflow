@@ -8,6 +8,10 @@ invariant — a test that only passes when the code is correct proves nothing
 
 from __future__ import annotations
 
+import ast
+import dataclasses
+import pathlib
+
 from flow.config import DEFAULT_CONFIG, FAMILY_POINTS
 from flow.engine import DecisionContext, _resolve_arithmetic, decide_field
 from flow.fields import (
@@ -49,6 +53,11 @@ def _fail(family: str, detail: str) -> EvidenceSignal:
 
 def _unknown(family: str) -> EvidenceSignal:
     return EvidenceSignal(family, UNKNOWN, 0, "test")
+
+
+#: The module that *declares* the dials. The scan skips it: a dial named in its
+#: own declaration file is not a dial that is read.
+CONFIG_MODULE = "config.py"
 
 
 # --- I2: the score belongs to the candidate, merged before scoring ---------
@@ -228,3 +237,97 @@ def test_all_components_are_amounts_rejects_the_measured_junk() -> None:
     assert all_components_are_amounts("$ 1.234,56", "0", "1.234,56") is True
     for junk in ("0,90 | 0", "21,0%", "null", "", "ABC"):
         assert all_components_are_amounts("1.234,56", junk, "1.234,56") is False, junk
+
+
+# --- The config is the only source of a dial -------------------------------
+
+
+def test_the_escalate_floor_dial_decides_the_verdict() -> None:
+    """Changing `Config.escalate_floor` changes the decision it claims to gate.
+
+    The defect this guards, measured: `engine.py` read the module constant
+    `ESCALATE_FLOOR` while carrying the run's `Config` one attribute away — and
+    `family_points`, in the same module, was read from `ctx.config`. So the dial
+    was split in two: one attribute honoured, its neighbour ignored. Measured,
+    `dataclasses.replace(DEFAULT_CONFIG, escalate_floor=0)` left every verdict
+    **identical** — the number in the escalation message was a constant dressed
+    as a dial, and an operator who tuned it would have changed nothing while the
+    report confirmed their change had been applied.
+
+    The assertion is the difference between two runs of the same candidate, so
+    it fails whether the dial is ignored *or* wired to the wrong field. A test
+    that only checked the default value would pass on the broken code.
+    """
+    candidate = _candidate("x", _pass("SAME_MATERIAL", 1))
+    fields = {"subtotal": "", "iva": "", "importe_total_facturado": ""}
+
+    def decide(floor: int) -> object:
+        config = dataclasses.replace(DEFAULT_CONFIG, escalate_floor=floor)
+        ctx = DecisionContext(config=config, tier="texto_nativo", own_cuits=frozenset())
+        return decide_field("notas", [candidate], ctx, fields).decision
+
+    assert decide(2) == "ESCALATE", "score 1 is below a floor of 2"
+    assert decide(0) == "REVIEW", (
+        "with a floor of 0 the same candidate must stop escalating: the run's "
+        "config is not the thing being read"
+    )
+
+
+def test_no_module_reaches_a_dial_by_importing_it() -> None:
+    """A dial is read from a `Config`, never imported as a module constant.
+
+    The general form of the defect above, and the reason this test exists rather
+    than only the one before it: a single dial read as a constant is a typo, and
+    the *class* is a dial that is declared, documented, journalled as a setting
+    and then never consulted.
+
+    **The first version of this test was a false negative, and the mutation
+    proved it.** It scanned the sources for `config.<name>` and treated a hit as
+    "read" — but the mutated code still *mentioned* the name, in the escalation
+    message on the line after the branch that had gone back to the constant. So
+    the scan found the mention and passed while the decision ignored the dial.
+    **A gate that matches a mention is not a gate on a use.**
+
+    This version asserts the mechanism instead of the text: reaching a dial
+    without a `Config` requires importing its module-level constant, and the
+    import is what puts it in scope. Reading it through `ctx.config.<name>` or a
+    `config` parameter needs no import at all. Only the three names that *are*
+    the declaration — the class, the default instance and the per-severity dial
+    type — are legitimately imported.
+    """
+    flow = pathlib.Path("scripts/poc-flow-v2/flow")
+    offenders: list[str] = []
+    for path in sorted(flow.glob("*.py")):
+        if path.name == CONFIG_MODULE:
+            continue
+        imported = _names_imported_from_config(path)
+        stray = sorted(imported - _DECLARATION_NAMES)
+        if stray:
+            offenders.append(f"{path.name}: {stray}")
+
+    assert not offenders, (
+        f"these modules import a dial from `config` instead of reading it off a "
+        f"`Config`: {offenders}. A dial read as a constant is journalled as a "
+        f"setting and then ignored — read it as `ctx.config.<name>`, or delete "
+        f"it from `Config`."
+    )
+
+
+def _names_imported_from_config(path: pathlib.Path) -> set[str]:
+    """The names a module takes from `config`, read from the import statements."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("config"):
+            names.update(alias.name for alias in node.names)
+    return names
+
+
+#: The names in `config.py` that are the *declaration* rather than a dial: the
+#: `Config` type, the default instance a caller starts from, and the per-severity
+#: dial type. Importing one of these cannot bypass a dial — there is no value to
+#: be stale, only a shape to be built. Everything else in `config.py` is a
+#: scalar a run may override, so importing it freezes that override out.
+_DECLARATION_NAMES: frozenset[str] = frozenset(
+    {"Config", "DEFAULT_CONFIG", "FieldDial"}
+)

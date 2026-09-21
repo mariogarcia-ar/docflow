@@ -74,6 +74,21 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
         "",
         {"test_an_operators_window_is_not_overwritten"},
     ),
+    (
+        "config: the escalate floor is a literal, so the dial is inert",
+        FLOW / "engine.py",
+        "    elif score < ctx.config.escalate_floor:",
+        "    elif score < 2:",
+        {"test_the_escalate_floor_dial_decides_the_verdict"},
+    ),
+    (
+        "config: a module imports a dial as a module-level constant",
+        FLOW / "engine.py",
+        "from .config import (\n    DEFAULT_CONFIG,\n    Config,\n    FieldDial,\n)",
+        "from .config import (\n    DEFAULT_CONFIG,\n    ESCALATE_FLOOR,\n"
+        "    Config,\n    FieldDial,\n)",
+        {"test_no_module_reaches_a_dial_by_importing_it"},
+    ),
 ]
 
 
