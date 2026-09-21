@@ -54,7 +54,12 @@ ARITHMETIC_INCONSISTENT: Final[str] = "ARITHMETIC_INCONSISTENT"
 #: Factura C the net-plus-VAT equation has nothing to judge, so no component is
 #: required and the validator answers UNKNOWN rather than vetoing a type it does
 #: not model.
-_NO_IVA_TYPES: Final[frozenset[str]] = frozenset({"C"})
+#:
+#: Both spellings are listed because the prompt accepts both: the printed letter
+#: (`C`) and the AFIP code (`011`) are the same receipt type, and a rule that knew
+#: only one of them would silently apply the net-plus-VAT equation to a Factura C
+#: that arrived as a code.
+_NO_IVA_TYPES: Final[frozenset[str]] = frozenset({"C", "011"})
 
 #: TODO: [MVP] The ``required_components`` per ``tipo_comprobante`` (`my_flow.md`
 #: §6.4) is not modelled: this version assumes the net-plus-VAT combination and

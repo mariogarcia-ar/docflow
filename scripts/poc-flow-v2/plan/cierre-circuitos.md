@@ -305,6 +305,77 @@ con capa OCR invisible obsoleta entra como `texto_nativo`.
 
 ---
 
+## Tercera ronda: el registry contra las fuentes oficiales (2026-09-21)
+
+Los prompts y el schema se escribieron a mano y **nunca se contrastaron con las tablas de
+AFIP**. El contraste (biblioteca de ARCA, Libro IVA Digital, RG 259/98) encontró un defecto
+**probado experimentalmente** y cuatro errores factuales.
+
+### El defecto probado: el ejemplo del prompt era el valor incorrecto
+
+La regla 3 ilustraba el truncamiento de un CUIT así:
+
+```
+Ejemplo: "C.U.I.T. Nro.: 20-1 Ing, Brutas: 201641" -> "cuit_emisor": "20-1".
+```
+
+El CUIT del emisor del fixture es `20-22087601-3`: **el ejemplo es su prefijo literal**.
+Medido con 3 corridas por variante, mismo documento:
+
+| Prompt | `cuit_emisor` devuelto |
+|---|---|
+| ejemplo `20-1` (el original) | `['20-22087601-3', '20-1', '20-22087601-3']` |
+| ejemplo cambiado a `99-9` | `['99-9', '20-22087601-3', '99-9']` |
+| ejemplo **eliminado** | `['20-22087601-3', '20-22087601-3', '20-22087601-3']` |
+
+El modelo **copia el ejemplo**. Es B.10 — un valor plausible — y `20-1` parece un CUIT
+truncado por OCR, así que pasa toda validación de forma. El motor lo contuvo (quedó
+segundo, score 0, `DOCUMENT_CONTENT` UNKNOWN), pero el candidato **no debía existir**.
+
+**El arreglo es de forma:** un ejemplo usa un valor que ningún documento puede imprimir.
+El prefijo `99` no existe en la tabla de AFIP, así que el ejemplo es inconfundible.
+
+### Los cuatro errores factuales
+
+| # | Dónde | Decía | Dice AFIP | Arreglo |
+|---|---|---|---|---|
+| F1 | `tipo_comprobante`, regla 7 de ambos prompts | *"Un boleto o pasaje de colectivo con 090/099"* | `090`/`099` son **"comprobantes que no cumplen la RG 1415"**; nada que ver con boletos | La regla nombra los códigos reales (001/006/011) y aclara qué son 090/099 |
+| F2 | `condicion_impositiva_dominante` | `enum: [21, 10_5, 27, 2_5, exento_no_gravado, null]` | Es la **condición del emisor** (RG 259/98): Responsable Inscripto, Monotributo, Exento, No Categorizado, Consumidor Final | Enum con las cinco leyendas reales; las alícuotas van a `alicuotas_detectadas` |
+| F3 | `alicuotas_detectadas` | *"every rate found"* | Tabla de alícuotas: 0, **2,5**, **5**, 10,5, 21, 27 | La descripción y la regla listan las seis |
+| F4 | `iva` (regla del campo) | *"la suma de las alícuotas discriminadas"* | Es un **importe en pesos** | *"el IMPORTE del IVA en pesos, o 0 — nunca la alícuota"* |
+
+**F2 es el más caro:** el modelo devolvía `condicion_impositiva_dominante: "21"` — la
+alícuota que acababa de leer — y la **condición nunca se capturaba**. Un vocabulario que
+mezcla dos preguntas recibe la respuesta equivocada de ambas.
+
+### Dos defectos de consistencia que el contraste destapó
+
+- **`tipo_comprobante` y la regla de Factura C.** Al aceptar el prompt el código `011`, la
+  regla `_NO_IVA_TYPES = {"C"}` dejaba de reconocer una Factura C que llegara como código:
+  le aplicaba la ecuación neto+IVA a un comprobante que no discrimina IVA. Ahora es
+  `{"C", "011"}`, y el control prueba que `A`/`001` y `B`/`006` **no** quedaron exentos.
+- **El ejemplo del importe también colisionaba:** `"17.898,30"` es literalmente el total del
+  fixture. Cambiado por `"12.345,60"`, que ningún fixture imprime.
+
+### Verificación
+
+**94 tests** en `tests/poc_flow_v2`, **1139** en el repo. Seis mutaciones, **las seis
+falsadas**. Tres lecciones del arnés, todas de mis propios tests:
+
+- **Un regex de una línea no ve un ejemplo que se envuelve.** El `\s*` de mi patrón
+  `"…" -> "…"` no cruzaba el salto de línea, así que el ejemplo de CUIT — el que causó el
+  defecto — era **invisible** a la guarda. `re.DOTALL` lo arregló.
+- **Una comprobación por substring no comprueba una lista de opciones.** `"5" in "10_5, 21"`
+  es `True`: el 5% podía faltar y el test pasaba. Hizo falta una frontera.
+- **Un patrón que no distingue un valor posible de uno imposible no sirve.** Mi primer
+  intento marcaba `99-9` como colisión — y también dejaba pasar `20-1`, porque pedía tres
+  grupos. La regla correcta juzga el **prefijo**: los prefijos reales de CUIT son 20/23/24/
+  25/27/30/33/34/50, y `99` no está entre ellos.
+
+---
+
+
+
 ## Criterio de cierre
 
 1. **Nueve circuitos con test** — cada C1…C9 tiene un test que falla si el

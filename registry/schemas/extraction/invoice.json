@@ -1,5 +1,5 @@
 {
-  "$comment": "The 22 fields `legacy/prompts/11-extraction_key_value_invoice_prompt.yaml` declares, as a JSON Schema the provider constrains generation with. It is a SEPARATE artifact from the prompt on purpose (two artifacts, one per concern): the prompt says what to look for and how to read it, the schema says what shape the answer must have. They are kept in step by `test_the_schema_and_the_prompt_agree_on_the_fields` rather than by being generated from one another.",
+  "$comment": "The 23 fields `legacy/prompts/11-extraction_key_value_invoice_prompt.yaml` declares, as a JSON Schema the provider constrains generation with. It is a SEPARATE artifact from the prompt on purpose (two artifacts, one per concern): the prompt says what to look for and how to read it, the schema says what shape the answer must have. They are kept in step by `test_the_schema_and_the_prompt_agree_on_the_fields` rather than by being generated from one another.",
   "type": "object",
   "properties": {
     "comprobante_valido": {
@@ -13,8 +13,8 @@
     },
     "tipo_comprobante": {
       "type": "string",
-      "enum": ["A", "B", "C", "090", "099", "null"],
-      "description": "the letter or code printed in the header, or 'null' when the document is not a fiscal receipt"
+      "enum": ["A", "B", "C", "001", "006", "011", "090", "099", "null"],
+      "description": "the letter or the AFIP code printed in the header (001 Factura A, 006 Factura B, 011 Factura C), or 'null' when the document is not a fiscal receipt. 090/099 are 'comprobantes que no cumplen la RG 1415', not receipt classes"
     },
     "razon_social_emisor": {
       "type": "string"
@@ -62,12 +62,19 @@
     },
     "condicion_impositiva_dominante": {
       "type": "string",
-      "enum": ["21", "10_5", "27", "2_5", "exento_no_gravado", "null"],
-      "description": "the dominant rate, or 'null' when the receipt does not discriminate IVA"
+      "enum": [
+        "Responsable Inscripto",
+        "Monotributo",
+        "Exento",
+        "No Categorizado",
+        "Consumidor Final",
+        "null"
+      ],
+      "description": "the EMITTER's IVA condition, as the document declares it (RG 259/98 legends), or 'null' when it declares none. Never an alícuota — rates belong in alicuotas_detectadas"
     },
     "alicuotas_detectadas": {
       "type": "string",
-      "description": "every rate found, separated by '|'"
+      "description": "every IVA rate printed on the document, as AFIP codes separated by '|': 0, 2_5, 5, 10_5, 21, 27"
     },
     "categoria_gasto": {
       "type": "string",

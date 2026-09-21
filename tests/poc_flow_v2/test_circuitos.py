@@ -570,6 +570,27 @@ def test_c5_a_factura_c_has_no_required_components() -> None:
     assert not required_components_for("C")
 
 
+def test_c5_a_factura_c_is_recognised_by_its_afip_code_too() -> None:
+    """`011` is Factura C, and the rule must know both spellings.
+
+    The prompt accepts the printed letter *or* the AFIP code, so a rule that knew
+    only `"C"` would silently apply the net-plus-VAT equation to a Factura C that
+    arrived as a code — judging a receipt that has no IVA to discriminate.
+    """
+    assert not required_components_for("011")
+
+
+def test_c5_a_factura_a_keeps_its_components_in_both_spellings() -> None:
+    """The control: only the C family is exempt, not every code."""
+    assert required_components_for("A") == required_components_for("001")
+    assert required_components_for("B") == required_components_for("006")
+    assert required_components_for("B") == (
+        "subtotal",
+        "iva",
+        "importe_total_facturado",
+    )
+
+
 def test_c5_the_default_combination_needs_all_three() -> None:
     """The net-plus-VAT combination requires subtotal, IVA and total."""
     assert required_components_for("A") == (

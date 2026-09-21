@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 
 from flow import run
 from flow.artifacts import load_artifacts
@@ -199,6 +200,141 @@ def test_a_closed_vocabulary_field_declares_a_real_enum() -> None:
         f"these fields answer from a closed list but declare no `enum`, so the "
         f"model can echo the option list as a value: {missing}"
     )
+
+
+def test_no_prompt_example_collides_with_a_real_document_value() -> None:
+    """A prompt's example must not be a value a real document can contain.
+
+    Measured: the rule-3 example read `"C.U.I.T. Nro.: 20-1 Ing, Brutas: 201641"
+    -> "cuit_emisor": "20-1"`, and the fixture's issuer CUIT is `20-22087601-3`
+    — its **literal prefix**. `deepseek-r1:1.5b` returned `"20-1"` on 1 of 3 runs,
+    and returned whatever the example said when the example was changed to
+    `"99-9"`. Removing the example made it answer correctly 3 of 3.
+
+    The rule is about the **shape** of an example, not its number: an example
+    drawn from the value space of a real field is a plausible wrong answer
+    (`my_flow.md` B.10), and it is indistinguishable from a reading.
+    """
+    artifacts = load_artifacts()
+    examples = _prompt_examples(artifacts.prompts)
+
+    assert examples, "the prompts are expected to carry worked examples"
+    for role, example in examples:
+        assert not _looks_like_a_real_value(example), (
+            f"{role}: the example {example!r} is drawn from the value space of a "
+            "real field; use a value no document can print (e.g. an impossible "
+            "prefix such as 99-9) so a copied example cannot pass as a reading"
+        )
+
+
+#: The CUIT prefixes AFIP issues. A worked example must stay outside this set, so
+#: a copied example can never pass as a reading. Measured: the rule-3 example was
+#: `20-1`, and the fixture's issuer CUIT is `20-22087601-3` — the example is that
+#: value's literal prefix, and the model returned it on 1 of 3 runs.
+_CUIT_PREFIXES: frozenset[str] = frozenset(
+    {"20", "23", "24", "25", "27", "30", "33", "34", "50"}
+)
+
+#: Patterns whose match makes a prompt example indistinguishable from a real
+#: document value: a **possible** CUIT, a printed amount, or a printed date.
+_LOOKS_REAL: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b\d{1,3}(?:\.\d{3})+,\d{2}\b"),  # a printed amount
+    re.compile(r"\b\d{1,2}/\d{1,2}/\d{4}\b"),  # a printed date
+)
+
+
+def _prompt_examples(prompts: dict[str, str]) -> list[tuple[str, str]]:
+    """The example values a prompt's worked examples introduce.
+
+    `re.DOTALL` because a worked example wraps across lines and the arrow lands on
+    the continuation: without it the CUIT example — the one whose collision was
+    measured — is invisible to this guard.
+    """
+    found: list[tuple[str, str]] = []
+    for role, text in sorted(prompts.items()):
+        for match in re.finditer(r'"([^"]+)"\s*->\s*"[^"]*"', text, re.DOTALL):
+            found.append((role, match.group(1)))
+    return found
+
+
+def _looks_like_a_real_value(example: str) -> bool:
+    """Whether a quoted example could be mistaken for a value read from a file.
+
+    A CUIT-shaped example is judged by its **prefix**: `99-9` cannot be a real
+    CUIT prefix, so it is a safe illustration, while `20-1` is a real prefix and
+    therefore indistinguishable from a truncated reading of `20-22087601-3`.
+    """
+    if any(pattern.search(example) for pattern in _LOOKS_REAL):
+        return True
+    return any(
+        match.group(1) in _CUIT_PREFIXES
+        for match in re.finditer(r"\b(\d{2})-\d", example)
+    )
+
+
+def test_the_condition_field_declares_afip_legends_not_rates() -> None:
+    """`condicion_impositiva_dominante` holds a condition, never an alícuota.
+
+    The field answers *who the emitter is before IVA*, declared with one of
+    AFIP's legends (RG 259/98): responsable inscripto, monotributo, exento, no
+    categorizado, consumidor final. The rates live in `alicuotas_detectadas`.
+
+    Measured, the enum used to hold `[21, 10_5, 27, 2_5, exento_no_gravado]` —
+    four rates plus one label — so the model answered the field with the rate
+    it had just read (`condicion_impositiva_dominante: "21"`) and the condition
+    was never captured. A vocabulary that mixes two questions gets the wrong
+    answer to both.
+    """
+    schema = load_artifacts().extraction_schema
+    enum = schema["properties"]["condicion_impositiva_dominante"]["enum"]
+
+    rates = [option for option in enum if re.fullmatch(r"\d+(_\d+)?", option)]
+    assert not rates, (
+        f"`condicion_impositiva_dominante` accepts rates {rates}; a rate is not a "
+        "condition and belongs in `alicuotas_detectadas`"
+    )
+    assert "Responsable Inscripto" in enum, enum
+    assert "null" in enum, enum
+
+
+def test_the_rate_field_declares_the_real_afip_rates() -> None:
+    """`alicuotas_detectadas` names the AFIP rate set, including 5%.
+
+    Measured against AFIP's Libro IVA Digital rate table: 0,00 (0003), 2,50
+    (0009), 5,00 (0008), 10,50 (0004), 21,00 (0005), 27,00 (0006). The registry
+    described the field as "every rate found" and the prompts listed only four,
+    so a 5% line — a real rate for certain goods — had no name to be read into.
+    """
+    schema = load_artifacts().extraction_schema
+    description = schema["properties"]["alicuotas_detectadas"]["description"]
+
+    for rate in ("2_5", "5", "10_5", "21", "27"):
+        # A bounded match, not a substring: `"5" in "10_5, 21"` is True, so a
+        # substring check would pass while the 5% rate was missing entirely.
+        assert re.search(rf"(?<![\d_]){re.escape(rate)}(?![\d_])", description), (
+            f"the AFIP rate {rate!r} is missing from `alicuotas_detectadas`: "
+            f"a rate with no name cannot be reported"
+        )
+
+
+def test_every_receipt_code_the_prompt_names_is_in_the_enum() -> None:
+    """The other direction: a code the prompt teaches must be an accepted answer.
+
+    The forward check (every enum option reaches the prompt) cannot see a code the
+    prompt names but the enum rejects — the model would be taught `011` and then
+    constrained out of answering it. The prompt is the source of truth for what a
+    document prints, so it is parsed for the codes of the type table.
+    """
+    artifacts = load_artifacts()
+    enum = artifacts.extraction_schema["properties"]["tipo_comprobante"]["enum"]
+
+    for role in ("extract_texto", "extract_vision"):
+        named = set(re.findall(r"\b(00[16]|011|090|099)\b", artifacts.prompts[role]))
+        missing = sorted(code for code in named if code not in enum)
+        assert not missing, (
+            f"{role}: the prompt names {missing}, but the enum rejects them: "
+            "the model is taught a code it cannot answer with"
+        )
 
 
 def test_every_enum_option_is_declared_in_the_prompt() -> None:

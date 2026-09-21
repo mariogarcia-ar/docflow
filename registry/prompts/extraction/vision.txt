@@ -38,25 +38,39 @@ Reglas:
 1. No infieras un valor que no puedas leer en los píxeles.
 2. Corregí O/0 confundidos solo en campos de texto libre (razón social, notas,
    descripción). No toques dígitos de CUIT, montos, fechas ni número de comprobante.
-3. "cuit_emisor" es el CUIT del emisor y nada más, nunca el del receptor. Cortá
-   apenas aparezca cualquier carácter que no sea dígito o los guiones del propio
+3. "cuit_emisor" es el CUIT **del emisor** y nada más, nunca el del receptor.
+   Formato: XX-XXXXXXXX-X (2 dígitos, guión, 8 dígitos, guión, 1 dígito = 11 cifras).
+   Cortá apenas aparezca cualquier carácter que no sea dígito o los guiones del propio
    número, aunque el resultado quede incompleto porque la impresión lo truncó o lo
-   pegó con el campo siguiente.
+   pegó con el campo siguiente: "C.U.I.T. Nro.: 99-9 Ing, Brutas: 201641"
+   -> "cuit_emisor": "99-9". Nunca arrastres "Ing, Brutas: 201641". (El prefijo
+   `99` es imposible en un CUIT real: el ejemplo no puede confundirse con una lectura.)
 4. Los montos se devuelven **tal como están impresos**, como texto: usá el separador
-   decimal del documento y no los reformatees. "17.898,30" se devuelve "17.898,30".
-   No los conviertas a número: hacerlo pierde el separador y los ceros finales.
+   decimal del documento y no los reformatees. Un importe impreso como
+   "12.345,60" se devuelve "12.345,60". No los conviertas a número: hacerlo pierde
+   el separador y los ceros finales.
 5. "descripcion" es una frase breve y concreta, en minúsculas, basada en los ítems o
    el concepto impreso. Si hay varios ítems de rubros distintos, quedate con el rubro
    común a la mayoría, o el del ítem de mayor importe. Si no hay ítems ni concepto
    legible, dejalo en "null": no lo inventes a partir del nombre del proveedor.
 6. "moneda" es "USD" si la imagen muestra "USD" o "U$S". Sin indicio explícito, "ARS".
-7. "tipo_comprobante" sale de la letra impresa en el encabezado: A | B | C | 090 | 099.
-8. "condicion_impositiva_dominante" solo aplica a comprobantes que discriminan IVA
-   (21 | 10_5 | 27 | 2_5 | exento_no_gravado). Si hay más de una alícuota con importe
-   mayor a "0", la dominante es la de mayor importe neto gravado. Si no discrimina,
+7. "tipo_comprobante" es el **código o la letra impresa en el encabezado**, nada más.
+   Los códigos de AFIP son numéricos: 001 Factura A, 006 Factura B, 011 Factura C.
+   Si el encabezado muestra la letra suelta, devolvé la letra ("A", "B", "C"). Si
+   muestra el código de tres cifras, devolvé el código ("001", "006", "011").
+   Los códigos 090 y 099 son *"comprobantes que no cumplen la RG 1415"*: NO son
+   boletos ni pasajes, y no son clases A/B/C. Si no hay letra ni código legible,
+   devolvé "null".
+8. "condicion_impositiva_dominante" es la condición del **emisor** frente al IVA, y
+   se declara con una de estas leyendas: "Responsable Inscripto", "Monotributo",
+   "Exento", "No Categorizado", "Consumidor Final". Devolvé la leyenda, no la
+   alícuota. Una alícuota (21, 10_5, 27, 2_5, 5) va en "alicuotas_detectadas". Si el
+   comprobante no la declara, devolvé "null"; no la deduzcas de la alícuota.
+9. "alicuotas_detectadas" son las alícuotas impresas, separadas por "|": 0, 2_5, 5,
+   10_5, 21, 27. Si hay más de una, la dominante es la de mayor importe neto gravado.
+10. "categoria_gasto" se infiere del rubro del emisor. Si no hay indicio claro,
    dejalo en "null".
-9. "categoria_gasto" se infiere del rubro del emisor (Restaurante | Supermercado |
-   Hospedaje | Combustible | Movilidad/Pasajes | Peajes | Herramientas | Otros). Si no
-   hay indicio claro, dejalo en "null".
+11. "fecha_emision" se devuelve como está impresa, en formato DD/MM/AAAA. No la
+   conviertas a ISO (AAAA-MM-DD) ni a otro formato: la normalización es de otro paso.
 10. Distingue fecha de EMISIÓN de vencimiento y de período de facturación.
 11. "centro_de_costo" es siempre "null": lo completa un paso posterior.
