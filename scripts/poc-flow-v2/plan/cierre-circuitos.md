@@ -242,6 +242,69 @@ productor**. Es la contraparte de H2, pero depende del render a demanda, que es 
 
 ---
 
+## Segunda ronda: los tres defectos que impedían confirmar (2026-09-21)
+
+El caso «pdf texto · con comprobante» no confirmaba sus dos campos **críticos**
+(`importe_total_facturado`, `iva`). La causa no estaba en el motor: estaba en las
+**fuentes de evidencia** que el motor recibe. Tres defectos, uno por ronda de medición.
+
+| # | Defecto | Efecto medido | Arreglo |
+|---|---|---|---|
+| R1 | El reviewer configurado era un nombre que el runtime **no puede invocar** | `TEXT_MODEL_B = "gemma3"` sin tag: Ollama responde `404 model not found` aunque `gemma3:1b` esté pulled y responda `200`. La lane B nunca corrió → `SAME_MATERIAL` = 0 señales, sin motivo legible | `gemma3:1b` + gate `test_every_configured_local_model_name_is_tagged` + la negativa de la lane reporta su **código** y su modelo |
+| R2 | Un componente que **no es un importe** contaba como combinación fallida | §6.4 manda `UNKNOWN` (*«si falta alguno, no puntúa ni veta»*, I10); el motor daba `non_unique` y **escalaba los dos campos críticos con un motivo falso** | `all_components_are_amounts` como precondición del cartesiano: componente ilegible = ausente → `None` (UNKNOWN) |
+| R3 | Un **ausente declarado** se colaba como componente aritmético | La regla «no es un valor» vivía en **dos lugares con criterio distinto**: `_fields_to_candidates` filtraba `"null"` y el bucle de `values` no. Medido: `values = {'subtotal': 'null', ...}` con el string, no el token JSON | `_declared_absent()` como **único** dueño + `document_values()` para la segunda ruta |
+| R4 | El schema declaraba las opciones en **prosa**, no como `enum` | 0 de 23 campos con `enum`; el modelo devolvía la `description` como valor (`"090 \| 099"`, `"21 \| 10_5 \| 27 \| 2_5 \| exento_no_gravado"`), que es B.7 otra vez | `enum` real en los 5 campos de vocabulario cerrado, **con escape de abstención**, y dos gates nuevos |
+
+### La medición que definió R4
+
+Un `enum` respaldado por gramática **fuerza una elección**. Sobre un *remito* (no es
+comprobante), 3 corridas contra cada variante:
+
+| Variante | `tipo_comprobante` | ¿Se abstiene? |
+|---|---|---|
+| Sin `enum` (el defecto) | divaga o devuelve la `description` | — |
+| `enum` **sin** escape | `['A', '090', '090']` | **0 de 3** |
+| `enum` **con** `"null"` | `['A', 'null', 'null']` | **2 de 3** |
+
+Y sobre una Factura A real, las dos variantes devuelven `A`/`A`/`090`: el escape **no
+perjudica** el caso normal.
+
+**Conclusión escrita en el schema:** todo `enum` de clasificación cerrada necesita una
+salida de abstención. Sin ella el arreglo de B.7 introduce el modo de fallo de B.10 — un
+valor plausible (`"A"` para un remito) que el schema acepta. Dos excepciones, declaradas
+en el test y no por relajamiento de la regla: `comprobante_valido` (su `"false"` **es**
+la abstención) y `moneda` (el prompt declara `ARS` por defecto; un `null` contradiría la
+regla 6).
+
+### Verificación
+
+**88 tests** en `tests/poc_flow_v2`, **1133** en el repo. Trece mutaciones, **las trece
+falsadas**. Tres lecciones del arnés, todas nuevas:
+
+- **Un test que reimplementa la lógica no prueba nada.** El primer test de R3 copiaba el
+  bucle del llamador; sobrevivió a la mutación que revertía el arreglo. El arreglo real
+  fue **extraer `document_values()`** para que la regla tuviera una dirección.
+- **La mutación de una omisión no se ve desde los datos.** Quitar la clave `enum` deja
+  vacuas todas las aserciones sobre su contenido. Hizo falta una guarda que nombre los
+  campos de vocabulario cerrado: una transcripción explícita, para que el próximo campo
+  nuevo tenga que justificarse.
+- **Un límite blando se declara, no se oculta.** El módulo de tests pasó las 1000 líneas;
+  el repo ya tiene la convención (`# pylint: disable=too-many-lines` con la razón al
+  lado), así que se siguió.
+
+**Radio de impacto de R4:** cambiar el schema cambia el `registry_hash`, que es **la
+clave de caché** (`sad.md` §5). Verificado que ningún test fija el hash anterior, y que
+la invalidación resultante es la correcta: un schema distinto es trabajo distinto.
+
+**Pendientes, no ausentes:** `NATIVE_ANCHOR` se exige en el gate de severidad alta
+(`config.py`) y **ningún módulo lo emite** — hoy no se nota porque `cuit_emisor` y
+`fecha_emision` cierran por sus validadores determinísticos. Y el **chequeo de integridad
+de la capa de texto** de §2 no está cableado: K2 ya reporta `invisible_text` y
+`producer_contradiction`, y `material.py` lee solo `shape`. El riesgo es real — un escaneo
+con capa OCR invisible obsoleta entra como `texto_nativo`.
+
+---
+
 ## Criterio de cierre
 
 1. **Nueve circuitos con test** — cada C1…C9 tiene un test que falla si el

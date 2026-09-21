@@ -163,6 +163,112 @@ def test_registry_schema_and_prompt_agree() -> None:
         )
 
 
+def test_a_closed_vocabulary_field_declares_a_real_enum() -> None:
+    """A field whose answers are a closed list declares them as `enum`.
+
+    The defect this guards is one of *omission*, and no test of the enum's
+    contents can see it: drop the `enum` key and every "the options reach the
+    prompt" assertion becomes vacuous, because there are no options to check.
+    Measured, that omission is exactly what produced the echo — with the option
+    list living in `description`, `deepseek-r1:1.5b` returned the description
+    itself (`"090 | 099"`).
+
+    The list below is a transcription, not a derivation: it names the fields
+    whose answer set the prompt enumerates. A new field with a closed vocabulary
+    must be added here, which is the point — the rule cannot be satisfied by
+    silence.
+    """
+    closed_vocabulary: frozenset[str] = frozenset(
+        {
+            "comprobante_valido",
+            "tipo_comprobante",
+            "moneda",
+            "condicion_impositiva_dominante",
+            "categoria_gasto",
+        }
+    )
+    schema = load_artifacts().extraction_schema
+
+    missing = sorted(
+        field
+        for field in closed_vocabulary
+        if "enum" not in schema["properties"].get(field, {})
+    )
+
+    assert not missing, (
+        f"these fields answer from a closed list but declare no `enum`, so the "
+        f"model can echo the option list as a value: {missing}"
+    )
+
+
+def test_every_enum_option_is_declared_in_the_prompt() -> None:
+    """An enum's options reach the prompt, or the model is constrained blind.
+
+    The schema constrains generation (Ollama receives it as `format`), so an
+    option the prompt never mentions is an answer the model can be forced into
+    without ever being told it was available. This is the drift the field-name
+    check above cannot see: names can agree while the vocabulary does not.
+
+    Measured: with the option list living only in the schema's `description`,
+    `deepseek-r1:1.5b` returned the **description itself** as the value
+    (`"090 | 099"`, and `"21 | 10_5 | 27 | 2_5 | exento_no_gravado | null"`).
+    """
+    artifacts = load_artifacts()
+    schema = artifacts.extraction_schema
+
+    for role in ("extract_texto", "extract_vision"):
+        prompt = artifacts.prompts[role]
+        for field, spec in schema["properties"].items():
+            for option in spec.get("enum", []):
+                assert option in prompt, (
+                    f"{role}: `{field}` accepts {option!r} per the schema, but "
+                    f"the prompt never mentions it"
+                )
+
+
+def test_every_enum_has_an_abstention_escape() -> None:
+    """An enum that cannot abstain forces the model to invent an option.
+
+    A grammar-backed enum leaves the model no way out of the set. Measured on a
+    *remito* (a delivery note, not a fiscal receipt) against
+    `enum: [A, B, C, 090, 099]`: **3 of 3 runs returned a receipt type** — `A`,
+    `090`, `090` — none of which the document bears. Adding `"null"` to the same
+    enum made it abstain in 2 of 3 (`my_flow.md` B.10: the dangerous failure mode
+    is the one that returns a plausible value).
+
+    A field whose enum is a closed classification must therefore carry an escape
+    — either the literal `"null"`, or a member that **is** the abstention by its
+    own definition (see `_ABSTENTION_IS_A_MEMBER`).
+    """
+    schema = load_artifacts().extraction_schema
+
+    for field, spec in schema["properties"].items():
+        options = spec.get("enum")
+        if not options or field in _ABSTENTION_IS_A_MEMBER:
+            continue
+        assert "null" in options, (
+            f"`{field}` has enum {options} with no 'null' escape, so the model "
+            "cannot decline to answer"
+        )
+
+
+#: Enums where one of the values already **is** the abstention, so a `null` would
+#: be a second way to say the same thing — or would contradict the prompt.
+#:
+#: - `comprobante_valido` is the binary classification *is this a readable
+#:   receipt*: its prompt defines `"false"` as exactly that, and a document the
+#:   model cannot judge takes `"false"`.
+#: - `moneda` has a **declared default**: the prompt says *"without an explicit
+#:   indication of currency, use ARS"*. Adding `null` would offer the model an
+#:   answer the prompt forbids, which is worse than the constraint — the enum
+#:   would then be able to produce a value no rule expects.
+#:
+#: The exceptions are stated here rather than by loosening the rule: a rule that
+#: admits anything is not a rule, and the next enum added still has to justify
+#: itself against it.
+_ABSTENTION_IS_A_MEMBER: frozenset[str] = frozenset({"comprobante_valido", "moneda"})
+
+
 def test_every_configured_local_model_name_is_tagged() -> None:
     """A configured model name carries its tag, or the runtime cannot invoke it.
 

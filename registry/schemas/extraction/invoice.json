@@ -4,6 +4,7 @@
   "properties": {
     "comprobante_valido": {
       "type": "string",
+      "enum": ["true", "false"],
       "description": "'true' when the text is a readable receipt, 'false' when it is not"
     },
     "motivo_rechazo": {
@@ -12,7 +13,8 @@
     },
     "tipo_comprobante": {
       "type": "string",
-      "description": "A | B | C | 090 | 099"
+      "enum": ["A", "B", "C", "090", "099", "null"],
+      "description": "the letter or code printed in the header, or 'null' when the document is not a fiscal receipt"
     },
     "razon_social_emisor": {
       "type": "string"
@@ -29,7 +31,8 @@
     },
     "moneda": {
       "type": "string",
-      "description": "ARS | USD"
+      "enum": ["ARS", "USD"],
+      "description": "the currency the document shows; 'ARS' when it shows none"
     },
     "subtotal": {
       "type": "string",
@@ -59,7 +62,8 @@
     },
     "condicion_impositiva_dominante": {
       "type": "string",
-      "description": "21 | 10_5 | 27 | 2_5 | exento_no_gravado | null"
+      "enum": ["21", "10_5", "27", "2_5", "exento_no_gravado", "null"],
+      "description": "the dominant rate, or 'null' when the receipt does not discriminate IVA"
     },
     "alicuotas_detectadas": {
       "type": "string",
@@ -67,7 +71,18 @@
     },
     "categoria_gasto": {
       "type": "string",
-      "description": "Restaurante | Supermercado | Hospedaje | Combustible | Movilidad/Pasajes | Peajes | Herramientas | Otros | null"
+      "enum": [
+        "Restaurante",
+        "Supermercado",
+        "Hospedaje",
+        "Combustible",
+        "Movilidad/Pasajes",
+        "Peajes",
+        "Herramientas",
+        "Otros",
+        "null"
+      ],
+      "description": "inferred from the emitter's line of business, or 'null' when there is no clear indication"
     },
     "notas": {
       "type": "string"
