@@ -39,6 +39,7 @@ from docflow.kernels.types import Bytes  # noqa: E402
 from .amounts import read_amount_columns  # noqa: E402
 from .artifacts import RESERVED_EXTRACTION_STEPS, Artifacts  # noqa: E402
 from .config import Config  # noqa: E402
+from .dotenv import load_env  # noqa: E402
 from .fields import (  # noqa: E402
     FAIL,
     IVA_FIELD,
@@ -644,13 +645,27 @@ def _rubro_applies(candidates: dict[str, list[FieldCandidate]]) -> bool:
 def _engine() -> OllamaEngine:
     """Build the local engine with the flow's sampling window declared.
 
-    The two steps are one function so they cannot drift apart: the adapter reads
-    its options from the environment **at call time**, so an engine built without
-    the declaration runs at the runtime's own default — measured, 4096 — and a
-    caller that built the engine but forgot the dial would get a silent window
-    change rather than an error. Keeping them together makes *declared window*
-    an attribute of the engine instead of a step a caller has to remember.
+    Three steps, in this order, and the order is load-bearing:
+
+    1. :func:`flow.dotenv.load_env` reads ``.env`` into ``os.environ`` — before
+       the declaration below, which writes only when the variable is unset. The
+       other order would leave the file unable to say anything about ``num_ctx``,
+       the one option the flow already declares.
+    2. :func:`flow.sampling.apply_sampling` declares the window this run asks for.
+    3. The engine is built, with no sampling options of its own — the adapter
+       reads them from the environment at call time.
+
+    They are one function so they cannot drift apart: an engine built without the
+    declaration runs at the runtime's own default — measured, 4096 — and a caller
+    that built the engine but forgot the dial would get a silent window change
+    rather than an error. Keeping them together makes *declared window* an
+    attribute of the engine instead of a step a caller has to remember.
+
+    The ``.env`` load lives here rather than in each client for the same reason:
+    `myllmlocal.py` measured that a value written to ``.env`` reached no request
+    at all, because nothing between the client and the adapter parsed the file.
     """
+    load_env()
     apply_sampling()
     return OllamaEngine()
 
