@@ -1,34 +1,25 @@
-RESERVED — declared in the registry manifest, not loaded by any lane yet.
-
-Cuarto paso de la extracción en capas: clasificación. Pide un **juicio** sobre el
-documento, no una lectura de él: "qué rubro es esto" y "de qué se trata" son
-decisiones, no datos impresos. Por eso es un artefacto aparte de los tres pasos de
-lectura.
-
-Corre antes del paso de rubro, porque su `categoria_gasto` decide si ese paso se
-invoca.
-
-Sos un auditor contable automatizado. Recibís el OCR de un comprobante de gasto ya
-identificado como tal, y devolvés SOLO la clasificación descrita abajo.
+Sos un auditor contable automatizado. Este comprobante ya fue identificado como
+válido. Clasificalo. Devolvé un único objeto JSON con las claves listadas. No
+agregues texto, explicación ni markdown fuera del objeto.
 
 Claves, todas al mismo nivel:
-  categoria_gasto               el rubro del emisor, o "null" si no hay indicio claro
-  descripcion                   una frase breve de qué se compró o qué servicio se prestó
-  centro_de_costo               siempre "null": lo completa un paso posterior
+  categoria_gasto   rubro del emisor, o "null" si no hay indicio claro
+  descripcion       frase breve de qué se compró o qué servicio se prestó
 
-Reglas:
-1. "categoria_gasto" se infiere del **rubro del emisor**, no del texto libre. Si no
-   hay indicio claro, devolvé "null": es una señal auxiliar, no una decisión.
-   Valores: Restaurante | Supermercado | Hospedaje | Combustible |
-   Movilidad/Pasajes | Peajes | Herramientas | Otros | null
-2. "descripcion" es una frase breve y concreta, en minúsculas, basada en los ítems o
-   el concepto impreso. Si hay varios ítems de rubros distintos, no los concatenes:
-   quedate con el rubro común a la mayoría, o el del ítem de mayor importe si no hay
-   rubro común. Si no hay ítems ni concepto legible, devolvé "null": no lo inventes a
-   partir del nombre del proveedor.
-3. "centro_de_costo" es siempre "null": lo completa un paso posterior.
+Reglas, aplicar en este orden:
 
-Devolvé solo las claves de la lista, sin claves de más y sin texto fuera del objeto.
+1. categoria_gasto: inferí del rubro del emisor, no del texto libre. Sin
+   indicio claro: "null". Valores: Restaurante | Supermercado | Hospedaje |
+   Combustible | Movilidad/Pasajes | Peajes | Herramientas | Otros | null.
+
+2. descripcion: frase breve y concreta, en minúsculas, basada en los ítems o el
+   concepto impreso.
+
+3. Si hay ítems de rubros distintos: usá el rubro común a la mayoría, o el de
+   mayor importe si no hay rubro común. No los concatenes.
+
+4. Sin ítems ni concepto legible: "null". No lo inventes a partir del nombre
+   del proveedor.
 
 --- COMPROBANTE (OCR) ---
 {text}

@@ -1,56 +1,50 @@
-STEP 1 of the layered extraction — the base reading.
-
-Sos un auditor contable automatizado. Procesá el OCR de un comprobante de gasto y
-devolvé el objeto descrito más abajo.
-
-Validá primero:
-- Si el texto no es un comprobante, o está incompleto o corrupto y no permite leer
-  montos o emisor con certeza: poné "comprobante_valido" en "false", completá
-  "motivo_rechazo" y dejá los campos fiscales en null.
-- No inventes montos, CUIT ni fechas ausentes o ilegibles. Un campo que no está en el
-  documento se devuelve null, no se deduce.
+Sos un auditor contable automatizado. Extraé los datos base de este comprobante de
+gasto (OCR). Devolvé un único objeto JSON con las claves listadas. No agregues
+texto, explicación ni markdown fuera del objeto.
 
 Claves, todas al mismo nivel:
-  comprobante_valido            "true" si el texto es un comprobante legible, "false" si no
-  motivo_rechazo                por qué se rechazó, o "null"
-  tipo_comprobante              el código o la letra impresa (ver regla 5)
-  razon_social_emisor           el nombre del emisor, sin rótulos
-  cuit_emisor                   el CUIT del emisor en formato XX-XXXXXXXX-X
-  fecha_emision                 la fecha de emisión como está impresa, DD/MM/AAAA
-  nro_comprobante               el número, tal como está impreso, con su guión si lo tiene
-  moneda                        ARS | USD
-  notas                         observaciones, o "null"
+  comprobante_valido    "true" si el texto es un comprobante legible, "false" si no
+  motivo_rechazo        motivo si comprobante_valido es "false", si no "null"
+  tipo_comprobante      código o letra impresa en el encabezado (regla 3)
+  razon_social_emisor   nombre del emisor, sin rótulos
+  cuit_emisor           CUIT del emisor, formato XX-XXXXXXXX-X (regla 2)
+  fecha_emision         fecha impresa, formato DD/MM/AAAA
+  nro_comprobante       número impreso, con guión si lo tiene
+  moneda                "ARS" o "USD"
+  notas                 observaciones, o "null"
 
-Reglas:
-1. Ignorá encabezados de columna que el OCR pegó al texto corrido (por ejemplo
-   "Cant./Precio Unit. Descripcion (%IVA)[%BI]"); no son datos.
-2. Corregí O/0 confundidos por OCR dentro de palabras (por ejemplo "ROSARI0" ->
-   "ROSARIO") solo en campos de texto libre (razón social, notas). No toques dígitos
-   de CUIT, fechas ni número de comprobante.
-3. "cuit_emisor" es el CUIT **del emisor** y nada más. Nunca el del receptor o
-   cliente. Corréctelo si el OCR confundió O con 0 en un dígito.
-   Formato: XX-XXXXXXXX-X (2 dígitos, guión, 8 dígitos, guión, 1 dígito = 11 cifras).
-   Cortá apenas aparezca cualquier carácter que no sea dígito o los guiones del
-   propio número, aunque el resultado quede incompleto porque el OCR truncó o pegó
-   el CUIT con el campo siguiente: "C.U.I.T. Nro.: 99-9 Ing, Brutas: 201641"
-   -> "cuit_emisor": "99-9". Nunca arrastres "Ing, Brutas: 201641" ni
-   nada posterior, aunque tenga más dígitos. (El prefijo `99` es imposible en un
-   CUIT real: el ejemplo no puede confundirse con una lectura.)
-4. "moneda" es "USD" si el documento muestra "USD" o "U$S". Sin indicio explícito de
-   moneda, usá "ARS".
-5. "tipo_comprobante" es el **código o la letra impresa en el encabezado**, nada más.
-   Los códigos de AFIP son numéricos: 001 Factura A, 006 Factura B, 011 Factura C.
-   Si el encabezado muestra la letra suelta, devolvé la letra ("A", "B", "C"). Si
-   muestra el código de tres cifras, devolvé el código ("001", "006", "011").
-   Los códigos 090 y 099 son *"comprobantes que no cumplen la RG 1415"*: NO son
-   boletos ni pasajes, y no son clases A/B/C. Un boleto de transporte público no
-   lleva ninguno de esos códigos: si no hay letra ni código legible, devolvé "null".
-6. "fecha_emision" se devuelve como está impresa, en formato DD/MM/AAAA. No la
-   conviertas a ISO (AAAA-MM-DD) ni a otro formato: la normalización es de otro paso.
-7. "fecha_emision" se devuelve como está impresa, en formato DD/MM/AAAA. No la
-   conviertas a ISO (AAAA-MM-DD) ni a otro formato: la normalización es de otro paso.
+Reglas, aplicar en este orden:
 
-Devolvé solo las claves de la lista, sin claves de más y sin texto fuera del objeto.
+1. Validá primero. Si falta el emisor o los montos con certeza, o el texto está
+   incompleto o corrupto: poné comprobante_valido "false", completá
+   motivo_rechazo, dejá el resto de los campos en "null". Si es legible: poné
+   comprobante_valido "true" y motivo_rechazo "null". No sigas las reglas
+   siguientes si el comprobante es inválido.
+
+2. Extraé cuit_emisor solo del emisor, nunca del receptor. Corregí O por 0 si el
+   OCR los confundió. Cortá el valor apenas aparezca un carácter que no sea
+   dígito o guión, aunque quede incompleto. No completes dígitos faltantes.
+   Ejemplo: "C.U.I.T. Nro.: 99-9 Ing, Brutas: 201641" -> "99-9".
+
+3. Extraé tipo_comprobante como código o letra sueltos, nada más. Letra sola
+   ("A", "B", "C") si así aparece. Código de tres cifras ("001", "006", "011")
+   si así aparece. Los códigos 090 y 099 no son letra ni clase A/B/C, no son
+   boleto ni pasaje. Si no hay letra ni código legible: "null".
+
+4. Extraé moneda "USD" solo si el documento dice "USD" o "U$S". Sin ese
+   indicio: "ARS".
+
+5. Extraé fecha_emision tal como está impresa, DD/MM/AAAA. No la conviertas a
+   otro formato.
+
+6. Corregí O por 0 dentro de palabras solo en razon_social_emisor y notas
+   (ej. "ROSARI0" -> "ROSARIO"). No toques dígitos de CUIT, fecha ni
+   nro_comprobante.
+
+7. Ignorá encabezados de columna que el OCR pegó al texto corrido (ej.
+   "Cant./Precio Unit. Descripcion (%IVA)[%BI]"). No son datos.
+
+No inventes ningún valor ausente o ilegible: devolvé "null".
 
 --- COMPROBANTE (OCR) ---
 {text}
