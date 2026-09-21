@@ -1,0 +1,35 @@
+{
+  "$comment": "RESERVED — declared in the manifest, not loaded by any lane yet. Step 4 of the layered extraction: classification. It asks for a JUDGEMENT about the document rather than a reading of it, which is a different task from the three steps above and the reason it gets its own artifact. `categoria_gasto` also feeds step 3, so this step must settle before `rubro.json` can run.",
+  "type": "object",
+  "properties": {
+    "categoria_gasto": {
+      "type": "string",
+      "enum": [
+        "Restaurante",
+        "Supermercado",
+        "Hospedaje",
+        "Combustible",
+        "Movilidad/Pasajes",
+        "Peajes",
+        "Herramientas",
+        "Otros",
+        "null"
+      ],
+      "description": "inferred from the emitter's line of business, or 'null' when there is no clear indication. This value decides whether the rubro step runs"
+    },
+    "descripcion": {
+      "type": "string",
+      "description": "a short lowercase phrase of what was bought or what service was rendered, from the printed line items or concept. Never derived from the provider's name"
+    },
+    "centro_de_costo": {
+      "type": "string",
+      "description": "always 'null' at extraction: filled by a later classification step. Kept in the contract so a consumer reads one shape"
+    }
+  },
+  "required": [
+    "categoria_gasto",
+    "descripcion",
+    "centro_de_costo"
+  ],
+  "additionalProperties": false
+}

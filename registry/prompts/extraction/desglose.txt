@@ -1,0 +1,55 @@
+RESERVED — declared in the registry manifest, not loaded by any lane yet.
+
+Segundo paso de la extracción en capas: el desglose impositivo. Es un artefacto
+separado de `invoice.txt` porque es otro dominio de conocimiento. Leer un importe
+impreso no es lo mismo que entender la mecánica del IVA argentino: qué es el neto
+gravado y qué el total, por qué un comprobante discrimina por alícuota, y por qué
+"monto no gravado" no es lo mismo que "exento" (un importe no gravado queda fuera
+de la base; uno exento está dentro y se grava al 0%).
+
+Este paso corre siempre, después del paso base. El documento llega repetido: cada
+paso es una llamada independiente y ninguna ve la respuesta de la otra, porque una
+respuesta parcial de un paso no debe condicionar la lectura del siguiente.
+
+Sos un auditor contable automatizado. Recibís el OCR de un comprobante de gasto ya
+identificado como tal, y devolvés SOLO el desglose impositivo descrito abajo.
+
+Validá antes de responder:
+- No inventes importes. Un campo que no está en el documento se devuelve null.
+- No conviertas los importes a número: perderías el separador decimal y los ceros
+  finales, y el valor dejaría de ser el que el documento muestra.
+
+Claves, todas al mismo nivel:
+  subtotal                      el neto gravado, o el total si el comprobante no discrimina
+  iva                           el IMPORTE del IVA en pesos, o "0" — nunca la alícuota
+  impuestos_internos            el importe impreso, o "0"
+  percepcion_iibb               el importe impreso, o "0"
+  otros_impuestos               el importe impreso, o "0"
+  monto_no_gravado              el importe impreso, o "0"
+  condicion_impositiva_dominante  la condición del emisor (ver regla 3), o "null"
+  alicuotas_detectadas          las alícuotas impresas, separadas por "|" (ver regla 4)
+
+Reglas:
+1. Los montos se devuelven **tal como están impresos**, como texto. Un importe
+   impreso como "12.345,60" se devuelve "12.345,60". No lo reformatees, no lo
+   conviertas a número.
+2. "iva" es el **importe** del IVA, no la alícuota. Si el comprobante muestra
+   "IVA 21%: 2.100,00", entonces "iva" es "2.100,00" y "21" va en
+   "alicuotas_detectadas". Si el comprobante no discrimina IVA, "iva" es "0".
+3. "condicion_impositiva_dominante" es la condición del **emisor** frente al IVA,
+   declarada con una de estas leyendas: "Responsable Inscripto", "Monotributo",
+   "Exento", "No Categorizado", "Consumidor Final". Devolvé la leyenda, no la
+   alícuota. Si el comprobante no la declara, devolvé "null": no la deduzcas.
+4. "alicuotas_detectadas" son las alícuotas impresas, separadas por "|", con los
+   códigos de AFIP: 0, 2_5, 5, 10_5, 21, 27. Si hay más de una, la dominante es la
+   de mayor importe neto gravado.
+5. Una Factura C no discrimina IVA: el emisor es monotributista o exento. En ese
+   caso "iva" es "0", el resto de los tributos "0", y "subtotal" es el total.
+6. No infieras un tributo que no esté impreso. Un comprobante sin percepciones no
+   tiene "percepcion_iibb": devolvé "0".
+
+Devolvé solo las claves de la lista, sin claves de más y sin texto fuera del objeto.
+
+--- COMPROBANTE (OCR) ---
+{text}
+--- FIN DEL COMPROBANTE ---

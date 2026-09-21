@@ -21,7 +21,9 @@ import json
 import pathlib
 import re
 
+import pytest
 from flow import run
+from flow._bootstrap import REGISTRY_ROOT, ensure_docflow_importable
 from flow.artifacts import load_artifacts
 from flow.config import DEFAULT_CONFIG
 from flow.engine import DecisionContext, decide_field
@@ -34,6 +36,15 @@ from flow.fields import (
 from flow.journal import Journal, run_signature
 from flow.record import read_run
 from flow.stages import STAGE_DECIDE, STAGE_EXTRACT, STAGE_READ, STAGES
+
+ensure_docflow_importable()
+
+# `wrong-import-position`: `docflow` is only importable once the bootstrap above has
+# put `src/` on `sys.path`. The order is load-bearing, not cosmetic — the same rule
+# `flow/artifacts.py` and `flow/extract.py` state for their own imports.
+from docflow.kernels.registry import (  # noqa: E402  # pylint: disable=wrong-import-position
+    load_registry,
+)
 
 
 def _candidate(raw: str, signals: list[EvidenceSignal]) -> FieldCandidate:
@@ -335,6 +346,95 @@ def test_every_receipt_code_the_prompt_names_is_in_the_enum() -> None:
             f"{role}: the prompt names {missing}, but the enum rejects them: "
             "the model is taught a code it cannot answer with"
         )
+
+
+# `xfail` with `strict=True`: the overlap it reports is the *expected* state until
+# step 3 trims `invoice.json`, and `strict` means the marker must be removed the
+# moment the partition becomes clean — an `xpass` would otherwise go unnoticed.
+@pytest.mark.xfail(
+    strict=True,
+    reason="step 3 pending: invoice.json still carries all 23 fields",
+)
+def test_the_extraction_steps_partition_every_field() -> None:
+    """The four extraction steps together cover the contract, with no overlap.
+
+    `invoice.json` is the single-pass contract: 23 fields. The layered implementation
+    splits them across four artifacts — base reading, tax breakdown, line-of-business
+    detail and classification — which are **declared but not loaded** yet, per
+    `cierre-circuitos.md` §«Enfoque en capas», step 1.
+
+    This test is what makes the split a property rather than a promise. Without it,
+    "we will split the extraction" is a note; with it, dropping a field while
+    partitioning fails the build. It reads the four schemas from the registry, so it
+    also proves the reservations are declared and their files are valid JSON the
+    provider could constrain on.
+
+    The partition must be:
+    - **complete**, every field of the single-pass contract lands in exactly one step;
+    - **disjoint**, no field is claimed by two steps, because two steps claiming one
+      field is two answers for one value.
+
+    Until step 3 runs, this test fails on the overlap and that is the honest state:
+    the four artifacts exist and are declared, while `invoice.json` still carries all
+    23 fields. It is marked `xfail` on purpose — a `skip` would hide that the work is
+    outstanding, and an unmarked failure would block the suite on a known state.
+    Remove the marker when `invoice.json` is trimmed to the base step.
+    """
+    artifacts = load_artifacts()
+    contract = set(artifacts.extraction_schema["properties"])
+    steps = _extraction_step_properties()
+
+    assert set(steps) == set(_EXTRACTION_STEPS), (
+        f"the registry declares {sorted(steps)}, expected {sorted(_EXTRACTION_STEPS)}"
+    )
+
+    claimed: dict[str, str] = {}
+    for name, fields in steps.items():
+        for field in fields:
+            assert field not in claimed, (
+                f"`{field}` is claimed by both {claimed[field]!r} and {name!r}: two "
+                "steps answering one field is two answers for one value"
+            )
+            claimed[field] = name
+
+    lost = sorted(contract - set(claimed))
+    assert not lost, f"the partition drops these fields from the contract: {lost}"
+
+    extra = sorted(set(claimed) - contract)
+    assert not extra, (
+        f"the partition invents fields the contract does not declare: {extra}"
+    )
+
+
+#: The extraction steps a layered implementation runs, in order, and the registry
+#: keys that declare each one's fields. Keyed declaratively rather than discovered,
+#: so a step that disappears is a failure and not a smaller loop.
+_EXTRACTION_STEPS: dict[str, str] = {
+    "base": "schemas/extraction/invoice.json",
+    "desglose": "schemas/extraction/desglose.json",
+    "rubro": "schemas/extraction/rubro.json",
+    "clasificacion": "schemas/extraction/clasificacion.json",
+}
+
+
+def _extraction_step_properties() -> dict[str, set[str]]:
+    """Each extraction step, mapped to the fields its schema declares.
+
+    Read from the manifest's assets rather than from the filesystem: the registry is
+    the single source (`my_flow.md` B.15), and a schema that is on disk but
+    undeclared is refused by K8 rather than silently half-counted.
+    """
+    loaded = load_registry(REGISTRY_ROOT)
+    assert loaded.value is not None, "the registry must load for this gate to mean"
+    assets = loaded.value.assets
+
+    steps: dict[str, set[str]] = {}
+    for name, key in _EXTRACTION_STEPS.items():
+        asset = assets.get(key)
+        assert asset is not None, f"the {name} schema {key!r} is not declared"
+        parsed = json.loads(asset.content.decode("utf-8"))
+        steps[name] = set(parsed["properties"])
+    return steps
 
 
 def test_every_enum_option_is_declared_in_the_prompt() -> None:

@@ -22,12 +22,39 @@
       "format": "text"
     },
     {
+      "key": "prompts/extraction/desglose.txt",
+      "format": "text"
+    },
+    {
+      "key": "prompts/extraction/rubro.txt",
+      "format": "text"
+    },
+    {
+      "key": "prompts/extraction/clasificacion.txt",
+      "format": "text"
+    },
+    {
       "key": "schemas/extraction/invoice.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },
     {
       "key": "schemas/review/review.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schemas/extraction/desglose.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schemas/extraction/rubro.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schemas/extraction/clasificacion.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     }

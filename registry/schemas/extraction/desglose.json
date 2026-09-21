@@ -1,0 +1,57 @@
+{
+  "$comment": "RESERVED — declared in the manifest, not loaded by any lane yet. Step 2 of the layered extraction: the tax breakdown. It is a SEPARATE artifact from `invoice.json` because it is a different domain of knowledge: reading a printed amount is not the same as understanding Argentine IVA mechanics (net vs gross, why a rate is discriminated, what 'no gravado' means. A receipt that does not discriminate IVA has nothing to put here, and the `rubro.json` step must not run before this one has settled `categoria_gasto`). The partition of the 23 fields across the four steps is verified by `test_the_extraction_steps_partition_every_field`.",
+  "type": "object",
+  "properties": {
+    "subtotal": {
+      "type": "string",
+      "description": "the net taxable amount as printed, or the total when the receipt does not discriminate - never reformatted into a number"
+    },
+    "iva": {
+      "type": "string",
+      "description": "the IVA AMOUNT in pesos as printed, or '0' - never the rate"
+    },
+    "impuestos_internos": {
+      "type": "string",
+      "description": "as printed, or '0'"
+    },
+    "percepcion_iibb": {
+      "type": "string",
+      "description": "as printed, or '0'"
+    },
+    "otros_impuestos": {
+      "type": "string",
+      "description": "as printed, or '0'"
+    },
+    "monto_no_gravado": {
+      "type": "string",
+      "description": "as printed, or '0'. Not the same as 'exento': a non-taxed amount is outside the IVA base, an exempt one is inside it and taxed at 0%"
+    },
+    "condicion_impositiva_dominante": {
+      "type": "string",
+      "enum": [
+        "Responsable Inscripto",
+        "Monotributo",
+        "Exento",
+        "No Categorizado",
+        "Consumidor Final",
+        "null"
+      ],
+      "description": "the EMITTER's IVA condition, as the document declares it (RG 259/98 legends), or 'null' when it declares none. Never an alícuota - rates belong in alicuotas_detectadas"
+    },
+    "alicuotas_detectadas": {
+      "type": "string",
+      "description": "every IVA rate printed on the document, as AFIP codes separated by '|': 0, 2_5, 5, 10_5, 21, 27"
+    }
+  },
+  "required": [
+    "subtotal",
+    "iva",
+    "impuestos_internos",
+    "percepcion_iibb",
+    "otros_impuestos",
+    "monto_no_gravado",
+    "condicion_impositiva_dominante",
+    "alicuotas_detectadas"
+  ],
+  "additionalProperties": false
+}

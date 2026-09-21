@@ -374,9 +374,74 @@ falsadas**. Tres lecciones del arnés, todas de mis propios tests:
 
 ---
 
+## Enfoque en capas: por qué el registry, y qué más cambia (2026-09-21)
 
+La lista de 23 campos viene de *«los campos que se controlan en la primera aprobación»* —
+una checklist que un **aprobador humano** revisa en una pantalla. Como checklist para una
+persona funciona: mira los cuatro grupos a la vez sin esfuerzo. Trasladada tal cual a un
+esquema de extracción para un modelo de 1.5B es el problema: hereda un agrupamiento pensado
+para revisión humana, no para que un modelo lo complete de forma confiable.
 
-## Criterio de cierre
+Los grupos, y por qué no son el mismo trabajo:
+
+| Grupo | Campos | Por qué es otro trabajo |
+|---|---|---|
+| 1 · base | `tipo_comprobante`, `razon_social_emisor`, `cuit_emisor`, `fecha_emision`, `nro_comprobante`, `moneda`, `importe_total_facturado` | Lectura de lo impreso |
+| 2 · fiscal | `subtotal`, `iva`, `impuestos_internos`, `percepcion_iibb`, `otros_impuestos`, `monto_no_gravado`, `condicion_impositiva_dominante`, `alicuotas_detectadas` | Exige entender mecánica de IVA argentino (neto vs bruto, discriminación por alícuota, *no gravado* ≠ *exento*): dominio aparte, no se deduce mirando el papel |
+| 3 · rubro | `cantidad_comensales_personas`, `cantidad_litros` | Solo aplican si el rubro ya es Restaurante / Combustible — rama condicional disfrazada de campo plano |
+| 4 · clasificación | `categoria_gasto`, `descripcion`, `centro_de_costo` | Juicio de negocio, no lectura |
+
+**Medición que respalda el grupo 3:** en la corrida sobre una factura de restaurante,
+`cantidad_comensales_personas` y `cantidad_litros` **no vinieron** en la extracción — junto
+con `centro_de_costo`, `motivo_rechazo` y `notas`. Cinco campos (22 %) que se le pedían a
+todos los documentos, obligando al modelo a decidir «no aplica» en cada uno.
+
+### Los pasos 1 y 2: crear y declarar sin recortar (hecho)
+
+Los artefactos nuevos existen y están **declarados en el manifest, pero ningún lane los
+carga**:
+
+```
+prompts/extraction/desglose.txt        schemas/extraction/desglose.json
+prompts/extraction/rubro.txt           schemas/extraction/rubro.json
+prompts/extraction/clasificacion.txt   schemas/extraction/clasificacion.json
+```
+
+`invoice.txt` / `invoice.json` **no se tocaron**: el flujo sigue leyendo sus 5 claves por
+nombre y las 94 pruebas del flujo pasan sin cambios.
+
+**El hallazgo que definió el «cómo»:** K8 **refuse** un asset no declarado
+(`asset_invalid`, probado creando un archivo sin declararlo). No se pueden dejar archivos
+«para después»: o se declaran en el manifest, o rompen toda corrida. Declararlos llanos
+—sin campo de estado— alcanza porque `Artifacts` **pide claves por nombre** y no itera el
+registry: un asset declarado que nadie pide entra al hash y no se carga.
+
+**Efecto colateral conocido:** el `registry_hash` cambia (los prompts y schemas son assets),
+así que los journals anteriores quedan invalidados. Es la invalidación correcta —un registry
+distinto es trabajo distinto— y ningún test fija el hash anterior.
+
+### El gate que hace que esto sea una propiedad
+
+`test_the_extraction_steps_partition_every_field` verifica que los cuatro esquemas
+**cubran exactamente** los 23 campos del contrato, sin repetir ni perder ninguno. Es lo que
+convierte «después partimos la extracción» en algo verificable: sin él es una nota; con él,
+perder un campo al partir **falla el build**.
+
+Hoy el gate está `xfail(strict=True)` y **ese es el estado honesto**: los artefactos existen
+y están declarados, mientras `invoice.json` todavía carga los 23 campos, así que la partición
+se solapa (`iva` lo reclaman `base` y `desglose`). No es `skip` —un `skip` escondería que el
+trabajo falta— ni un fallo desnudo, que bloquearía la suite por un estado conocido. El
+marcador se quita cuando el **paso 3** recorte `invoice.json` a los 7 campos base.
+
+### Lo que el paso 3 obliga a tocar además del registry
+
+Los cuatro gates de deriva iteran el schema activo, y dos de ellos buscan campos del
+**grupo 2**: `test_the_condition_field_declares_afip_legends_not_rates` y
+`test_the_rate_field_declares_the_real_afip_rates`. Al recortar `invoice.json` hay que
+re-apuntarlos al esquema `desglose`. Es el único acoplamiento fuera de `registry/` que el
+split exige resolver — el resto del flujo no cambia, porque pide claves por nombre.
+
+---
 
 1. **Nueve circuitos con test** — cada C1…C9 tiene un test que falla si el
    circuito no cierra (B.16).
