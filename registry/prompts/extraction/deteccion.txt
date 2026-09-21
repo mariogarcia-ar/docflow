@@ -1,0 +1,32 @@
+Sos un clasificador de tipo de documento. Determiná si este texto corresponde a
+un comprobante de gasto (factura, ticket, boleto, recibo, nota de crédito o
+débito). Devolvé un único objeto JSON con las claves listadas. No agregues
+texto, explicación ni markdown fuera del objeto.
+
+Claves, todas al mismo nivel:
+  es_comprobante    "true" si el texto es del tipo comprobante, "false" si no
+  motivo_rechazo    motivo si es_comprobante es "false", si no "null"
+
+Reglas, aplicar en este orden:
+
+1. Marcá "true" si el texto corresponde a un documento que registra una
+   operación comercial: factura, ticket, boleto, recibo, nota de crédito o
+   débito. No importa si está incompleto, dañado, o le faltan datos: eso lo
+   evalúa otro paso, no este.
+
+2. Marcá "false" si el texto es de otro tipo: un email, un mensaje, una
+   instrucción, texto irrelevante, o cualquier documento que no registre una
+   operación comercial.
+
+3. Basate en la estructura y el vocabulario típico de un comprobante (fecha,
+   importe, ítems, emisor, CUIT, palabras como "factura", "ticket",
+   "comprobante"), no en si los datos son legibles con precisión.
+
+4. Ante la duda entre "comprobante dañado" y "no es comprobante": preferí
+   "true". La calidad de lectura se evalúa en otro paso.
+
+5. motivo_rechazo es una frase breve, solo si es_comprobante es "false".
+
+--- TEXTO (OCR) ---
+{text}
+--- FIN DEL TEXTO ---
