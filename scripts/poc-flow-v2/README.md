@@ -17,6 +17,11 @@ python scripts/poc-flow-v2/myflow.py <document> --json     # el resultado, máqu
 python scripts/poc-flow-v2/myflow.py <document> --pretty   # el resultado, indentado
 ```
 
+**Ver cada circuito de `my_flow.md` en acción** — clasificar, las lanes, `verified`,
+la aritmética, lane-on-demand, el resolver, el frontier y el HITL, uno por uno con su
+comando y su salida: [`quickstart-flows.md`](quickstart-flows.md). Incluye qué
+circuitos todavía **no** se ven desde el CLI (C3 QR y C9 aprender) y por qué.
+
 ## Estado — migración cerrada
 
 Las tres fases del plan están ejecutadas:

@@ -110,7 +110,14 @@ VISION_MODEL_A: Final[str] = "qwen2.5vl:3b"
 VISION_MODEL_B: Final[str] = "granite-vision:2b"
 
 #: The frontier model the flow escalates to (`my_flow.md` §8).
-FRONTIER_MODEL: Final[str] = "anthropic:claude-sonnet-4-6"
+#:
+#: **DeepSeek, and the consequence is not optional.** `supports_vision` is
+#: ``False`` for this provider — measured, not assumed: handed an image it
+#: accepts the request, ignores the pixels and answers as if the document were
+#: blank. K6 therefore refuses the call with `unsupported_format` **before** the
+#: network, so `frontier.suggest` must send text, never images. See
+#: `frontier.py::_frontier_attempt` for where that choice is made and why.
+FRONTIER_MODEL: Final[str] = "deepseek:deepseek-v4-pro"
 
 #: Routing dials (`my_flow.md` §2). A text layer with fewer characters than the
 #: floor is not treated as content; a render is capped by the page's own

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pathlib
 import tempfile
+from types import MappingProxyType, SimpleNamespace
 
 # Pylint cannot see inside OpenCV (compiled extension); the members it reports
 # as missing are real and documented. Same suppression as `flow/qr.py`.
@@ -28,7 +29,7 @@ from flow.fields import (
     FieldDecision,
     FieldResult,
 )
-from flow.frontier import suggest
+from flow.frontier import _ask, suggest
 from flow.hitl import PendingItem, backtest_rule
 from flow.lane import needs_vision_lane
 from flow.learn import (
@@ -44,6 +45,55 @@ from flow.material import Material
 from flow.qr import qr_candidates, qr_conflict, qr_deterministic
 from flow.resolve import resolver_loop
 from flow.validators import arithmetic_signal, required_components_for
+
+
+def _answer(**observed: object):
+    """A frontier result shaped like `KernelResult`, carrying only ``observed``.
+
+    Deliberately **not** the real `KernelResult`: the property under test is
+    which operation `_ask` chooses, and importing the kernel types would couple
+    this suite to the frozen boundary it does not exercise. `_ask` reads
+    ``.value`` and ``.value.observed`` and nothing else.
+    """
+    return SimpleNamespace(
+        value=SimpleNamespace(observed=MappingProxyType(observed)),
+        reason=None,
+    )
+
+
+class _StubFrontier:
+    """A frontier stand-in that records which operation was asked for.
+
+    The material choice is the property under test, so the double only has to
+    answer `capabilities` and remember whether `vision` or `structured` was
+    called. Both return an empty `suggestions` list, which is a successful call:
+    the tests are about *what was sent*, never about what came back.
+    """
+
+    # `too-few-public-methods`: the double's job is the `calls` list and the two
+    # recorded operations, not a surface.
+    # pylint: disable=too-few-public-methods
+
+    def __init__(self, *, supports_vision: bool) -> None:
+        self.supports_vision = supports_vision
+        self.calls: list[str] = []
+
+    def capabilities(self, model: str):  # pylint: disable=unused-argument
+        """Report what the provider declares about pixels."""
+        return _answer(supports_vision=self.supports_vision)
+
+    def vision(self, model, prompt, images, schema):  # pylint: disable=unused-argument
+        """Record a call about images."""
+        self.calls.append("vision")
+
+        return _answer(suggestions=[])
+
+    def structured(self, model, prompt, schema):  # pylint: disable=unused-argument
+        """Record a call about text."""
+        self.calls.append("structured")
+
+        return _answer(suggestions=[])
+
 
 # --- C1: classify ----------------------------------------------------------
 
@@ -470,6 +520,7 @@ def test_c8_a_rule_consistent_with_history_is_proposed() -> None:
 def test_c8_without_a_credential_the_queue_survives(monkeypatch) -> None:
     """No key: suggestions are empty and the refusal is a note, never a fake."""
     monkeypatch.delenv("DOCFLOW_FRONTIER_KEY", raising=False)
+    monkeypatch.delenv("DOCFLOW_FRONTIER_DEEPSEEK_KEY", raising=False)
     material = Material(
         kind="pdf",
         tier="texto_nativo",
@@ -493,6 +544,95 @@ def test_c8_without_a_credential_the_queue_survives(monkeypatch) -> None:
 
     assert not suggestions
     assert note.startswith("frontier refused:")
+
+
+def test_c8_a_provider_without_vision_gets_the_text_and_says_so() -> None:
+    """A scan degrades to its OCR text, and the degradation is announced.
+
+    The frontier model is DeepSeek, whose provider declares no vision: handed an
+    image it accepts the request, ignores the pixels and answers as if the
+    document were blank. Sending the pages would therefore be refused before the
+    call, and sending nothing would throw away the OCR text the run already paid
+    for. What must **not** happen is either of those *silently* — `my_flow.md`
+    B.12: a recorte anunciado no es un recorte silencioso.
+
+    A scanned fixture carries both, which is what makes the choice real rather
+    than hypothetical.
+    """
+    engine = _StubFrontier(supports_vision=False)
+    material = Material(
+        kind="pdf",
+        tier="escaneado_ocr",
+        text="CUIT 20-22087601-3 Importe $ 17.898,30",
+        route="ocr",
+        pages_read=1,
+        pages_total=1,
+        images=[b"\x89PNG\r\n\x1a\n" + b"0" * 32],
+        notes=[],
+    )
+
+    attempt, note = _ask(engine, DEFAULT_CONFIG, "prompt", material)
+
+    # `None` would mean nothing was sent — the text was available and readable.
+    assert attempt is not None
+    assert engine.calls == ["structured"]
+    # The note is what keeps a degraded reading from passing as the full one.
+    assert "OCR text" in note
+    assert "no vision" in note
+
+
+def test_c8_a_provider_with_vision_gets_the_pages() -> None:
+    """The same material goes to `vision` when the provider declares it.
+
+    The control for the test above: without it, `_ask` could send text always
+    and the degradation note would be reported for a provider that can read
+    pages, which is a worse failure than the one it announces.
+    """
+    engine = _StubFrontier(supports_vision=True)
+    material = Material(
+        kind="pdf",
+        tier="escaneado_ocr",
+        text="CUIT 20-22087601-3",
+        route="ocr",
+        pages_read=1,
+        pages_total=1,
+        images=[b"\x89PNG\r\n\x1a\n" + b"0" * 32],
+        notes=[],
+    )
+
+    attempt, note = _ask(engine, DEFAULT_CONFIG, "prompt", material)
+
+    assert attempt is not None
+    assert engine.calls == ["vision"]
+    assert note == ""
+
+
+def test_c8_a_scan_without_text_and_without_vision_sends_nothing() -> None:
+    """No pixels readable and no text to fall back to: no call, and a reason.
+
+    The remaining branch of the material choice. A call here would be the
+    plausible-looking wrong answer this project exists to catch, so the honest
+    outcome is `None` — nothing sent — with a note naming why.
+    """
+    engine = _StubFrontier(supports_vision=False)
+    material = Material(
+        kind="pdf",
+        tier="escaneado_ocr",
+        text="",
+        route="ocr",
+        pages_read=1,
+        pages_total=1,
+        images=[b"\x89PNG\r\n\x1a\n" + b"0" * 32],
+        notes=[],
+    )
+
+    attempt, note = _ask(engine, DEFAULT_CONFIG, "prompt", material)
+
+    assert attempt is None
+    # `not engine.calls` would also pass for a `None` that `_ask` never set, so
+    # the empty list is asserted explicitly: *nothing was sent* is the property.
+    assert engine.calls == []  # pylint: disable=use-implicit-booleaness-not-comparison
+    assert "nothing to send" in note
 
 
 # --- C9: learning -----------------------------------------------------------
