@@ -60,4 +60,3 @@ def _no_leaked_sampling_environment() -> Iterator[None]:
         for name in [k for k in os.environ if k.startswith(PREFIX)]:
             del os.environ[name]
         os.environ.update(saved)
-

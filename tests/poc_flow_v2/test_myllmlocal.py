@@ -368,3 +368,79 @@ def test_a_text_file_that_cannot_be_read_reports_it(tmp_path: pathlib.Path) -> N
     assert text.body is None
     assert text.route == "", "a read that produced nothing ran no operation"
     assert text.notes, "the failure has to say something"
+
+
+def test_show_env_needs_neither_a_document_nor_a_prompt(capsys) -> None:
+    """`--show-env` answers the environment question on its own.
+
+    It exists for the machine where the setup is broken: requiring a document would
+    make it unusable exactly where it is needed. The exit code is `0` because the
+    question was answered — no document was asked about, so nothing can have been
+    refused.
+    """
+    code = client_main(["--show-env"])
+
+    assert code == 0
+    report = json.loads(capsys.readouterr().out)
+    assert "effective_options" in report
+    assert "sources" in report
+
+
+def test_show_env_names_where_each_value_came_from(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """The report attributes each option to its source, which is the whole point.
+
+    A report printing only `num_ctx: 8192` leaves *the caller's `.env` was read*,
+    *the flow declared it* and *an operator exported it* indistinguishable —
+    measured, that ambiguity is what made a `.env` nothing read look like it was
+    working. Each case is set up separately here, and the **source string** is what
+    is asserted, not the value: two sources can agree on a number and disagree on
+    who supplied it.
+    """
+    from flow.sampling import SAMPLING_ENV_PREFIX
+
+    variable = f"{SAMPLING_ENV_PREFIX}NUM_CTX"
+    dotenv = tmp_path / ".env"
+    dotenv.write_text(f"{variable}=2048\n", encoding="utf-8")
+    monkeypatch.setattr("flow.dotenv.DOTENV_PATH", dotenv)
+    monkeypatch.delenv(variable, raising=False)
+
+    client_main(["--show-env"])
+    from_file = json.loads(capsys.readouterr().out)
+    assert from_file["sources"][variable] == "dotenv"
+    assert from_file["effective_options"]["num_ctx"] == "2048"
+    assert from_file["variables_set_from_dotenv"] == 1
+
+    monkeypatch.setenv(variable, "4096")
+    client_main(["--show-env"])
+    exported = json.loads(capsys.readouterr().out)
+    assert exported["sources"][variable] == "environment", (
+        "an exported variable must outrank the file; reporting it as 'dotenv' "
+        "would hide that the export was honoured"
+    )
+    assert exported["effective_options"]["num_ctx"] == "4096"
+    assert exported["variables_set_from_dotenv"] == 0
+
+
+def test_show_env_with_no_dotenv_reports_the_flows_own_declaration(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """With no file at all, `num_ctx` is attributable to the flow, not to silence.
+
+    The third source, and the one that matters most in a fresh checkout: without a
+    distinct label, a run at the flow's default would read the same as a run whose
+    file was present and empty.
+    """
+    from flow.sampling import SAMPLING_ENV_PREFIX
+
+    variable = f"{SAMPLING_ENV_PREFIX}NUM_CTX"
+    monkeypatch.setattr("flow.dotenv.DOTENV_PATH", tmp_path / "no-existe.env")
+    monkeypatch.delenv(variable, raising=False)
+
+    client_main(["--show-env"])
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["dotenv_exists"] is False
+    assert report["variables_set_from_dotenv"] == 0
+    assert report["sources"][variable] == "flow default"

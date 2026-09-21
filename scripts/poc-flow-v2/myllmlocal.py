@@ -37,9 +37,19 @@ Run:
     DOCFLOW_OLLAMA_NUM_CTX=16384 python scripts/poc-flow-v2/myllmlocal.py <document> \\
         --prompt <file>
 
+    # what the sampling options would be, and which source supplied each one,
+    # without reading a document or calling a model
+    python scripts/poc-flow-v2/myllmlocal.py --show-env
+
 ``--model`` is the only dial. A prompt and a schema are *inputs*, and that is why
 neither is derived from the other: pairing them here would make this client
 decide which question the caller asked.
+
+`--show-env` is the one mode that needs neither a document nor a prompt: it
+reports the three sources of a sampling option — an exported variable, the
+`.env` file, and the flow's own declaration — and the value each one settled on,
+so *did my `.env` get read* is answerable without spending a call. It runs before
+any document is opened.
 
 Stdout is one JSON object — the answer with the call's own numbers beside it, so
 ``| jq`` works. The route and the window go to stderr: a run that reported only
@@ -62,6 +72,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import pathlib
 import sys
 from collections.abc import Mapping
@@ -151,12 +162,13 @@ def _build_parser() -> _Parser:
     parser.add_argument(
         "document",
         type=pathlib.Path,
-        help="a text file, a PDF, or an image",
+        nargs="?",
+        help="a text file, a PDF, or an image (omitted with --show-env)",
     )
     parser.add_argument(
         "--prompt",
         type=pathlib.Path,
-        required=True,
+        default=None,
         metavar="FILE",
         help=f"the prompt file, with {TEXT_PLACEHOLDER!r} where the document goes",
     )
@@ -178,6 +190,12 @@ def _build_parser() -> _Parser:
         "--pretty",
         action="store_true",
         help="indent the JSON",
+    )
+    parser.add_argument(
+        "--show-env",
+        action="store_true",
+        help="report the sampling options this run would send, and where each "
+        "one came from, without reading a document or calling a model",
     )
     return parser
 
@@ -270,6 +288,66 @@ def _default_model() -> str:
     from flow.config import DEFAULT_CONFIG
 
     return DEFAULT_CONFIG.text_model_a
+
+
+def _sampling_variables() -> dict[str, str]:
+    """The sampling variables currently in the environment, by full name."""
+    from flow.sampling import SAMPLING_ENV_PREFIX
+
+    return {
+        name: value
+        for name, value in os.environ.items()
+        if name.startswith(SAMPLING_ENV_PREFIX)
+    }
+
+
+def _sampling_environment() -> dict[str, object]:
+    """What the sampling options would be, and where each value came from.
+
+    Reporting the **origin** and not only the value is the point of this function.
+    A run that printed `num_ctx: 8192` says nothing about whether the caller's
+    `.env` was honoured, the flow's own default applied, or an operator's export
+    won — the three cases someone debugging this is trying to tell apart.
+    Measured, that ambiguity is exactly what made `.env` look like it worked while
+    nothing read the file.
+
+    The three sources are consulted in the order `flow.extract._engine` uses:
+    `load_env` first (an exported variable wins, then the file), then
+    `apply_sampling`, which writes only what is still unset. Running them here for
+    real — rather than predicting what they would do — is what makes the report
+    evidence instead of a second opinion that could drift from the loader.
+    """
+    from flow.dotenv import DOTENV_PATH, load_env
+    from flow.sampling import SAMPLING_ENV_PREFIX, apply_sampling
+
+    exported = _sampling_variables()
+    # `apply_sampling` runs after, so leaving it out of this read is what makes
+    # *the file set it* distinguishable from *the flow declared it*.
+    set_from_dotenv = load_env()
+    after_file = _sampling_variables()
+    apply_sampling()
+    after_flow = _sampling_variables()
+
+    def _origin(name: str) -> str:
+        """Which of the three sources supplied a variable's value."""
+        if name in exported:
+            return "environment"
+        if name in after_file:
+            return "dotenv"
+        if name in after_flow:
+            return "flow default"
+        return "runtime default"
+
+    return {
+        "dotenv": str(DOTENV_PATH),
+        "dotenv_exists": DOTENV_PATH.is_file(),
+        "variables_set_from_dotenv": set_from_dotenv,
+        "sources": {name: _origin(name) for name in sorted(after_flow)},
+        "effective_options": {
+            name.removeprefix(SAMPLING_ENV_PREFIX).lower(): value
+            for name, value in sorted(after_flow.items())
+        },
+    }
 
 
 def _number(value: object) -> float | None:
@@ -405,6 +483,25 @@ def main(argv: list[str] | None = None) -> int:
     """Read one document, ask the model one prompt, print the answer as JSON."""
     parser = _build_parser()
     args = parser.parse_args(argv)
+
+    # `--show-env` answers before any document is read or any model is called: it
+    # is the question *what would this run send*, and paying for a PDF read to
+    # answer it would make the flag unusable on the machine where it is needed —
+    # the one with a broken setup.
+    if args.show_env:
+        print(
+            json.dumps(
+                _sampling_environment(),
+                ensure_ascii=False,
+                indent=2 if args.pretty else None,
+            )
+        )
+        return EXIT_OK
+
+    if args.document is None:
+        parser.error("the following arguments are required: document")
+    if args.prompt is None:
+        parser.error("the following arguments are required: --prompt")
 
     document: pathlib.Path = args.document
     if not document.is_file():

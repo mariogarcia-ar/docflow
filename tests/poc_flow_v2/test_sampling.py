@@ -88,6 +88,7 @@ def _material() -> Material:
 
 
 def test_every_model_call_runs_under_a_declared_window(
+    tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Every model call runs under a declared window, not the runtime's default.
@@ -109,7 +110,17 @@ def test_every_model_call_runs_under_a_declared_window(
     does **not** fail it — correctly, since the adapter does not read the
     environment at construction. An earlier version of this test claimed
     otherwise in prose; the mutation showed the prose was wrong.)
+
+    The ``.env`` is pointed at an absent file **on purpose**, and that is
+    load-bearing rather than hygienic. `_engine` loads the file before declaring
+    the window, and the repository's own `.env` carries ``NUM_CTX=8192`` — the
+    same number this flow declares. Without the isolation the two sources are
+    indistinguishable, so deleting ``apply_sampling()`` changed nothing and the
+    mutation **survived**: the gate stopped guarding the declaration the day the
+    file started supplying the same value. Removing the file leaves the flow's own
+    declaration as the only thing that can set it.
     """
+    monkeypatch.setattr("flow.dotenv.DOTENV_PATH", tmp_path / "no-existe.env")
     engine = _RecordingEngine()
     monkeypatch.setattr("flow.extract.OllamaEngine", lambda: engine)
 
@@ -185,7 +196,9 @@ def test_a_value_written_to_dotenv_reaches_the_engine(
     ``NUM_PREDICT`` is asserted beside it because it is a variable the flow never
     touches: it can only arrive from the file.
     """
-    planted = f"{SAMPLING_ENV_PREFIX}NUM_CTX=2048\n{SAMPLING_ENV_PREFIX}NUM_PREDICT=77\n"
+    planted = (
+        f"{SAMPLING_ENV_PREFIX}NUM_CTX=2048\n{SAMPLING_ENV_PREFIX}NUM_PREDICT=77\n"
+    )
     dotenv = tmp_path / ".env"
     dotenv.write_text(planted, encoding="utf-8")
     monkeypatch.setattr("flow.dotenv.DOTENV_PATH", dotenv)
