@@ -21,6 +21,7 @@ import xml.etree.ElementTree as ET
 
 FLOW = pathlib.Path("scripts/poc-flow-v2/flow")
 SUITE = pathlib.Path("tests/poc_flow_v2/test_invariants.py")
+SAMPLING_SUITE = pathlib.Path("tests/poc_flow_v2/test_sampling.py")
 
 #: (label, file, anchor, replacement, the tests that MUST fail)
 MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
@@ -59,17 +60,40 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
         "            ARITHMETIC_INCONSISTENT,",
         {"test_i10_an_incomplete_equation_is_unknown_not_fail"},
     ),
+    (
+        "sampling: the window is never declared, so the runtime's default wins",
+        FLOW / "extract.py",
+        "    apply_sampling()\n    return OllamaEngine()",
+        "    return OllamaEngine()",
+        {"test_every_model_call_runs_under_a_declared_window"},
+    ),
+    (
+        "sampling: an operator's exported window is overwritten by the default",
+        FLOW / "sampling.py",
+        "    if os.environ.get(name):\n        return\n",
+        "",
+        {"test_an_operators_window_is_not_overwritten"},
+    ),
 ]
 
 
 def _run_suite() -> tuple[int, set[str]]:
-    """Run the invariant suite and return (exit code, failed test names)."""
+    """Run the guarded suites and return (exit code, failed test names).
+
+    Both suites run every time: a mutation's expected failure set names the test
+    that must fail, and it does not matter which file that test lives in. Running
+    only `test_invariants.py` would leave the sampling mutations' anchors in
+    place and their guards unexercised — a mutation whose suite never loads the
+    test it expects fails for the wrong reason, and one that expects a test from
+    another file could never pass at all.
+    """
     result = subprocess.run(
         [
             sys.executable,
             "-m",
             "pytest",
             str(SUITE),
+            str(SAMPLING_SUITE),
             "-q",
             "--tb=no",
             "--junitxml=/tmp/mutation_invariants.xml",

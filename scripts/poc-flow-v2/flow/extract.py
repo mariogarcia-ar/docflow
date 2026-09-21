@@ -51,6 +51,7 @@ from .fields import (  # noqa: E402
     normalize,
 )
 from .material import Material  # noqa: E402
+from .sampling import apply_sampling  # noqa: E402
 
 __all__: list[str] = ["extract"]
 
@@ -588,7 +589,28 @@ def _rubro_applies(candidates: dict[str, list[FieldCandidate]]) -> bool:
     return _rubro_value(candidates) in RUBRO_CATEGORIES
 
 
-def extract(  # pylint: disable=too-many-locals, too-many-branches
+def _engine() -> OllamaEngine:
+    """Build the local engine with the flow's sampling window declared.
+
+    The two steps are one function so they cannot drift apart: the adapter reads
+    its options from the environment **at call time**, so an engine built without
+    the declaration runs at the runtime's own default — measured, 4096 — and a
+    caller that built the engine but forgot the dial would get a silent window
+    change rather than an error. Keeping them together makes *declared window*
+    an attribute of the engine instead of a step a caller has to remember.
+    """
+    apply_sampling()
+    return OllamaEngine()
+
+
+# `too-many-locals`: `extract` is the lane sequence itself — each lane's
+# candidate map, the two review prompts, the collected record. Its shape is the
+# contract `my_flow.md` §4 states, and splitting it would move the same names one
+# frame away.
+# pylint: disable=too-many-locals
+
+
+def extract(  # pylint: disable=too-many-branches
     material: Material,
     config: Config,
     artifacts: Artifacts,
@@ -608,7 +630,7 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
         The candidates and document values, with any refusals noted.
     """
     notes: list[str] = []
-    engine = OllamaEngine()
+    engine = _engine()
 
     extract_text_prompt = artifacts.prompts.get("extract_texto", "")
     extract_vision_prompt = artifacts.prompts.get("extract_vision", "")

@@ -499,6 +499,164 @@ cuatro schemas.
 
 ---
 
+## Cuarta ronda: el cableado, y la ventana que nadie pedía (2026-09-21)
+
+Con los tres pasos reservados cableados (`_run_reserved_steps`), una corrida de punta a punta
+sobre un comprobante real produjo 13 campos con candidato — contra 9 antes del split — y
+**volvió a dejar afuera el campo crítico**. La nota lo dijo con precisión:
+
+```
+desglose step refused (truncated_output); fields absent
+```
+
+No hubo silencio ni valor inventado: el motor reportó bien. Pero el diagnóstico merecía una
+medición, y la medición cambió la explicación.
+
+### Lo que se midió
+
+`truncated_output` tiene un solo emisor en el adapter: `done_reason == "length"`. Así que el
+corte era real. La pregunta era *de qué*. Cinco repeticiones del mismo paso con
+`num_ctx: 4096`:
+
+| Corrida | `eval_count` | `done_reason` | suma de la ventana |
+|---|---:|---|---:|
+| 1 | 631 | `stop` | 2481/4096 |
+| 2 | 396 | `stop` | 2246/4096 |
+| 3 | 840 | `stop` | 2690/4096 |
+| 4 | 439 | `stop` | 2289/4096 |
+| 5 | 1011 | `stop` | 2861/4096 |
+
+**0 de 5 truncadas.** O sea: el truncamiento es **intermitente**, no sistemático. La causa es
+que `deepseek-r1` emite tokens de razonamiento antes de la respuesta — medido en la corrida
+que falló, 1824 caracteres de `thinking` contra 290 de `content` — y ese gasto **varía por
+corrida** (396 a 1011 tokens de generación). Cuando el razonamiento se alarga, el `done_reason`
+pasa a `length` y el paso pierde los nueve campos enteros. Un defecto que aparece 1 de cada 6
+corridas y que se **lleva el campo crítico** cuando aparece es peor que uno permanente: pasa
+desapercibido en la revisión y arruina la corrida que importa.
+
+### El defecto real: nadie pedía la ventana
+
+El flujo nunca declaraba `num_ctx`. Medido contra este runtime:
+
+```
+/api/show  deepseek-r1:1.5b -> qwen2.context_length = 131072
+/api/ps    sin num_ctx       -> context_length = 4096     <- lo que corría
+/api/ps    num_ctx = 8192    -> context_length = 8192
+```
+
+El modelo **declara 131072**; el runtime cargaba **4096**. Así que el número en vigor no era
+ni el del modelo ni el del llamador: era el default del runtime, elegido por nadie.
+`my_flow.md` B.10 ya tenía la trampa en la tabla — *un prompt más grande que la ventana: la
+respuesta describe el principio del documento* — y el flujo igual la tenía abierta.
+
+El puerto `LlmEngine.structured` no acepta opciones, y no debía cambiar: la ventana que un
+modelo se carga es un hecho **del runtime**, no del contrato de la operación. El canal que el
+adapter sí declara (`_options_from_environment`, `DOCFLOW_OLLAMA_<OPTION>`) es el entorno, y
+`tests/kernels/test_resolution.py` ya usaba `{"num_ctx": 8192}` como el valor de la casa.
+`docs/artifacts/kernel-cli.md` §5 lo usa igual en su ejemplo de evidencia para K5.
+
+**Arreglo:** `flow/sampling.py` declara el dial y lo aplica; `flow/extract.py::_engine()`
+construye el motor con la declaración adentro, para que *ventana declarada* sea un atributo
+del motor y no un paso que un llamador tenga que recordar. El valor es 8192: el paso más
+pesado usa ~1850 tokens de prompt, así que 4096 alcanzaba — la varianza del razonamiento es lo
+que el margen absorbe.
+
+**Precedencia:** un `DOCFLOW_OLLAMA_NUM_CTX` exportado gana. Un `.env` o un operador tiene
+que poder subir la ventana para un documento más grande sin editar el flujo, y una librería que
+lo pisara invertiría la precedencia que `.env.example` declara.
+
+### La mutación que sobrevivió, y lo que enseñó
+
+El primer test afirmaba —en prosa y en su nombre— que el dial debía declararse **antes de
+construir el motor**. La mutación que movía la declaración después del constructor
+**sobrevivió**: el adapter lee el entorno *en la llamada*, no al construir, así que el orden
+respecto del constructor no importa. El comentario era falso y el test no probaba lo que decía.
+
+El arreglo no fue re-apuntar la mutación sino **corregir la afirmación**: la que sí es un
+defecto es *eliminar* la declaración — el estado en que estaba el flujo — y esa mutación
+falla con las 4 llamadas bajo `None`. Renombrar el test
+(`test_every_model_call_runs_under_a_declared_window`) y corregir el docstring dejó el gate
+afirmando lo medido. Cuarta vez que este repo paga la lección de B.16, con una variante nueva:
+**una mutación que sobrevive también puede estar diciendo que la propiedad es otras** — no
+solo que el test es débil.
+
+Y una segunda: el refactor a `_engine()` movió el anchor de la mutación, y el arnés lo
+reportó como `ANCHOR MISSING`. Un arnés que falla ruidosamente cuando el código se mueve es
+lo que evita que las mutaciones queden mirando un sitio que ya no existe.
+
+### Verificación
+
+**1145 tests** en el repo (eran 1142), **6 mutaciones** en el arnés, **las 6 falsadas**.
+Tres gates nuevos en `tests/poc_flow_v2/test_sampling.py`, un módulo propio porque el sujeto
+es distinto: los gates de `test_gates.py` miran el **registry**, estos miran la **llamada**.
+
+| Gate | Qué afirma |
+|---|---|
+| `test_every_model_call_runs_under_a_declared_window` | cada llamada vio `8192`, no el default del runtime |
+| `test_an_operators_window_is_not_overwritten` | un valor exportado gana |
+| `test_the_declared_prefix_is_the_one_the_adapter_reads` | el prefijo se lee del adapter, así los dos no pueden derivar |
+
+El tercero es el que hace que la constante sea un **contrato** y no una cadena: lee
+`ollama._FORWARDED_OPTIONS`, así que si el adapter renombra su canal, el flujo lo sabe en el
+build en vez de en una corrida donde *configurado* se leería igual que *no configurado*.
+
+**Pendientes, no ausentes:** un paso truncado **descarta el paso entero** — no hay reintento.
+Ahora es improbable (el margen pasó de 1235 a 5335 tokens), pero sigue siendo posible con un
+documento más grande, y la respuesta correcta no es subir el número sino reintentar o partir el
+paso. Queda declarado.
+
+### Lo que el arreglo destapó
+
+Con la ventana declarada, `desglose` **ya no se trunca** y su `values` pasó de **0 a 3**
+entradas (`subtotal`, `iva`, `importe_total_facturado`). La nota de truncamiento desapareció
+y 4 campos más llegaron a la decisión (13 → 17). Pero el campo crítico **sigue sin confirmar**,
+y ahora se ve por qué: el truncamiento **ocultaba un defecto peor**.
+
+Cinco corridas del paso ya reparado, sobre el mismo documento:
+
+| Corrida | `subtotal` | `iva` | `importe_total_facturado` | ¿grupo evaluable? |
+|---|---|---|---|---|
+| 1 | `'00000000.00'` | `'0'` | `'021.311.076.9'` | no |
+| 2 | `'14791,98'` | `'21%: 2.100.00'` | `'17898,30'` | no |
+| 3 | `'12.345,60'` | `'21%: 2.100,00'` | `'21,00'` | no |
+| 4 | `'17.898,30'` | `'0.00'` | `'21,000,00'` | no |
+| 5 | `'123456789.10'` | `'21%: 2.100.00'` | `'3.456.789.101.00'` | no |
+
+**5 de 5 no evaluables.** El documento *sí* imprime los tres valores, en una línea legible:
+
+```
+Bruto     %   Desc./Rec.   Subtotal   IVA 10,5%   IVA 21,0%   Percep.  Imp.Int.   TOTAL
+14.791,98 0,00    0,00     14.791,98      0,00       3.106,32      0,00      0,00  17.898,30
+```
+
+Y el camino aritmético **funciona** con esos valores:
+
+```
+all_components_are_amounts('14.791,98','3.106,32','17.898,30') -> True
+arithmetic_consistent(...)                                    -> True   (14791.98+3106.32=17898.30)
+```
+
+Así que el bloqueo no está en el motor, ni en la regla, ni en la ventana: está en **quién lee
+los importes**. `deepseek-r1:1.5b` devuelve ceros de relleno, dígitos inventados y hasta la
+alícuota pegada al importe (`'21%: 2.100.00'`), que es B.7 otra vez. Dos de las cinco
+respuestas son basura sintácticamente válida — el modo de fallo que B.10 llama el peligroso.
+
+**Lección.** El truncamiento no era el defecto: era el **síntoma que impedía ver** el defecto.
+Un paso que falla ruidosamente (`truncated_output`, una nota, campos ausentes) es fácil de
+leer y fácil de arreglar; el mismo paso **teniendo éxito** con valores inventados no se nota
+hasta que algo aguas abajo se niega a usarlos. `all_components_are_amounts` —el arreglo de
+R2— es lo que convirtió «el total no confirma» en un hecho visible en vez de un `UNKNOWN`
+silencioso, y por eso el defecto apareció en cuanto la ventana dejó de esconderlo.
+
+**Pendiente, no ausente:** el paso `desglose` tiene un defecto de **calidad de lectura**, no de
+cableado, y no se arregla desde el flujo: `deepseek-r1:1.5b`, con 1.5B de parámetros, no lee
+una tabla de importes. Las salidas posibles son cambiar el modelo del paso, darle el **recorte
+de la región de importes** en vez del documento entero, o leer los importes con el parser
+determinístico (`regexp` ya produce candidatos y no decide). La tercera es la que el proyecto
+ya prefiere para formato fijo, y es la que hay que probar antes de tocar el modelo.
+
+---
+
 1. **Nueve circuitos con test** — cada C1…C9 tiene un test que falla si el
    circuito no cierra (B.16).
 2. **El Anexo A no tiene celdas inalcanzables** salvo la intencional — lane-on-demand

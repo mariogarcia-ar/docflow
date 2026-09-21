@@ -5,6 +5,15 @@ registry/prompts/extraction/vision.txt
 
 revisar si cambio el objetivo ... creeria que no oprque el run es agnostico a los prompts 
 
+necesito un
+myllmlocal.py 
+que me permita pasar un arhivo , prompt y que me de el resultado
+si el archivo es 
+- texto, directo, 
+- pdf texto: usar pdftotext 
+- pdf imagen: exportar imagen
+- imagen: usar ocr (doclint)
+
 
 
 
