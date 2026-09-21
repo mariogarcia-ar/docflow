@@ -1,0 +1,43 @@
+                                                              A            FACTURA 0138-00000236-A
+                                                             CODIGO        Fecha: 07/07/2026
+                                                               01          09:38:08 a.m.
+                                                                                                       CARLOS ANDRETICH S.A.
+                                                                                                       Paul Harris 136 - Rafaela - Santa Fe
+                                                                                                       03492-501252
+                                                                                                       C.U.I.T. Nº: 30684416096
+                                                                 7199183                               Ing. Brutos: 921-744698-2
+                                                                                                       Inicio de Actividad: 02/01/1998
+
+   Señor(es): 05350 CVC SOCIEDAD ANONIMA - CVC SOCIEDAD ANONIMA
+   Domicilio: RUTA NAC Nº7 - KM 262                                               Localidad: JUNIN
+   Sit. I.V.A.: Resp. Inscripto                                                   C.U.I.T.: 30-58221570-3
+
+   Enviar por: R.F. TRANSPORTE S.A.
+                                                                                  Comprobante Origen: 0043-00090965-R
+   Condición de venta: Cta. Cte.
+
+CODIGO                            CANT. DETALLE                       DESP. A PLAZA            IVA       PR. UNIT.          DTO.        TOTAL
+
+DV-BP20-R                         1.00 BIDON PARA NAFTA CANADIENSE ROJO PICO VERTEDOR ANTIVENTEO 20LTS - ANTIESTATICO/
+                                                                                          21 54639.36                  TRABA SEG
+                                                                                                            0.00% 54639.36
+
+
+
+
+Nota (MercadoLibre): NickName: GM20260409085145 - Procesado por: GBELTRAMINO -                              BRUTO:                $ 54,639.36
+N° Venta = 2000017234667292 - N° Pack = 2000013830391821                                             DESCUENTO:                         $ 0.00
+<PERC IIBB ARBA: $109.28>                                                                              RECARGO:                         $ 0.00
+                                                                                                              NETO:               $ 54,639.36
+                                                                                                         I.V.A. 21%:              $ 11,474.26
+                                                                                                     I.V.A.: 10,5 %:
+                                                                                                          Perc. IIBB:                 $ 109.28
+                                                                                                             TOTAL:           $ 66,222.90
+
+
+
+
+                                                          3068441609601013886272811918677202607170
+                                                                    CAE 86272811918677         **ORIGINAL**
+                                                                    FEC VENC: 17/07/2026
+
