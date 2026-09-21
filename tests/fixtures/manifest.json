@@ -1,7 +1,7 @@
 {
   "root": "tests/fixtures",
-  "files": 98,
-  "bytes": 73175523,
+  "files": 99,
+  "bytes": 73193814,
   "pdf_detector": "voucherflow",
   "by_folder": {
     "blur": {
@@ -25,8 +25,8 @@
       "bytes": 45678002
     },
     "negativos": {
-      "files": 10,
-      "bytes": 83854
+      "files": 11,
+      "bytes": 102145
     },
     "otros": {
       "files": 20,
@@ -595,6 +595,15 @@
       "bytes": 732,
       "sha256": "9ac68735f02c36f7529fb2efc57d1a121ba1f17402052f7d8a65adae3e4d429e",
       "pdf_type": "pdf_texto"
+    },
+    {
+      "path": "negativos/neg_2026-10_pantalla_aprobacion.pdf",
+      "folder": "negativos",
+      "name": "neg_2026-10_pantalla_aprobacion",
+      "extension": "pdf",
+      "bytes": 18291,
+      "sha256": "4a3c1bafd30f77fc7c38aa50a6b89fc6c884eb2cb135a137e6c55433b384d74d",
+      "pdf_type": "pdf_escaneado"
     },
     {
       "path": "negativos/neg_2026-10_pantalla_aprobacion.png",
