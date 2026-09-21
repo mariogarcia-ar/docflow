@@ -5,6 +5,7 @@ agregues texto, explicación ni markdown fuera del objeto.
 Claves, todas al mismo nivel:
   categoria_gasto   rubro del emisor, o "null" si no hay indicio claro
   descripcion       frase breve de qué se compró o qué servicio se prestó
+  centro_de_costo   siempre "null" (regla 5)
 
 Reglas, aplicar en este orden:
 
@@ -20,6 +21,9 @@ Reglas, aplicar en este orden:
 
 4. Sin ítems ni concepto legible: "null". No lo inventes a partir del nombre
    del proveedor.
+
+5. centro_de_costo: devolvé siempre "null". Se completa en un paso posterior de
+   clasificación automática, no acá: no es una lectura del comprobante.
 
 --- COMPROBANTE (OCR) ---
 {text}

@@ -545,13 +545,20 @@ def _run_reserved_steps(
     """Run the reserved extraction steps over the same material, in order.
 
     The layered split (`cierre-circuitos.md` §«Enfoque en capas») answers the same
-    document four times, once per domain of knowledge — reading, tax mechanics,
-    line-of-business detail, judgement — instead of asking one prompt for all 23
-    fields. Each step gets its **own prompt and its own schema**, so the grammar
-    constrains only that step's keys.
+    document once per domain of knowledge — detection, tax mechanics, judgement,
+    line-of-business detail — instead of asking one prompt for all 23 fields. Each
+    step gets its **own prompt and its own schema**, so the grammar constrains only
+    that step's keys.
 
-    Two orderings are load-bearing:
+    Three orderings are load-bearing:
 
+    - **`detection` first**, because `comprobante_valido` is the field `my_flow.md`
+      §3 names as the fast-fail gate, and the base prompt asserts the document
+      already *was* identified as a valid receipt — asking detection after it would
+      be asking a question the flow has already presumed the answer to. Nothing
+      acts on the answer yet: the step **reports** it and the gate itself is
+      `# TODO: [MVP]`, so a non-receipt currently costs the base reading rather
+      than being refused.  # TODO: [MVP]
     - **`clasificacion` before `rubro`**, because `categoria_gasto` decides whether
       the line-of-business step runs at all. `rubro` asks about litres or diners;
       asking that of every receipt is what made a model answer with nothing. The

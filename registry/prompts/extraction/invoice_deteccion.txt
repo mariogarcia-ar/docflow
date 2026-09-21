@@ -4,8 +4,8 @@ débito). Devolvé un único objeto JSON con las claves listadas. No agregues
 texto, explicación ni markdown fuera del objeto.
 
 Claves, todas al mismo nivel:
-  es_comprobante    "true" si el texto es del tipo comprobante, "false" si no
-  motivo_rechazo    motivo si es_comprobante es "false", si no "null"
+  comprobante_valido   "true" si el texto es del tipo comprobante, "false" si no
+  motivo_rechazo       motivo si comprobante_valido es "false", si no "null"
 
 Reglas, aplicar en este orden:
 
@@ -25,7 +25,7 @@ Reglas, aplicar en este orden:
 4. Ante la duda entre "comprobante dañado" y "no es comprobante": preferí
    "true". La calidad de lectura se evalúa en otro paso.
 
-5. motivo_rechazo es una frase breve, solo si es_comprobante es "false".
+5. motivo_rechazo es una frase breve, solo si comprobante_valido es "false".
 
 --- TEXTO (OCR) ---
 {text}

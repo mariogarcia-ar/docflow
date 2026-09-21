@@ -51,29 +51,39 @@ _EXTRACTION_SCHEMA_KEY: Final[str] = "schemas/extraction/invoice.json"
 _REVIEW_SCHEMA_KEY: Final[str] = "schemas/review/review.json"
 
 #: The reserved extraction steps (`cierre-circuitos.md` §«Enfoque en capas»):
-#: step name to its (prompt, schema) registry keys. They are declared in the
-#: manifest but no lane loads them yet, so `load_artifacts` reads only the ones a
-#: lane asks for by name.
+#: step name to its (prompt, schema) registry keys. `load_artifacts` reads the two
+#: base lane prompts; these are reached one at a time through
+#: `Artifacts.reserved_extraction_step`, which is why an asset nobody asks for costs
+#: a registry hash and nothing else.
 #:
 #: **The declaration order is the run order**, and it is load-bearing:
-#: `clasificacion` settles `categoria_gasto`, which is what decides whether
-#: `rubro` has a question to ask. Declaring `rubro` before `clasificacion` made it
-#: skip on every document — a dependency cannot be satisfied by a step that has not
-#: run yet.
+#: `detection` settles `comprobante_valido`, the field `my_flow.md` §3 names as the
+#: fast-fail gate, so it declares first — the one step whose answer could refuse the
+#: document runs before the steps that ask about its paper. Next `clasificacion`
+#: settles `categoria_gasto`, which is what decides whether `rubro` has a question
+#: to ask. Declaring `rubro` before `clasificacion` made it skip on every document —
+#: a dependency cannot be satisfied by a step that has not run yet.
 #:
 #: The step name is also the role the prompt is read under, and the field names
 #: each schema carries are proved to partition the single-pass contract by
 #: `tests/poc_flow_v2/test_gates.py::test_the_extraction_steps_partition_every_field`.
 RESERVED_EXTRACTION_STEPS: Final[dict[str, tuple[str, str]]] = {
+    "detection": (
+        "prompts/extraction/invoice_deteccion.txt",
+        "schemas/extraction/invoice_detection.json",
+    ),
     "desglose": (
-        "prompts/extraction/desglose.txt",
-        "schemas/extraction/desglose.json",
+        "prompts/extraction/invoice_desglose.txt",
+        "schemas/extraction/invoice_desglose.json",
     ),
     "clasificacion": (
-        "prompts/extraction/clasificacion.txt",
-        "schemas/extraction/clasificacion.json",
+        "prompts/extraction/invoice_clasificacion.txt",
+        "schemas/extraction/invoice_clasificacion.json",
     ),
-    "rubro": ("prompts/extraction/rubro.txt", "schemas/extraction/rubro.json"),
+    "rubro": (
+        "prompts/extraction/invoice_rubro.txt",
+        "schemas/extraction/invoice_rubro.json",
+    ),
 }
 
 

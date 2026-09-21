@@ -1,5 +1,5 @@
 {
-  "$comment": "RESERVED — declared in the manifest, not loaded by any lane yet. Step 2 of the layered extraction: the tax breakdown. It is a SEPARATE artifact from `invoice.json` because it is a different domain of knowledge: reading a printed amount is not the same as understanding Argentine IVA mechanics (net vs gross, why a rate is discriminated, what 'no gravado' means. A receipt that does not discriminate IVA has nothing to put here, and the `rubro.json` step must not run before this one has settled `categoria_gasto`). The partition of the 23 fields across the four steps is verified by `test_the_extraction_steps_partition_every_field`.",
+  "$comment": "The TAX BREAKDOWN step of the layered extraction. It is a SEPARATE artifact from `invoice.json` because it is a different domain of knowledge: reading a printed amount is not the same as understanding Argentine IVA mechanics (net vs gross, why a rate is discriminated, what 'no gravado' means). A receipt that does not discriminate IVA has nothing to put here. The partition of the 23 fields across the five steps is verified by `test_the_extraction_steps_partition_every_field`.",
   "type": "object",
   "properties": {
     "subtotal": {

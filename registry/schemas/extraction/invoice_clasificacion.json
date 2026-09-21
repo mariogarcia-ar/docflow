@@ -1,5 +1,5 @@
 {
-  "$comment": "RESERVED — declared in the manifest, not loaded by any lane yet. Step 4 of the layered extraction: classification. It asks for a JUDGEMENT about the document rather than a reading of it, which is a different task from the three steps above and the reason it gets its own artifact. `categoria_gasto` also feeds step 3, so this step must settle before `rubro.json` can run.",
+  "$comment": "The CLASSIFICATION step of the layered extraction. It asks for a JUDGEMENT about the document rather than a reading of it, which is a different task from the reading and tax steps and the reason it gets its own artifact. `categoria_gasto` also feeds the line-of-business step, so this step must settle before `invoice_rubro.json` can run. `centro_de_costo` is answered 'null' here on purpose: it is completed by a later classification step, and the contract keeps the key so a consumer reads one shape.",
   "type": "object",
   "properties": {
     "categoria_gasto": {

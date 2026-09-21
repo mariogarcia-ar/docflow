@@ -1,0 +1,19 @@
+{
+  "$comment": "The LINE-OF-BUSINESS step of the layered extraction: fields that only apply to one line of business. It runs ONLY when `categoria_gasto` (the classification step) already says Restaurante or Combustible - the caller decides that in code, so the model is never asked 'does this apply?'. Measured on the current single pass: both fields were absent from the extraction entirely, because a model asked about litres on a restaurant receipt answers with nothing. Asking a question that is inapplicable to 90% of documents costs attention on every document.",
+  "type": "object",
+  "properties": {
+    "cantidad_comensales_personas": {
+      "type": "string",
+      "description": "only when the receipt is a restaurant one and mentions diners or covers; otherwise 'null'. Never estimated from the number of line items"
+    },
+    "cantidad_litros": {
+      "type": "string",
+      "description": "only when the receipt is a fuel one and details exact litres; otherwise 'null'. Never derived from the amount and a price per litre"
+    }
+  },
+  "required": [
+    "cantidad_comensales_personas",
+    "cantidad_litros"
+  ],
+  "additionalProperties": false
+}

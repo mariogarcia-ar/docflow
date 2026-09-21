@@ -1,16 +1,7 @@
 {
-  "$comment": "STEP 1 of the layered extraction — the base reading. Nine fields, all read off the printed document without needing a domain judgement: is this a receipt, and who issued it. The other three steps are RESERVED artifacts (`desglose`, `rubro`, `clasificacion`); `test_the_extraction_steps_partition_every_field` proves the four together cover every field of the original 23-field contract exactly once. It carries no critical-severity field on purpose — the one field of group 1 that could only be CONFIRMED through an arithmetic combination (`importe_total_facturado`) moved to the step that holds that combination. The schema is a SEPARATE artifact from the prompt on purpose: the prompt says what to look for and how to read it, the schema says what shape the answer must have.",
+  "$comment": "The BASE READING step of the layered extraction: seven fields, all read off the printed document without needing a domain judgement. The other four scopes are RESERVED artifacts (`detection`, `desglose`, `rubro`, `clasificacion`); `test_the_extraction_steps_partition_every_field` proves the five together cover every field of the original 23-field contract exactly once. The two fields that asked *is this a receipt* (`comprobante_valido`, `motivo_rechazo`) live in `invoice_detection.json`, not here, because this prompt opens by asserting the document already WAS identified as a valid receipt — keeping the question in this contract would ask it of a model told not to ask it, and would make the contract answerable only about documents that are receipts. It carries no critical-severity field on purpose — the one field of the reading group that could only be CONFIRMED through an arithmetic combination (`importe_total_facturado`) moved to the step that holds that combination. The schema is a SEPARATE artifact from the prompt on purpose: the prompt says what to look for and how to read it, the schema says what shape the answer must have.",
   "type": "object",
   "properties": {
-    "comprobante_valido": {
-      "type": "string",
-      "enum": ["true", "false"],
-      "description": "'true' when the text is a readable receipt, 'false' when it is not"
-    },
-    "motivo_rechazo": {
-      "type": "string",
-      "description": "Why the document was rejected, or 'null'"
-    },
     "tipo_comprobante": {
       "type": "string",
       "enum": ["A", "B", "C", "001", "006", "011", "090", "099", "null"],
@@ -39,8 +30,6 @@
     }
   },
   "required": [
-    "comprobante_valido",
-    "motivo_rechazo",
     "tipo_comprobante",
     "razon_social_emisor",
     "cuit_emisor",

@@ -1,3 +1,9 @@
+creo que en v3 vamos a tener que ajustar los pasos porque ahora se especializaron los prompts (extraction/review) y los schemas
+
+en v1 usamos bien las primitivas
+en v2 mejoramos todo framework de recupero
+vn v3 vamos a mejorar el uso de los prompts 
+
 se aplico para 
 registry/prompts/extraction/invoice.txt
 pero falto 

@@ -384,8 +384,9 @@ def test_the_step_order_satisfies_the_dependency_between_steps() -> None:
 
 #: Which step settles the field gating another step. `rubro` asks about diners or
 #: litres, and only knows to ask once `clasificacion` has said the receipt is a
-#: restaurant or a fuel purchase.
-_STEP_DEPENDENCIES: dict[str, str] = {"rubro": "clasificacion"}
+#: restaurant or a fuel purchase. `desglose` reads printed amounts, so it asks only
+#: once `detection` has said the document is a receipt at all.
+_STEP_DEPENDENCIES: dict[str, str] = {"rubro": "clasificacion", "desglose": "detection"}
 
 
 def test_the_extraction_steps_partition_every_field() -> None:
@@ -467,11 +468,18 @@ _SINGLE_PASS_CONTRACT: frozenset[str] = frozenset(
 #: The extraction steps a layered implementation runs, in order, and the registry
 #: keys that declare each one's fields. Keyed declaratively rather than discovered,
 #: so a step that disappears is a failure and not a smaller loop.
+#:
+#: `detection` is a step of its own rather than part of `base` because it answers a
+#: different question — *is this a receipt* rather than *what does it say* — and the
+#: base prompt opens by asserting the document already was identified as a valid
+#: receipt. Reading and detection are two scopes; folding them together is what made
+#: a model asked to read a non-receipt invent fields for it.
 _EXTRACTION_STEPS: dict[str, str] = {
     "base": "schemas/extraction/invoice.json",
-    "desglose": "schemas/extraction/desglose.json",
-    "rubro": "schemas/extraction/rubro.json",
-    "clasificacion": "schemas/extraction/clasificacion.json",
+    "detection": "schemas/extraction/invoice_detection.json",
+    "desglose": "schemas/extraction/invoice_desglose.json",
+    "rubro": "schemas/extraction/invoice_rubro.json",
+    "clasificacion": "schemas/extraction/invoice_clasificacion.json",
 }
 
 
@@ -527,6 +535,7 @@ def _extraction_prompt_texts(artifacts: object) -> dict[str, str]:
 #: counterpart yet.
 _STEP_PROMPT_ROLES: dict[str, frozenset[str]] = {
     "base": frozenset({"extract_texto", "extract_vision"}),
+    "detection": frozenset({"extract_deteccion"}),
     "desglose": frozenset({"extract_desglose"}),
     "rubro": frozenset({"extract_rubro"}),
     "clasificacion": frozenset({"extract_clasificacion"}),
@@ -536,9 +545,10 @@ _STEP_PROMPT_ROLES: dict[str, frozenset[str]] = {
 #: speaks. Named here rather than imported from `flow`, so the gate reads what the
 #: manifest declares instead of what the loader happens to expose.
 _STEP_PROMPT_KEYS: dict[str, str] = {
-    "extract_desglose": "prompts/extraction/desglose.txt",
-    "extract_rubro": "prompts/extraction/rubro.txt",
-    "extract_clasificacion": "prompts/extraction/clasificacion.txt",
+    "extract_deteccion": "prompts/extraction/invoice_deteccion.txt",
+    "extract_desglose": "prompts/extraction/invoice_desglose.txt",
+    "extract_rubro": "prompts/extraction/invoice_rubro.txt",
+    "extract_clasificacion": "prompts/extraction/invoice_clasificacion.txt",
 }
 
 
@@ -613,18 +623,25 @@ def test_every_enum_option_is_declared_in_the_prompt() -> None:
     Measured: with the option list living only in the schema's `description`,
     `deepseek-r1:1.5b` returned the **description itself** as the value
     (`"090 | 099"`, and `"21 | 10_5 | 27 | 2_5 | exento_no_gravado | null"`).
-    """
-    artifacts = load_artifacts()
-    schema = artifacts.extraction_schema
 
-    for role in ("extract_texto", "extract_vision"):
-        prompt = artifacts.prompts[role]
-        for field, spec in schema["properties"].items():
-            for option in spec.get("enum", []):
-                assert option in prompt, (
-                    f"{role}: `{field}` accepts {option!r} per the schema, but "
-                    f"the prompt never mentions it"
-                )
+    It runs over **every step's prompt against its own schema**, not the base
+    pair alone: the split moved `condicion_impositiva_dominante` to `desglose` and
+    `categoria_gasto` to `clasificacion`, so a check pinned to `invoice.txt` /
+    `vision.txt` would have gone on passing while checking two fields that no
+    longer carry an enum in the artifact it read.
+    """
+    prompts = _extraction_prompt_texts(load_artifacts())
+    schemas = _extraction_step_schemas()
+
+    for step, schema in schemas.items():
+        for role in _STEP_PROMPT_ROLES[step]:
+            prompt = prompts[role]
+            for field, spec in schema["properties"].items():
+                for option in spec.get("enum", []):
+                    assert option in prompt, (
+                        f"{step}/{role}: `{field}` accepts {option!r} per the "
+                        "schema, but the prompt never mentions it"
+                    )
 
 
 def test_every_enum_has_an_abstention_escape() -> None:
@@ -640,25 +657,30 @@ def test_every_enum_has_an_abstention_escape() -> None:
     A field whose enum is a closed classification must therefore carry an escape
     — either the literal `"null"`, or a member that **is** the abstention by its
     own definition (see `_ABSTENTION_IS_A_MEMBER`).
-    """
-    schema = load_artifacts().extraction_schema
 
-    for field, spec in schema["properties"].items():
-        options = spec.get("enum")
-        if not options or field in _ABSTENTION_IS_A_MEMBER:
-            continue
-        assert "null" in options, (
-            f"`{field}` has enum {options} with no 'null' escape, so the model "
-            "cannot decline to answer"
-        )
+    The rule reads **every extraction step's schema**, not only the base one. The
+    layered split moved `comprobante_valido` — the field this test's whole
+    exception list exists for — out of `invoice.json` and into the detection
+    step, and a gate reading only the loaded artifact would have gone on passing
+    while silently no longer checking it.
+    """
+    for step, schema in _extraction_step_schemas().items():
+        for field, spec in schema["properties"].items():
+            options = spec.get("enum")
+            if not options or field in _ABSTENTION_IS_A_MEMBER:
+                continue
+            assert "null" in options, (
+                f"{step}/`{field}` has enum {options} with no 'null' escape, so "
+                "the model cannot decline to answer"
+            )
 
 
 #: Enums where one of the values already **is** the abstention, so a `null` would
 #: be a second way to say the same thing — or would contradict the prompt.
 #:
-#: - `comprobante_valido` is the binary classification *is this a readable
-#:   receipt*: its prompt defines `"false"` as exactly that, and a document the
-#:   model cannot judge takes `"false"`.
+#: - `comprobante_valido` (the detection step) is the binary classification *is
+#:   this a receipt*: its prompt defines `"false"` as exactly that, and a document
+#:   the model cannot judge takes `"false"`.
 #: - `moneda` has a **declared default**: the prompt says *"without an explicit
 #:   indication of currency, use ARS"*. Adding `null` would offer the model an
 #:   answer the prompt forbids, which is worse than the constraint — the enum

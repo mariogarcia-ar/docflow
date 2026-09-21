@@ -497,6 +497,10 @@ si un importe del contrato no lo declara ningún paso.
 gate de partición y por el de dirección inversa. Los cinco prompts suman lo mismo que los
 cuatro schemas.
 
+> **Superado por la séptima ronda.** Esta partición cierra en 23 pero reparte distinto: los 9
+> del paso base incluyen `comprobante_valido` / `motivo_rechazo`, que son un paso propio
+> (detección) y no una lectura. El reparto vigente es **7 + 2 + 9 + 2 + 3 = 23**.
+
 ---
 
 ## Cuarta ronda: el cableado, y la ventana que nadie pedía (2026-09-21)
@@ -973,6 +977,90 @@ inventó un borde. `I10` en acción.
 que **todo** candidato determinístico declare una familia `DOCUMENT_CONTENT`, y otro que
 exige que un ancla no verificable se **registre** igual. El segundo es el que distingue *no
 hay ancla* de *no se afirmó nada* — `§6.2` los puntúa igual y `B.9` exige que se lean distinto.
+
+---
+
+## Séptima ronda: el reparto de nombres, y la detección como paso propio (2026-09-21)
+
+Los cuatro pasos de la capa de extracción quedaron **nombrados de forma inconsistente**: los
+prompts se habían renombrado a `invoice_<paso>.txt` y los esquemas no, así que el archivo de
+cada paso se llamaba distinto según de qué lado del registry se lo mirara. La ronda cierra
+esa inconsistencia y, al hacerlo, encuentra el paso que faltaba.
+
+### El defecto que la aritmética destapó
+
+El contrato de 23 campos se repartía **7 + 9 + 2 + 3 = 21**. Faltaban exactamente dos:
+`comprobante_valido` y `motivo_rechazo`, o sea *¿este documento es un comprobante?*
+
+Estaban en `invoice.json` —el paso de **lectura**—, y ahí no pueden estar: el prompt base abre
+diciendo *«Este comprobante ya fue identificado como válido y legible»*. Es una contradicción
+literal: el esquema obliga a responder una pregunta que el prompt declara ya respondida. Y es
+la clase de defecto que costaba caro en las dos direcciones — un modelo al que se le pide
+leer campos de un documento que no es un comprobante **los inventa** (`B.10`, `my_flow.md`
+§3). La pregunta *¿es un comprobante?* es un gate barato y su lugar es un paso propio.
+
+**El reparto final es 7 + 2 + 9 + 2 + 3 = 23**, exacto, verificado por el gate de partición.
+
+| Paso | Archivo | Campos |
+|---|---|---|
+| lectura | `invoice.json` | 7 |
+| **detección** | `invoice_detection.json` (**nuevo**) | 2 |
+| fiscal | `invoice_desglose.json` | 9 |
+| rubro | `invoice_rubro.json` | 2 |
+| clasificación | `invoice_clasificacion.json` | 3 |
+
+### Lo que el reparto obligó a corregir además del registry
+
+Tres artefactos declaraban el paso base y quedaron desalineados:
+
+- **`invoice_clasificacion.txt` pedía 2 claves contra un esquema de 3.** Faltaba
+  `centro_de_costo`, que el contrato le asigna a ese paso y que el esquema ya declaraba
+  `required`. El modelo estaba obligado a una clave que las instrucciones nunca definían: la
+  misma deriva que `test_the_prompt_declares_every_field_the_schema_requires` existe para
+  atrapar, del lado de la partición. Se agregó la regla 5 (siempre `"null"`, se completa en un
+  paso posterior), que es la del prompt legacy §13.
+- **`invoice_deteccion.txt` pedía `es_comprobante`, no `comprobante_valido`.** El nombre
+  venía copiado de `legacy/files (2)/deteccion.txt`; el contrato de 23 campos
+  (`legacy/prompts/11-extraction_key_value_invoice_prompt.yaml`) y `_DERIVED_FIELDS` usan
+  `comprobante_valido`. Se renombró la **clave del prompt**, no el contrato: cambiar el
+  contrato para que coincida con una copia es dejar que la copia gane.
+- **`vision.txt` decía *«Extraé los datos base»* a secas.** Quedó redactado de forma paralela a
+  `invoice.txt`, que sí aclara que el comprobante ya fue identificado: son el mismo paso en dos
+  lanes y el prompt no debe diferir en lo que afirma sobre el documento.
+
+### Dos guardas que el reparto dejó ciegas, y la mutación que lo probó
+
+Al mover `comprobante_valido` fuera de `invoice.json`, **dos gates siguieron en verde sin
+seguir comprobando nada**:
+
+| Gate | Leía | Después del reparto |
+|---|---|---|
+| `test_every_enum_has_an_abstention_escape` | sólo `invoice.json` | `comprobante_valido` —el campo por el que existe toda su lista de excepciones— ya no estaba ahí |
+| `test_every_enum_option_is_declared_in_the_prompt` | sólo los dos prompts base | `condicion_impositiva_dominante` y `categoria_gasto` tampoco |
+
+Los dos se ensancharon a **todos los pasos contra su propio esquema**, la misma regla que el
+repo ya aplica en `test_the_amounts_are_strings...` (*la regla sigue al campo, no al archivo*).
+Falsificadas de a una: un enum nuevo en el esquema de detección sin escape `null` → rojo; una
+opción quitada del prompt de clasificación → rojo. Restauradas, verdes.
+
+### Verificación
+
+**1170 tests**, un `skip` esperado (`smollm2` no está descargado), cuatro gates en verde.
+Carga por K8 con los cinco pasos: la partición cierra en 23 sin repetir ni perder ninguno.
+Corrida real sobre `casos/66cd35e9-…pdf`: `comprobante_valido: "true"` con
+`producers: ['extractor_detection']` —el paso nuevo **corre**, no sólo carga— y `rubro`
+correctamente salteado (el rubro no era Restaurante ni Combustible).
+
+**Lo que este reparto NO cierra, y conviene decirlo:** nadie **consume** todavía
+`comprobante_valido`. El paso lo reporta y el campo entra al motor como cualquier otro
+(`_DERIVED_FIELDS`), pero el fast-fail de `my_flow.md` §3 —descartar un no-comprobante antes de
+gastar la lectura— es `# TODO: [MVP]`. Hoy un documento que no es comprobante **igual paga** el
+paso base. El orden de declaración deja el lugar listo para el gate; el gate no está.
+
+**Deriva de prosa corregida de paso:** los tres esquemas reservados seguían diciendo
+*«declared in the manifest, not loaded by any lane yet»*, falso desde la cuarta ronda (el
+cableado). Un `$comment` que describe un estado que ya no existe es una afirmación sobre el
+sistema que nadie vuelve a comprobar.
 
 ---
 
