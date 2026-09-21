@@ -11,6 +11,86 @@ un cli deberia tener
 entrada > proceso > salida 
 
 ---
+usar estos ejemplos 
+pdf texto : sin comprobante 
+tests/fixtures/negativos/neg_2026-06_correo_liquidacion.pdf
+
+pdf texto : con comprobante
+tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf
+
+pdf imagen : sin comprobante 
+tests/fixtures/negativos/neg_2026-10_pantalla_aprobacion.pdf
+
+pdf imagen : con comprobante
+tests/fixtures/pdf_aptos_layout/36744cc6-2ed9-47e5-b4b8-66c31768164b.pdf
+
+
+imagen : sin comprobante 
+tests/fixtures/negativos/neg_2026-06_correo_liquidacion.pdf
+
+imagen : con comprobante
+tests/fixtures/casos/66e6e0ea-e910-41f4-9037-13f0309812c1.jpg
+
+
+
+```bash
+#!/bin/bash
+
+# Limpiar ejecuciones anteriores
+rm -rf var 
+
+# ==============================================================================
+# 1. PDF TEXTO
+# ==============================================================================
+
+# pdf texto : sin comprobante 
+python scripts/poc-flow-v2/myflow.py \
+  'tests/fixtures/negativos/neg_2026-06_correo_liquidacion.pdf' \
+  --work-root var/work/pdf_text_sin_comprobante \
+  --verbose
+
+# pdf texto : con comprobante
+python scripts/poc-flow-v2/myflow.py \
+  'tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf' \
+  --work-root var/work/pdf_text_con_comprobante \
+  --verbose
+
+# ==============================================================================
+# 2. PDF IMAGEN
+# ==============================================================================
+
+# pdf imagen : sin comprobante 
+python scripts/poc-flow-v2/myflow.py \
+  'tests/fixtures/negativos/neg_2026-10_pantalla_aprobacion.pdf' \
+  --work-root var/work/pdf_imagen_sin_comprobante \
+  --verbose
+
+# pdf imagen : con comprobante
+python scripts/poc-flow-v2/myflow.py \
+  'tests/fixtures/pdf_aptos_layout/36744cc6-2ed9-47e5-b4b8-66c31768164b.pdf' \
+  --work-root var/work/pdf_imagen_con_comprobante \
+  --verbose
+
+# ==============================================================================
+# 3. IMAGENES NATIVAS
+# ==============================================================================
+
+# imagen : sin comprobante 
+python scripts/poc-flow-v2/myflow.py \
+  'tests/fixtures/negativos/neg_2026-06_correo_liquidacion.pdf' \
+  --work-root var/work/imagen_sin_comprobante \
+  --verbose
+
+# imagen : con comprobante
+python scripts/poc-flow-v2/myflow.py \
+  'tests/fixtures/casos/66e6e0ea-e910-41f4-9037-13f0309812c1.jpg' \
+  --work-root var/work/imagen_con_comprobante \
+  --verbose
+
+
+```
+
+---
 cat var/work/run.json| jq 
 jq -r '.text' var/work/material.json
 
