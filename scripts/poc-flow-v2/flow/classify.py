@@ -18,6 +18,8 @@ import dataclasses
 import re
 from typing import Final
 
+from .fields import CLASSIFY_NOT_A_RECEIPT
+
 __all__: list[str] = [
     "Decision",
     "classify",
@@ -25,6 +27,7 @@ __all__: list[str] = [
 
 #: The independent fiscal signals the gate counts. Each is a named pattern: a
 #: document earns a signal when its text matches, and the verdict needs two.
+_REQUIRED_SIGNALS: Final[int] = 2
 _CUIT_RE: Final = re.compile(r"\b\d{2}-\d{8}-\d\b")
 _AMOUNT_RE: Final = re.compile(r"(?:\$\s*)?\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?")
 _DATE_RE: Final = re.compile(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b")
@@ -50,12 +53,33 @@ class Decision:
         proceeds: ``True`` when the document should go to extraction.
         reason: Why, in words a console can print. Never empty.
         signals: The fiscal signals found, as ``name: count``.
+        code: The stable reason code when the gate refuses
+            (:data:`flow.fields.CLASSIFY_NOT_A_RECEIPT`), ``""`` when it
+            proceeds. A refusal counted in a metric names a code, never prose —
+            the same rule the engine's reason codes follow.
 
     """
 
     proceeds: bool
     reason: str
     signals: dict[str, int]
+    code: str = ""
+
+
+def _refused(reason: str, signals: dict[str, int]) -> Decision:
+    """A refusal, carrying the gate's stable code."""
+    return Decision(False, reason, signals, CLASSIFY_NOT_A_RECEIPT)
+
+
+def _missing(present: list[str]) -> str:
+    """The signals the gate found, and how many it needed.
+
+    The reason names what was **absent** as well as what was there: a refusal
+    that lists only the signals it found reads as if the last one were the
+    cause, when the cause is that two are required.
+    """
+    found = ", ".join(present) if present else "no fiscal signals"
+    return f"{len(present)} of {_REQUIRED_SIGNALS} required signals ({found})"
 
 
 def classify(text: str) -> Decision:
@@ -83,9 +107,9 @@ def classify(text: str) -> Decision:
 
     present = [name for name, count in signals.items() if count > 0]
     if not text.strip():
-        return Decision(False, "the document produced no text", signals)
+        return _refused(f"the document produced no text: {_missing(present)}", signals)
 
-    if len(present) >= 2:
+    if len(present) >= _REQUIRED_SIGNALS:
         return Decision(
             True,
             f"receipt-like text ({', '.join(present)})",
@@ -94,8 +118,4 @@ def classify(text: str) -> Decision:
     if "cuit" in present and "amount" in present:
         return Decision(True, "a CUIT and an amount are present", signals)
 
-    return Decision(
-        False,
-        f"not a receipt ({', '.join(present) or 'no fiscal signals'})",
-        signals,
-    )
+    return _refused(f"not a receipt: {_missing(present)}", signals)

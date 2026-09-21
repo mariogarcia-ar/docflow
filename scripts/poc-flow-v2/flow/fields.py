@@ -93,8 +93,24 @@ REASON_CODES: Final[frozenset[str]] = frozenset(
         "ESC_NO_NEW_EVIDENCE",
         "ESC_LOOP_LIMIT",
         "ESC_DEGRADED_MATERIAL",
+        "CLASSIFY_NOT_A_RECEIPT",
     }
 )
+
+#: The code the classification gate refuses with (`my_flow.md` §3). It is not an
+#: ``ESC_`` code: a document that is not a receipt did not escalate — it was
+#: discarded before extraction, which is a different outcome and so a different
+#: word. Named here rather than in `classify.py` because this module is the one
+#: owner of the vocabulary.
+CLASSIFY_NOT_A_RECEIPT: Final[str] = "CLASSIFY_NOT_A_RECEIPT"
+
+#: The code a material that could not be read at all escalates with (§6.5). It
+#: is an ``ESC_`` code because §2 sends a degraded material straight to the
+#: ladder, unlike a non-receipt, which is discarded. Distinct from
+#: :data:`CLASSIFY_NOT_A_RECEIPT` on purpose (B.9): *we could not read it* and
+#: *we read it and it is not a receipt* are different findings, and collapsing
+#: them makes a document nobody managed to read look like a bad receipt.
+ESC_DEGRADED_MATERIAL: Final[str] = "ESC_DEGRADED_MATERIAL"
 
 #: Characters that are not digits or the CUIT's own hyphen, for the CUIT rule:
 #: the value is cut at the first character that is not a digit or the hyphen

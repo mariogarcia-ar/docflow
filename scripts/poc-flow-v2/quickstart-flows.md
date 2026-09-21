@@ -36,7 +36,7 @@ On disk that is four stages, always in this order:
 | Stage | Artifact | What it answers |
 |---|---|---|
 | `read` | `material.json` (+ `images/` when pages were rendered) | What was read, which route, which tier |
-| `extract` | `extraction.json` | Candidates, producers, notes (including “classified out”) |
+| `extract` | `extraction.json` | Candidates, producers, notes (a refusal code + its reason) |
 | `decide` | `decision.json` | Per-field verdict, score, margin, gate, reason codes |
 | `hitl` | `pending.json` | The fields a human must settle |
 
@@ -73,7 +73,7 @@ Two facts about this table, kept apart on purpose:
 
 ```
 path
-  1. read      ran     read ran
+  1. read      ran     texto_nativo via 'layout_text', 1/1 page(s)
   2. extract   ran     17 field(s) with candidates
   3. decide    ran     17 field(s) decided, 2 confirmed
   4. hitl      ran     15 field(s) pending
@@ -92,6 +92,8 @@ notes
 
 `ran` vs `reused` is the only way to know whether today’s answer came from a model call or from last week’s artifact. `read next` names **only files that were written**.
 
+The `read` line is a measurement, never the placeholder `read ran`: it names the tier and the route, or says `degraded:` and why. A read that could not happen is the one thing an operator must not have to open a JSON file to discover (B.12).
+
 Reason codes are the `motivo` of every branch (`my_flow.md` §6.5). The ones you will see first:
 
 | Code | Branch |
@@ -100,7 +102,15 @@ Reason codes are the `motivo` of every branch (`my_flow.md` §6.5). The ones you
 | `REV_GATE_UNMET` | score enough, strong evidence missing |
 | `REV_SCORE_MID` | score between 2 and T |
 | `ESC_LOW_SCORE` | winner score &lt; 2 |
-| `ESC_DEGRADED_MATERIAL` | `read` produced no text |
+| `ESC_DEGRADED_MATERIAL` | `read` could not read the document at all (§2) |
+| `CLASSIFY_NOT_A_RECEIPT` | §3's gate refused it — read, but not a receipt |
+| `ESC_NO_NEW_EVIDENCE` | the resolver ran and had nothing new (§7) |
+
+The last two are deliberately different words: *we could not read it* and *we read
+it and it is not a receipt* are different findings, and collapsing them makes a
+document nobody managed to read look like a bad receipt (B.9). `ESC_NO_NEW_EVIDENCE`
+only appears when the resolver actually ran and could not advance — a run where the
+ladder simply does not apply records no code at all, so the metric counts real stops.
 
 ---
 
@@ -192,8 +202,11 @@ A photo or scan that is already pixels. Routing is: legibility gate, then OCR. T
 ```
 imagen (jpg/png/…)
   → chequear legibilidad
-       ├─ no legible → tier degradado, text=None → extract no corre un modelo
-       │                 → decide no tiene candidatos → hitl vacío / ESCALAR material
+       ├─ no legible → tier degradado, text=None
+       │                 → read detail: "degraded: the page's pixels cannot be read (…)"
+       │                 → extract short-circuits (§2): ESC_DEGRADED_MATERIAL
+       │                    — NO se pregunta al gate de §3 sobre un texto que no existe
+       │                 → decide no tiene candidatos → hitl vacío
        └─ legible → OCR (Docling) → tier escaneado_ocr, route=ocr
                     → clasificar → extraer (regexp + lanes de texto)
                     → vision: no corre — read_material deja images=[] en archivos imagen
@@ -212,6 +225,18 @@ Blurred / illegible control (the pixel route is refused **before** OCR):
 python scripts/poc-flow-v2/myflow.py \
   tests/fixtures/blur/f69d1898-40f7-4424-9c94-77a961677595.jpg \
   --work-root var/work/imagen-blur --verbose
+```
+
+This is the case that distinguishes *we could not read it* from *we read it and it is not
+a receipt*. The report shows both the reason and the code:
+
+```
+path
+  1. read      ran     degraded: the page's pixels cannot be read (sharpness 0.8938 below the threshold 100.0); …
+
+notes
+  - ESC_DEGRADED_MATERIAL
+  - degraded material: the page's pixels cannot be read (…)
 ```
 
 Honest gap: attaching the source image as `material.images` so vision can run on a `.jpg` is not wired. Today an image file is OCR-only, same scoring ceiling as native text without a second lane.
@@ -236,7 +261,25 @@ python scripts/poc-flow-v2/myflow.py \
   --work-root var/work/no-comprobante --verbose
 ```
 
-Look for `classified out:` in the report `notes` and in `extraction.json`. The model was not paid.
+Expected shape of the tail of the report:
+
+```
+path
+  1. read      ran     escaneado_ocr via 'ocr', 1 page(s)
+  2. extract   ran     0 field(s) with candidates
+  3. decide    ran     0 field(s) decided, 0 confirmed
+  4. hitl      ran     0 field(s) pending
+
+notes
+  - CLASSIFY_NOT_A_RECEIPT
+  - classified out: not a receipt: 1 of 2 required signals (fiscal_word)
+```
+
+The reason names the **shortfall** as well as what was found: `1 of 2 required signals`. Listing only the signals present would read as if the last one caused the refusal, when the cause is that two are required.
+
+The model was not paid. There is no `ESC_` code here: nothing escalated — the document was discarded at the gate.
+
+Contrast with a document `read` could not open at all (the blurred control in Case 3): same empty candidate set, different word, and the code is `ESC_DEGRADED_MATERIAL` because §2 sends a degraded material to the ladder instead.
 
 ---
 
@@ -289,13 +332,13 @@ python scripts/poc-flow-v2/myflow.py \
 
 | Circuit | From the CLI? | How you see it |
 |---|---|---|
-| C1 classify | yes | Case 4; note `classified out:` |
+| C1 classify | yes | Case 4; notes `CLASSIFY_NOT_A_RECEIPT` + the shortfall in prose |
 | C2 lanes A/B × texto/vision | **partial** | text A/B on every receipt-like document; vision A/B only when `material.images` is populated (Case 2). Image files and native-text PDFs skip vision |
 | C3 QR | **no** | `flow/qr.py` is tested (`test_c3_*`); `extract()` never calls it. No `DETERMINISTIC` from QR, no `REV_QR_CONFLICT` on a real document yet |
 | C4 `verified` | yes | `DOCUMENT_CONTENT` PASS only with digit-boundary presence in the text; otherwise UNKNOWN. Bbox re-read still `# TODO: [MVP]` |
 | C5 arithmetic groups | yes, when amounts parse as amounts | unique consistent combo → +3; missing component → `UNKNOWN` (an alícuota `"21,0%"` is not an amount — B.7); 0 or more than one combo → `ESC_NO_UNIQUE_ARITHMETIC_COMBINATION` |
 | C6 lane-on-demand | **detects, does not render** | note `lane-on-demand deferred: …`; Anexo A’s ladder is not walked for Case 1 |
-| C7 resolver loop | yes | capped at 2; no new evidence → stop (the deferred note is that stop) |
+| C7 resolver loop | yes | capped at 2; a resolver that runs and finds nothing new stops with `ESC_NO_NEW_EVIDENCE`. When the ladder simply does not apply, **no** code is recorded — a non-event is not a stop |
 | C8 frontier + HITL | yes | `--resolve` / `--confirm` (Case “After decide”) |
 | C9 learn | **no** | `flow/learn.py` is tested (`SYSTEM_CONFIRMED` cannot activate a template). No store, no `LAYOUT_HISTORY` on a run. Activation stays `# TODO: [MVP]` in the caller |
 

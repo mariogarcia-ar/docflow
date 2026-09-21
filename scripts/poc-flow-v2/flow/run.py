@@ -31,10 +31,15 @@ from .config import DEFAULT_CONFIG, Config
 from .control import CONTROL_PAUSED, CONTROL_STOPPED
 from .engine import DecisionContext, evaluate
 from .extract import extract
-from .fields import DECISION_CONFIRMED, Extraction, FieldResult
+from .fields import (
+    DECISION_CONFIRMED,
+    ESC_DEGRADED_MATERIAL,
+    Extraction,
+    FieldResult,
+)
 from .hitl import pending_items
 from .lane import needs_vision_lane
-from .material import Material, read_material
+from .material import TIER_DEGRADED, Material, read_material
 from .progress import StepTrace, artifact, configure, emit, outcome, reused, step, trace
 from .record import RunRecord
 from .resolve import resolver_loop
@@ -86,6 +91,39 @@ def _own_cuits(settings: Mapping[str, object]) -> frozenset[str]:
     return frozenset(str(value) for value in raw)
 
 
+def ladder_step(result: FieldResult) -> bool | None:
+    """One step of the Anexo A ladder: does a lane still have to run?
+
+    The pure half (which fields need a lane) lives in `lane.py`; the render
+    itself is deferred (`# TODO: [MVP]`) — a native-text material carries no
+    pages until one is rendered, and that adapter call is the missing piece.
+    Until then the step reports the need honestly rather than pretending the
+    ladder ran.
+
+    It is a module-level function rather than a closure so the *decision* is
+    testable without an adapter: a closure can only be reached through a full
+    `decide` stage, which is how the caller's answer came to be unguarded.
+
+    Args:
+        result: The engine's current decisions.
+
+    Returns:
+        ``None`` when no critical field needs a lane — the ladder does not apply,
+        so the loop records no reason code. ``False`` when a lane is needed and
+        the deferred render could not produce it: that *is* a stopped loop, and
+        `ESC_NO_NEW_EVIDENCE` names it.
+
+    """
+    needed = needs_vision_lane(result.decisions)
+    if not needed:
+        return None
+    result.notes.append(
+        f"lane-on-demand deferred: {', '.join(sorted(needed))} "
+        "still lack strong evidence"
+    )
+    return False
+
+
 def decide_stage(inputs: StageInput) -> FieldResult:
     """Stage `decide`: score the extraction's candidates with the real engine."""
     config: Config = DEFAULT_CONFIG
@@ -118,27 +156,7 @@ def decide_stage(inputs: StageInput) -> FieldResult:
             notes=list(extraction.notes),
         )
 
-    def resolve_once(result: FieldResult) -> bool:
-        """The ladder: run the vision lane on demand for the unmet gates.
-
-        The pure half (which fields still need a lane) lives in `lane.py`; the
-        render itself is deferred (`# TODO: [MVP]`) — a native-text material
-        carries no pages until one is rendered, and that adapter call is the
-        missing piece. Until then the resolver reports the need honestly rather
-        than pretending the ladder ran.
-        """
-        needed = needs_vision_lane(result.decisions)
-        if not needed:
-            return False
-        # The render-on-demand is not wired: report the unmet gates so the
-        # decision is honest, and stop the loop — no new evidence was produced.
-        result.notes.append(
-            f"lane-on-demand deferred: {', '.join(sorted(needed))} "
-            "still lack strong evidence"
-        )
-        return False
-
-    result = resolver_loop(decide_once, resolve_once, max_loops=config.max_loops)
+    result = resolver_loop(decide_once, ladder_step, max_loops=config.max_loops)
     return result
 
 
@@ -158,22 +176,36 @@ def _read_stage(inputs: StageInput) -> object:
 def _extract_stage(inputs: StageInput) -> object:
     """Stage `extract`: the real extraction over the read material.
 
-    The classification gate runs first (`my_flow.md` §3): a document that is not
-    a receipt is refused with a reason, and no model is paid for it. A refused
-    classification is an `Extraction` with no candidates and the reason in its
-    notes — never a fake answer.
+    Two gates run first, and they are different facts that must not collapse
+    into one (`my_flow.md` §2, §3, B.9):
+
+    - **The material is degraded** — `read` could not read it at all. §2 says a
+      degraded material escalates directly, so it short-circuits here with its
+      own reason code. Asking `classify` about empty text would report *"not a
+      receipt"*, which is a claim about a document nobody managed to read.
+    - **The text is not a receipt** — `classify`'s cheap rules (§3). The
+      document was read and is not a receipt, which is a finding about it.
+
+    Either way no model is paid, and the reason is a note — never a fake answer.
     """
     material: object = inputs.deps.get(STAGE_READ)
     if not isinstance(material, Material):
         return Extraction(
             candidates={}, values={}, notes=["no material to extract from"]
         )
+    if material.tier == TIER_DEGRADED:
+        why = "; ".join(material.notes) or "no reason recorded by the read"
+        return Extraction(
+            candidates={},
+            values={},
+            notes=[ESC_DEGRADED_MATERIAL, f"degraded material: {why}"],
+        )
     decision = classify(material.text or "")
     if not decision.proceeds:
         return Extraction(
             candidates={},
             values={},
-            notes=[f"classified out: {decision.reason}"],
+            notes=[decision.code, f"classified out: {decision.reason}"],
         )
     return extract(material, DEFAULT_CONFIG, load_artifacts())
 
@@ -222,7 +254,14 @@ def _reuse_detail(stage: str, tree: WorkTree) -> str:
 
 
 def _ran_detail(stage: str, value: object) -> str:
-    """A one-line account of a stage that ran."""
+    """A one-line account of a stage that ran.
+
+    Every branch reports something **measured**. The literal fallback is the
+    only unmeasured answer, so no stage that has a value worth describing may
+    reach it — `read` in particular: `my_flow.md` B.12 says a cut is not a
+    silent cut, and a degraded read reported as the bare word "ran" is exactly
+    the silence that rule forbids.
+    """
     if isinstance(value, FieldResult):
         count = len(value.decisions)
         confirmed = sum(
@@ -233,9 +272,24 @@ def _ran_detail(stage: str, value: object) -> str:
         return f"{count} field(s) decided, {confirmed} confirmed"
     if isinstance(value, Extraction):
         return f"{len(value.candidates)} field(s) with candidates"
+    if isinstance(value, Material):
+        return _material_detail(value)
     if isinstance(value, list):
         return f"{len(value)} field(s) pending"
     return f"{stage} ran"
+
+
+def _material_detail(material: Material) -> str:
+    """What `read` measured: its tier and route, or why it could not read."""
+    if material.tier == TIER_DEGRADED:
+        why = material.notes[0] if material.notes else "no reason recorded"
+        return f"degraded: {why}"
+    pages = (
+        f"{material.pages_read}/{material.pages_total}"
+        if material.pages_total is not None
+        else f"{material.pages_read}"
+    )
+    return f"{material.tier} via {material.route!r}, {pages} page(s)"
 
 
 def _result_of(tree: WorkTree) -> FieldResult:

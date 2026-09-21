@@ -13,6 +13,14 @@ The resolver itself — which mechanical validator dirimes a field, and how — 
 the caller's; this module owns the loop shape, the change detection and the
 reason codes. Nothing here imports an adapter, so the loop is testable with
 constructed decisions.
+
+The resolver's answer has **three** states, not two (the lesson of `my_flow.md`
+B.9 — a zero does not say why it is zero): ``True`` it produced something new,
+``False`` it ran and had nothing new, and ``None`` it did not apply at all. Only
+the middle one is evidence of a non-converging loop; the third is a non-event,
+and a non-event must not append a reason code — those codes are the ``motivo``
+of an escalation and the base of every metric (§6.5), so a code that fires on
+every run counts documents that never escalated.
 """
 
 from __future__ import annotations
@@ -68,7 +76,7 @@ def same_decision_set(
 
 def resolver_loop(
     decide: Callable[[], FieldResult],
-    resolve: Callable[[FieldResult], bool],
+    resolve: Callable[[FieldResult], bool | None],
     *,
     max_loops: int = MAX_LOOPS,
 ) -> FieldResult:
@@ -80,20 +88,28 @@ def resolver_loop(
             candidate set between calls; ``decide`` re-reads it.
         resolve: The resolver. It reads the current result, mutates the
             candidate set, and returns ``True`` when it produced a new candidate
-            or signal, ``False`` when it had nothing new.
+            or signal, ``False`` when it ran and had nothing new, and ``None``
+            when it did not apply to this run at all.
         max_loops: How many re-entries are allowed after the first run.
 
     Returns:
         The final result. Its notes carry the loop's own reason code when the
         loop stopped early (`ESC_NO_NEW_EVIDENCE`) or exhausted its cap
-        (`ESC_LOOP_LIMIT`).
+        (`ESC_LOOP_LIMIT`) — never when the resolver did not apply, because that
+        run did not escalate.
 
     """
     result = decide()
     previous = result.decisions
 
     for _ in range(max_loops):
-        if not resolve(result):
+        answer = resolve(result)
+        if answer is None:
+            # Not applicable. Nothing was resolved and nothing failed to
+            # resolve, so the loop records no code: an `ESC_` code here would
+            # name an escalation that never happened.
+            break
+        if not answer:
             result.notes.append(ESC_NO_NEW_EVIDENCE)
             break
         result = decide()

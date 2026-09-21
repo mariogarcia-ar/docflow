@@ -21,6 +21,7 @@ from flow.config import DEFAULT_CONFIG, FAMILY_POINTS
 from flow.engine import DecisionContext, _family_score, evaluate
 from flow.extract import _apply_review, _cross_modal, _present_at_location
 from flow.fields import (
+    CLASSIFY_NOT_A_RECEIPT,
     DECISION_CONFIRMED,
     DECISION_REVIEW,
     PASS,
@@ -44,6 +45,7 @@ from flow.learn import (
 from flow.material import Material
 from flow.qr import qr_candidates, qr_conflict, qr_deterministic
 from flow.resolve import resolver_loop
+from flow.run import ladder_step
 from flow.validators import arithmetic_signal, required_components_for
 
 
@@ -127,6 +129,42 @@ def test_c1_a_lone_keyword_is_not_enough() -> None:
     decision = classify("la factura de la luz llegó tarde este mes")
 
     assert decision.proceeds is False
+
+
+def test_c1_a_refusal_carries_a_stable_code() -> None:
+    """A refusal names a code, not only prose.
+
+    Reason codes are the base of every metric (§6.5), so a discard that leaves
+    no code cannot be counted. The code is asserted as a **literal** as well as
+    against the constant: a test that compares the constant to itself moves
+    with any rename and proves nothing.
+    """
+    decision = classify("la factura de la luz llegó tarde este mes")
+
+    assert decision.code == "CLASSIFY_NOT_A_RECEIPT"
+    assert decision.code == CLASSIFY_NOT_A_RECEIPT
+
+
+def test_c1_a_proceeding_document_carries_no_refusal_code() -> None:
+    """The code is the signature of a refusal; a passing gate has none."""
+    decision = classify(
+        "FACTURA A nro 0001-00001234 CUIT 20-22087601-3 Importe $ 17.898,30"
+    )
+
+    assert decision.proceeds is True
+    assert decision.code == ""
+
+
+def test_c1_the_reason_names_the_shortfall_not_only_what_was_found() -> None:
+    """The prose says how many signals were required.
+
+    Listing only the signals found reads as if the last one caused the refusal,
+    when the cause is that two are required.
+    """
+    decision = classify("la factura de la luz llegó tarde este mes")
+
+    assert "1 of 2 required signals" in decision.reason
+    assert "fiscal_word" in decision.reason
 
 
 # --- C3: QR (deterministic extraction) -------------------------------------
@@ -484,6 +522,86 @@ def test_c7_a_resolver_with_nothing_new_stops_with_a_reason() -> None:
 
     assert len(calls) == 1
     assert "ESC_NO_NEW_EVIDENCE" in result.notes
+
+
+def test_c7_a_resolver_that_does_not_apply_records_no_reason_code() -> None:
+    """`None` is a non-event, not a stopped loop (B.9).
+
+    The distinction is load-bearing: `ESC_NO_NEW_EVIDENCE` is an *escalation
+    motivo* and the base of every metric (§6.5). A resolver that had no work to
+    do must not report one, or a code fires on every run and counts documents
+    that never escalated — which it did, on all three measured runs, until this
+    state existed.
+    """
+    calls: list[int] = []
+
+    def decide():
+        calls.append(1)
+        return _result_of([])
+
+    result = resolver_loop(decide, lambda _result: None, max_loops=2)
+
+    assert len(calls) == 1, "the loop must not re-enter the engine"
+    # `== []` and not `not notes`: the assertion is that the note list is exactly
+    # empty, and `not None` would also pass — a state this loop must never be in.
+    # ``== []`` (not ``not notes``) asserts the list is exactly empty; ``not None``
+    # would also pass, and that is a state this loop must never be in.
+    assert result.notes == [], (  # pylint: disable=use-implicit-booleaness-not-comparison
+        result.notes
+    )
+
+
+def test_c7_not_applicable_is_not_the_same_answer_as_nothing_new() -> None:
+    """The two stops differ in exactly one observable: the note.
+
+    Asserted together so a change that collapses the two states into one
+    boolean fails here rather than silently reintroducing the false motivo.
+    """
+    not_applicable = resolver_loop(lambda: _result_of([]), lambda _result: None)
+    nothing_new = resolver_loop(lambda: _result_of([]), lambda _result: False)
+
+    assert not_applicable.notes == (  # pylint: disable=use-implicit-booleaness-not-comparison
+        []
+    )
+    assert nothing_new.notes == ["ESC_NO_NEW_EVIDENCE"]
+
+
+def test_c6_the_wired_ladder_step_returns_none_when_no_lane_is_needed() -> None:
+    """The caller's own answer, not just the pure predicate.
+
+    `needs_vision_lane` returning `{}` and the *caller* reporting the correct
+    three-state answer are two different facts. Testing only the predicate left
+    the wiring unguarded: returning `False` instead of `None` here re-created the
+    false `ESC_NO_NEW_EVIDENCE` on every run and no test failed.
+    """
+    result = _result_of([])
+
+    assert ladder_step(result) is None
+    assert result.notes == (  # pylint: disable=use-implicit-booleaness-not-comparison
+        []
+    )
+
+
+def test_c6_the_wired_ladder_step_stops_when_a_lane_is_deferred() -> None:
+    """A needed-but-unrendered lane is a real stop: the loop must be told."""
+    decision = FieldDecision(
+        field="importe_total_facturado",
+        severity="critica",
+        decision=DECISION_REVIEW,
+        reason_codes=["REV_GATE_UNMET"],
+        winner=FieldCandidate("1789830", "17.898,30", ["llm"], [], []),
+        runner_up=None,
+        score=2,
+        margin=2,
+        threshold=5,
+        strong=("DETERMINISTIC", "CROSS_MODAL"),
+        gate_satisfied=False,
+        notes=[],
+    )
+    result = _result_of([decision])
+
+    assert ladder_step(result) is False
+    assert any("lane-on-demand deferred" in note for note in result.notes)
 
 
 def _result_of(decisions):
