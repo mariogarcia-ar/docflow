@@ -50,6 +50,32 @@ _PROMPT_KEYS: Final[dict[str, str]] = {
 _EXTRACTION_SCHEMA_KEY: Final[str] = "schemas/extraction/invoice.json"
 _REVIEW_SCHEMA_KEY: Final[str] = "schemas/review/review.json"
 
+#: The reserved extraction steps (`cierre-circuitos.md` §«Enfoque en capas»):
+#: step name to its (prompt, schema) registry keys. They are declared in the
+#: manifest but no lane loads them yet, so `load_artifacts` reads only the ones a
+#: lane asks for by name.
+#:
+#: **The declaration order is the run order**, and it is load-bearing:
+#: `clasificacion` settles `categoria_gasto`, which is what decides whether
+#: `rubro` has a question to ask. Declaring `rubro` before `clasificacion` made it
+#: skip on every document — a dependency cannot be satisfied by a step that has not
+#: run yet.
+#:
+#: The step name is also the role the prompt is read under, and the field names
+#: each schema carries are proved to partition the single-pass contract by
+#: `tests/poc_flow_v2/test_gates.py::test_the_extraction_steps_partition_every_field`.
+RESERVED_EXTRACTION_STEPS: Final[dict[str, tuple[str, str]]] = {
+    "desglose": (
+        "prompts/extraction/desglose.txt",
+        "schemas/extraction/desglose.json",
+    ),
+    "clasificacion": (
+        "prompts/extraction/clasificacion.txt",
+        "schemas/extraction/clasificacion.json",
+    ),
+    "rubro": ("prompts/extraction/rubro.txt", "schemas/extraction/rubro.json"),
+}
+
 
 # `too-few-public-methods`: `Artifacts` is a load-or-refuse bundle; its fields
 # are the contract, not its methods.
@@ -74,11 +100,46 @@ class Artifacts:
         extraction_schema: Mapping[str, object],
         review_schema: Mapping[str, object],
         signature: str,
+        assets: Mapping[str, object] | None = None,
     ) -> None:
         self.prompts = dict(prompts)
         self.extraction_schema = dict(extraction_schema)
         self.review_schema = dict(review_schema)
         self.signature = signature
+        # The registry's raw assets, kept so a **reserved** step can be read by
+        # `reserved_extraction_step` without a second `load_registry` call. The
+        # loaded prompts and schemas are the ones a lane runs; these are the ones
+        # the manifest declares.
+        self._assets = dict(assets) if assets else {}
+
+    def reserved_extraction_step(self, step: str) -> tuple[str, dict[str, object]]:
+        """One reserved extraction step's prompt and schema, or refuse.
+
+        Refusing rather than defaulting for the same reason `load_artifacts`
+        does: a step whose prompt is missing would make the flow ask a model a
+        different question while reporting success.
+
+        Args:
+            step: The step name, one of :data:`RESERVED_EXTRACTION_STEPS`.
+
+        Returns:
+            The prompt text and the parsed schema.
+
+        Raises:
+            KeyError: When the step is not declared, or its assets are not in the
+                registry — both are wiring faults, not document facts.
+
+        """
+        prompt_key, schema_key = RESERVED_EXTRACTION_STEPS[step]
+        prompt_asset = self._assets.get(prompt_key)
+        schema_asset = self._assets.get(schema_key)
+        if prompt_asset is None or schema_asset is None:
+            raise KeyError(
+                f"the {step} step is declared but {prompt_key!r} or "
+                f"{schema_key!r} is not in the registry"
+            )
+        parsed = json.loads(schema_asset.content.decode("utf-8"))
+        return prompt_asset.content.decode("utf-8"), parsed
 
 
 def load_artifacts() -> Artifacts:
@@ -124,4 +185,5 @@ def load_artifacts() -> Artifacts:
         extraction_schema=schema,
         review_schema=review,
         signature=registry_hash(loaded.value),
+        assets=assets,
     )

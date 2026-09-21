@@ -23,7 +23,7 @@ import re
 
 from flow import run
 from flow._bootstrap import REGISTRY_ROOT, ensure_docflow_importable
-from flow.artifacts import load_artifacts
+from flow.artifacts import RESERVED_EXTRACTION_STEPS, load_artifacts
 from flow.config import DEFAULT_CONFIG
 from flow.engine import DecisionContext, decide_field
 from flow.fields import (
@@ -357,6 +357,35 @@ def test_every_receipt_code_the_prompt_names_is_in_the_enum() -> None:
             f"{role}: the prompt names {missing}, but the enum rejects them: "
             "the model is taught a code it cannot answer with"
         )
+
+
+def test_the_step_order_satisfies_the_dependency_between_steps() -> None:
+    """A step that depends on another's field must be declared after it.
+
+    `RESERVED_EXTRACTION_STEPS` is iterated in declaration order, so the order is the
+    run order. Measured: declaring `rubro` before `clasificacion` made the
+    line-of-business step skip on **every** document, because the `categoria_gasto`
+    that gates it is settled by `clasificacion` — a dependency cannot be satisfied by
+    a step that has not run yet, and the skip is silent.
+
+    The dependency is stated here rather than inferred: which field gates which step
+    is a design decision, and a test that derived it from the prompts would be
+    guessing at prose.
+    """
+    order = list(RESERVED_EXTRACTION_STEPS)
+    for step, depends_on in _STEP_DEPENDENCIES.items():
+        assert step in order, f"{step!r} is not a declared extraction step"
+        assert depends_on in order, f"{depends_on!r} is not a declared extraction step"
+        assert order.index(depends_on) < order.index(step), (
+            f"{step!r} is declared before {depends_on!r}, the step that settles the "
+            f"field gating it: the gate would never open, silently"
+        )
+
+
+#: Which step settles the field gating another step. `rubro` asks about diners or
+#: litres, and only knows to ask once `clasificacion` has said the receipt is a
+#: restaurant or a fuel purchase.
+_STEP_DEPENDENCIES: dict[str, str] = {"rubro": "clasificacion"}
 
 
 def test_the_extraction_steps_partition_every_field() -> None:

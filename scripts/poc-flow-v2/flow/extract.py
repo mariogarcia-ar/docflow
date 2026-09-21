@@ -36,7 +36,7 @@ ensure_docflow_importable()
 from docflow.adapters.ollama import OllamaEngine  # noqa: E402
 from docflow.kernels.types import Bytes  # noqa: E402
 
-from .artifacts import Artifacts  # noqa: E402
+from .artifacts import RESERVED_EXTRACTION_STEPS, Artifacts  # noqa: E402
 from .config import Config  # noqa: E402
 from .fields import (  # noqa: E402
     FAIL,
@@ -56,6 +56,20 @@ __all__: list[str] = ["extract"]
 
 #: Where the document's text is substituted into the prompts.
 TEXT_PLACEHOLDER: Final[str] = "{text}"
+
+#: Where the classification step's rubro is substituted into the line-of-business
+#: prompt. The caller decides whether to run that step at all, so the prompt never
+#: has to ask *does this apply*.
+RUBRO_PLACEHOLDER: Final[str] = "{rubro}"
+
+#: The field the classification step settles and the line-of-business step depends
+#: on. Named once because two steps name it: one produces it, the other is gated by
+#: its value.
+CATEGORY_FIELD: Final[str] = "categoria_gasto"
+
+#: The rubros whose receipt has a line-of-business question to answer. A restaurant
+#: receipt may print diners, a fuel one exact litres; nothing else does.
+RUBRO_CATEGORIES: Final[frozenset[str]] = frozenset({"Restaurante", "Combustible"})
 
 #: Where A's extraction is substituted into the review prompts. The reviewer
 #: must receive the proposal to review (I5): a review prompt that names a
@@ -444,6 +458,136 @@ def _reviewer_note(
     return ""
 
 
+# `too-few-public-methods`: `_Collected` is a record the lanes extend together —
+# its fields are the contract, not its methods. The same reasoning `fields.py` and
+# `material.py` state for their boundary records.
+# pylint: disable=too-few-public-methods
+
+
+class _Collected:
+    """What every lane and step accumulates, bundled so it can be passed once.
+
+    A record rather than three parallel arguments: the three are extended together
+    by every producer, and passing them separately pushed the runner past pylint's
+    argument budget for no gain in clarity.
+
+    Attributes:
+        candidates: Field name to the candidates produced so far.
+        values: The document-level amounts the arithmetic rule reads.
+        notes: Human-readable notes about what refused or was skipped.
+
+    """
+
+    def __init__(
+        self,
+        candidates: dict[str, list[FieldCandidate]],
+        values: dict[str, str],
+        notes: list[str],
+    ) -> None:
+        self.candidates = candidates
+        self.values = values
+        self.notes = notes
+
+
+def _run_reserved_steps(
+    engine: OllamaEngine,
+    material: Material,
+    config: Config,
+    artifacts: Artifacts,
+    collected: _Collected,
+) -> None:
+    """Run the reserved extraction steps over the same material, in order.
+
+    The layered split (`cierre-circuitos.md` §«Enfoque en capas») answers the same
+    document four times, once per domain of knowledge — reading, tax mechanics,
+    line-of-business detail, judgement — instead of asking one prompt for all 23
+    fields. Each step gets its **own prompt and its own schema**, so the grammar
+    constrains only that step's keys.
+
+    Two orderings are load-bearing:
+
+    - **`clasificacion` before `rubro`**, because `categoria_gasto` decides whether
+      the line-of-business step runs at all. `rubro` asks about litres or diners;
+      asking that of every receipt is what made a model answer with nothing. The
+      order is declared in `RESERVED_EXTRACTION_STEPS` and guarded by
+      `test_the_step_order_satisfies_the_dependency_between_steps`.
+    - **`desglose` runs always**, so its `subtotal`/`iva`/`importe_total_facturado`
+      reach `values` together — the combination §6.4 validates is a unit, and the
+      step that holds it is the step that can settle it.
+
+    A step that refuses is a **note**, never a silent gap: the fields it would have
+    contributed are simply absent, which is a fact the decision layer already
+    handles (`unknown scores nothing`).
+
+    Args:
+        engine: The local engine.
+        material: The document's text and pages.
+        config: The run's dials.
+        artifacts: The loaded artifacts, including the reserved steps.
+        collected: The candidates, values and notes to extend, in place.
+
+    """
+    text = material.text or ""
+    for step in RESERVED_EXTRACTION_STEPS:
+        if step == "rubro" and not _rubro_applies(collected.candidates):
+            continue
+        try:
+            prompt_template, schema = artifacts.reserved_extraction_step(step)
+        except KeyError as exc:
+            collected.notes.append(f"{step} step unavailable: {exc}")
+            continue
+
+        answered, refusal = _call_structured(
+            engine,
+            config.text_model_a,
+            _step_prompt(step, prompt_template, text, collected.candidates),
+            schema,
+        )
+        if answered is None:
+            collected.notes.append(f"{step} step refused ({refusal}); fields absent")
+            continue
+
+        for field, field_candidates in _fields_to_candidates(
+            answered, f"extractor_{step}", text, config
+        ).items():
+            collected.candidates.setdefault(field, []).extend(field_candidates)
+        collected.values.update(document_values(answered))
+
+
+def _step_prompt(
+    step: str,
+    template: str,
+    text: str,
+    candidates: dict[str, list[FieldCandidate]],
+) -> str:
+    """A reserved step's prompt with its placeholders substituted.
+
+    Two substitutions, and only the line-of-business step needs the second: it is
+    the one whose question depends on what the classification step settled.
+    """
+    prompt = template.replace(TEXT_PLACEHOLDER, text)
+    if step == "rubro":
+        prompt = prompt.replace(RUBRO_PLACEHOLDER, _rubro_value(candidates))
+    return prompt
+
+
+def _rubro_value(candidates: dict[str, list[FieldCandidate]]) -> str:
+    """The `categoria_gasto` the classification step already settled."""
+    produced = candidates.get(CATEGORY_FIELD)
+    return produced[0].raw_value if produced else ""
+
+
+def _rubro_applies(candidates: dict[str, list[FieldCandidate]]) -> bool:
+    """Whether the line-of-business step has a rubro that gives it a question.
+
+    The step asks about diners or litres; on a receipt that is neither a restaurant
+    nor a fuel purchase there is nothing to ask, so it is **skipped** rather than
+    asked and answered with nulls on every document (measured: both fields came back
+    absent from a restaurant receipt when the single pass asked anyway).
+    """
+    return _rubro_value(candidates) in RUBRO_CATEGORIES
+
+
 def extract(  # pylint: disable=too-many-locals, too-many-branches
     material: Material,
     config: Config,
@@ -559,5 +703,9 @@ def extract(  # pylint: disable=too-many-locals, too-many-branches
 
     # --- Cross-modal agreement -------------------------------------------
     _cross_modal(candidates, config)
+
+    # --- The reserved steps, in order -------------------------------------
+    collected = _Collected(candidates, values, notes)
+    _run_reserved_steps(engine, material, config, artifacts, collected)
 
     return Extraction(candidates=candidates, values=values, notes=notes)
