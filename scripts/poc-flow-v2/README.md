@@ -17,6 +17,23 @@ python scripts/poc-flow-v2/myflow.py <document> --json     # el resultado, máqu
 python scripts/poc-flow-v2/myflow.py <document> --pretty   # el resultado, indentado
 ```
 
+**Una sola pregunta, sin correr todo el pipeline** — *dado este documento y este
+prompt, qué dice el modelo local*:
+
+```bash
+python scripts/poc-flow-v2/myllmlocal.py <document> --prompt var/prompt.txt
+python scripts/poc-flow-v2/myllmlocal.py <document> --prompt p.txt --schema s.json
+```
+
+La ruta del documento a texto es la del flujo, nunca un segundo lector: un `.txt`
+se lee tal cual, un PDF con capa de texto pasa por `pdftotext -layout`, una página
+sin capa se renderiza y va a OCR, y una imagen pasa por el filtro de legibilidad y
+OCR. Sólo se envía **texto** — la lane de visión es la de `myflow.py`. Sin
+`--prompt`/`--schema` usa el prompt y el schema del registry (`extract_texto`), por
+K8. `stdout` es **un** objeto JSON; la ruta, el modelo y la ventana van a `stderr`.
+Códigos de salida: `0` valor, `2` rechazo tipado, `3` precondición, `4` invocación
+mal formada.
+
 **Ver cada circuito de `my_flow.md` en acción** — clasificar, las lanes, `verified`,
 la aritmética, lane-on-demand, el resolver, el frontier y el HITL, uno por uno con su
 comando y su salida: [`quickstart-flows.md`](quickstart-flows.md). Incluye qué
@@ -135,7 +152,8 @@ Tres reglas del registro, heredadas del Anexo B:
 
 ## La biblioteca
 
-La librería es el entregable; `myflow.py` es un cliente. El punto de entrada:
+La librería es el entregable; `myflow.py` y `myllmlocal.py` son clientes. El punto
+de entrada:
 
 ```python
 from flow import render_report, run, trace

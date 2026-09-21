@@ -20,9 +20,11 @@ import sys
 import xml.etree.ElementTree as ET
 
 FLOW = pathlib.Path("scripts/poc-flow-v2/flow")
+CLIENT = pathlib.Path("scripts/poc-flow-v2/myllmlocal.py")
 SUITE = pathlib.Path("tests/poc_flow_v2/test_invariants.py")
 SAMPLING_SUITE = pathlib.Path("tests/poc_flow_v2/test_sampling.py")
 PENDING_SUITE = pathlib.Path("tests/poc_flow_v2/test_pendientes.py")
+CLIENT_SUITE = pathlib.Path("tests/poc_flow_v2/test_myllmlocal.py")
 
 #: (label, file, anchor, replacement, the tests that MUST fail)
 MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
@@ -190,13 +192,63 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
         '        settings["owncuits"] = [',
         {"test_the_own_cuit_flag_reaches_the_veto"},
     ),
+    (
+        "probe: a text file is routed to read_material, which calls it invalid",
+        CLIENT,
+        "    if path.suffix.lower() in TEXT_SUFFIXES:",
+        "    if False:",
+        {"test_a_text_file_is_read_directly"},
+    ),
+    (
+        "probe: the document's text is substituted with nothing",
+        CLIENT,
+        "    return template.replace(TEXT_PLACEHOLDER, text)",
+        '    return template.replace(TEXT_PLACEHOLDER, "")',
+        {"test_the_document_text_reaches_the_model"},
+    ),
+    (
+        "probe: a prompt with no placeholder is sent, so it never carries the text",
+        CLIENT,
+        "    if TEXT_PLACEHOLDER not in template:",
+        "    if False:",
+        {"test_a_prompt_without_the_placeholder_is_refused"},
+    ),
+    (
+        "probe: a whitespace-only document reaches the model instead of going aside",
+        CLIENT,
+        "    if not text.strip():",
+        "    if not text:",
+        {"test_a_document_with_no_text_never_reaches_a_model"},
+    ),
+    (
+        "probe: a degraded material is reported as a blank page",
+        CLIENT,
+        "    refused = ESC_DEGRADED_MATERIAL if material.tier == TIER_DEGRADED "
+        'else "blank_page"',
+        '    refused = "blank_page"',
+        {"test_a_degraded_material_names_its_own_reason"},
+    ),
+    (
+        "probe: a typed refusal is reported as a value on the exit code",
+        CLIENT,
+        '    return EXIT_OK if facts.get("refusal") is None else EXIT_REFUSED',
+        "    return EXIT_OK",
+        {"test_a_refused_call_is_a_report_and_never_an_exception"},
+    ),
+    (
+        "probe: an unmeasured number is reported as 0.0 instead of None",
+        CLIENT,
+        '    return None if value is None else float(cast("float", value))',
+        '    return 0.0 if value is None else float(cast("float", value))',
+        {"test_an_unmeasured_number_stays_none_instead_of_becoming_zero"},
+    ),
 ]
 
 
 def _run_suite() -> tuple[int, set[str]]:
     """Run the guarded suites and return (exit code, failed test names).
 
-    Both suites run every time: a mutation's expected failure set names the test
+    Every suite runs every time: a mutation's expected failure set names the test
     that must fail, and it does not matter which file that test lives in. Running
     only `test_invariants.py` would leave the sampling mutations' anchors in
     place and their guards unexercised — a mutation whose suite never loads the
@@ -211,6 +263,7 @@ def _run_suite() -> tuple[int, set[str]]:
             str(SUITE),
             str(SAMPLING_SUITE),
             str(PENDING_SUITE),
+            str(CLIENT_SUITE),
             "-q",
             "--tb=no",
             "--junitxml=/tmp/mutation_invariants.xml",
