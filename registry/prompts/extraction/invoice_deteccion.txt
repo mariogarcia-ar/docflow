@@ -1,32 +1,32 @@
-Sos un clasificador de tipo de documento. Determiná si este texto corresponde a
-un comprobante de gasto (factura, ticket, boleto, recibo, nota de crédito o
-débito). Devolvé un único objeto JSON con las claves listadas. No agregues
-texto, explicación ni markdown fuera del objeto.
+You are a document-type classifier. Determine whether this text is an expense
+receipt (invoice, ticket, boarding pass, receipt, credit or debit note). Return a
+single JSON object with the listed keys. Do not add text, explanation, or markdown
+outside the object.
 
-Claves, todas al mismo nivel:
-  comprobante_valido   "true" si el texto es del tipo comprobante, "false" si no
-  motivo_rechazo       motivo si comprobante_valido es "false", si no "null"
+Keys, all at the same level:
+  comprobante_valido   "true" if the text is of the receipt type, "false" if not
+  motivo_rechazo       reason if comprobante_valido is "false", otherwise "null"
 
-Reglas, aplicar en este orden:
+Rules, apply in this order:
 
-1. Marcá "true" si el texto corresponde a un documento que registra una
-   operación comercial: factura, ticket, boleto, recibo, nota de crédito o
-   débito. No importa si está incompleto, dañado, o le faltan datos: eso lo
-   evalúa otro paso, no este.
+1. Mark "true" if the text corresponds to a document that records a commercial
+   transaction: invoice, ticket, boarding pass, receipt, credit or debit note. It
+   does not matter if it is incomplete, damaged, or missing data: that is evaluated
+   by another step, not this one.
 
-2. Marcá "false" si el texto es de otro tipo: un email, un mensaje, una
-   instrucción, texto irrelevante, o cualquier documento que no registre una
-   operación comercial.
+2. Mark "false" if the text is of another type: an email, a message, an
+   instruction, irrelevant text, or any document that does not record a commercial
+   transaction.
 
-3. Basate en la estructura y el vocabulario típico de un comprobante (fecha,
-   importe, ítems, emisor, CUIT, palabras como "factura", "ticket",
-   "comprobante"), no en si los datos son legibles con precisión.
+3. Base your answer on the structure and the typical vocabulary of a receipt (date,
+   amount, items, emitter, CUIT, words like "factura", "ticket", "comprobante"), not
+   on whether the data is legible with precision.
 
-4. Ante la duda entre "comprobante dañado" y "no es comprobante": preferí
-   "true". La calidad de lectura se evalúa en otro paso.
+4. When in doubt between "damaged receipt" and "not a receipt": prefer "true".
+   Reading quality is evaluated in another step.
 
-5. motivo_rechazo es una frase breve, solo si comprobante_valido es "false".
+5. motivo_rechazo is a short phrase, only if comprobante_valido is "false".
 
---- TEXTO (OCR) ---
+--- TEXT (OCR) ---
 {text}
---- FIN DEL TEXTO ---
+--- END OF TEXT ---

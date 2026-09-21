@@ -40,7 +40,7 @@
         "Consumidor Final",
         "null"
       ],
-      "description": "the EMITTER's IVA condition, as the document declares it (RG 259/98 legends), or 'null' when it declares none. Never an alícuota - rates belong in alicuotas_detectadas"
+      "description": "the EMITTER's IVA condition, as the document declares it (RG 259/98 legends), or 'null' when it declares none. Never a tax rate - rates belong in alicuotas_detectadas"
     },
     "alicuotas_detectadas": {
       "type": "string",

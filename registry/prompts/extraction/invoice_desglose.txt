@@ -1,41 +1,40 @@
-Sos un auditor contable automatizado. Extraé el desglose impositivo de este
-comprobante de gasto (OCR), ya identificado como válido. Devolvé un único
-objeto JSON con las claves listadas. No agregues texto, explicación ni markdown
-fuera del objeto.
+You are an automated accounting auditor. Extract the tax breakdown of this expense
+receipt (OCR), already identified as valid. Return a single JSON object with the
+listed keys. Do not add text, explanation, or markdown outside the object.
 
-Claves, todas al mismo nivel:
-  subtotal                        neto gravado, o el total si no discrimina
-  iva                              importe del IVA en pesos, o "0" (regla 2)
-  impuestos_internos               importe impreso, o "0"
-  percepcion_iibb                  importe impreso, o "0"
-  otros_impuestos                  importe impreso, o "0"
-  monto_no_gravado                 importe impreso, o "0"
-  importe_total_facturado          total tal como figura impreso, sin ajustes
-  condicion_impositiva_dominante   condición del emisor (regla 3), o "null"
-  alicuotas_detectadas             alícuotas impresas, separadas por "|" (regla 4)
+Keys, all at the same level:
+  subtotal                        net amount, or the total if not discriminated
+  iva                             IVA amount in pesos, or "0" (rule 2)
+  impuestos_internos              printed amount, or "0"
+  percepcion_iibb                 printed amount, or "0"
+  otros_impuestos                 printed amount, or "0"
+  monto_no_gravado                printed amount, or "0"
+  importe_total_facturado         total as printed, with no adjustments
+  condicion_impositiva_dominante  emitter's condition (rule 3), or "null"
+  alicuotas_detectadas            printed rates, separated by "|" (rule 4)
 
-Reglas, aplicar en este orden:
+Rules, apply in this order:
 
-1. Devolvé todos los importes tal como están impresos, como texto. "12.345,60"
-   se devuelve "12.345,60". No los reformatees ni los conviertas a número.
+1. Return every amount exactly as printed, as text. "12.345,60" is returned as
+   "12.345,60". Do not reformat them or convert them to a number.
 
-2. iva es el importe del IVA, nunca la alícuota. Si el comprobante muestra
-   "IVA 21%: 2.100,00": iva es "2.100,00", "21" va en alicuotas_detectadas.
-   Sin IVA discriminado: iva "0".
+2. iva is the IVA amount, never the rate. If the receipt shows "IVA 21%: 2.100,00":
+   iva is "2.100,00", "21" goes in alicuotas_detectadas. With no discriminated IVA:
+   iva "0".
 
-3. Si es Factura C (emisor monotributista o exento): iva "0", el resto de los
-   tributos "0", subtotal es el total.
+3. If it is a Factura C (emitter registered under Monotributo or exempt): iva "0",
+   the rest of the taxes "0", subtotal is the total.
 
-4. condicion_impositiva_dominante es la condición del emisor frente al IVA:
-   "Responsable Inscripto", "Monotributo", "Exento", "No Categorizado" o
-   "Consumidor Final". Devolvé la leyenda, no la alícuota. Si no está
-   declarada: "null".
+4. condicion_impositiva_dominante is the emitter's condition before IVA:
+   "Responsable Inscripto", "Monotributo", "Exento", "No Categorizado", or
+   "Consumidor Final". Return the legend, not the rate. If it is not declared:
+   "null".
 
-5. alicuotas_detectadas son las alícuotas impresas, con los códigos de AFIP: 0,
-   2_5, 5, 10_5, 21, 27, separadas por "|".
+5. alicuotas_detectadas are the printed rates, with the AFIP codes: 0, 2_5, 5,
+   10_5, 21, 27, separated by "|".
 
-6. No infieras ningún tributo que no esté impreso: devolvé "0".
+6. Do not infer any tax that is not printed: return "0".
 
---- COMPROBANTE (OCR) ---
+--- RECEIPT (OCR) ---
 {text}
---- FIN DEL COMPROBANTE ---
+--- END OF RECEIPT ---

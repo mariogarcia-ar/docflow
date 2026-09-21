@@ -566,10 +566,17 @@ def test_no_prompt_asks_for_a_field_its_schema_does_not_declare() -> None:
     the grammar will drop, and contradicts the schema's own claim that the two
     artifacts are kept in step.
 
-    The comparison is over the keys the prompt's `Claves:` block lists, not over the
+    The comparison is over the keys the prompt's `Keys:` block lists, not over the
     whole text: a rule may mention a field's name while explaining it (`"iva" es el
     importe…`), and flagging that would be a false positive. The block is the place
     where a prompt *asks for a key*.
+
+    **The block is required to be non-empty, and that assertion is load-bearing.**
+    Measured: the heading used to be spelled in Spanish, and when the prompts were
+    translated the constant stopped matching any shipped prompt — so `_declared_keys`
+    returned an empty set and `asked - declared` was empty for **every** prompt. The
+    gate went green while checking nothing at all, which is why the heading is
+    asserted to find its block rather than trusted to.
     """
     prompts = _extraction_prompt_texts(load_artifacts())
     schemas = _extraction_step_schemas()
@@ -578,18 +585,24 @@ def test_no_prompt_asks_for_a_field_its_schema_does_not_declare() -> None:
         declared = set(schema["properties"])
         for role in _STEP_PROMPT_ROLES[step]:
             asked = _declared_keys(prompts[role])
-            extra = sorted(asked - declared)
-            assert not extra, (
-                f"{step}/{role}: the prompt asks for {extra}, which its schema does "
-                "not declare: the model would spend attention on an answer the "
-                "grammar drops"
+            assert asked, (
+                f"{step}/{role}: the prompt has no `{_KEYS_HEADER}` block, so this"
+                "gate would compare nothing and pass. Either the prompt lost its key"
+                "list or the heading it opens with has changed."
+            )
+            assert asked == declared, (
+                f"{step}/{role}: the prompt asks for {sorted(asked - declared)} that "
+                "the schema does not declare, and never names "
+                f"{sorted(declared - asked)} that it does: the model would spend "
+                "attention on an answer the grammar drops, or be required to answer "
+                "a key no instruction defines"
             )
 
 
 def _declared_keys(prompt: str) -> set[str]:
-    """The field names a prompt's `Claves:` block asks the model to answer with.
+    """The field names a prompt's `Keys:` block asks the model to answer with.
 
-    Reads only the block between `Claves, todas al mismo nivel:` and the first blank
+    Reads only the block between `Keys, all at the same level:` and the first blank
     line after it, where each line is `  key   description`. Returns an empty set for a
     prompt without that block, so a shape change fails the assertions that read the
     result rather than raising on a parse.
@@ -608,8 +621,11 @@ def _declared_keys(prompt: str) -> set[str]:
 
 
 #: The heading that opens a prompt's key list. Spelled once so every reader of the
-#: block agrees on where it starts.
-_KEYS_HEADER: str = "Claves, todas al mismo nivel:"
+#: block agrees on where it starts. English, because the registry's prompts are English
+#: (`copilot-instructions.md`: output, code and docs are 100% English) — a Spanish
+#: heading here would look for a block no shipped prompt contains and silently return
+#: an empty set, which every assertion reading it would pass.
+_KEYS_HEADER: str = "Keys, all at the same level:"
 
 
 def test_every_enum_option_is_declared_in_the_prompt() -> None:

@@ -8,17 +8,20 @@
       "description": "the letter or the AFIP code printed in the header (001 Factura A, 006 Factura B, 011 Factura C), or 'null' when the document is not a fiscal receipt. 090/099 are 'comprobantes que no cumplen la RG 1415', not receipt classes"
     },
     "razon_social_emisor": {
-      "type": "string"
+      "type": "string",
+      "description": "the EMITTER's name as printed in the header, without labels like 'Razon Social:' or 'Cliente:'. It is the emitter's, never the recipient's"
     },
     "cuit_emisor": {
       "type": "string",
-      "description": "the emitter's CUIT, digits and its own hyphens only"
+      "description": "the EMITTER's CUIT, digits and its own hyphens only, format XX-XXXXXXXX-X. Never the recipient's. Cut the value at the first character that is not a digit or a hyphen, even if it is left incomplete"
     },
     "fecha_emision": {
-      "type": "string"
+      "type": "string",
+      "description": "the issue date as printed, DD/MM/YYYY. The issue date, not the due date and not the billing period"
     },
     "nro_comprobante": {
-      "type": "string"
+      "type": "string",
+      "description": "the receipt number printed beside 'Comp.Nro.' or 'Nro.', complete, with the hyphen if it has one. Not the point of sale, not the CAE, not an item code"
     },
     "moneda": {
       "type": "string",
@@ -26,7 +29,8 @@
       "description": "the currency the document shows; 'ARS' when it shows none"
     },
     "notas": {
-      "type": "string"
+      "type": "string",
+      "description": "real observations printed on the receipt, or 'null'. Not a column header, not a summary of what you did, and not text in another language"
     }
   },
   "required": [

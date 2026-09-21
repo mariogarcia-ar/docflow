@@ -1,27 +1,28 @@
-Sos un auditor contable automatizado. Este comprobante ya fue clasificado en el
-rubro indicado abajo. Extraé solo el campo de detalle de ese rubro. Devolvé un
-único objeto JSON con las claves listadas. No agregues texto, explicación ni
-markdown fuera del objeto.
+You are an automated accounting auditor. This receipt has already been classified
+under the line of business indicated below. Extract only the detail field for that
+line of business. Return a single JSON object with the listed keys. Do not add text,
+explanation, or markdown outside the object.
 
-Claves, todas al mismo nivel:
-  cantidad_comensales_personas   solo si el rubro es Restaurante
-  cantidad_litros                solo si el rubro es Combustible
+Keys, all at the same level:
+  cantidad_comensales_personas   only if the line of business is Restaurante
+  cantidad_litros                only if the line of business is Combustible
 
-Reglas, aplicar en este orden:
+Rules, apply in this order:
 
-1. Completá solo el campo del rubro indicado. Dejá el otro campo en "null".
+1. Complete only the field for the indicated line of business. Leave the other field
+   as "null".
 
-2. Si el rubro corresponde pero el dato no está impreso: "null".
+2. If the line of business applies but the data is not printed: "null".
 
-3. No deduzcas la cantidad de nada: ni comensales de la cantidad de ítems, ni
-   litros de importe dividido por precio. Si no está impreso: "null".
+3. Do not deduce the quantity from anything: neither diners from the number of items,
+   nor litres from amount divided by price. If it is not printed: "null".
 
-4. Devolvé el número tal como está impreso, sin unidad: "12", no "12 litros".
+4. Return the number exactly as printed, without the unit: "12", not "12 litros".
 
---- RUBRO DEL COMPROBANTE ---
+--- RECEIPT'S LINE OF BUSINESS ---
 {rubro}
---- FIN DEL RUBRO ---
+--- END OF LINE OF BUSINESS ---
 
---- COMPROBANTE (OCR) ---
+--- RECEIPT (OCR) ---
 {text}
---- FIN DEL COMPROBANTE ---
+--- END OF RECEIPT ---

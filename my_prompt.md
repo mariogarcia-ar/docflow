@@ -29,23 +29,26 @@ deepseek-r1:1.5b     e0979632db5a    1.1 GB    2 weeks ago
 qwen2.5vl:3b         fb90415cde1e    3.2 GB    2 months ago  
 
 ```bash
-# es factura
-python scripts/poc-flow-v2/myllmlocal.py \
-  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
-  --prompt 'registry/prompts/extraction/invoice_deteccion.txt' \
-  --model 'deepseek-r1:1.5b'
 
-# no es factura
+# deteccion: no es factura
 python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/negativos/neg_2026-06_correo_liquidacion.txt' \
   --prompt 'registry/prompts/extraction/invoice_deteccion.txt' \
+  --schema 'registry/schemas/extraction/invoice_detection.json' \
   --model 'deepseek-r1:1.5b'
 
+# deteccion: es factura
+python scripts/poc-flow-v2/myllmlocal.py \
+  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
+  --prompt 'registry/prompts/extraction/invoice_deteccion.txt' \
+  --schema 'registry/schemas/extraction/invoice_detection.json' \
+  --model 'deepseek-r1:1.5b'
 
-# extraer los campos de una factura
+# extraer: los campos de una factura
 python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
   --prompt 'registry/prompts/extraction/invoice.txt' \
+  --schema 'registry/schemas/extraction/invoice.json' \
   --model 'deepseek-r1:1.5b'
 
 
