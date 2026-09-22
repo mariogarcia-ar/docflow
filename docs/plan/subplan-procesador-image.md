@@ -129,6 +129,7 @@ Errors are classified technically into a typed `ImageError` with a `recoverable`
 | IMG-12 | Implement `process_image` entry point wiring the full flow | M | IMG-09, IMG-11 |
 | IMG-13 | Write happy-path + invariant tests; record mutation-falsification evidence | M | IMG-12 |
 | IMG-14 | Run the four QA gates clean | S | IMG-13 |
+| IMG-15 | Lab tool `scripts/tools/image.py` (see §10) | S | IMG-14 |
 
 ### Order / waves
 
@@ -137,6 +138,7 @@ Errors are classified technically into a typed `ImageError` with a `recoverable`
 - **Wave 3 — Outputs:** IMG-07, IMG-09, IMG-10 (after IMG-06) and IMG-08 (after IMG-05 and IMG-06); all four may proceed in parallel once their predecessors are green.
 - **Wave 4 — Publish:** IMG-11 → IMG-12.
 - **Wave 5 — Verify:** IMG-13 → IMG-14.
+- **Wave 6 — Lab tool:** IMG-15, built once IMG-14 is green. Manual exercise only; not on the processor's critical path.
 
 ## 5. Acceptance criteria
 
@@ -233,3 +235,71 @@ Scenario: Leave the source untouched
 5. **Naming mapping — RESOLVED:** code uses `docflow.image` (path `src/docflow/image/`) with the entry points the
    idea names (`process_image`, `process_image_from_page`); the Spanish `procesador-image`
    remains only as the idea document's title.
+
+---
+
+## 10. Lab tool — `scripts/tools/image.py`
+
+A thin command-line caller over this processor, built once IMG-14 is green. The convention
+— the `var/tools/<tool>/` output root and the three boundaries — is in
+`docs/plan/README.md` §4.1.
+
+### Command surface
+
+```text
+python scripts/tools/image.py info      <img>                    # dimensions, format, size
+python scripts/tools/image.py metrics   <img>                    # full ImageMetrics: blur,
+                                                                  #   sharpness, contrast, brightness,
+                                                                  #   noise, orientation, skew, text_coverage
+python scripts/tools/image.py normalize <img>                    # → normalized.png
+python scripts/tools/image.py ocr-ready <img>                    # → ocr_ready.png (grayscale/deskew/binarize)
+python scripts/tools/image.py vlm-ready <img>                    # → vlm_ready.png (colour and layout kept)
+python scripts/tools/image.py classify  <img>                     # TEXT_IMAGE / VISUAL_IMAGE / MIXED_IMAGE /
+                                                                  #   LOW_QUALITY
+python scripts/tools/image.py run       <img> --ocr-ready --vlm-ready   # full process_image
+python scripts/tools/image.py crop      <img> --box x,y,w,h      # explicit region only
+```
+
+Global flags: `--out <dir>` (default `var/tools/image/`), `--json`.
+
+### Output layout
+
+```text
+var/tools/image/page-b2c4d5/
+├── normalized.png
+├── ocr_ready.png           # only when requested
+├── vlm_ready.png           # only when requested
+├── regions/region_001.png  # only for explicit crops
+└── metadata.json
+```
+
+### Boundaries
+
+- **Calls, never reimplements.** `metrics` calls `analyze_image`; it does not recompute
+  blur itself. `ocr-ready` calls `prepare_image_for_ocr`.
+- **May reach `image/primitives/` directly** — a lab tool's purpose: `crop` drives
+  `crop_region` alone, `metrics` drives the analysis primitives without producing any
+  output file.
+- **Exposes the OCR/VLM split instead of hiding it.** Two separate subcommands, because the
+  processor never assumes the OCR-optimal image equals the VLM-optimal image; a single
+  `prepare` subcommand would teach the opposite.
+- **No library dependency, no workflow decision.** `normalize` always normalizes; the tool
+  never decides whether normalization is warranted — that justification belongs to the
+  processor's own option handling.
+
+### Acceptance criteria
+
+```gherkin
+Scenario: Produce both variants from the command line
+  Given a skewed colour document image
+  When "python scripts/tools/image.py run page.png --ocr-ready --vlm-ready" runs
+  Then var/tools/image/page-<hash>/ocr_ready.png and vlm_ready.png are two distinct files
+  And the VLM variant retains colour channels
+  And the source image is unmodified
+
+Scenario: The tool adds no behaviour of its own
+  Given the tool source under scripts/tools/
+  When its imports and calls are inspected
+  Then every operation resolves to a docflow.image function or primitive
+  And no module under src/docflow/ imports it
+```

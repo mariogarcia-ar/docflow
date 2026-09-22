@@ -235,6 +235,7 @@ result is the contract:
 | OCR-11 | Entry points: `process_ocr_image` orchestration + optional `process_ocr_from_page` wrapper. | M | OCR-10 |
 | OCR-12 | Tests: happy path + invariant tests + committed image fixtures. | M | OCR-11 |
 | OCR-13 | Four QA gates green; mutation-falsify each invariant test and document observations. | S | OCR-12 |
+| OCR-14 | Lab tool `scripts/tools/ocr.py` (see §10). | S | OCR-13 |
 
 `process_ocr_from_page` is declared in OCR-11 but deferred to Phase 3 integration by §9 resolved decision 5; Phase 1 ships only `process_ocr_image` and the wrapper carries an inline `# TODO: [MVP]`.
 
@@ -245,6 +246,7 @@ result is the contract:
 - **Wave 3 — Outputs:** OCR-06 ∥ OCR-08 (both after OCR-05), then OCR-07 and OCR-09 (representations; metrics computed in parallel with the output builders; tables and validation close the wave).
 - **Wave 4 — Publish + entry points:** OCR-10, OCR-11 (atomic write, `process_ocr_image`).
 - **Wave 5 — Verification:** OCR-12, OCR-13 (tests, fixtures, QA gates).
+- **Wave 6 — Lab tool:** OCR-14, built once OCR-13 is green (manual exercise only).
 
 Waves are strictly sequential; tasks within a wave that share no dependency may proceed in
 parallel (Wave 3 is the only wave with genuine parallelism in this subplan).
@@ -391,3 +393,75 @@ pylint src tests                          # fixme disabled; the rest clean
    ships only `process_ocr_image`.
 6. Physical layout — **RESOLVED:** sub-package `docflow.ocr` (path `src/docflow/ocr/`) with
    `primitives/` / `utils/` / `helpers/`, per the idea's §"Estructura del proyecto".
+
+---
+
+## 10. Lab tool — `scripts/tools/ocr.py`
+
+A thin command-line caller over this processor, built once OCR-13 is green. The convention
+— the `var/tools/<tool>/` output root and the three boundaries — is in
+`docs/plan/README.md` §4.1.
+
+### Command surface
+
+```text
+python scripts/tools/ocr.py run     <img>              # full process_ocr_image
+python scripts/tools/ocr.py text    <img>              # plain text to stdout only
+python scripts/tools/ocr.py md      <img>              # Markdown to stdout only
+python scripts/tools/ocr.py json    <img>              # document.json to stdout
+python scripts/tools/ocr.py tables  <img>              # detected tables, in reading order
+python scripts/tools/ocr.py blocks  <img>              # blocks with their normalized bboxes
+python scripts/tools/ocr.py metrics <img>              # OCRMetrics
+python scripts/tools/ocr.py diff    <img-a> <img-b>    # run both, compare functional content
+```
+
+Global flags: `--out <dir>` (default `var/tools/ocr/`), `--json`, `--language <tag>`.
+
+`diff` is the tool-side counterpart of invariant 1: it runs the same image twice and reports
+whether the **functional content** is identical, which is what determinism means here — not
+raw-byte equality. It re-derives nothing: it calls `process_ocr_image` twice and compares the
+results.
+
+### Output layout
+
+```text
+var/tools/ocr/ocr_ready-c3d4e5/
+├── text.txt
+├── document.md
+├── document.json
+├── tables/table_001.md  table_002.md
+└── metadata.json
+```
+
+### Boundaries
+
+- **Calls, never reimplements.** `md` prints `OCRResult.markdown`; it does not re-render
+  Markdown from the blocks. `tables` prints `OCRResult.tables`; it does not re-detect them.
+- **May reach `ocr/primitives/` directly** — a lab tool's purpose: `python scripts/tools/ocr.py
+  blocks` can drive extraction without building the output files, which is how an operator
+  inspects ordering and bbox normalization in isolation.
+- **Never compares OCR against native text or a VLM.** That comparison is a documental
+  decision and belongs to the orchestrator; `diff` compares two OCR runs of the same input,
+  never two sources.
+- **The engine is not a flag.** There is no `--engine` option, because Docling is fixed and
+  never a user-selectable setting. A tool must not invent a knob the library refuses to have.
+- **No library dependency, no workflow decision.** `run` always runs; the tool never decides
+  whether OCR is needed.
+
+### Acceptance criteria
+
+```gherkin
+Scenario: Extract and print from the command line
+  Given a prepared image fixture with known content
+  When "python scripts/tools/ocr.py run ocr_ready.png" runs
+  Then var/tools/ocr/ocr_ready-<hash>/ holds text.txt, document.md, document.json and metadata.json
+  And metadata.json records engine="docling" and a concrete engine_version
+  And the exit code is 0
+
+Scenario: The tool offers no engine choice
+  Given the tool's command surface
+  When its options are inspected
+  Then no engine-selection flag exists
+  And every operation resolves to a docflow.ocr function or primitive
+  And no module under src/docflow/ imports it
+```

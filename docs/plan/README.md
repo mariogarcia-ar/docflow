@@ -159,6 +159,10 @@ src/docflow/
          select_source, select_extraction_strategy, build_llm_input,
          invalidate_downstream, resume_document, execute_document_workflow)
 tests/                   # mirrors src/docflow, one test module per source module
+scripts/                 # operator tools — NOT part of the library, never imported by src/
+└── tools/               # one lab tool per processor: pdf.py, image.py, ocr.py, llm.py,
+                         # workflow.py (see §4.1)
+var/                     # tool run output — never committed (see §4.1)
 ```
 
 The `workflow/` block lists **symbols the orchestrator exposes**, not a file tree: they are
@@ -202,6 +206,68 @@ LLM   → llm/
 ```
 
 Inputs are immutable; outputs are published atomically (`.tmp` → validate → `rename`).
+
+### 4.1 Lab tools and the `var/` output root
+
+Every processor subplan ends with a **lab tool**: a thin command-line script under
+`scripts/tools/` that exposes the operations an operator needs in order to exercise that
+processor by hand, once its subplan is complete.
+
+```text
+scripts/tools/pdf.py       split mi.pdf            → var/tools/pdf/…
+                           render mi.pdf --page 3
+                           text mi.pdf --page 1
+                           inspect mi.pdf
+scripts/tools/image.py     analyze page.png
+                           normalize page.png --ocr-ready
+scripts/tools/ocr.py       run ocr_ready.png
+                           tables ocr_ready.png
+scripts/tools/llm.py       call --task extract_fields --document doc.txt
+                           graph --config graph.json
+scripts/tools/workflow.py  plan mi.pdf --dry-run
+                           run mi.pdf --force ocr
+                           status doc-1
+```
+
+**The convention.** A tool takes the input as an argument and writes under
+`var/tools/<tool>/`, never beside the input and never into `out/`. The run root is
+overridable with `--out`, but `var/tools/<tool>/` is the default so that a manual
+experiment is reproducible and its residue is obvious and disposable:
+
+```text
+var/tools/pdf/           one directory per invocation, named for the input and a hash
+└── mi-a1b2c3/
+    ├── source/  render/  native_text/  embedded_images/   # the processor's namespaces
+    └── metadata.json
+```
+
+The per-invocation directory is derived from the input name plus a short content hash, so
+two runs over the same bytes land in the same directory and are therefore comparable —
+which is the point of a lab bench. `var/` is never committed.
+
+**A tool is a caller, not a component.** Three boundaries hold, and `GEN-21` asserts them:
+
+- **No reimplementation.** A tool calls `docflow.*`; it never re-does work the library
+already does. Printing a `PDFResult`, filtering pages or formatting a table is a tool's
+job; extracting text is not.
+- **No dependency from the library.** Nothing under `src/docflow/` imports `scripts/` or
+anything in `var/`. The library stays usable with `scripts/` deleted.
+- **No new seam.** A tool adds no contract, no options type and no behaviour the library
+does not already have. If an operation is missing, it is missing from the processor and
+the fix belongs in the processor's own issue, not in its tool.
+
+**A tool may reach `primitives/`.** This is the one place where that is true, and it is
+why the rule is stated rather than assumed: the orchestrator must not reach a
+`primitives/` module (`GEN-19`), but a lab tool's whole purpose is to drive a single
+primitive in isolation — `split_pdf` without a full document run, `render_page_to_image`
+at a different DPI. A tool therefore sits *outside* both frontiers: it is neither a
+processor (which may only touch its own `primitives/`) nor the orchestrator (which may
+touch none). It reaches `docflow` from the outside, exactly as an operator's REPL would.
+
+The corresponding task is assigned to each subplan — `PDF-14`, `IMG-15`, `OCR-14`,
+`LLM-16`, `ORC-20` — and the cross-cutting convention itself is `GEN-21`. Each tool is
+built **after** its subplan's own acceptance evidence is green, and its subplan section
+states the command surface, the `var/` layout and the boundaries above.
 
 ---
 

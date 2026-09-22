@@ -1,10 +1,20 @@
 # docflow ignore rules. This file is the authority: read it before adding a file that
 # looks like output.
+#
+# NOTE: a comment must occupy its own line. A `#` in the middle of a line is NOT a
+# comment in gitignore syntax — `out/  # product output` is a pattern matching a
+# literal path named "out/  # product output", and it matches nothing. Annotations go
+# on the line above the pattern.
 
 # ---- Never committed -------------------------------------------------------------
-/documentos/          # source corpus: copyrighted material, not distributed
-/out/                 # product run output tree
-/work/                # lab-bench output tree
+# Source corpus: copyrighted material, not distributed.
+/documentos/
+# Product run output tree.
+/out/
+# Run output: lab-tool runs (var/tools/<tool>/) and scratch state.
+/var/
+# Lab-bench output tree (legacy; superseded by /var/ — reconciliation is GEN-17).
+/work/
 .env
 .env.*
 

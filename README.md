@@ -40,8 +40,7 @@ would be a silent stand-in, which this project forbids at every stage.
 | 1 — processors, independently | `pdf`, `image`, `ocr`, `llm` | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
-| 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
-
+| 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` || 5 — lab tools | one operator CLI per processor | `GEN-21`, `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` |
 ---
 
 ## Requirements
@@ -80,6 +79,8 @@ src/docflow/           the library — import name is `docflow`, never `src.docf
 ├── states.py          the shared stage-state vocabulary (import this, not docflow.workflow)
 └── identities.py      the three identities + the artifact metadata key set
 
+scripts/tools/         operator tools — NOT part of the library, never imported by src/
+var/                   tool run output (var/tools/<tool>/) — never committed
 tests/                 mirrors src/docflow/, one test module per source module
 docs/                  the specification. `docs/idea/` explores; `docs/plan/` decides.
 ```
@@ -87,6 +88,53 @@ docs/                  the specification. `docs/idea/` explores; `docs/plan/` de
 Every processor sub-package holds `primitives/`, `utils/` and `helpers/`. The `primitives/`
 directory is the *only* place an engine may be reached — that is what makes an engine
 swappable without touching a contract.
+
+---
+
+## Lab tools (`scripts/tools/`)
+
+Each processor's subplan ends with a thin command-line tool for exercising it by hand. The
+convention is in [`docs/plan/README.md` §4.1](docs/plan/README.md); the short version:
+
+```bash
+python scripts/tools/pdf.py split mi.pdf          # → var/tools/pdf/mi-<hash>/page_001/…
+python scripts/tools/pdf.py inspect mi.pdf
+python scripts/tools/workflow.py plan mi.pdf --dry-run
+```
+
+Input is an argument; output goes to `var/tools/<tool>/`, never beside the input and never
+into `out/`. Override with `--out`.
+
+**A tool is a caller, not a component.** Three boundaries hold, and `GEN-21` asserts them:
+
+- **Calls, never reimplements.** `split` calls `split_pdf`; it does not shell out to
+  `pdfseparate`. Printing a result is a tool's job; producing it is not.
+- **The library never imports a tool.** Nothing under `src/docflow/` references `scripts/`
+  or `var/`. Deleting `scripts/` leaves the library and its tests untouched.
+- **No new seam.** A tool adds no contract, no options type and no behaviour the library
+  lacks. A missing operation is a gap in the *processor* — fix it there, not in its tool.
+
+One deliberate asymmetry: **a tool may reach a processor's `primitives/` directly.** That is
+the point of a lab bench — `render --dpi 400` drives `render_page_to_image` without a whole
+document run, which the orchestrator is forbidden to do (`GEN-19`). A tool is outside both
+frontiers. **Except `workflow.py`**, which is bound by the same prohibition the orchestrator
+is: it reaches the four processors only through their public contracts.
+
+| Tool | Task | Exposes |
+|---|---|---|
+| `pdf.py` | `PDF-14` | `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` |
+| `image.py` | `IMG-15` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run`, `crop` |
+| `ocr.py` | `OCR-14` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics`, `diff` |
+| `llm.py` | `LLM-16` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
+| `workflow.py` | `ORC-20` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
+
+None of these exist yet: each is built after its processor's own acceptance evidence is
+green. Two design notes worth knowing before they are written — `ocr.py` has **no** `--engine`
+flag, because Docling is fixed and never user-selectable; and `llm.py` requires `--provider`
+and `--model` on every inference subcommand, because a default model is exactly the silent
+stand-in this project forbids. Its `fake` subcommand is first-class, not a hidden test flag:
+the deterministic fake provider is what makes the graph and resume paths demonstrable without
+a model or a spent token.
 
 ---
 
@@ -267,7 +315,7 @@ processor's `primitives/` and nowhere else.
 regardless of the input language. The Spanish `procesador-*` names survive only as titles of
 `docs/idea/` documents.
 
-**Never commit:** the corpus (`documentos/`), run output (`out/`, `work/`), `.env`, and
+**Never commit:** the corpus (`documentos/`), run output (`out/`, `var/`, `work/`), `.env`, and
 coverage/cache/build directories. `.gitignore` is the authority.
 
 ---
@@ -304,6 +352,12 @@ Recorded here so the first `GEN-17` reconciliation does not have to rediscover t
 2. **`.gitignore` has no owning issue.** It is not in the scope of `GEN-01` or `GEN-05`; only
    `.github/copilot-instructions.md` mentions it. Following the WBS literally would leave the
    first `git add .` picking up `.DS_Store` and the cache directories.
+
+3. **Two output conventions now overlap.** `.gitignore` and `.github/copilot-instructions.md`
+   designate `out/` (product) and `work/` (lab bench). The lab tools introduce `var/`, which is
+   the same idea under a different name. `var/` is now the documented default for
+   `scripts/tools/`; `work/` is left in `.gitignore` as legacy rather than silently deleted,
+   and the reconciliation of the three belongs to `GEN-17`.
 
 Three smaller ones were resolved while writing the contracts, each noted in the module
 docstring where it lives: `DocumentResult.processing_key` (required by `GEN-04` but absent from
