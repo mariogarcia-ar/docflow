@@ -39,11 +39,6 @@ python scripts/poc-flow-v2/myllmlocal.py \
   --model 'deepseek-r1:8b'
 
 # deteccion: es factura
-python scripts/poc-flow-v2/myllmlocal.py \
-  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
-  --prompt 'registry/prompts/extraction/invoice_deteccion.txt' \
-  --schema 'registry/schemas/extraction/invoice_detection.json' \
-  --model 'deepseek-r1:8b'
 
 # extraer: los campos de una factura
 python scripts/poc-flow-v2/myllmlocal.py \

@@ -51,6 +51,13 @@ __all__: list[str] = []
 #:   **sequential** and the adapter's per-call ceiling is 600 s, so one runaway stalls
 #:   the whole run with no output between files - which is what a hang looks like.
 #:   Measured: 1 runaway in 5 calls with no token ceiling.
+#: - **`deepseek-r1:8b` is the current default** (an 8.2B model, Q4_K_M). Measured
+#:   3 of 3 runs on `tests/fixtures-txt/casos/66cd35e9-…txt`: `fecha_emision`
+#:   `07/08/2026`, `nro_comprobante` `00037469`, `cuit_emisor` `20-22087601-3` — the
+#:   emitter's own CUIT, not the `Cliente:` CUIT printed on the same receipt — at
+#:   ~26 s a call and 666 completion tokens on every run. It answers `"null"` for
+#:   `tipo_comprobante` although the header prints `A`, which is the defect it was
+#:   measured to keep.
 #: - **`deepseek-r1:1.5b` answered every one of 10 consecutive calls on that same
 #:   file**, 4.1-10.6 s each (`done_reason: 'stop'`). A repeating generation there is
 #:   bounded by the context, and the model stops on its own.

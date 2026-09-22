@@ -30,12 +30,17 @@ per-call ceiling is 600 s, one runaway stalls a whole run with no output between
 **refuses** an oversized prompt with `HTTP 400 exceed_context_size_error` instead of
 dropping it past the window silently — see *The silent cut* below for why that matters.
 
-The tag is **7b** rather than 1.5B, and that too is measured. On
+The tag is **8b** rather than 1.5B, and that too is measured. On
 `tests/fixtures-txt/casos/66cd35e9-…txt` the 1.5B model read `fecha_emision` — an
 `alta`-severity field with no stronger reader to outvote it — as `"2026"`, and
 took `nro_comprobante` from the prompt's own rule-1 example (`"99-9"`); with that
-example removed it answered correctly. **7b returned the printed date 3 of 3 runs**
-at ~27 s a call.
+example removed it answered correctly. **8b returns the printed date 3 of 3 runs**
+at ~26 s a call, deterministically (666 completion tokens on every run).
+
+What the larger tag does **not** fix is `tipo_comprobante`: this fixture prints
+**`A`** in the header, and the model answers `"null"` on 3 of 3 runs. The `A` is
+legible in the extracted text, so that is a reading failure rather than an OCR one —
+`gemma3:4b` answers `"001"` on the same document and the same prompt.
 
 The adapter speaks Ollama's **HTTP API directly** through `httpx`, not the `ollama`
 Python package. The package is one option; speaking the API keeps the response
@@ -562,8 +567,8 @@ overridable: `--model`, `--frontier-model`, or `KERNEL_LLM_MODEL` /
 away on a small real document and stalls a sequential driver for the adapter's full
 600 s ceiling; `deepseek-r1:1.5b` did not, across 10 consecutive calls, and it refuses
 an oversized prompt with `HTTP 400` instead of dropping it in silence. The tag has
-since moved to **7b**, which keeps that behaviour and reads the date field the 1.5B
-tag got wrong (above). The reason is
+since moved to **7b** and then to **8b**, neither of which runs away on the file
+above. The reason is
 recorded at the declaration in `scripts/kernel/kernel-llm.sh` and in
 `llm_local.TEXT_MODEL`, so it is not re-litigated by preference later. The vision
 default (`qwen2.5vl:3b`) is unchanged: vision is a different requirement from text
