@@ -2,47 +2,55 @@
 
 ## Objetivo
 
-El módulo `procesador-llm-call` tiene como responsabilidad exclusiva **preparar, ejecutar y validar llamadas a modelos LLM/VLM**.
+El módulo `procesador-llm-call` tiene como responsabilidad exclusiva **preparar, ejecutar, validar y encadenar llamadas a modelos LLM/VLM**.
 
-Debe recibir entradas ya preparadas por otros módulos y transformarlas en solicitudes estructuradas al modelo.
+Recibe información ya preparada por el `procesador-orquestador` y la transforma en una o varias solicitudes al modelo.
 
-Este módulo **no procesa PDFs**, **no normaliza imágenes**, **no ejecuta OCR** y **no decide qué fuente documental usar**. Esa coordinación pertenece al `workflow/orchestrator`.
+Este módulo **no decide qué fuente documental utilizar**, **no procesa PDFs**, **no normaliza imágenes**, **no ejecuta OCR** y **no coordina el workflow documental completo**.
+
+Su responsabilidad empieza cuando recibe un `LLMInput` ya definido y termina cuando devuelve un `LLMResult`.
+
+---
+
+# Principio de diseño
+
+`procesador-llm-call` debe responder:
+
+> **“Dada una tarea LLM ya definida, ¿cómo la ejecuto de forma estructurada, validada y trazable?”**
+
+No debe responder:
+
+> **“¿Qué debo hacer con esta página?”**
+
+Esa decisión pertenece al `procesador-orquestador`.
 
 ---
 
 # Flujo principal
 
-* Recibir una solicitud LLM ya definida.
-* Preparar:
+* Recibir una tarea LLM preparada.
+* Cargar:
 
-  * prompt;
+  * modelo;
+  * provider;
   * template;
   * variables;
   * texto;
   * imágenes;
   * contexto adicional;
-  * schema de salida.
-* Construir el payload requerido por el proveedor.
-* Ejecutar la llamada al modelo.
-* Capturar:
-
-  * respuesta;
-  * metadata;
-  * tokens;
-  * tiempo;
-  * errores.
-* Parsear la salida.
-* Validar la respuesta contra el schema esperado.
-* Persistir el resultado.
-* Permitir reutilizar la salida como entrada de otro nodo.
-* Permitir:
-
-  * retries;
-  * comparación de resultados;
-  * múltiples modelos;
-  * múltiples prompts;
-  * ejecución paralela.
-* Mantener trazabilidad completa de cada llamada.
+  * schema.
+* Renderizar el prompt.
+* Preparar el payload.
+* Ejecutar la llamada.
+* Capturar la respuesta.
+* Parsear salida.
+* Validar contra schema.
+* Registrar metadata.
+* Aplicar retry cuando corresponda.
+* Permitir encadenar múltiples llamadas LLM.
+* Permitir ejecutar llamadas en paralelo.
+* Comparar outputs cuando el workflow LLM lo requiera.
+* Devolver resultado estructurado al orquestador.
 
 ---
 
@@ -50,15 +58,13 @@ Este módulo **no procesa PDFs**, **no normaliza imágenes**, **no ejecuta OCR**
 
 ## Entrada
 
-El módulo debería recibir una estructura similar a:
-
-```text id="5ybng9"
-LLMRequest
-├── model
+```text
+LLMInput
+├── task
 ├── provider
+├── model
 ├── template
-├── variables
-├── text
+├── document
 ├── images[]
 ├── extra_context
 ├── schema
@@ -66,23 +72,26 @@ LLMRequest
 └── metadata
 ```
 
-Ejemplo conceptual:
+Ejemplo:
 
-```json id="haipcc"
+```json
 {
+  "task": "extract_invoice",
+
   "provider": "ollama",
   "model": "qwen2.5-vl",
 
-  "template": "extract_invoice",
+  "template": "invoice-extraction.md",
 
-  "variables": {
-    "doc": "document.md",
-    "extra": "business_rules.json"
-  },
+  "document": "ocr/document.md",
 
   "images": [
-    "normalized.png"
+    "image/normalized.png"
   ],
+
+  "extra_context": {
+    "document_type": "invoice"
+  },
 
   "schema": "invoice.schema.json",
 
@@ -93,19 +102,37 @@ Ejemplo conceptual:
 }
 ```
 
+El módulo no debe modificar la decisión de usar:
+
+```text
+document = native_text
+```
+
+o:
+
+```text
+document = OCR
+```
+
+ni decidir si la imagen debe adjuntarse.
+
+Eso ya viene resuelto por el orquestador.
+
 ---
 
-## Salida
+# Salida
 
-```text id="8f8k2a"
+```text
 LLMResult
-├── request_id
-├── model
+├── run_id
+├── task
 ├── provider
+├── model
 ├── raw_response
 ├── parsed_response
 ├── schema_valid
 ├── validation_errors[]
+├── attempts[]
 ├── usage
 ├── timing
 ├── status
@@ -114,20 +141,21 @@ LLMResult
 
 Ejemplo:
 
-```json id="f84h0c"
+```json
 {
-  "request_id": "run_001",
+  "run_id": "llm_001",
+  "task": "extract_invoice",
 
-  "model": "qwen2.5-vl",
   "provider": "ollama",
+  "model": "qwen2.5-vl",
 
   "parsed_response": {
-    "document_type": "invoice",
-    "invoice_number": "0001-12345"
+    "invoice_number": "0001-12345",
+    "date": "2026-09-22",
+    "total": 150000
   },
 
   "schema_valid": true,
-
   "validation_errors": [],
 
   "status": "success"
@@ -138,7 +166,9 @@ Ejemplo:
 
 # 1. Primitivas
 
-Funciones de bajo nivel que encapsulan proveedores y librerías externas como:
+Funciones de bajo nivel que encapsulan librerías y proveedores externos.
+
+Pueden conocer:
 
 * `ollama`;
 * APIs compatibles con OpenAI;
@@ -151,8 +181,9 @@ Funciones de bajo nivel que encapsulan proveedores y librerías externas como:
 * `list_models()`
 * `check_model_available(model_name)`
 * `get_model_info(model_name)`
+* `get_context_window(model_name)`
 
-## Llamadas
+## Ejecución
 
 * `generate_text(model, messages, options=None)`
 * `generate_multimodal(model, messages, images, options=None)`
@@ -171,37 +202,78 @@ Funciones de bajo nivel que encapsulan proveedores y librerías externas como:
 * `validate_schema(data, schema)`
 * `parse_json_response(response)`
 
-## Tokens / modelo
+## Tokens
 
 * `count_tokens(model, content)`
-* `get_context_window(model)`
 
-## Persistencia básica
+## Persistencia
 
-* `save_llm_response(response, path)`
+* `save_llm_response(response, output_path)`
 
-Las primitivas deben conocer el proveedor, pero no el flujo documental completo.
+Las primitivas conocen el proveedor, pero no conocen el workflow documental.
 
 ---
 
 # 2. Utilitarios
 
-Funciones que combinan primitivas y representan operaciones completas de la capa LLM.
+## `process_llm_request(llm_input)`
 
-## `process_prompt(template, variables, schema=None)`
-
-Responsable de construir el prompt final.
+Función principal del módulo.
 
 Debe:
 
+* validar `LLMInput`;
 * cargar template;
-* resolver variables;
-* inyectar `<doc>`;
-* inyectar `<extra>`;
-* inyectar `<schema>`;
+* procesar variables;
+* preparar texto;
+* preparar imágenes;
+* cargar schema;
+* construir mensajes;
+* construir payload;
+* ejecutar modelo;
+* capturar respuesta;
+* parsear salida;
+* validar schema;
+* registrar metadata;
+* devolver `LLMResult`.
+
+Flujo:
+
+```text
+LLMInput
+   ↓
+process_template()
+   ↓
+process_prompt()
+   ↓
+prepare inputs
+   ↓
+build_messages()
+   ↓
+execute model
+   ↓
+parse response
+   ↓
+validate schema
+   ↓
+LLMResult
+```
+
+---
+
+## `process_prompt(template, variables, schema=None)`
+
+Debe:
+
+* inyectar variables;
+* resolver `<doc>`;
+* resolver `<extra>`;
+* resolver `<schema>`;
 * sanitizar contenido;
 * validar variables requeridas;
-* devolver el prompt final.
+* devolver prompt final.
+
+No debe seleccionar qué documento utilizar.
 
 ---
 
@@ -209,11 +281,11 @@ Debe:
 
 Debe:
 
-* cargar el template;
-* identificar variables;
-* verificar variables faltantes;
-* renderizar el contenido;
-* devolver el template hidratado.
+* cargar template;
+* detectar variables;
+* validar variables requeridas;
+* renderizar contenido;
+* devolver template procesado.
 
 ---
 
@@ -225,126 +297,165 @@ Debe:
 * extraer JSON;
 * parsear respuesta;
 * validar tipos;
-* validar campos requeridos;
-* devolver:
-
-  * resultado;
-  * errores;
-  * estado de validación.
+* validar campos;
+* devolver errores si corresponde.
 
 ---
 
 ## `process_text_input(text, model, options=None)`
 
-Prepara texto para una llamada LLM.
-
 Debe:
 
 * normalizar contenido;
-* verificar tamaño;
 * contar tokens;
-* truncar o rechazar según configuración;
-* devolver representación lista para el request.
+* validar tamaño;
+* controlar límite de contexto;
+* preparar entrada textual.
+
+No debe seleccionar entre texto PDF u OCR.
 
 ---
 
 ## `process_image_input(image_path, model, options=None)`
 
-Prepara una imagen ya normalizada.
-
 Debe:
 
 * validar existencia;
-* validar formato soportado por el modelo;
-* generar payload;
-* devolver representación multimodal.
+* validar formato compatible;
+* preparar payload multimodal.
 
 No debe:
 
 * rotar;
+* hacer deskew;
 * redimensionar;
-* mejorar;
-* aplicar OCR.
+* mejorar calidad;
+* ejecutar OCR.
 
-Eso pertenece a otros módulos.
+La imagen ya debe llegar preparada.
 
 ---
 
-## `process_llm_request(request)`
+# 3. Nodos LLM
 
-Función central del módulo.
+## `process_llm_node(node_config, state)`
+
+Ejecuta un nodo dentro de un grafo exclusivamente LLM.
 
 Debe:
 
-* validar `LLMRequest`;
-* procesar template;
-* preparar texto;
-* preparar imágenes;
-* cargar schema;
-* construir mensajes;
-* construir payload;
-* ejecutar modelo;
-* capturar respuesta;
-* parsear salida;
-* validar schema;
-* persistir metadata;
-* devolver `LLMResult`.
+* obtener inputs del estado LLM;
+* construir `LLMInput`;
+* llamar a `process_llm_request()`;
+* almacenar resultado en estado local;
+* devolver resultado del nodo.
 
-Flujo:
+Ejemplo:
 
-```text id="v54b1x"
-LLMRequest
-     ↓
-process_prompt()
-     ↓
-prepare inputs
-     ↓
-build messages
-     ↓
-LLM primitive
-     ↓
-parse response
-     ↓
-validate schema
-     ↓
+```text
+classify_document
+      ↓
 LLMResult
 ```
 
 ---
 
-## `process_llm_node(node_config, state)`
+# 4. Grafo LLM
 
-Ejecuta una llamada LLM dentro de un grafo.
+El módulo puede coordinar un **subgrafo de inferencia LLM**.
 
-Debe:
+Ejemplo:
 
-* leer inputs requeridos desde `state`;
-* construir `LLMRequest`;
-* llamar a `process_llm_request()`;
-* almacenar la salida en `state`;
-* devolver el resultado del nodo.
+```text
+classify
+   ↓
+ ┌─┴─────────┐
+ ▼           ▼
+extract_a  extract_b
+ └────┬──────┘
+      ↓
+   compare
+      ↓
+   validate
+      ↓
+ consolidate
+```
 
-No debe decidir qué página, OCR o texto nativo debe procesarse.
-
-Ese input debe venir ya definido por el orquestador.
+Este grafo solo contiene operaciones relacionadas con LLM.
 
 ---
 
+## `execute_llm_graph(graph, initial_state)`
+
+Debe:
+
+* inicializar estado LLM;
+* ejecutar nodos;
+* resolver dependencias;
+* permitir ramas;
+* ejecutar nodos en paralelo;
+* capturar resultados;
+* finalizar cuando el grafo termina.
+
+No debe ejecutar:
+
+```text
+PDF → Image → OCR
+```
+
+Ese flujo pertenece al orquestador documental.
+
+---
+
+# 5. Routing interno del grafo LLM
+
+El módulo puede tener routing interno, pero exclusivamente entre nodos LLM.
+
+Ejemplo:
+
+```text
+classify
+   ↓
+document_type
+   │
+   ├── invoice → extract_invoice
+   ├── receipt → extract_receipt
+   └── unknown → generic_extract
+```
+
+Funciones posibles:
+
+* `select_next_llm_node(node_result, routing_rules)`
+* `evaluate_llm_condition(condition, state)`
+* `resolve_llm_branch(node_result, graph)`
+
+No debe contener decisiones como:
+
+```text
+if page_is_image:
+    run_ocr()
+```
+
+---
+
+# 6. Comparación de outputs
+
 ## `compare_outputs(outputs, fields=None)`
 
-Compara salidas de múltiples llamadas.
+Compara resultados de múltiples llamadas LLM.
 
-Puede comparar:
+Puede evaluar:
 
 * igualdad exacta;
-* campos individuales;
-* valores numéricos;
-* estructura JSON;
-* similitud semántica cuando corresponda.
+* campos;
+* números;
+* listas;
+* estructuras JSON;
+* similitud semántica.
 
 Devuelve:
 
-```text id="jbyzu1"
+```text
 ComparisonResult
 ├── matches
 ├── conflicts
@@ -356,72 +467,127 @@ ComparisonResult
 
 ## `calculate_consensus(outputs)`
 
-Calcula acuerdo entre múltiples salidas.
+Calcula acuerdo entre:
 
-Puede trabajar:
+* modelos distintos;
+* prompts distintos;
+* múltiples ejecuciones.
 
-* por documento;
+Puede calcular consenso:
+
+* global;
 * por campo;
 * por valor.
 
-No debe decidir acciones de negocio posteriores.
+No compara:
 
-Solo devuelve métricas de consenso.
+* texto nativo vs OCR;
+* OCR vs imagen;
+* fuentes documentales.
+
+Eso pertenece a una capa superior.
 
 ---
 
+# 7. Retry
+
 ## `retry_llm_request(request, validation_errors, retry_config)`
 
-Permite repetir una llamada cuando:
+Debe poder ejecutar un nuevo intento cuando:
 
 * el JSON es inválido;
 * falla el schema;
 * faltan campos;
-* existe una condición explícita de retry.
+* existe timeout;
+* la respuesta está incompleta;
+* una regla LLM explícita indica retry.
 
-Debe generar un nuevo request conservando trazabilidad del intento anterior.
+Debe conservar trazabilidad del intento anterior.
 
 ---
 
-## `execute_llm_graph(graph, initial_state)`
+## Scope del retry
 
-Ejecuta únicamente el **subgrafo LLM**.
+Este módulo puede hacer:
 
-Puede contener nodos como:
-
-```text id="9dsy7v"
-classify
+```text
+LLM call
    ↓
-extract_a ─┐
-           ├─ compare
-extract_b ─┘
-           ↓
-validate
-           ↓
-consolidate
+schema invalid
+   ↓
+retry LLM call
 ```
 
-Este grafo conoce:
+No debe hacer:
 
-* prompts;
-* modelos;
-* schemas;
-* resultados LLM.
+```text
+OCR falló
+   ↓
+usar VLM
+```
 
-No conoce:
-
-* procesamiento PDF;
-* procesamiento de imagen;
-* OCR;
-* estructura física de páginas.
+Ese fallback pertenece al orquestador.
 
 ---
 
-# 3. Helpers
+# 8. Validación LLM
 
-Funciones pequeñas y reutilizables.
+## `validate_llm_result(result, schema, rules=None)`
 
-## Mensajes y requests
+Puede validar:
+
+* estructura JSON;
+* tipos;
+* campos requeridos;
+* enumeraciones;
+* formatos;
+* reglas simples asociadas al resultado LLM.
+
+Debe devolver:
+
+```text
+VALID
+INVALID
+RETRYABLE
+```
+
+Las reglas de negocio documentales generales pueden mantenerse en otra capa si exceden el alcance de la inferencia.
+
+---
+
+# 9. Estado interno
+
+El módulo puede mantener un estado propio para el grafo LLM.
+
+Ejemplo:
+
+```text
+LLMGraphState
+├── graph_id
+├── current_nodes[]
+├── node_results{}
+├── attempts{}
+├── comparisons{}
+├── errors[]
+└── final_result
+```
+
+Este estado debe permanecer encapsulado.
+
+No debe reemplazar:
+
+```text
+DocumentContext
+PageContext
+```
+
+del orquestador.
+
+---
+
+# 10. Helpers
+
+## Requests
 
 * `build_messages(system, user, images=None)`
 * `build_llm_request(model, messages, schema=None)`
@@ -437,7 +603,7 @@ Funciones pequeñas y reutilizables.
 * `inject_schema(template, schema)`
 * `validate_template_variables(template, variables)`
 
-## Contexto
+## Contexto LLM
 
 * `build_node_context(state, required_fields)`
 * `merge_contexts(*contexts)`
@@ -473,7 +639,7 @@ Funciones pequeñas y reutilizables.
 ## Trazabilidad
 
 * `build_run_id()`
-* `append_trace(trace_path, event)`
+* `append_llm_trace(event)`
 * `build_request_metadata(request)`
 * `build_response_metadata(response)`
 * `write_json(path, data)`
@@ -483,126 +649,170 @@ Funciones pequeñas y reutilizables.
 
 # Responsabilidades que NO pertenecen a este módulo
 
-Eliminar del alcance cualquier función similar a:
+Eliminar cualquier función o lógica relacionada con:
 
-```text id="h7ypgh"
-process_page()
-process_pdf()
+```text
 process_document()
+process_page()
+
+detect_input_type()
+
+process_pdf()
+process_image()
 run_ocr()
-normalize_image()
-select_document_source()
-select_ocr_or_vlm()
+
+should_run_ocr()
+should_run_vlm()
+
+select_source()
+select_extraction_strategy()
+
+build_document_context()
+consolidate_document_result()
 ```
 
-Tampoco debe hacer:
+También debe evitar:
 
-```text id="pnp56a"
-if page.type == IMAGE:
+```text
+if page.classification == IMAGE:
     run_ocr()
 ```
 
-Esa lógica pertenece al orquestador.
+o:
+
+```text
+if native_text_empty:
+    use_ocr()
+```
+
+Estas decisiones pertenecen al `procesador-orquestador`.
 
 ---
 
-# Separación entre Orquestador y LLM Graph
+# Separación con `procesador-orquestador`
 
-Es importante distinguir los dos niveles.
+## Procesador Orquestador
 
-## Workflow documental
+Decide:
 
-Responsabilidad del orquestador:
-
-```text id="qdaglg"
-PDF
- ↓
-page
- ↓
-image
- ↓
-OCR
- ↓
-selección de fuente
- ↓
-LLM
+```text
+¿Qué procesador ejecutar?
+¿Qué fuente utilizar?
+¿Necesito OCR?
+¿Necesito VLM?
+¿Qué hago si un procesador falla?
+¿Cómo proceso las páginas?
+¿Cómo consolido el documento?
 ```
 
-## Workflow LLM
+Produce:
 
-Responsabilidad de `procesador-llm-call`:
-
-```text id="ub2s0y"
-Prepared Input
-      ↓
- classify
-      ↓
- ┌────┴────┐
- ▼         ▼
-extract_A extract_B
- └────┬────┘
-      ↓
-   compare
-      ↓
-   validate
-      ↓
-   result
+```text
+LLMInput
 ```
-
-El segundo puede existir independientemente del primero.
 
 ---
 
-# Integración con el sistema
+## Procesador LLM Call
 
-El orquestador prepara algo como:
+Decide:
 
-```text id="ry4bif"
-PreparedDocumentInput
-├── document
-├── images[]
-├── extra_context
-└── metadata
+```text
+¿Cómo ejecuto esta tarea LLM?
+¿Qué template renderizo?
+¿Cómo construyo el payload?
+¿Cómo valido el schema?
+¿Debo reintentar esta llamada?
+¿Qué nodo LLM sigue dentro del grafo?
+¿Cómo comparo múltiples outputs LLM?
 ```
 
-y lo transforma en:
+Produce:
 
-```text id="df45ou"
-LLMRequest
-```
-
-A partir de ahí:
-
-```text id="crwzgu"
-ORCHESTRATOR
-      ↓
-prepared input
-      ↓
-procesador-llm-call
-      ↓
-LLM Graph
-      ↓
+```text
 LLMResult
-      ↓
-ORCHESTRATOR
 ```
 
 ---
 
-# Principio de diseño
+# Integración
 
-`procesador-llm-call` debe cumplir una regla simple:
+```text
+procesador-orquestador
+          ↓
+       LLMInput
+          ↓
+procesador-llm-call
+          ↓
+      LLM Graph
+          ↓
+       LLMResult
+          ↓
+procesador-orquestador
+```
 
-> **Recibe información preparada, ejecuta una o varias operaciones LLM y devuelve resultados estructurados y trazables.**
+La interfaz entre ambos debe ser explícita.
 
-No conoce Poppler.
+El orquestador no necesita conocer detalles como:
 
-No conoce Docling.
+* formato específico de Ollama;
+* mensajes del proveedor;
+* parsing del JSON;
+* retries de inferencia;
+* estructura interna del grafo LLM.
 
-No procesa imágenes con OpenCV.
+Y `procesador-llm-call` no necesita conocer:
 
-No decide qué representación del documento utilizar.
+* páginas;
+* PDF;
+* OCR;
+* selección de fuentes;
+* estrategia documental.
 
-No coordina el pipeline documental.
+---
 
-Sí puede conocer y orquestar un **grafo interno de llamadas LLM**, porque esa es parte de su responsabilidad específica.
+# Independencia del módulo
+
+Debe poder ejecutarse sin el resto del pipeline.
+
+Ejemplo:
+
+```text
+LLMInput
+   ↓
+procesador-llm-call
+   ↓
+LLMResult
+```
+
+Esto permite:
+
+* testear modelos independientemente;
+* probar prompts;
+* comparar modelos;
+* ejecutar benchmarks;
+* cambiar Ollama por otro proveedor;
+* probar schemas;
+* ejecutar workflows LLM sin documentos PDF.
+
+---
+
+# Regla arquitectónica final
+
+`procesador-llm-call`:
+
+> **Recibe una tarea LLM preparada y devuelve un resultado LLM estructurado.**
+
+Puede orquestar **nodos LLM entre sí**.
+
+No puede orquestar **procesadores documentales**.
+
+En términos simples:
+
+```text
+procesador-orquestador
+    = qué hacer
+
+procesador-llm-call
+    = cómo ejecutar la inferencia
+```
