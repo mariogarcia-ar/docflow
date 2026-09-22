@@ -30,8 +30,8 @@ from docflow.pdf.primitives.engine import (
     PopplerCommand,
     PopplerOutputMissingError,
     require_positive_page_range,
-    run_engine_command,
 )
+from docflow.pdf.primitives.failures import run_classified
 
 RENDER_FORMAT = "png"
 """The only render format in Phase 1. A constant, so no caller can silently pick another."""
@@ -92,7 +92,7 @@ def render_page_to_image(
     # and the published name is put in place afterwards. `-singlefile` is not optional:
     # without it the same prefix would yield one file per page in the range.
     prefix = output_path.parent / f"{output_path.stem}{_STAGED_SUFFIX}"
-    run_engine_command(
+    run_classified(
         PopplerCommand.PDFTOPPM,
         [
             "-singlefile",
@@ -106,10 +106,15 @@ def render_page_to_image(
             str(pdf_path),
             str(prefix),
         ],
+        pdf_path,
+        page_number=page_number,
     )
 
     staged = Path(f"{prefix}.{RENDER_FORMAT}")
     if not staged.exists() or staged.stat().st_size == 0:
+        # A staged file that is absent or empty is not an artifact, and leaving it behind
+        # would put a file in a published namespace that no result describes.
+        staged.unlink(missing_ok=True)
         raise PopplerOutputMissingError(PopplerCommand.PDFTOPPM, output_path)
 
     staged.replace(output_path)

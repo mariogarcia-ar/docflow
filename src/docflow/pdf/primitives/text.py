@@ -41,14 +41,12 @@ from xml.etree import ElementTree
 from docflow.pdf.contracts import TextBlock
 from docflow.pdf.primitives.engine import (
     PopplerCommand,
-    PopplerError,
     page_range_arguments,
     require_positive_page_range,
-    run_engine_command,
 )
 from docflow.pdf.primitives.failures import (
-    classify_engine_failure,
     classify_text_failure,
+    run_classified,
 )
 
 PAGE_BREAK = "\x0c"
@@ -148,12 +146,9 @@ def engine_report(path: Path, page_number: int, layout: bool = True) -> TextPage
         *page_range_arguments((page_number, page_number), path),
         "-",
     ]
-    try:
-        raw = run_engine_command(PopplerCommand.PDFTOTEXT, arguments)
-    except PopplerError as failure:
-        raise classify_engine_failure(
-            path, failure, page_number=page_number
-        ) from failure
+    raw = run_classified(
+        PopplerCommand.PDFTOTEXT, arguments, path, page_number=page_number
+    )
 
     text = strip_page_breaks(raw)
     return TextPage(
@@ -195,12 +190,9 @@ def extract_text_from_page(
         *page_range_arguments((page_number, page_number), pdf_path),
         "-",
     ]
-    try:
-        raw = run_engine_command(PopplerCommand.PDFTOTEXT, arguments)
-    except PopplerError as failure:
-        raise classify_engine_failure(
-            pdf_path, failure, page_number=page_number
-        ) from failure
+    raw = run_classified(
+        PopplerCommand.PDFTOTEXT, arguments, pdf_path, page_number=page_number
+    )
 
     return strip_page_breaks(raw)
 
@@ -223,19 +215,16 @@ def get_text_blocks(pdf_path: Path, page_number: int) -> list[TextBlock]:
     """
     require_positive_page_range((page_number, page_number))
 
-    try:
-        markup = run_engine_command(
-            PopplerCommand.PDFTOTEXT,
-            [
-                "-bbox-layout",
-                *page_range_arguments((page_number, page_number), pdf_path),
-                "-",
-            ],
-        )
-    except PopplerError as failure:
-        raise classify_engine_failure(
-            pdf_path, failure, page_number=page_number
-        ) from failure
+    markup = run_classified(
+        PopplerCommand.PDFTOTEXT,
+        [
+            "-bbox-layout",
+            *page_range_arguments((page_number, page_number), pdf_path),
+            "-",
+        ],
+        pdf_path,
+        page_number=page_number,
+    )
 
     try:
         root = ElementTree.fromstring(markup)

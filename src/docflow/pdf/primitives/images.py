@@ -40,15 +40,10 @@ from pathlib import Path
 from docflow.pdf.contracts import EmbeddedImage
 from docflow.pdf.primitives.engine import (
     PopplerCommand,
-    PopplerError,
     page_range_arguments,
     require_positive_page_range,
-    run_engine_command,
 )
-from docflow.pdf.primitives.failures import (
-    classify_engine_failure,
-    classify_image_failure,
-)
+from docflow.pdf.primitives.failures import classify_image_failure, run_classified
 from docflow.pdf.primitives.naming import image_index_name
 
 IMAGE_TYPE = "image"
@@ -193,18 +188,15 @@ def embedded_image_records(
     """
     require_positive_page_range((page_number, page_number))
 
-    try:
-        output = run_engine_command(
-            PopplerCommand.PDFIMAGES,
-            [
-                "-list",
-                *page_range_arguments((page_number, page_number), pdf_path),
-            ],
-        )
-    except PopplerError as failure:
-        raise classify_engine_failure(
-            pdf_path, failure, page_number=page_number
-        ) from failure
+    output = run_classified(
+        PopplerCommand.PDFIMAGES,
+        [
+            "-list",
+            *page_range_arguments((page_number, page_number), pdf_path),
+        ],
+        pdf_path,
+        page_number=page_number,
+    )
 
     # The engine accepts a range that starts before the page and reports every page it
     # covers, so the page column is filtered rather than trusted to match the request.
@@ -287,29 +279,43 @@ def extract_images_from_page(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     prefix = output_dir / "_staged"
-    try:
-        run_engine_command(
-            PopplerCommand.PDFIMAGES,
-            [
-                "-png",
-                *page_range_arguments((page_number, page_number), pdf_path),
-                str(prefix),
-            ],
-        )
-    except PopplerError as failure:
-        raise classify_engine_failure(
-            pdf_path, failure, page_number=page_number
-        ) from failure
+    run_classified(
+        PopplerCommand.PDFIMAGES,
+        [
+            "-png",
+            *page_range_arguments((page_number, page_number), pdf_path),
+            str(prefix),
+        ],
+        pdf_path,
+        page_number=page_number,
+    )
 
     try:
         return _publish_images(output_dir, prefix, images)
     except (OSError, ValueError) as failure:
+        # Nothing is published until every rename has happened, so a failure in the publish
+        # step leaves the engine's staged files behind. They are removed before the failure
+        # is reported: a residue in a published namespace is a file a later stage would read
+        # as an artifact, and `PDF-12`'s acceptance criterion is that an interrupted run
+        # leaves neither a final-named artifact nor a staged one.
+        _discard_staged(output_dir, prefix)
         # Typed as an image failure rather than a document failure: the page parsed well
         # enough to be listed, so its render and its text are unaffected and `PDF-09` can
         # keep the page.
         raise classify_image_failure(
             pdf_path, failure, page_number=page_number
         ) from failure
+
+
+def _discard_staged(output_dir: Path, prefix: Path) -> None:
+    """Remove the engine's staged files, ignoring their absence.
+
+    Args:
+        output_dir: The directory the engine wrote into.
+        prefix: The stem the engine was given.
+    """
+    for path in output_dir.glob(f"{prefix.name}-*"):
+        path.unlink(missing_ok=True)
 
 
 def _publish_images(

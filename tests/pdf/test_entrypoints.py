@@ -23,7 +23,7 @@ from docflow.pdf import PDFContext, PDFOptions, PDFRequest
 from docflow.pdf.entrypoints import process_pdf_page
 from docflow.pdf.primitives.failures import PDFPrimitiveError
 from docflow.pdf.primitives.publishing import TEMP_SUFFIX
-from tests.factories import build_pdf_request_for
+from tests.factories import PAGE_ARTIFACT_TREE, build_pdf_request_for
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 TEXT_PDF = FIXTURES / "matrix" / "three-invoices.pdf"
@@ -78,13 +78,7 @@ def test_a_valid_page_publishes_the_documented_tree(tmp_path: Path) -> None:
         if path.is_file()
     )
 
-    assert relative == [
-        "metadata.json",
-        "native_text/blocks.json",
-        "native_text/text.txt",
-        "render/page.png",
-        "source/page.pdf",
-    ]
+    assert relative == list(PAGE_ARTIFACT_TREE)
 
 
 def test_a_valid_page_reports_success_and_valid(tmp_path: Path) -> None:

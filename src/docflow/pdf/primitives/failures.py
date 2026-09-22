@@ -27,7 +27,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from docflow.pdf.contracts import PDFErrorType
-from docflow.pdf.primitives.engine import PopplerError
+from docflow.pdf.primitives.engine import (
+    PopplerCommand,
+    PopplerError,
+    run_engine_command,
+)
 
 PDF_HEADER = b"%PDF-"
 """Every PDF begins with this. Its absence is not a matter of interpretation."""
@@ -123,16 +127,36 @@ def declares_encryption(pdf_path: Path) -> bool:
 def check_pdf_is_readable(pdf_path: Path) -> None:
     """Fail fast, with a typed cause, when a document cannot be read at all.
 
-    Called before the engine so the three failures that make parsing pointless are named
-    without depending on the engine's diagnostics.
+    Called before the engine so the failures that make parsing pointless are named without
+    depending on the engine's diagnostics. The order matters: existence is checked first so a
+    missing file is reported as missing rather than as corrupt, and the header is checked
+    before the encryption marker so a file that only *contains* the ``/Encrypt`` bytes is not
+    mistaken for an encrypted document.
+
+    **``UNSUPPORTED_PDF`` is never produced here, and that is a finding rather than a gap.**
+    Two reasons, both verified against Poppler 25.02.0:
+
+    * There is **no version gate to fail**. Poppler parses the structure and ignores the
+      version the header claims: a document whose header was rewritten to ``%PDF-9.9`` is
+      read as happily as ``%PDF-1.7``, reporting ``Pages: 3`` either way. So there is no
+      "version too new" answer to give.
+    * There is **no third structural failure**. A missing file is one cause; anything else
+      that does not parse — a truncated trailer, a file that is not a PDF, a document whose
+      page tree is empty or absent — is corruption, and is reported as ``CORRUPTED_PDF``.
+
+    The literal stays in the contract because it describes a real category a future engine
+    could hit; producing it here would require inventing a distinction the engine does not
+    make, which is the kind of plausible-but-wrong classification the plan forbids.
 
     Args:
         pdf_path: PDF to inspect.
 
     Raises:
-        PDFPrimitiveError: The file is absent, does not begin with ``%PDF-``, or declares
-            itself encrypted. Password handling is deferred, so an encrypted document is
-            reported rather than guessed at.
+        PDFPrimitiveError: The file is absent, is not a regular file, does not begin with
+            ``%PDF-``, or declares itself encrypted. Password handling is deferred, so an
+            encrypted document is reported rather than guessed at.
+
+    # TODO: [MVP] real encryption and password handling (PDF-11).
     """
     if not pdf_path.exists():
         raise PDFPrimitiveError(
@@ -160,6 +184,40 @@ def check_pdf_is_readable(pdf_path: Path) -> None:
             f"{pdf_path} is encrypted; passwords are not handled yet",
             detail=str(pdf_path),
         )
+
+
+def run_classified(
+    command: PopplerCommand,
+    arguments: list[str],
+    pdf_path: Path,
+    *,
+    page_number: int | None = None,
+) -> str:
+    """Run an engine command, classifying any failure into the contract's vocabulary.
+
+    Every primitive did this by hand — five copies of the same ``try``/``except`` pair, which
+    is five places to forget the classification and five chances for one primitive to answer
+    differently from its siblings. ``render`` was the one that had actually drifted: it still
+    raised a raw ``PopplerExecutionError`` while the other four were typed.
+
+    Args:
+        command: The binary to run.
+        arguments: Its arguments, in order.
+        pdf_path: The document being read, for the classification.
+        page_number: Page being requested, when the call was page-scoped.
+
+    Returns:
+        The command's standard output.
+
+    Raises:
+        PDFPrimitiveError: Classified from whatever the engine raised.
+    """
+    try:
+        return run_engine_command(command, arguments)
+    except PopplerError as failure:
+        raise classify_engine_failure(
+            pdf_path, failure, page_number=page_number
+        ) from failure
 
 
 def classify_engine_failure(
@@ -265,4 +323,5 @@ __all__ = [
     "classify_text_failure",
     "declares_encryption",
     "looks_like_a_pdf",
+    "run_classified",
 ]

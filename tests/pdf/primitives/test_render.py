@@ -15,10 +15,10 @@ import pytest
 
 from docflow.pdf.primitives.engine import (
     PopplerCommand,
-    PopplerExecutionError,
     PopplerOutputMissingError,
     run_engine_command,
 )
+from docflow.pdf.primitives.failures import PDFPrimitiveError
 from docflow.pdf.primitives.render import (
     MIN_RENDER_DPI,
     RENDER_FORMAT,
@@ -243,12 +243,18 @@ def test_render_rejects_a_dpi_the_engine_would_silently_replace(
 def test_render_reports_a_page_past_the_end_of_the_document(
     source_pdf: Path, tmp_path: Path
 ) -> None:
-    """A page the document does not have is the engine's error, not a guess."""
-    with pytest.raises(PopplerExecutionError) as failure:
+    """A page the document does not have is reported as out of range, and typed.
+
+    ``PDF-11`` unified the error model: every primitive classifies the engine's failure into
+    the contract's own vocabulary, so a caller gets ``PAGE_OUT_OF_RANGE`` rather than an exit
+    code it would have to interpret. The render was the last primitive still handing back a
+    raw ``PopplerExecutionError`` while its four siblings were typed.
+    """
+    with pytest.raises(PDFPrimitiveError) as failure:
         render_page_to_image(source_pdf, PAGE_COUNT + 1, tmp_path / "oob.png")
 
-    assert failure.value.returncode is not None
-    assert failure.value.returncode != 0
+    assert failure.value.error_type == "PAGE_OUT_OF_RANGE"
+    assert failure.value.page_number == PAGE_COUNT + 1
 
 
 def test_render_never_modifies_the_source_pdf(source_pdf: Path, tmp_path: Path) -> None:
@@ -285,8 +291,11 @@ def test_an_engine_that_writes_nothing_is_reported_not_published(
     ``pytest.raises`` block fails, and ``render_page_to_image`` returns a path to a file
     that does not exist, which is the silent stand-in the plan forbids.
     """
+    # Patched at the seam wrapper the primitive now calls, not at `run_engine_command`:
+    # `PDF-11` moved the classification into `run_classified` and the primitive no longer
+    # reaches the raw runner, so the older patch target stopped intercepting anything.
     monkeypatch.setattr(
-        "docflow.pdf.primitives.render.run_engine_command", lambda *a, **k: ""
+        "docflow.pdf.primitives.render.run_classified", lambda *a, **k: ""
     )
 
     with pytest.raises(PopplerOutputMissingError) as failure:

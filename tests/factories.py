@@ -164,3 +164,19 @@ def build_document_request(tmp_path: Path) -> DocumentRequest:
         options={},
         metadata={},
     )
+
+
+PAGE_ARTIFACT_TREE: tuple[str, ...] = (
+    "metadata.json",
+    "native_text/blocks.json",
+    "native_text/text.txt",
+    "render/page.png",
+    "source/page.pdf",
+)
+"""The files a complete page publishes, relative to ``page_NNN/``.
+
+Shared by the page-level and hardening tests. Both assert the *complete* set rather than
+"these exist", because an extra file in this namespace is something a later stage would read
+as part of the page — the two suites would otherwise spell the same list twice and could
+drift into checking different trees.
+"""

@@ -169,7 +169,15 @@ def test_no_processor_defines_a_reserved_orchestrator_name() -> None:
 
 
 def test_tests_mirrors_the_source_tree() -> None:
-    """A test package exists for each sub-package, and the mirror is not partial."""
+    """A test package exists for each library sub-package, and the mirror is not partial.
+
+    ``tools/`` is excluded because it has no counterpart to mirror: ``scripts/tools/`` is not
+    part of the library, and its tests must not live *inside* the mirror they would break.
+    ``GEN-21`` states the boundary — nothing under ``src/docflow/`` imports a tool, so the
+    tools' tests are deliberately outside the library's test tree mapping.
+    """
+    library_owned = {"tools"}
+
     source_packages = {
         path.name
         for path in (REPO_ROOT / "src" / "docflow").iterdir()
@@ -179,7 +187,7 @@ def test_tests_mirrors_the_source_tree() -> None:
         path.name
         for path in (REPO_ROOT / "tests").iterdir()
         if path.is_dir() and (path / "__init__.py").exists()
-    }
+    } - library_owned
 
     assert source_packages == test_packages
 

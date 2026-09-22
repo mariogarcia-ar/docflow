@@ -35,14 +35,12 @@ from pathlib import Path
 
 from docflow.pdf.primitives.engine import (
     PopplerCommand,
-    PopplerError,
     require_positive_page_range,
-    run_engine_command,
 )
 from docflow.pdf.primitives.failures import (
     PDFPrimitiveError,
     check_pdf_is_readable,
-    classify_engine_failure,
+    run_classified,
 )
 
 _PAGE_COUNT_PATTERN = re.compile(r"^Pages:\s+(\d+)\s*$", re.MULTILINE)
@@ -99,14 +97,12 @@ def _run_pdfinfo(pdf_path: Path, *, page_range: tuple[int, int] | None = None) -
         str(pdf_path),
     ]
 
-    try:
-        return run_engine_command(PopplerCommand.PDFINFO, arguments)
-    except PopplerError as failure:
-        raise classify_engine_failure(
-            pdf_path,
-            failure,
-            page_number=page_range[0] if page_range else None,
-        ) from failure
+    return run_classified(
+        PopplerCommand.PDFINFO,
+        arguments,
+        pdf_path,
+        page_number=page_range[0] if page_range else None,
+    )
 
 
 def _parse_page_count(output: str, pdf_path: Path) -> int:

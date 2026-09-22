@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PDF-01` … `PDF-14` |
-| Status | `PDF-01`…`PDF-10` **DONE** — Wave 3 closed; `PDF-11`…`PDF-14` `NOT_STARTED` |
+| Status | `PDF-01`…`PDF-14` **DONE** — the processor is complete |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -40,10 +40,10 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | DONE |
 | PDF-09 | Page entry point | M | 3 — Composition | PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | `process_pdf_page`, `page_001/metadata.json` | this file §PDF-09 | DONE |
 | PDF-10 | Document entry point | M | 3 — Composition | PDF-03, PDF-09 | `process_pdf`, `metadata.json` | this file §PDF-10 | DONE |
-| PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | NOT_STARTED |
-| PDF-12 | Atomic persistence | S | 4 — Hardening | PDF-09, PDF-10 | `.tmp` → validate → rename across all artifacts | this file §PDF-12 | NOT_STARTED |
-| PDF-13 | Fixtures + tests | M | 4 — Hardening | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 | `fixtures/pdf_sample_*.pdf`, `tests/` | this file §PDF-13 | NOT_STARTED |
-| PDF-14 | Lab tool `scripts/tools/pdf.py` | S | 5 — Lab tool | PDF-13 | `scripts/tools/pdf.py` | this file §PDF-14 | NOT_STARTED |
+| PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | DONE |
+| PDF-12 | Atomic persistence | S | 4 — Hardening | PDF-09, PDF-10 | `.tmp` → validate → rename across all artifacts | this file §PDF-12 | DONE |
+| PDF-13 | Fixtures + tests | M | 4 — Hardening | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 | `fixtures/pdf_sample_*.pdf`, `tests/` | this file §PDF-13 | DONE |
+| PDF-14 | Lab tool `scripts/tools/pdf.py` | S | 5 — Lab tool | PDF-13 | `scripts/tools/pdf.py` | this file §PDF-14 | DONE |
 
 ## 3. Detailed issues
 
@@ -311,6 +311,13 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given an encrypted PDF, when the document run starts, then it fails fast with `ENCRYPTED_PDF` and `recoverable = false` instead of guessing.
 - **Evidence / DoD:** Unit tests on validation states, including the encrypted/corrupt fixtures; no silent-default assertion reviewed in the diff.
 - **Tags:** `# TODO: [MVP]` for real encryption and password handling.
+- **Status: DONE.** The fail-fast paths were already reachable through ``PDF-03``'s ``check_pdf_is_readable``; this task made the model **complete and uniform**, which is where the real work was.
+  - **The render was the one primitive that did not classify.** ``document``, ``split``, ``text`` and ``images`` all converted an engine failure into a ``PDFPrimitiveError`` with a contract type; ``render`` still raised a raw ``PopplerExecutionError``. A caller therefore received a typed failure from four capabilities and an exit code from the fifth. Fixed, and the fix is now shared: ``run_classified`` in the failures bridge replaced **five** copies of the same ``try``/``except`` pair.
+  - **``UNSUPPORTED_PDF`` is not produced, and that is a finding rather than a gap — verified, not assumed.** Poppler has no version gate to fail: a document whose header was rewritten to ``%PDF-9.9`` reports ``Pages: 3`` exactly like ``%PDF-1.7``. And there is no third structural failure: a missing file is one cause, an encrypted file another, and everything else that does not parse — a truncated trailer, a file that is not a PDF, an absent page tree — is corruption. Producing the literal would mean inventing a distinction the engine does not make. A test pins the absence so the reasoning cannot go stale silently.
+  - **The ``ERROR`` validation state was unreachable** and is now wired into both status mappings: it means "no verdict could be reached", so it raises rather than being folded into one of the three real statuses, which would be an invented answer.
+  - `validate_pdf_result(result)` takes the options, for symmetry with the page-level validator.
+  - Mutation-verified: disabling encryption detection degrades the verdict to ``CORRUPTED_PDF`` and fails the errors-model test.
+  - Four QA gates green.
 
 ### PDF-12 — Atomic persistence
 
@@ -327,6 +334,11 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given a partial page, then only its valid artifacts remain under `page_NNN/`.
 - **Evidence / DoD:** Failure-path test asserting the absence of `.tmp` files and final-named artifacts; reviewed by the atomic-publication rule.
 - **Tags:** `# TODO: [RELEASE]` for filesystem-level crash-safety guarantees.
+- **Status: DONE.** The helper already existed from ``PDF-09``/``PDF-10``; what this task added is the guarantee on the paths that had been missed.
+  - **A real residue, observed rather than assumed.** Three primitives hand the engine a **prefix** and let it write its own output — ``pdftoppm`` and ``pdfimages`` name files ``<prefix>-NNN.<ext>``. An interruption between the engine run and the rename step left **five** ``_staged-*.png`` files inside a published ``embedded_images/`` namespace. They matter because ``PDF-09`` treats every file there as a page artifact, so the residue would be read as images no record describes. The staged files are now removed before the failure is raised, and the render's empty-or-absent staged file is removed before its error too.
+  - ``split`` was checked as well: it hands the engine a ``%d`` template and reads the result, so an interruption leaves only the engine's own files, which the next run overwrites — no residue.
+  - Mutation-verified: removing the cleanup brings the five ``_staged-*`` files back and fails the failure-path test.
+  - Four QA gates green.
 
 ### PDF-13 — Committed fixtures and tests
 
@@ -343,6 +355,12 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given each invariant test, when its documented mutation is applied to the source, then the test fails; after restoring the source, it is green again.
 - **Evidence / DoD:** Test run output for the happy path; both observations (failure under mutation, green after restore) reported per invariant.
 - **Tags:** `# TODO: [MVP]` where a fixture stands in for a real-world document.
+- **Status: DONE.** `tests/pdf/test_hardening.py`, 22 tests. The fixtures are the committed matrix plus the three this session added: `pdf_corrupt.pdf`, `pdf_encrypted.pdf`, `pdf_hyphenated.pdf` and `pdf_accents.pdf`. The four names the plan lists (`pdf_sample_text`/`_image`/`_mixed`/`pdf_corrupt`) map onto the corpus as `three-invoices.pdf`, `scan150.pdf`, `36744cc6-…pdf` and `pdf_corrupt.pdf`; the corpus was used rather than four new files so the tests measure documents that actually occur.
+  - **Invariant 1 — page completeness.** Mutation: drop the last page. **6 tests fail**; restored green.
+  - **Invariant 2 — immutable input.** Mutation: `extract_page` writes to `pdf_path`. **3 tests fail** (one per fixture, across the three engine calls); restored green. The mutation is worth recording for a second reason: it **overwrote the three fixture PDFs on disk**, which is exactly the damage the invariant exists to prevent — the suite reported 127 failures afterwards until the fixtures were restored from git.
+  - **Invariant 3 — classification vocabulary and purity.** Mutation: return `"OCR"`. The first attempt **passed every test in the module**, because no committed fixture produces the vector that reaches the mutated branch (no text *and* no images). A vector sweep over the classifier's whole domain was added; the mutation now fails it. Both tests are kept — one grounds the invariant in real bytes, the other covers the domain.
+  - The happy path runs over all three fixtures, asserting the complete top-level namespace.
+  - Four QA gates green.
 
 ### PDF-14 — Lab tool `scripts/tools/pdf.py`
 
@@ -359,6 +377,17 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the tool source, when its imports and calls are inspected, then every operation resolves to a `docflow.pdf` function or primitive and no module under `src/docflow/` imports it.
 - **Evidence / DoD:** The two scenarios above executed and their output pasted; the four QA gates still green with the tool present; an import-direction check proving `src/docflow/` does not import `scripts/`.
 - **Tags:** `# TODO: [MVP]` on `--json` if its serialization is kept permissive for the PoC.
+- **Status: DONE.** `scripts/tools/pdf.py`, all eight subcommands; tests in `tests/tools/test_pdf_tool.py`, which run the tool as a subprocess — exactly as an operator runs it.
+  - **Scenario 1 observed:** ``split`` writes ``page_001..003/source/page.pdf`` under ``var/tools/pdf/three-invoices-71b4fb06/`` and the input's SHA-256 is unchanged.
+  - **Scenario 2 observed:** the tool imports ``docflow.pdf``; no module under ``src/docflow/`` mentions ``scripts``; the library imports cleanly in a fresh interpreter that never sees the tool.
+  - **Three defects found while exercising it, each fixed:**
+    1. ``--json`` changed nothing — it printed JSON in *both* modes and then the human summary on top, so the output was not parseable. It now selects the mode.
+    2. ``split`` wrote flat ``page_NNN.pdf`` files, not the ``page_NNN/source/page.pdf`` layout the acceptance criterion names.
+    3. Global flags worked only *before* the subcommand, and once both positions were declared, a *leading* flag was silently dropped because the sub-parser's default overwrote it. Both positions now work, pinned by a parametrised test — the silent-loss variant is the worse failure, since it writes output somewhere other than where it was asked.
+  - ``classify`` publishes nothing: it reads the listing rather than extracting, so measuring is read-only.
+  - Two guards were refined after flagging **prose** rather than code: forbidding the word ``reuse`` would have condemned the docstring explaining that the tool does not decide reuse. The check now strips comments and docstrings and inspects executable text only — the same false-positive class the seam guard hit over ``shutil``.
+  - The ``tools`` test package is deliberately outside ``tests/``'s mirror of ``src/docflow/``: the tools are not part of the library, and ``GEN-21`` says so.
+  - Four QA gates green.
 
 ```gherkin
 Scenario: Split from the command line leaves the input untouched

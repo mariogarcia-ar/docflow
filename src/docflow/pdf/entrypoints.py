@@ -23,7 +23,6 @@ shape it:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 from docflow.pdf.contracts import (
@@ -57,6 +56,9 @@ from docflow.pdf.primitives.render import render_page_to_image
 from docflow.pdf.primitives.split import extract_page
 from docflow.pdf.primitives.text import engine_report, get_text_blocks
 from docflow.pdf.primitives.validation import (
+    ERROR,
+    PARTIAL,
+    VALID,
     document_metadata,
     page_metadata,
     validate_pdf_page_result,
@@ -356,24 +358,26 @@ def process_pdf_page(
             than recorded.
     """
     started = time.perf_counter()
-    stages = _run_page_stages(request, page_number, output_dir)
-    stages.timing["total"] = time.perf_counter() - started
+    produced, errors, timing = _run_page_stages(request, page_number, output_dir)
+    timing["total"] = time.perf_counter() - started
 
     stage = time.perf_counter()
     metrics, classification = _measure(
         request,
         page_number,
-        stages.errors,
-        stages.native_text,
-        stages.text_blocks,
-        stages.embedded_images,
+        errors,
+        produced["native_text"],  # type: ignore[arg-type]
+        produced["text_blocks"],  # type: ignore[arg-type]
+        produced["embedded_images"],  # type: ignore[arg-type]
     )
-    stages.timing["analyze"] = time.perf_counter() - stage
+    timing["analyze"] = time.perf_counter() - stage
 
     result = _assemble(
         request=request,
         page_number=page_number,
-        stages=stages,
+        produced=produced,
+        errors=errors,
+        timing=timing,
         metrics=metrics,
         classification=classification,
     )
@@ -381,35 +385,9 @@ def process_pdf_page(
     return result
 
 
-@dataclass
-class _PageStages:
-    """What one page's four capabilities produced, and what failed.
-
-    A record rather than a dozen locals threaded through three function calls. It is private:
-    it exists to keep ``process_pdf_page`` readable, not to be a contract.
-
-    Attributes:
-        page_pdf: The one-page PDF, or ``None``.
-        page_image: The render, or ``None``.
-        native_text: The text artifact, or ``None``.
-        text_blocks: The page's text blocks.
-        embedded_images: The page's embedded images.
-        timing: Wall-clock seconds by stage.
-        errors: The failures recorded while processing.
-    """
-
-    page_pdf: Path | None
-    page_image: Path | None
-    native_text: Path | None
-    text_blocks: list[TextBlock]
-    embedded_images: list[EmbeddedImage]
-    timing: dict[str, float]
-    errors: list[PDFError]
-
-
 def _run_page_stages(
     request: PDFRequest, page_number: int, output_dir: Path
-) -> _PageStages:
+) -> tuple[dict[str, object], list[PDFError], dict[str, float]]:
     """Run the page's capabilities, containing every failure but a missing page.
 
     Args:
@@ -418,7 +396,10 @@ def _run_page_stages(
         output_dir: The page directory.
 
     Returns:
-        The record of what was produced and what failed.
+        What the page produced, the failures recorded, and the stage timings. A tuple rather
+        than a record: a record carrying the page's own attributes would restate the
+        contract's shape, which is a second definition of it with nothing keeping the two in
+        step.
 
     Raises:
         PDFPrimitiveError: The page does not exist. This is the one capability whose failure
@@ -446,22 +427,23 @@ def _run_page_stages(
     )
     timing.update(render_timing, **text_timing, **images_timing)
 
-    return _PageStages(
-        page_pdf=page_pdf,
-        page_image=page_image,
-        native_text=native_text,
-        text_blocks=text_blocks,
-        embedded_images=embedded_images,
-        timing=timing,
-        errors=errors,
-    )
+    produced: dict[str, object] = {
+        "page_pdf": page_pdf,
+        "page_image": page_image,
+        "native_text": native_text,
+        "text_blocks": text_blocks,
+        "embedded_images": embedded_images,
+    }
+    return produced, errors, timing
 
 
 def _assemble(
     *,
     request: PDFRequest,
     page_number: int,
-    stages: _PageStages,
+    produced: dict[str, object],
+    errors: list[PDFError],
+    timing: dict[str, float],
     metrics: PDFPageMetrics,
     classification: PDFPageClassification,
 ) -> PDFPageResult:
@@ -474,7 +456,9 @@ def _assemble(
     Args:
         request: The request the page was processed under.
         page_number: Page index.
-        stages: What the page's capabilities produced and what failed.
+        produced: What the page's capabilities produced, keyed by contract field.
+        errors: The failures recorded while processing.
+        timing: Wall-clock seconds by stage.
         metrics: The page's measurements.
         classification: The page's descriptive class.
 
@@ -484,18 +468,18 @@ def _assemble(
     engine = get_engine()
     result = PDFPageResult(
         page_number=page_number,
-        page_pdf=stages.page_pdf,
-        page_image=stages.page_image,
-        native_text=stages.native_text,
-        text_blocks=stages.text_blocks,
-        embedded_images=stages.embedded_images,
+        page_pdf=produced["page_pdf"],
+        page_image=produced["page_image"],
+        native_text=produced["native_text"],
+        text_blocks=produced["text_blocks"],
+        embedded_images=produced["embedded_images"],
         metrics=metrics,
         classification=classification,
         artifacts=_published_artifacts(
-            stages.page_pdf,
-            stages.page_image,
-            stages.native_text,
-            stages.embedded_images,
+            produced["page_pdf"],  # type: ignore[arg-type]
+            produced["page_image"],  # type: ignore[arg-type]
+            produced["native_text"],  # type: ignore[arg-type]
+            produced["embedded_images"],  # type: ignore[arg-type]
         ),
         validation=PDFPageValidation(status="VALID", errors=[], missing_artifacts=[]),
         metadata=page_metadata(
@@ -504,12 +488,12 @@ def _assemble(
             processor=processor_name(),
             processor_version=processor_version(),
             context=request.context,
-            timing=stages.timing,
+            timing=timing,
         ),
         status="success",
     )
 
-    validation = validate_pdf_page_result(result, stages.errors, request.options)
+    validation = validate_pdf_page_result(result, errors, request.options)
     result.validation = validation
     result.errors = list(validation.errors)
     result.status = _status_for(validation)
@@ -810,10 +794,20 @@ def _status_for(validation: PDFPageValidation) -> PDFStatus:
     Returns:
         ``success`` for a valid page, ``partial`` when some artifacts survived, ``failed``
         when none did.
+
+    Raises:
+        ValueError: The verdict is ``ERROR``, which means validation could not reach a
+            verdict about this page at all. There is no status that describes an unknown
+            outcome, so it is reported rather than mapped onto one of the three real states.
     """
-    if validation.status == "VALID":
+    if validation.status == ERROR:
+        raise ValueError(
+            f"page validation reached no verdict: "
+            f"{[error.message for error in validation.errors]}"
+        )
+    if validation.status == VALID:
         return "success"
-    if validation.status in ("PARTIAL",):
+    if validation.status == PARTIAL:
         return "partial"
     return "failed"
 
