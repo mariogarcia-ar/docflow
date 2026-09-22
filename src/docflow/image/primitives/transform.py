@@ -118,6 +118,9 @@ for that reason.
 GRAYSCALE_RANK = 2
 """Shape rank of an image with no channel axis."""
 
+QUARTER_TURNS_PER_TURN = 4
+"""Quarter turns in a full rotation; the modulus :func:`turn_quarter` normalises against."""
+
 ENCODABLE_FORMATS: frozenset[str] = frozenset(
     {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 )
@@ -179,6 +182,30 @@ def _require_positive(width: int, height: int, operation: str) -> None:
         raise classify_transformation_failure(
             operation, f"expected positive dimensions, got {width}x{height}"
         )
+
+
+def turn_quarter(image: ImageArray, quarter_turns: int) -> ImageArray:
+    """Turn an image by whole quarter turns counter-clockwise.
+
+    Deliberately **not** parameterised by an engine, and the only primitive here that is not. A
+    quarter turn is a permutation of the pixel grid, not a re-sampling: no interpolation is
+    involved and no library is needed, so routing it through an engine would add a dependency to
+    buy nothing. It is written with the array library the whole primitive layer already speaks.
+
+    It exists because :func:`rotate_image` cannot do this job. That function keeps the input's
+    dimensions, which is right for a small tilt but means a 90-degree turn **crops** the page to its
+    original frame instead of reorienting it. A quarter turn has to exchange width and height, and
+    this is the primitive that does.
+
+    Args:
+        image: The decoded pixels, RGB or grayscale. Not modified.
+        quarter_turns: How many quarter turns to apply, counter-clockwise; taken modulo four, so
+            ``-1`` and ``3`` are the same request.
+
+    Returns:
+        A new image, with width and height exchanged for an odd number of quarter turns.
+    """
+    return np.ascontiguousarray(np.rot90(image, quarter_turns % QUARTER_TURNS_PER_TURN))
 
 
 def rotate_image(image: ImageArray, degrees: float, engine: EngineChoice) -> ImageArray:
@@ -660,6 +687,7 @@ __all__ = [
     "MAX_COMPRESSION_QUALITY",
     "MIN_COMPRESSION_QUALITY",
     "OTSU_THRESHOLD",
+    "QUARTER_TURNS_PER_TURN",
     "SEARCH_WINDOW_SIZE",
     "SHARPEN_AMOUNT",
     "SHARPEN_SIGMA",
@@ -676,4 +704,5 @@ __all__ = [
     "rotate_image",
     "sharpen_image",
     "to_grayscale",
+    "turn_quarter",
 ]

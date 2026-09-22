@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`…`IMG-06` **DONE** - contracts frozen, engine seam in place, images read, measured, transformed and aggregated into `ImageMetrics`; `IMG-07` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`…`IMG-07` **DONE** - contracts frozen, engine seam in place, images read, measured, aggregated and published as `normalized.png`; `IMG-08` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -34,7 +34,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-04 | Analysis primitives | M | 2 — Analysis | IMG-03 | `calculate_*_score`, `detect_orientation`, `detect_skew_angle`, `detect_text_regions`, `calculate_text_coverage` | this file §IMG-04 | DONE |
 | IMG-05 | Transformation primitives | M | 2 — Analysis | IMG-03 | `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` | this file §IMG-05 | DONE |
 | IMG-06 | `analyze_image` → `ImageMetrics` | S | 2 — Analysis | IMG-04 | `analyze_image` (side-effect-free) | this file §IMG-06 | DONE |
-| IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png` | this file §IMG-07 | NOT_STARTED |
+| IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png` | this file §IMG-07 | DONE |
 | IMG-08 | `prepare_image_for_ocr` / `prepare_image_for_vlm` | M | 3 — Outputs | IMG-05, IMG-06 | `image/ocr_ready.png`, `image/vlm_ready.png` (distinct pipelines) | this file §IMG-08 | NOT_STARTED |
 | IMG-09 | `classify_image` | S | 3 — Outputs | IMG-06 | `TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY` | this file §IMG-09 | NOT_STARTED |
 | IMG-10 | `validate_image_result` + typed error classification | S | 3 — Outputs | IMG-06 | `validate_image_result`, `ImageError` kinds | this file §IMG-10 | NOT_STARTED |
@@ -383,6 +383,58 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given `normalize=false`, then no normalized artifact is produced and no error is raised.
 - **Evidence / DoD:** Scenario test for the "normalize a valid color input" acceptance criterion.
 - **Tags:** `# TODO: [MVP]` for the deferred transformation catalogue.
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/normalize.py` implements
+  `normalize_image` and `prepare_normalized_image`. Both WBS acceptance criteria hold: with
+  `normalize=true` the artifact exists and `transformations` lists every applied operation, and with
+  `normalize=false` nothing is produced and nothing is raised. The transformation list is
+  cross-checked against the pixels rather than against a second call to the pipeline - a skewed page
+  reports the deskew *and* comes out measurably straighter - so the record cannot be decorative.
+
+- **Everything applied is justified, and the tests say which way.** The plan's risk table names
+  "over-eager enhancement degrades information" and prescribes "apply transformations only when
+  justified by metrics + explicit options". The suite therefore exercises all four combinations of
+  "flag set" and "correction needed": each correction fires only when both are true, and a page that
+  is already fine is returned **unchanged**, asserted with array equality rather than by checking
+  the transformation list alone.
+
+- **A quarter turn needed a new primitive.** `rotate_image` keeps the input's dimensions, which is
+  right for a small tilt but means a 90-degree correction **crops** the page to its original frame
+  instead of reorienting it. `turn_quarter` was added to `transform.py` for it, and it is the one
+  primitive there that takes no engine: a quarter turn is a permutation of the pixel grid, not a
+  re-sampling, so routing it through a library would add a dependency to buy nothing.
+
+- **The thresholds were calibrated by measurement, not by taste.** Brightness 100 and contrast 45.
+  The committed fixtures measure 183/220/212 brightness; scaling one down gives 146, 110, 91, 73 for
+  factors of 0.8 down to 0.4. Contrasts are 78-98 for the fixtures, 49 for a half-exposed page and
+  39 for a washed-out one. The first draft used 50 and 25, and a page at brightness 67 was passed
+  through untouched - the probe is why it does not anymore.
+
+- **Two honest limits, each pinned by a test rather than hidden.**
+  1. **The orientation direction is not decided.** A quarter-turn reading says the page is turned
+     but not which way: turning it either way leaves the ink projecting along the rows, which is all
+     the detector can see. Correcting the direction would take the page's content, and reading it
+     means OCR or a classifier, both out of bounds. Only the magnitude is corrected, and the test
+     asserts the *shape* is restored rather than claiming the page is upright.
+  2. **The contrast stretch recovers almost nothing** on a genuinely washed-out page - measured,
+     39.05 before and 39.70 after. It is applied because the measurement says the page needs it and
+     because it costs nothing, and it is recorded as *applied* rather than as *successful*. A test
+     fails if it ever becomes effective, so the claim gets revisited instead of quietly overstated.
+
+- **Brightness is re-measured on the corrected pixels.** The contrast stretch lifts the mean a
+  little, so an offset decided from the stale snapshot would be applied to a page that no longer
+  needs it. That is not observable on an ordinary page - both readings agree - so a constructed one
+  sits in the window where they differ: brightness 95.22 before the stretch and 103.69 after,
+  against a threshold of 100.
+
+- **Mutation evidence.** Twelve mutations applied; **one survived the first run and closing it
+  required the constructed page above**, which is the useful part of the result. After closing it,
+  all twelve are detected: corrections applied regardless of the options (1 test fails), the
+  pipeline running when `normalize` is false (1), the deskew flag ignored (1), the orientation flag
+  ignored (1), a bright page darkened (4), brightness decided on the stale snapshot (1), the
+  contrast correction skipped (3), an unrequested artifact published (1), the transformation record
+  dropped (2), the artifact reference built from the request instead of the file (1), a quarter turn
+  made a no-op (3), the wrong way turned (3).
 
 ### IMG-08 — `prepare_image_for_ocr` and `prepare_image_for_vlm`
 

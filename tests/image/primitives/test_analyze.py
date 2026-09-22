@@ -13,8 +13,8 @@ code under test.
 
 # pylint: disable=duplicate-code
 # The fixture constants repeat the other image suites' on purpose. A shared helper module would let
-# a change made for one suite silently redirect another's assertions; the duplication is a handful
-# of lines per suite and the independence is worth the noise. `EXPECTED_DIMENSIONS` below is this
+# a change made for one suite silently redirect another's; the duplication is a handful of
+# lines per suite and the independence is worth the noise. `EXPECTED_DIMENSIONS` below is this
 # module's own, taken from the generator rather than from a run of the code under test.
 from __future__ import annotations
 
@@ -365,7 +365,8 @@ def test_the_codec_engine_reports_a_capability_gap_rather_than_substituting() ->
 def test_every_contract_field_is_populated() -> None:
     """Guards against the contract growing a field that the aggregation forgets to fill.
 
-    Constructing ``ImageMetrics`` would already fail on a missing argument, so this catches the other
+    Constructing ``ImageMetrics`` would already fail on a missing argument, so this catches
+    the other
     shape of the problem: a field added with a default, which would slip through construction and
     reach ``metadata.json`` as an unfilled value.
     """
