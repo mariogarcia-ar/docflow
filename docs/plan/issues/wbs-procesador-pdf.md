@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PDF-01` … `PDF-14` |
-| Status | `PDF-01`, `PDF-02`, `PDF-03`, `PDF-04`, `PDF-05` **DONE**; `PDF-06`…`PDF-08` signatures landed, bodies `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
+| Status | `PDF-01`…`PDF-06` **DONE**; `PDF-07`, `PDF-08` signatures landed, bodies `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -35,7 +35,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-03 | Document primitives | M | 2 — Primitives | PDF-02 | `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | this file §PDF-03 | DONE |
 | PDF-04 | Split/extract primitives | M | 2 — Primitives | PDF-02 | `extract_page`, `split_pdf`, `merge_pdfs` | this file §PDF-04 | DONE |
 | PDF-05 | Render primitive | S | 2 — Primitives | PDF-02 | `render_page_to_image` | this file §PDF-05 | DONE |
-| PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | SIGNATURE_ONLY |
+| PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | DONE |
 | PDF-07 | Embedded image primitives | M | 2 — Primitives | PDF-02 | `extract_images_from_page`, `get_image_blocks` | this file §PDF-07 | SIGNATURE_ONLY |
 | PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | SIGNATURE_ONLY |
 | PDF-09 | Page entry point | M | 3 — Composition | PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | `process_pdf_page`, `page_001/metadata.json` | this file §PDF-09 | NOT_STARTED |
@@ -178,6 +178,18 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given an image-only page, then `text.txt` is empty and the processor reports it as data.
 - **Evidence / DoD:** Fixture-based test on text-dominant and image-dominant fixtures.
 - **Tags:** `# TODO: [MVP]` for layout-aware block reconstruction.
+- **Status: DONE.** `src/docflow/pdf/primitives/text.py`; tests in `tests/pdf/primitives/test_text.py`. Two committed fixtures carry the two answers that must stay distinct: the text-dominant `three-invoices.pdf`, and `pdf_escaneados/3ac5a2ec-…pdf` — an **image-only** page with no text layer.
+  - **The empty-layer trap, confirmed by measurement:** an image-only page returns ``"\\x0c"``, not ``""``. A naive implementation reports a one-character "text layer" and every downstream measurement counts a character that is not there. `strip_page_breaks` removes the framing; `engine_report` keeps the engine's own count (measured *before* the edit) so ``PDF-08`` has a real number rather than a derived one.
+  - **Zero bound, fourth tool:** `pdftotext -f 0 -l 0` returns every page. Same hazard as `pdfseparate`, `pdftoppm` and `pdfinfo`; the shared seam guard runs here too.
+  - **`-bbox-layout` emits XHTML in a namespace.** Querying ``"block"`` instead of ``"{namespace}block"`` silently finds nothing — the failure looks like a document with no text rather than a parser bug.
+  - **Two new committed fixtures, because the guards needed real bytes.** `matrix/pdf_hyphenated.pdf` (a word split across lines) and `matrix/pdf_accents.pdf` (non-ASCII text layer).
+  - **Engine fact that decides what `layout` means: `pdftotext` de-hyphenates by default.** With `-layout` a document saying ``"well-\\nknown"`` keeps the hyphen and the break; without it the engine returns ``"wellknown"``. So the engine interprets the text in its default mode and `-layout` is what stops it — which is what makes the plan's `layout` option load-bearing rather than cosmetic.
+  - **No content interpretation of our own.** An earlier version of this module de-hyphenated the text itself; it was removed. It corrupts legitimate hyphens (``well-known`` → ``wellknown``) irreversibly, and `subplan-procesador-pdf.md` §2 puts interpretation out of bounds for this processor.
+  - **Encoding pinned in the seam, and the pin is load-bearing.** `subprocess(text=True)` decodes with the host locale; under `en_US.ISO8859-1` the same bytes give mojibake and extracted text would depend on the machine, contradicting this processor's deterministic class. `ENGINE_ENCODING` fixes it; strict decoding, so an undecodable byte raises rather than becoming U+FFFD published as document text.
+  - **An inconsistency this task found in itself:** `engine_report` omitted the `-layout` flag while `extract_text_from_page` defaulted it on, so the two returned *different* text for the same page. Caught by a test asserting they agree, now asserted at both settings.
+  - Mutation-verified, five mutations, each restored green: framing not stripped (**7 fail**, incl. the empty-layer trap), namespace dropped (2 fail), de-hyphenation re-added (1 fail), encoding pin removed (1 fail — the locale test reports `MOJIBAKE`), page guard removed (guards fail).
+  - Two measurement errors of mine were corrected rather than recorded as findings: a shell pipeline read `head`'s exit code instead of the engine's, and a terminal rendering artefact made the accented text look corrupted. Both were resolved by comparing inside Python and emitting ASCII verdicts.
+  - Four QA gates green.
 
 ### PDF-07 — Embedded image primitives
 

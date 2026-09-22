@@ -49,12 +49,14 @@ _RECOVERABLE: dict[str, bool] = {
     "UNSUPPORTED_PDF": False,
     "PAGE_OUT_OF_RANGE": False,
     "IO_ERROR": True,
+    "TEXT_EXTRACTION_ERROR": True,
 }
 """Whether a run can continue without the artifact that failed.
 
-A document-level failure stops the document. ``IO_ERROR`` is the one entry marked
-recoverable: it describes a write that failed at a path the caller controls, so a retry or
-a different output root is a real option rather than a hope.
+A document-level failure stops the document. The two entries marked recoverable describe a
+failure of one artifact rather than of the document: a write at a path the caller controls,
+and a text layer that could not be read. Both leave the rest of the page intact, which is
+what lets ``PDF-09`` report a page as ``PARTIAL`` instead of losing it.
 """
 
 
@@ -194,6 +196,34 @@ def classify_engine_failure(
     )
 
 
+def classify_text_failure(
+    pdf_path: Path,
+    failure: Exception,
+    *,
+    page_number: int | None = None,
+) -> PDFPrimitiveError:
+    """Turn a text-extraction failure into a typed one.
+
+    Separate from :func:`classify_engine_failure` because a text failure is a **per-artifact**
+    failure, not a document failure: the page's render and its embedded images are
+    unaffected, so it is marked recoverable and ``PDF-09`` can keep the page.
+
+    Args:
+        pdf_path: The document that was being read.
+        failure: What went wrong.
+        page_number: Page the failure belongs to.
+
+    Returns:
+        A :class:`PDFPrimitiveError` classified as ``TEXT_EXTRACTION_ERROR``.
+    """
+    return PDFPrimitiveError(
+        "TEXT_EXTRACTION_ERROR",
+        f"the native text of page {page_number} of {pdf_path} could not be read",
+        page_number=page_number,
+        detail=str(failure),
+    )
+
+
 __all__ = [
     "ENCRYPT_MARKER",
     "PAGE_OUT_OF_RANGE_STATUS",
@@ -201,6 +231,7 @@ __all__ = [
     "PDFPrimitiveError",
     "check_pdf_is_readable",
     "classify_engine_failure",
+    "classify_text_failure",
     "declares_encryption",
     "looks_like_a_pdf",
 ]

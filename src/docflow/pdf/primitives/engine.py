@@ -52,6 +52,21 @@ Poppler ships its tools with one shared version number, so probing one names all
 ``pdftotext`` is the primary reader of this processor, which makes it the honest choice.
 """
 
+ENGINE_ENCODING = "utf-8"
+"""Encoding the engine's output is decoded with, stated explicitly.
+
+Not a detail. ``subprocess`` with ``text=True`` alone decodes using the *host locale*, and
+under a non-UTF-8 locale the same bytes come back as mojibake — ``café`` reads ``cafÃ©``.
+That would make extracted text depend on the machine it ran on, which contradicts the
+**deterministic** class ``subplan-procesador-pdf.md`` §3 declares for this processor: same
+PDF plus same options must give the same artifacts, on any host.
+
+Decoding is strict rather than lossy. ``errors="replace"`` would turn an undecodable byte
+into U+FFFD and publish it as if it were document text — a silent stand-in, which
+``docs/plan/README.md`` §7 forbids. A :class:`UnicodeDecodeError` therefore propagates for
+the caller to classify.
+"""
+
 
 class PopplerCommand(StrEnum):
     """The Poppler binaries this processor uses, named one at a time.
@@ -159,19 +174,54 @@ def get_engine_name() -> str:
     return POPPLER_ENGINE_NAME
 
 
+def page_range_arguments(
+    page_range: tuple[int, int] | None, pdf_path: Path
+) -> list[str]:
+    """Build the trailing ``-f/-l <path>`` arguments every ranged Poppler tool takes.
+
+    Three primitives need the same four tokens — the split, the render and the text reader —
+    and they all name the pages the same way. Building them once keeps the range guard and
+    the argument shape from drifting apart, which is exactly the coupling that produced the
+    zero-bound hazard in the first place.
+
+    Args:
+        page_range: The ``(first, last)`` pages, or ``None`` for the whole document.
+        pdf_path: The document to read.
+
+    Returns:
+        The argument list to append after any tool-specific flags.
+
+    Raises:
+        ValueError: The range is not 1-based, or is empty.
+    """
+    require_positive_page_range(page_range)
+    if page_range is None:
+        return [str(pdf_path)]
+    return [
+        "-f",
+        str(page_range[0]),
+        "-l",
+        str(page_range[1]),
+        str(pdf_path),
+    ]
+
+
 def require_positive_page_range(page_range: tuple[int, int] | None) -> None:
     """Reject a page range the Poppler tools would silently reinterpret.
 
-    Both tools this processor drives read a **non-positive bound as "no range"** and then
-    operate on the whole document instead of failing:
+    Every ranged tool this processor drives reads a **non-positive bound as "no range"** and
+    then operates on the whole document instead of failing. Verified against Poppler
+    25.02.0, one behaviour per tool:
 
     * ``pdfseparate -f 0 -l 0 doc.pdf 'page_%03d.pdf'`` exits 0 and splits every page.
-    * ``pdftoppm -singlefile -f 0 -l 0 doc.pdf out.png`` exits 0 and renders page **1** —
-      byte-identical to an explicit request for page 1, which is what makes it undetectable
-      downstream.
+    * ``pdftoppm -singlefile -f 0 -l 0 doc.pdf out.png`` exits 0 and renders page **1**,
+      byte-identical to an explicit request for page 1.
+    * ``pdftotext -f 0 -l 0 doc.pdf -`` exits 0 and returns every page's text.
+    * ``pdfinfo -f 0 -l 0 doc.pdf`` exits 0 and prints pages 1 **and 2** — neither nothing
+      nor the whole document.
 
     The guard lives here, in the seam, rather than in each primitive: the hazard belongs to
-    the engine, and two copies of the rule would be two places to forget it. It is a
+    the engine, and four copies of the rule would be four places to forget it. It is a
     genuine safety net rather than documentation of a caller error — no caller wants the
     whole document when it asked for page 0.
 
@@ -234,6 +284,7 @@ def get_engine_version() -> str:
             [str(binary), "-v"],
             capture_output=True,
             text=True,
+            encoding=ENGINE_ENCODING,
             check=False,
             timeout=_VERSION_TIMEOUT_SECONDS,
         )
@@ -286,6 +337,9 @@ def run_engine_command(
     Raises:
         PopplerNotAvailableError: The binary is not on ``PATH``.
         PopplerExecutionError: The command exited non-zero, or exceeded ``timeout``.
+        UnicodeDecodeError: The output was not valid :data:`ENGINE_ENCODING`. Propagated
+            rather than replaced with U+FFFD, so a caller can classify it instead of
+            publishing a substituted character as document text.
     """
     binary = find_engine_command(command)
     try:
@@ -293,6 +347,7 @@ def run_engine_command(
             [str(binary), *arguments],
             capture_output=True,
             text=True,
+            encoding=ENGINE_ENCODING,
             check=False,
             timeout=timeout,
         )
@@ -308,3 +363,23 @@ def run_engine_command(
     if completed.returncode != 0:
         raise PopplerExecutionError(command, completed.returncode, completed.stderr)
     return completed.stdout
+
+
+__all__ = [
+    "ENGINE_ENCODING",
+    "POPPLER_ENGINE_NAME",
+    "VERSION_PROBE_COMMAND",
+    "Engine",
+    "PopplerCommand",
+    "PopplerError",
+    "PopplerExecutionError",
+    "PopplerNotAvailableError",
+    "PopplerOutputMissingError",
+    "find_engine_command",
+    "get_engine",
+    "get_engine_name",
+    "get_engine_version",
+    "page_range_arguments",
+    "require_positive_page_range",
+    "run_engine_command",
+]

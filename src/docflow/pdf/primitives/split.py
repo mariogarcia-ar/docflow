@@ -42,6 +42,7 @@ from pathlib import Path
 from docflow.pdf.primitives.engine import (
     PopplerCommand,
     PopplerOutputMissingError,
+    page_range_arguments,
     require_positive_page_range,
     run_engine_command,
 )
@@ -70,16 +71,13 @@ def _split_range_to_directory(
         PopplerExecutionError: The engine failed.
         PopplerOutputMissingError: The engine reported success and wrote nothing.
     """
-    require_positive_page_range(page_range)
     output_directory.mkdir(parents=True, exist_ok=True)
     template = engine_page_template(output_directory)
 
-    arguments = [
-        *(("-f", str(page_range[0]), "-l", str(page_range[1])) if page_range else ()),
-        str(pdf_path),
-        template,
-    ]
-    run_engine_command(PopplerCommand.PDFSEPARATE, arguments)
+    run_engine_command(
+        PopplerCommand.PDFSEPARATE,
+        [*page_range_arguments(page_range, pdf_path), template],
+    )
 
     written = sorted(output_directory.glob(_SPLIT_GLOB))
     if not written:
