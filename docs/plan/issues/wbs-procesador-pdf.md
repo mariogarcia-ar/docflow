@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PDF-01` … `PDF-14` |
-| Status | `PDF-01`, `PDF-02`, `PDF-04`, `PDF-05` **DONE**; `PDF-03`, `PDF-06`…`PDF-08` signatures landed, bodies `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
+| Status | `PDF-01`, `PDF-02`, `PDF-03`, `PDF-04`, `PDF-05` **DONE**; `PDF-06`…`PDF-08` signatures landed, bodies `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -32,7 +32,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 |---|---|---|---|---|---|---|---|
 | PDF-01 | Contract types | S | 1 — Foundations | — | `PDFRequest`, `PDFResult`, `PDFPageResult`, `PDFPageMetrics`, `PDFError` | this file §PDF-01 | DONE |
 | PDF-02 | Poppler primitives skeleton | M | 1 — Foundations | PDF-01 | `pdf/primitives/` | this file §PDF-02 | DONE |
-| PDF-03 | Document primitives | M | 2 — Primitives | PDF-02 | `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | this file §PDF-03 | SIGNATURE_ONLY |
+| PDF-03 | Document primitives | M | 2 — Primitives | PDF-02 | `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | this file §PDF-03 | DONE |
 | PDF-04 | Split/extract primitives | M | 2 — Primitives | PDF-02 | `extract_page`, `split_pdf`, `merge_pdfs` | this file §PDF-04 | DONE |
 | PDF-05 | Render primitive | S | 2 — Primitives | PDF-02 | `render_page_to_image` | this file §PDF-05 | DONE |
 | PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | SIGNATURE_ONLY |
@@ -99,6 +99,19 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given `pdf_corrupt.pdf`, when `inspect_pdf` runs, then a typed `PDFError` is produced (`CORRUPTED_PDF`) and no exception escapes the contract.
 - **Evidence / DoD:** Unit test on the committed fixture; typed error on the corrupt fixture.
 - **Tags:** `# TODO: [MVP]` for real encryption handling.
+- **Status: DONE.** `src/docflow/pdf/primitives/document.py`, plus a new `primitives/failures.py` (the engine→contract error bridge); tests in `tests/pdf/primitives/test_document.py`.
+  - **New committed fixtures** (the task required them and none existed): `tests/fixtures/matrix/pdf_corrupt.pdf` — a genuine truncation of `three-invoices.pdf` that **keeps its `%PDF-` header** so "corrupt" stays distinguishable from "never was a PDF" — and `tests/fixtures/matrix/pdf_encrypted.pdf`, encrypted with a real user password via `pdftk`. A test asserts the header survives, so the corrupt case cannot pass for the wrong reason.
+  - `inspect_pdf` returns the count and one size per page in order; the three functions are cross-checked against each other rather than tested in isolation.
+  - **Four engine facts probed, none of them in the plan:**
+    1. `pdfinfo` prints page sizes **only** for an explicit range; the default invocation has a single `Page size:` line.
+    2. **`-f 0 -l 0` is accepted and prints pages 1 *and* 2** — neither empty nor the whole document. Third tool in this package with the zero-bound hazard, so the shared seam guard runs here too.
+    3. `-f 1 -l 99999` is accepted and silently truncated; only a range starting **past** the end exits 99. The engine is therefore the authority on the count, never the requested bound.
+    4. A missing or **corrupt** file exits **1**, not 99 — as does an **encrypted** one. Status alone cannot separate the causes, so classification leans on the document (header, `/Encrypt` marker) rather than on the engine's English text.
+  - Metadata excludes the per-page lines, which otherwise leak `Page size` / `Page rot` into the document's metadata.
+  - **Also removed the `Encrypted:` contradiction:** the stub documented an `encrypted` field reachable without throwing, while `corrupted_pdf` was staged as the corrupt fixture — `pdf_encrypted.pdf` now exists and encrypts the "corrupt ⇒ CORRUPTED_PDF" shortcut. The field keeps its value for a readable document rather than being deleted.
+  - The shell pipeline that suggested a silent-failure class was mis-measured (exit codes after a pipe are the last command's, not the engine's); the real behaviour is "exit 1, stdout empty", which still defeats a stdout-only parse and is what `classify_engine_failure` handles.
+  - Mutation-verified, four mutations, each restored green: range guard removed (1 fail), metadata filter removed (1 fail), encryption check disabled (1 fail, degrading to `CORRUPTED_PDF` as predicted), page count taken from a bound (6 fail).
+  - Four QA gates green.
 
 ### PDF-04 — Split/extract primitives
 
