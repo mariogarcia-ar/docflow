@@ -76,11 +76,11 @@ or `# TODO: [RELEASE]` (telemetry/caching/HA/security).
 
 ```mermaid
 flowchart TB
-    IN["DocumentRequest"] --> ORCH["procesador-orquestador"]
-    ORCH --> PDF["procesador-pdf"]
-    ORCH --> IMG["procesador-image"]
-    ORCH --> OCR["procesador-ocr"]
-    ORCH --> LLM["procesador-llm-call"]
+    IN["DocumentRequest"] --> ORCH["docflow.workflow<br/>(procesador-orquestador)"]
+    ORCH --> PDF["docflow.pdf<br/>(procesador-pdf)"]
+    ORCH --> IMG["docflow.image<br/>(procesador-image)"]
+    ORCH --> OCR["docflow.ocr<br/>(procesador-ocr)"]
+    ORCH --> LLM["docflow.llm<br/>(procesador-llm-call)"]
 
     PDF -- "PDFResult" --> ORCH
     IMG -- "ImageResult" --> ORCH
@@ -97,19 +97,23 @@ calls another processor; the orchestrator is the only component that composes th
 ```mermaid
 flowchart TD
     A[INPUT] --> B[detect_input_type]
-    B -->|PDF| C[procesador-pdf]
+    B -->|PDF| C["docflow.pdf"]
     B -->|IMAGE| D[logical page]
-    C --> E[procesador-image]
+    C --> E["docflow.image"]
     D --> E
     E --> F{requires OCR?}
-    F -->|yes| G[procesador-ocr]
+    F -->|yes| G["docflow.ocr"]
     F -->|no| H[select_source]
     G --> H
     H --> I[build_llm_input]
-    I --> J[procesador-llm-call]
+    I --> J["docflow.llm"]
     J --> K[consolidate]
     K --> L[DocumentResult]
 ```
+
+All processor nodes above are `docflow.*` sub-packages under `src/docflow/`; the free
+labels (`detect_input_type`, `select_source`, `build_llm_input`, `consolidate`) are
+functions of `docflow.workflow`.
 
 Two workflow levels exist and **must not mix**:
 
@@ -327,6 +331,14 @@ flowchart LR
     P2 --> P3[Phase 3 integration]
     P3 --> P4[Phase 4 hardening]
 ```
+
+| Phase | Modules (`src/docflow/`) |
+|---|---|
+| 0 | skeleton of all five sub-packages + contracts |
+| 1 | `pdf/`, `image/`, `ocr/`, `llm/` (independent, parallel) |
+| 2 | `workflow/` (orchestrator) |
+| 3 | `workflow/` source selection + end-to-end result |
+| 4 | all — hardening |
 
 Within Phase 1 the four processors are independent and parallel; the orchestrator (Phase
 2) depends on all of them only through their contracts, not their internals.
