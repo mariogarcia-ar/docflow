@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`…`IMG-04` **DONE** - contracts frozen, engine seam in place, images read and written, metrics measured; `IMG-05` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`…`IMG-05` **DONE** - contracts frozen, engine seam in place, images read, measured and transformed; `IMG-06` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -32,7 +32,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-02 | Image-ops primitives skeleton | M | 1 - Contracts & seam | IMG-01 | `image/primitives/` (OpenCV, Pillow fallback) | this file §IMG-02 | DONE |
 | IMG-03 | Load/store primitives | S | 1 — Contracts & seam | IMG-02 | `load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions` | this file §IMG-03 | NOT_STARTED |
 | IMG-04 | Analysis primitives | M | 2 — Analysis | IMG-03 | `calculate_*_score`, `detect_orientation`, `detect_skew_angle`, `detect_text_regions`, `calculate_text_coverage` | this file §IMG-04 | DONE |
-| IMG-05 | Transformation primitives | M | 2 — Analysis | IMG-03 | `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` | this file §IMG-05 | NOT_STARTED |
+| IMG-05 | Transformation primitives | M | 2 — Analysis | IMG-03 | `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` | this file §IMG-05 | DONE |
 | IMG-06 | `analyze_image` → `ImageMetrics` | S | 2 — Analysis | IMG-04 | `analyze_image` (side-effect-free) | this file §IMG-06 | NOT_STARTED |
 | IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png` | this file §IMG-07 | NOT_STARTED |
 | IMG-08 | `prepare_image_for_ocr` / `prepare_image_for_vlm` | M | 3 — Outputs | IMG-05, IMG-06 | `image/ocr_ready.png`, `image/vlm_ready.png` (distinct pipelines) | this file §IMG-08 | NOT_STARTED |
@@ -251,6 +251,54 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given a skewed image, when `deskew_image` runs with the detected angle, then the output is written to a distinct path.
 - **Evidence / DoD:** Fixture-based unit tests per transformation group; input hash unchanged assertion.
 - **Tags:** —
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/transform.py` implements all eleven
+  primitives. Both WBS acceptance criteria hold: `convert_to_grayscale` yields a single channel with
+  the source file's hash unchanged, and `deskew_image` composes over a distinct output array with
+  nothing written. The deskew criterion is stated as the *correction* rather than as a non-zero
+  reading: feeding the detector's angle straight through takes `skewed_text.png` from `+4.00` to
+  `0.00`, and inverting the sign doubles the tilt instead of removing it.
+
+  Every transform is asserted to return a **new** array and leave its argument untouched, for all
+  eleven primitives in one parametrised guard so a new primitive cannot be added without coverage.
+  The module is separately asserted to contain no route to the filesystem at all, so "the source is
+  never written" does not rest on a test having exercised the right branch.
+
+- **Two defects found and fixed during the task, both by tests rather than by review.**
+  1. **Channel-order asymmetry.** The seam normalises every image to RGB and OpenCV's encoders
+     expect BGR, so encoding converted the channels - but `imdecode` hands back BGR and nothing
+     converted it back. Every file written through `convert_image_format` or `compress_image` had
+     red and blue swapped. Each operation was individually correct, which is why no per-operation
+     test found it; a **lossless PNG round-trip equality** test did. Both conversions now exist
+     explicitly and are named for the direction they travel.
+  2. **Engine arguments wrong in three places.** A hand-copied `IMREAD_GRAYSCALE`-style guess
+     produced parameters named for a bilateral filter that the non-local-means denoiser does not
+     take (its second strength parameter is the colour strength and its fourth is
+     `searchWindowSize`, which must be an odd integer), and `imencode` was called as
+     `(image, extension)` rather than the engine's actual `(extension, image)`. All three were
+     caught by running the primitives against the fixtures rather than by reading signatures.
+
+- **The destructive operation is pinned where it is tested.** `binarize_image` drops colour for
+  good, which the plan's risk table names as the reason `IMG-07` only binarizes when a metric
+  justifies it. A test asserts the result is single-channel with at most two levels, so the loss is
+  a documented property of the primitive rather than something discovered downstream.
+
+- **Nothing is clamped.** A threshold outside 0-255, a compression quality outside 1-100, a
+  non-positive resize dimension, a brightness target outside the luminance range and an unknown
+  container are all refused as typed `TRANSFORMATION_ERROR`s. Clamping would substitute a value the
+  caller never asked for, which is the "no silent stand-in" rule applied to a knob. The unknown
+  container is checked before the call because the engine's own answer is a native exception, not
+  something a caller can classify.
+
+- **`BINARIZATION_THRESHOLD` moved.** It was declared in `analysis.py`, which never read it: a
+  transformation's parameter sitting beside the numbers meant to justify that transformation. It now
+  lives in `transform.py` with the other thresholds.
+
+- **Mutation evidence.** Ten mutations applied, each detected, each restored: transforms mutating
+  their input (1 test fails), the RGB→BGR encode conversion removed (2), the BGR→RGB decode
+  conversion removed (2), inverted deskew sign (1), out-of-range threshold clamped (1), out-of-range
+  quality clamped (1), brightness offset unclamped so a bright page wraps to black (1), resize
+  dimension unguarded (1), unknown container passed to the engine (1), inverted skew reading (4).
 
 ### IMG-06 — `analyze_image` → `ImageMetrics`
 

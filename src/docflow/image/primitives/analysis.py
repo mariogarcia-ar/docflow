@@ -39,15 +39,6 @@ from docflow.image.primitives.engine import (
     engine_operation,
 )
 
-BINARIZATION_THRESHOLD = 128
-"""Luminance cut for binarization, on the 0-255 scale.
-
-Consumed by :mod:`docflow.image.primitives.transform`; declared here because ``IMG-08`` documents
-the numeric thresholds before coding starts and an unnamed literal mid-call is not documentable.
-
-# TODO: [MVP] provisional - a fixed cut ignores uneven lighting, where an adaptive one would not.
-"""
-
 INK_BLOCK_SIZE = 15
 """Neighbourhood, in pixels, used to decide whether a pixel is ink.
 
@@ -271,9 +262,10 @@ def detect_skew_angle(image: ImageArray, engine: EngineChoice) -> float:
         engine: The engine to measure with.
 
     Returns:
-        The tilt in degrees, folded into ``(-45, 45]``. The sign matches the rotation used to
-        correct it, so ``rotate by -detected`` straightens the page. Zero means no measurable tilt,
-        including on an image with no ink at all.
+        The tilt in degrees, folded into ``(-45, 45]``. The sign matches the rotation that corrects
+        it - rotating by the *returned* value straightens the page, established by measuring the
+        engine rather than by reasoning about the sign. Zero means no measurable tilt, including on
+        an image with no ink at all.
     """
     min_area_rect = engine_operation(engine, "minAreaRect")
     rows, columns = np.nonzero(ink_mask(image, engine))
@@ -486,7 +478,6 @@ def _fold_skew(angle: float) -> float:
 
 
 __all__ = [
-    "BINARIZATION_THRESHOLD",
     "INK_BLOCK_SIZE",
     "INK_CONSTANT",
     "MIN_ORIENTATION_INEQUALITY",

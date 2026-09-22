@@ -86,22 +86,18 @@ def _primitive(module: object, name: str) -> Callable[..., object]:
     return typing.cast("Callable[..., object]", getattr(module, name))
 
 
-@pytest.mark.parametrize("name", LOAD_PRIMITIVES + ANALYSIS_PRIMITIVES)
-def test_the_implemented_primitives_are_not_stubs(name: str) -> None:
-    """IMG-03 and IMG-04 are done, so their surfaces must no longer refuse to answer.
+@pytest.mark.parametrize(
+    "name", LOAD_PRIMITIVES + ANALYSIS_PRIMITIVES + TRANSFORM_PRIMITIVES
+)
+def test_every_primitive_is_implemented_not_a_stub(name: str) -> None:
+    """IMG-03, IMG-04 and IMG-05 are done, so no primitive may still refuse to answer.
 
-    The inverse of the transformation guard below: when IMG-05 lands, its entries move up to this
-    test and the stub list shrinks to empty.
+    Replaces the earlier pair of guards, one asserting stubs and one asserting the converse. With
+    every body written there is nothing left to be a stub, so the only useful assertion is the one
+    that fails if a future edit reintroduces a ``NotImplementedError`` into a shipped primitive.
     """
     source = inspect.getsource(_locate(name))
     assert "raise NotImplementedError" not in source, f"{name} is still a stub"
-
-
-@pytest.mark.parametrize("name", TRANSFORM_PRIMITIVES)
-def test_the_transformation_primitives_are_declared_and_still_stubs(name: str) -> None:
-    """IMG-05's surface exists and refuses to answer until it is implemented."""
-    with pytest.raises(NotImplementedError):
-        _call(_primitive(transform, name))
 
 
 @pytest.mark.parametrize(
