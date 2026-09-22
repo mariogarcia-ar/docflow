@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-The `orchestrator` component (`processors/workflow/`, import name `processors.workflow`) owns the complete document workflow. It is the single component that decides what processor runs, in what order, with what artifacts, whether OCR or vision runs, which document source is selected, when to reuse / skip / force / resume, how to handle errors and fallbacks, and how to consolidate pages and the document. It receives a `DocumentRequest` and returns a `DocumentResult`, persisting and controlling all execution state in between, and it never implements any PDF, image, OCR, or LLM logic itself.
+The `orchestrator` component (`src/docflow/workflow/`, import name `docflow.workflow`) owns the complete document workflow. It is the single component that decides what processor runs, in what order, with what artifacts, whether OCR or vision runs, which document source is selected, when to reuse / skip / force / resume, how to handle errors and fallbacks, and how to consolidate pages and the document. It receives a `DocumentRequest` and returns a `DocumentResult`, persisting and controlling all execution state in between, and it never implements any PDF, image, OCR, or LLM logic itself.
 
 ## 2. Context (BA)
 
@@ -343,9 +343,9 @@ pylint src tests
 
 **Resolved decisions**
 
-1. **Layer mapping — RESOLVED.** The five components live under `processors/`, with the
-   orchestrator at `processors/workflow/`, exactly as the idea's §"Estructura del
-   proyecto" fixes. There is no `kernels/` layer.
+1. **Layer mapping — RESOLVED.** The five components are sub-packages of `docflow`, with the
+   orchestrator at `docflow/workflow/` (physical path `src/docflow/workflow/`), exactly as
+   the idea's §"Estructura del proyecto" fixes. There is no `kernels/` layer.
 2. **Durable state backend — RESOLVED for PoC.** In-memory `DocumentContext` first;
    `save`/`load` serialise to JSON with atomic writes, so the shape is real even if the
    store is transient (`# TODO: [MVP]` for a durable backend).

@@ -120,13 +120,16 @@ Two workflow levels exist and **must not mix**:
 
 ## 4. Proposed package layout
 
-`docs/idea/readme.md` §"Estructura del proyecto" fixes the layout: a `processors/` tree
-with one sub-package per processor, each holding `primitives`, `utils` and `helpers`, plus
-a `workflow/` sub-package that is the orchestrator. The same document's §"Naming" fixes
-the entry-point names. Both are adopted verbatim:
+The library is a **`src/` layout** whose import name is **`docflow`** (never `src.docflow`):
+the package lives at `src/docflow/`, tests mirror it in `tests/`, and the import is always
+`docflow.…`. On top of that, `docs/idea/readme.md` §"Estructura del proyecto" fixes the
+internal shape: one sub-package per processor, each holding `primitives`, `utils` and
+`helpers`, plus a `workflow/` sub-package that is the orchestrator. The same document's
+§"Naming" fixes the entry-point names. Both are adopted verbatim, nested under the
+`docflow` package:
 
 ```
-processors/
+src/docflow/
 ├── pdf/                 # procesador-pdf
 │   ├── primitives/      # low-level PDF ops (Poppler encapsulated here)
 │   ├── utils/
@@ -153,16 +156,17 @@ processors/
     ├── invalidate_downstream()
     ├── resume_document()
     └── execute_document_workflow()
+tests/                   # mirrors src/docflow, one test module per source module
 ```
 
 Entry-point names (from the idea, `readme.md` §"Naming"):
 
 ```text
-process_document()  process_page()        → workflow/  (orchestrator; reserved global names)
-process_pdf()       process_pdf_page()    → pdf/
-process_image()     process_image_from_page() → image/
-process_ocr_image()                       → ocr/
-process_llm_request()  process_llm_node() → llm/
+process_document()  process_page()        → docflow.workflow (orchestrator; reserved names)
+process_pdf()       process_pdf_page()    → docflow.pdf
+process_image()     process_image_from_page() → docflow.image
+process_ocr_image()                       → docflow.ocr
+process_llm_request()  process_llm_node() → docflow.llm
 ```
 
 There is no separate `ports/` / `adapters/` layer in the idea: engines are replaceable
@@ -205,9 +209,9 @@ within a phase, independent processors may proceed in parallel.
 
 **Deliverables**
 
-- Package skeleton under `processors/` — five sub-packages (`pdf/`, `image/`, `ocr/`,
+- Package skeleton under `src/docflow/` — five sub-packages (`pdf/`, `image/`, `ocr/`,
   `llm/`, `workflow/`), each with `primitives/`, `utils/`, `helpers/`, and the entry-point
-  signatures fixed by the idea's §"Naming".
+  signatures fixed by the idea's §"Naming". Import name is `docflow`; never `src.docflow`.
 - The Request/Result contract types, one per processor, as typed dataclasses with no
   defaults on required fields:
 
@@ -334,7 +338,7 @@ Within Phase 1 the four processors are independent and parallel; the orchestrato
 ### The four QA gates (all must pass before a task is `done`)
 
 ```bash
-pytest                  # tests green (processors/ on the path via pyproject)
+pytest                  # tests green (src/ on the path via pyproject)
 ruff check .            # linter, includes import order
 ruff format --check .   # formatter
 pylint src tests        # fixme disabled; the rest clean
@@ -370,11 +374,14 @@ pylint src tests        # fixme disabled; the rest clean
 
 ## 9. Resolved decisions
 
-Each was open; each is now **resolved from `docs/idea/`** (the source of truth).
+Each was open; each is now **resolved from `docs/idea/`** (the source of truth) plus the
+`src/` layout with import name **`docflow`**.
 
-1. **Naming / layer mapping — RESOLVED.** The layout is the idea's `readme.md`
-   §"Estructura del proyecto": `processors/{pdf,image,ocr,llm,workflow}`. The orchestrator
-   is `workflow/`. There is no `kernels` / `ports` / `adapters` layer.
+1. **Package layout / layer mapping — RESOLVED.** `src/` layout, import name `docflow`
+   (never `src.docflow`); the five processors are sub-packages of `docflow`
+   (`docflow.pdf`, `docflow.image`, `docflow.ocr`, `docflow.llm`, `docflow.workflow`),
+   and `tests/` mirrors `src/docflow/`. The orchestrator is `docflow/workflow/`. There is
+   no `kernels` / `ports` / `adapters` layer.
 2. **Package vs. flat modules — RESOLVED.** Each processor is a **sub-package** with
    `primitives/`, `utils/`, `helpers/`, exactly as the idea lists it.
 3. **Concrete engines — RESOLVED** by the idea's §"Implementaciones reemplazables":
@@ -382,5 +389,6 @@ Each was open; each is now **resolved from `docs/idea/`** (the source of truth).
    **Ollama / vLLM / API**. The first implementation uses one engine per contract; each is
    swappable behind `Request → Processor → Result` without touching the contract.
 4. **Language / naming — RESOLVED.** Directories, modules and entry points use the English
-   names the idea itself uses (`processors/…`, `process_document`, `process_pdf`, …). The
-   Spanish `procesador-*` names remain only as titles of the `docs/idea/` documents.
+   names the idea itself uses (`docflow.pdf`, `docflow.workflow`, `process_document`,
+   `process_pdf`, …). The Spanish `procesador-*` names remain only as titles of the
+   `docs/idea/` documents.

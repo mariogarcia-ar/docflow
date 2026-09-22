@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-Implement `procesador-llm-call` (module `processors/llm`, import name `processors.llm`) as an independently
+Implement `procesador-llm-call` (module `docflow.llm`, physical path `src/docflow/llm/`) as an independently
 usable processor whose single responsibility is to **prepare, execute, validate, persist
 and coordinate calls to LLM/VLM models**. It consumes an already-defined inference task
 (`LLMInput`) and returns a structured, validated, traceable result (`LLMResult`), running
@@ -356,7 +356,7 @@ reports `status == "SUCCESS"`, `schema_valid == true`, non-empty `usage` and `ti
 
 ### Definition of Done
 
-- `processors.llm` implements the single call and the internal subgraph with providers
+- `docflow.llm` implements the single call and the internal subgraph with providers
   reached only through `llm/primitives/`; no import of another processor; no domain noun in any API.
 - Every shortcut carries an explicit `# TODO: [MVP]` (real provider transport, real
   persistence) or `# TODO: [RELEASE]` (telemetry, HA, caching).

@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-Implement `procesador-image` (module `processors/image`, import name `processors.image`) as a single-responsibility processor whose only job is to **analyze, normalize and technically prepare images** for downstream processors. It turns one `ImageRequest` into one `ImageResult` by validating the input, computing technical metrics without mutating the source, producing a `normalized.png` plus optional `ocr_ready.png` and `vlm_ready.png` variants, classifying the image technically, validating the outputs, and atomically publishing everything inside the `image/` artifact namespace together with a `metadata.json`. The image engine (OpenCV or Pillow) is encapsulated in `image/primitives/`. This processor is built standalone in Phase 1: it imports no other processor and makes no workflow decisions.
+Implement `procesador-image` (module `docflow.image`, physical path `src/docflow/image/`) as a single-responsibility processor whose only job is to **analyze, normalize and technically prepare images** for downstream processors. It turns one `ImageRequest` into one `ImageResult` by validating the input, computing technical metrics without mutating the source, producing a `normalized.png` plus optional `ocr_ready.png` and `vlm_ready.png` variants, classifying the image technically, validating the outputs, and atomically publishing everything inside the `image/` artifact namespace together with a `metadata.json`. The image engine (OpenCV or Pillow) is encapsulated in `image/primitives/`. This processor is built standalone in Phase 1: it imports no other processor and makes no workflow decisions.
 
 ## 2. Context (BA)
 
@@ -230,6 +230,6 @@ Scenario: Leave the source untouched
 4. **Metric thresholds — RESOLVED for PoC.** Concrete numeric thresholds for
    `LOW_QUALITY` classification and OCR binarization are explicit constants marked
    `# TODO: [MVP]`; their exact values are fixed when IMG-06/IMG-08 start.
-5. **Naming mapping — RESOLVED:** code uses `processors/image/` with the entry points the
+5. **Naming mapping — RESOLVED:** code uses `docflow.image` (path `src/docflow/image/`) with the entry points the
    idea names (`process_image`, `process_image_from_page`); the Spanish `procesador-image`
    remains only as the idea document's title.

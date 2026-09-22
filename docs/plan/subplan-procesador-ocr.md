@@ -1,7 +1,7 @@
 # Subplan — procesador-ocr
 
 > Phase: **1 (processors, independently)** of the general plan (`docs/plan/README.md`).
-> Module: `ocr` → `processors/ocr` (import `processors.ocr`).
+> Module: `ocr` → `docflow.ocr` (physical path `src/docflow/ocr/`).
 > Source of truth: `docs/idea/procesador-ocr.md` + `docs/idea/readme.md`. Where they
 > disagree, reconcile back to the idea. All output and identifiers in English.
 
@@ -222,7 +222,7 @@ result is the contract:
 
 | ID | Task | Effort | Depends on |
 |---|---|---|---|
-| OCR-01 | Skeleton sub-package `processors/ocr/` + contract dataclasses (`OCRRequest`, `OCRResult`, `NormalizedOCROptions`, `OCRMetrics`, `OCRMetadata`, `OCRValidation`, `OCRError`, `ArtifactPaths`) with type hints and no silent defaults. | S | — |
+| OCR-01 | Skeleton sub-package `src/docflow/ocr/` + contract dataclasses (`OCRRequest`, `OCRResult`, `NormalizedOCROptions`, `OCRMetrics`, `OCRMetadata`, `OCRValidation`, `OCRError`, `ArtifactPaths`) with type hints and no silent defaults. | S | — |
 | OCR-02 | Docling primitives skeleton in `ocr/primitives/`; pin `docling` in `pyproject.toml`; record `engine`/`engine_version`. | S | OCR-01 |
 | OCR-03 | Pipeline/config primitives: `load_docling_pipeline`, `configure_image_pipeline`, `enable_*`, `normalize_docling_options`. | M | OCR-02 |
 | OCR-04 | Execution + extraction primitives: `convert_image_with_docling`, `extract_docling_*`, building the engine-independent `OCRDocument`. | M | OCR-03 |
@@ -387,5 +387,5 @@ pylint src tests                          # fixme disabled; the rest clean
    engine-independent target).
 5. `process_ocr_from_page` wrapper — **RESOLVED:** deferred to Phase 3 integration; Phase 1
    ships only `process_ocr_image`.
-6. Physical layout — **RESOLVED:** sub-package `processors/ocr/` with
+6. Physical layout — **RESOLVED:** sub-package `docflow.ocr` (path `src/docflow/ocr/`) with
    `primitives/` / `utils/` / `helpers/`, per the idea's §"Estructura del proyecto".

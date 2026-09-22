@@ -296,5 +296,5 @@ pylint src tests
 5. **Layout — RESOLVED:** sub-package `pdf/` with `primitives/`, `utils/`, `helpers/`,
    matching the idea's §"Estructura del proyecto".
 6. **Naming mapping — RESOLVED:** code and modules use the English names the idea itself
-   uses (`processors/pdf/`, `process_pdf`, `process_pdf_page`); the Spanish
+   uses (`docflow.pdf`, `process_pdf`, `process_pdf_page`); the Spanish
    `procesador-pdf` remains only as the title of the idea document.
