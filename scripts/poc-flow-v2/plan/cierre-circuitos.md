@@ -83,8 +83,8 @@ graph LR
 ### Ola 1.2 — C2: lanes completas
 
 - [x] Split de prompts en el registry: `extract_texto` (invoice.txt), `extract_vision`
-      (vision.txt), `review_texto` (review/texto.txt), `review_vision`
-      (review/vision.txt) + `schemas/review/review.json`, declarados en el manifest
+      (vision.txt), `review_texto` (review/invoice.txt), `review_vision`
+      (review/vision.txt) + `schemas/review/invoice.json`, declarados en el manifest
 - [x] `extract.py`: lane A texto + lane B texto (framing adversarial, I5); lane A
       vision + lane B vision sobre `material.images`
 - [x] `CROSS_MODAL` (+2) cuando texto y vision coinciden en `normalized_value`;

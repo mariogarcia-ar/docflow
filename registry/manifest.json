@@ -14,7 +14,7 @@
       "format": "text"
     },
     {
-      "key": "prompts/review/texto.txt",
+      "key": "prompts/review/invoice.txt",
       "format": "text"
     },
     {
@@ -43,7 +43,7 @@
       "required_keys": ["type", "properties", "required"]
     },
     {
-      "key": "schemas/review/review.json",
+      "key": "schemas/review/invoice.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },

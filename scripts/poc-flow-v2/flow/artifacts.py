@@ -9,7 +9,7 @@ The role/lane split of `my_flow.md` §4.1 maps onto these registry keys:
 
     extract_texto  → prompts/extraction/invoice.txt   (the text lane's prompt)
     extract_vision → prompts/extraction/vision.txt    (the vision lane's prompt)
-    review_texto   → prompts/review/texto.txt         (the text reviewer)
+    review_texto   → prompts/review/invoice.txt       (the text reviewer)
     review_vision  → prompts/review/vision.txt        (the vision reviewer)
 
 The extraction schema is shared by both extract lanes; the review schema shapes
@@ -44,11 +44,11 @@ __all__: list[str] = [
 _PROMPT_KEYS: Final[dict[str, str]] = {
     "extract_texto": "prompts/extraction/invoice.txt",
     "extract_vision": "prompts/extraction/vision.txt",
-    "review_texto": "prompts/review/texto.txt",
+    "review_texto": "prompts/review/invoice.txt",
     "review_vision": "prompts/review/vision.txt",
 }
 _EXTRACTION_SCHEMA_KEY: Final[str] = "schemas/extraction/invoice.json"
-_REVIEW_SCHEMA_KEY: Final[str] = "schemas/review/review.json"
+_REVIEW_SCHEMA_KEY: Final[str] = "schemas/review/invoice.json"
 
 #: The reserved extraction steps (`cierre-circuitos.md` §«Enfoque en capas»):
 #: step name to its (prompt, schema) registry keys. `load_artifacts` reads the two
