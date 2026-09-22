@@ -18,10 +18,10 @@ of it.
 pip install -e ".[dev]"      # pytest, ruff, pylint
 pip install httpx            # the transport
 ollama serve                 # the runtime, if it is not already running
-ollama pull deepseek-r1:7b   # the default local model
+ollama pull deepseek-r1:8b   # the default local model
 ```
 
-**`deepseek-r1:7b` is the default.** The model *family* holds the slot for a reason
+**`deepseek-r1:8b` is the default.** The model *family* holds the slot for a reason
 measured on the **1.5B** tag: on the 1 589-byte `chicos/22f0e9af-…-p1.txt`,
 `smollm2:latest` **intermittently runs away** into an unbounded repetition loop (1 in
 5 calls with no token ceiling); because a batch driver is sequential and the adapter's
@@ -156,7 +156,7 @@ r.value            # None
 r.reason.code      # 'model_not_pulled'
 r.reason.message   # "the model 'no-existe:9b' is not present in this Ollama runtime.
                    #  Pull it first: `ollama pull no-existe:9b`. The available models
-                   #  are ['deepseek-r1:7b', 'granite3.1-moe:1b', ...]; no default
+                   #  are ['deepseek-r1:8b', 'granite3.1-moe:1b', ...]; no default
                    #  is substituted."
 r.evidence.observed['available']   # every model the runtime does hold, sorted
 ```
@@ -535,7 +535,7 @@ line, as it does for all eight drivers (`lab-cli.md`):
 ```console
 $ scripts/kernel/kernel-llm.sh
 
-  local model      deepseek-r1:7b  (default)
+  local model      deepseek-r1:8b  (default)
   vision model     qwen2.5vl:3b  (default)
   frontier model   anthropic:claude-sonnet-4-6  (default)
   image            tests/fixtures/matrix/page.png

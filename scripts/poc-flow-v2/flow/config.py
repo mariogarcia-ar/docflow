@@ -102,7 +102,7 @@ VETO_CODES: Final[frozenset[str]] = frozenset(
 #: The local model for the text lane, as the caller names it to the adapter
 #: (`my_flow.md` §4.1: primary extractor). The reviewer model differs, which is
 #: what makes the A/B contrast meaningful.
-TEXT_MODEL_A: Final[str] = "deepseek-r1:7b"
+TEXT_MODEL_A: Final[str] = "deepseek-r1:8b"
 
 #: The text reviewer (`my_flow.md` §4.1: `gemma3`), **tagged**.
 #:

@@ -21,12 +21,13 @@ si el archivo es usar los metodos existente en scripts/poc-flow-v2/flow
 - imagen: usar ocr (doclint) y enviar texto 
 
 
-ollama ls
-AME                 ID              SIZE      MODIFIED           
-deepseek-r1:7b       755ced02ce7b    4.7 GB    About a minute ago    
-gemma3:4b            a2af6cc3eb7f    3.3 GB    10 hours ago          
-granite3.1-moe:1b    3269ce3e31ea    1.4 GB    34 hours ago          
-qwen2.5vl:3b         fb90415cde1e    3.2 GB    2 months ago     
+ollama list 
+NAME                   ID              SIZE      MODIFIED       
+deepseek-r1:8b         6995872bfe4c    5.2 GB    18 minutes ago    
+qwen2.5:7b-instruct    845dbda0ea48    4.7 GB    18 minutes ago    
+gemma3:4b              a2af6cc3eb7f    3.3 GB    11 hours ago      
+granite3.1-moe:1b      3269ce3e31ea    1.4 GB    35 hours ago      
+qwen2.5vl:3b           fb90415cde1e    3.2 GB    2 months ago        
 
 ```bash
 
@@ -35,21 +36,28 @@ python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/negativos/neg_2026-06_correo_liquidacion.txt' \
   --prompt 'registry/prompts/extraction/invoice_deteccion.txt' \
   --schema 'registry/schemas/extraction/invoice_detection.json' \
-  --model 'deepseek-r1:7b'
+  --model 'deepseek-r1:8b'
 
 # deteccion: es factura
 python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
   --prompt 'registry/prompts/extraction/invoice_deteccion.txt' \
   --schema 'registry/schemas/extraction/invoice_detection.json' \
-  --model 'deepseek-r1:7b'
+  --model 'deepseek-r1:8b'
 
 # extraer: los campos de una factura
 python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
   --prompt 'registry/prompts/extraction/invoice.txt' \
   --schema 'registry/schemas/extraction/invoice.json' \
-  --model 'deepseek-r1:7b' --pretty
+  --model 'deepseek-r1:8b' --pretty
+
+python scripts/poc-flow-v2/myllmlocal.py \
+  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
+  --prompt 'registry/prompts/extraction/invoice.txt' \
+  --schema 'registry/schemas/extraction/invoice.json' \
+  --model 'qwen2.5:7b-instruct' --pretty
+
 
 python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
@@ -61,16 +69,15 @@ python scripts/poc-flow-v2/myllmlocal.py \
 
 
 
+python scripts/poc-flow-v2/myllmlocal.py \
+  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
+  --prompt 'registry/prompts/extraction/invoice.txt' \
+  --model 'deepseek-r1:8b'
 
 python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
   --prompt 'registry/prompts/extraction/invoice.txt' \
-  --model 'deepseek-r1:7b'
-
-python scripts/poc-flow-v2/myllmlocal.py \
-  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
-  --prompt 'registry/prompts/extraction/invoice.txt' \
-  --model 'deepseek-r1:7b'
+  --model 'deepseek-r1:8b'
 
 
 
