@@ -558,9 +558,9 @@ def test_no_prompt_asks_for_a_field_its_schema_does_not_declare() -> None:
     The field-name gate above asks *does the prompt name everything the schema
     requires*. That direction cannot see the failure this guards: a prompt left
     asking for keys its schema no longer declares. Measured: after the layered split
-    trimmed `invoice.txt` and `invoice.json` to the base step, `vision.txt` still
-    listed all 23 keys — 14 of them absent from the schema — and **every gate passed**,
-    because the 9 declared fields were all named.
+    trimmed `invoice.txt` and `invoice.json` to the base step, the vision prompt
+    still listed all 23 keys — 14 of them absent from the schema — and **every gate
+    passed**, because the 9 declared fields were all named.
 
     A prompt asking for an undeclared key wastes the model's attention on an answer
     the grammar will drop, and contradicts the schema's own claim that the two
@@ -643,8 +643,8 @@ def test_every_enum_option_is_declared_in_the_prompt() -> None:
     It runs over **every step's prompt against its own schema**, not the base
     pair alone: the split moved `condicion_impositiva_dominante` to `desglose` and
     `categoria_gasto` to `clasificacion`, so a check pinned to `invoice.txt` /
-    `vision.txt` would have gone on passing while checking two fields that no
-    longer carry an enum in the artifact it read.
+    `invoice_vision.txt` would have gone on passing while checking two fields that
+    no longer carry an enum in the artifact it read.
     """
     prompts = _extraction_prompt_texts(load_artifacts())
     schemas = _extraction_step_schemas()

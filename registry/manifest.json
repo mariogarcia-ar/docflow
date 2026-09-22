@@ -10,7 +10,7 @@
       "format": "text"
     },
     {
-      "key": "prompts/extraction/vision.txt",
+      "key": "prompts/extraction/invoice_vision.txt",
       "format": "text"
     },
     {
@@ -18,7 +18,7 @@
       "format": "text"
     },
     {
-      "key": "prompts/review/vision.txt",
+      "key": "prompts/review/invoice_vision.txt",
       "format": "text"
     },
     {

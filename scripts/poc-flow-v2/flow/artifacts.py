@@ -7,10 +7,10 @@ asset changes the registry hash, which keeps the journal honest.
 
 The role/lane split of `my_flow.md` §4.1 maps onto these registry keys:
 
-    extract_texto  → prompts/extraction/invoice.txt   (the text lane's prompt)
-    extract_vision → prompts/extraction/vision.txt    (the vision lane's prompt)
-    review_texto   → prompts/review/invoice.txt       (the text reviewer)
-    review_vision  → prompts/review/vision.txt        (the vision reviewer)
+    extract_texto  → prompts/extraction/invoice.txt        (the text lane's prompt)
+    extract_vision → prompts/extraction/invoice_vision.txt (the vision lane's prompt)
+    review_texto   → prompts/review/invoice.txt            (the text reviewer)
+    review_vision  → prompts/review/invoice_vision.txt     (the vision reviewer)
 
 The extraction schema is shared by both extract lanes; the review schema shapes
 the reviewer's verdicts, never an extraction.
@@ -43,9 +43,9 @@ __all__: list[str] = [
 #: flow speaks.
 _PROMPT_KEYS: Final[dict[str, str]] = {
     "extract_texto": "prompts/extraction/invoice.txt",
-    "extract_vision": "prompts/extraction/vision.txt",
+    "extract_vision": "prompts/extraction/invoice_vision.txt",
     "review_texto": "prompts/review/invoice.txt",
-    "review_vision": "prompts/review/vision.txt",
+    "review_vision": "prompts/review/invoice_vision.txt",
 }
 _EXTRACTION_SCHEMA_KEY: Final[str] = "schemas/extraction/invoice.json"
 _REVIEW_SCHEMA_KEY: Final[str] = "schemas/review/invoice.json"
