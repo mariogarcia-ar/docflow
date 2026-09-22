@@ -271,7 +271,6 @@ def extract_images_from_page(
         PDFPrimitiveError: The document is unreadable, or the page does not exist.
     """
     require_positive_page_range((page_number, page_number))
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     images = [
         record
@@ -279,10 +278,13 @@ def extract_images_from_page(
         if record.image_type == IMAGE_TYPE
     ]
     if not images:
-        # Nothing to extract. Returning before the engine runs keeps an image-free page from
-        # writing a stray file, which is what `pdfimages` would otherwise do for a mask-only
-        # page.
+        # Nothing to extract. Returning before the output directory is created keeps an
+        # image-free page from publishing an empty ``embedded_images/`` namespace, which
+        # would claim the page had images that produced nothing. The listing is what decides
+        # this, so the check happens before any directory exists.
         return []
+
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     prefix = output_dir / "_staged"
     try:

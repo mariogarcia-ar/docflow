@@ -41,11 +41,13 @@ from pathlib import Path
 
 from docflow.pdf.primitives.engine import (
     PopplerCommand,
+    PopplerError,
     PopplerOutputMissingError,
     page_range_arguments,
     require_positive_page_range,
     run_engine_command,
 )
+from docflow.pdf.primitives.failures import classify_engine_failure
 from docflow.pdf.primitives.naming import engine_page_template, renumber_split_output
 
 _SPLIT_GLOB = "page_*.pdf"
@@ -114,17 +116,22 @@ def extract_page(pdf_path: Path, page_number: int, output_path: Path) -> Path:
     # A file path rather than a `%d` template, deliberately: with an explicit file the
     # engine refuses a zero or inverted range instead of reading the bounds as "no range"
     # and silently splitting the whole document.
-    run_engine_command(
-        PopplerCommand.PDFSEPARATE,
-        [
-            "-f",
-            str(page_number),
-            "-l",
-            str(page_number),
-            str(pdf_path),
-            str(output_path),
-        ],
-    )
+    try:
+        run_engine_command(
+            PopplerCommand.PDFSEPARATE,
+            [
+                "-f",
+                str(page_number),
+                "-l",
+                str(page_number),
+                str(pdf_path),
+                str(output_path),
+            ],
+        )
+    except PopplerError as failure:
+        raise classify_engine_failure(
+            pdf_path, failure, page_number=page_number
+        ) from failure
 
     if not output_path.exists():
         raise PopplerOutputMissingError(PopplerCommand.PDFSEPARATE, output_path)

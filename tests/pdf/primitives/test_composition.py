@@ -14,6 +14,7 @@ closed and the function is pure. Both are asserted rather than assumed.
 
 from __future__ import annotations
 
+import inspect
 import subprocess
 import sys
 from pathlib import Path
@@ -123,8 +124,6 @@ def test_classification_depends_on_nothing_but_its_argument() -> None:
     Mutation that breaks it: add a ``force_ocr`` parameter read from ``PDFContext``, or
     import ``docflow.workflow`` here. The parameter assertion or the subprocess check fails.
     """
-    import inspect
-
     parameters = list(inspect.signature(classify_pdf_page).parameters)
     assert parameters == ["metrics"]
 

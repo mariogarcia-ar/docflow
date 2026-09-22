@@ -15,10 +15,10 @@ import pytest
 
 from docflow.pdf.primitives.engine import (
     PopplerCommand,
-    PopplerExecutionError,
     PopplerOutputMissingError,
     run_engine_command,
 )
+from docflow.pdf.primitives.failures import PDFPrimitiveError
 from docflow.pdf.primitives.split import extract_page, merge_pdfs, split_pdf
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
@@ -160,12 +160,18 @@ def test_the_engine_really_does_read_a_zero_bound_as_no_range(
 def test_extract_page_reports_an_out_of_range_page(
     source_pdf: Path, tmp_path: Path
 ) -> None:
-    """A page the document does not have is the engine's own error, not a guess."""
-    with pytest.raises(PopplerExecutionError) as failure:
+    """A page the document does not have is reported as out of range, not as a raw status.
+
+    The primitive classifies the engine's failure into the contract's own vocabulary, so a
+    caller gets ``PAGE_OUT_OF_RANGE`` rather than an exit code it would have to interpret
+    itself. ``PDF-09`` relies on this: it raises this one failure while recording every other
+    capability's failure instead, and it can only tell them apart if they are typed.
+    """
+    with pytest.raises(PDFPrimitiveError) as failure:
         extract_page(source_pdf, PAGE_COUNT + 1, tmp_path / "oob.pdf")
 
-    assert failure.value.returncode is not None
-    assert failure.value.returncode != 0
+    assert failure.value.error_type == "PAGE_OUT_OF_RANGE"
+    assert failure.value.page_number == PAGE_COUNT + 1
 
 
 def test_the_input_pdf_is_byte_identical_after_a_run(

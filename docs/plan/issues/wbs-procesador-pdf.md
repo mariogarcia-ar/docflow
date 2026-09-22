@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PDF-01` … `PDF-14` |
-| Status | `PDF-01`…`PDF-08` **DONE** — Wave 2 complete; `PDF-09`…`PDF-14` `NOT_STARTED` |
+| Status | `PDF-01`…`PDF-09` **DONE** — Wave 2 closed and Wave 3 began; `PDF-10`…`PDF-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -38,7 +38,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | DONE |
 | PDF-07 | Embedded image primitives | M | 2 — Primitives | PDF-02 | `extract_images_from_page`, `get_image_blocks` | this file §PDF-07 | DONE |
 | PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | DONE |
-| PDF-09 | Page entry point | M | 3 — Composition | PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | `process_pdf_page`, `page_001/metadata.json` | this file §PDF-09 | NOT_STARTED |
+| PDF-09 | Page entry point | M | 3 — Composition | PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | `process_pdf_page`, `page_001/metadata.json` | this file §PDF-09 | DONE |
 | PDF-10 | Document entry point | M | 3 — Composition | PDF-03, PDF-09 | `process_pdf`, `metadata.json` | this file §PDF-10 | NOT_STARTED |
 | PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | NOT_STARTED |
 | PDF-12 | Atomic persistence | S | 4 — Hardening | PDF-09, PDF-10 | `.tmp` → validate → rename across all artifacts | this file §PDF-12 | NOT_STARTED |
@@ -257,6 +257,17 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given image extraction fails while render and text extraction succeed, then the page `status` is `PARTIAL`, the valid artifacts are preserved, and the `PDFError` records `recoverable`.
 - **Evidence / DoD:** Fixture-based page test plus the partial-page scenario; namespace-ownership assertion (nothing under `image/`, `ocr/`, `llm/`).
 - **Tags:** `# TODO: [MVP]` for real validation of degenerate page content.
+- **Status: DONE.** `src/docflow/pdf/entrypoints.py` (the composition) plus three new primitives it needed: `provenance.py` (processor name/version), `publishing.py` (`.tmp` → validate → rename) and `validation.py` (structural verdict). Tests in `tests/pdf/test_entrypoints.py`. The artifact tree matches `subplan-procesador-pdf.md` §3 exactly, asserted as the complete file set rather than as "these exist".
+  - **Two defects found by its own tests, both real:**
+    1. **The verdict ignored recorded failures.** With image extraction failing, all three core artifacts were still present, so the page validated as ``VALID`` and reported ``success`` — while the ``IMAGE_EXTRACTION_ERROR`` sat in its error list. The acceptance criterion is explicit that this must be ``PARTIAL``. Validation now takes the recorded errors as well as the artifact set.
+    2. **The verdict could not tell "not requested" from "failed".** ``render: false`` reported ``PARTIAL`` for a page that did exactly as it was told. Validation now reads the options.
+  - A third defect was in the validator's shape rather than its logic: it derived the missing paths and the unsatisfied capabilities in two lists and zipped them, which mispaired them as soon as the lists had different lengths — a capability that was not requested appears in one and not the other. Replaced with a single ``ARTIFACT_CAPABILITIES`` table so the pairing cannot be got wrong.
+  - **`processing_key` is recorded as explicit ``None``, not computed here.** ``subplan-orquestador.md`` §3.4 defines the formula and ``ORC-02`` owns its computation in Phase 2, because it needs normalized options and input hashes the orchestrator owns. A processor that hashed its own would be making a workflow decision — out of bounds for this module — and would be a second implementation of a value the reuse rule depends on being identical everywhere. The key is present so a consumer sees it was not computed, which is not the same as it being absent.
+  - **The one failure that escapes rather than being recorded** is a page that does not exist: there is no partial result to keep, so ``extract_page`` raises and the caller gets a typed ``PAGE_OUT_OF_RANGE``. Every other capability is contained.
+  - **Also fixed a gap this task exposed in ``PDF-04``:** ``extract_page`` propagated a raw ``PopplerExecutionError`` while ``PDF-03`` classified the identical failure for ``pdfinfo``. It now classifies too, which is what lets ``PDF-09`` distinguish "page 99" from "the document is corrupt".
+  - Two Phase-0 assertions were updated rather than worked around: ``test_a_stub_raises_instead_of_returning_a_placeholder`` now points at the entry points still awaiting their task (``process_pdf``, ``process_document``), and a ``PDF-04`` test now expects the typed classification instead of a raw exit code.
+  - Mutation-verified, three mutations, each restored green: recorded failures ignored (**3 fail** — the original defect), options ignored (3 fail), render failure propagated (2 fail).
+  - Four QA gates green.
 
 ### PDF-10 — Document entry point
 

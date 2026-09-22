@@ -210,8 +210,15 @@ def test_no_contract_field_carries_an_undocumented_default() -> None:
     )
 
 
-def test_a_stub_raises_instead_of_returning_a_placeholder() -> None:
-    """A caller can never mistake a Phase 0 stub for a processed document."""
+def test_a_processor_that_is_not_implemented_raises_instead_of_placeholding() -> None:
+    """An unimplemented entry point raises; a caller cannot mistake it for a result.
+
+    Phase 0 asserted this for both PDF entry points. ``PDF-09`` implemented
+    ``process_pdf_page``, so the assertion now covers ``process_document`` (``ORC-14``) and
+    ``process_pdf`` (``PDF-10``) — the entry points still awaiting their task. Keeping the
+    check pointed at what is genuinely a stub is the point: asserting it against code that
+    now works would fail for a reason that is not a defect.
+    """
     workflow_module = importlib.import_module("docflow.workflow")
     pdf_module = importlib.import_module("docflow.pdf")
 
@@ -222,7 +229,7 @@ def test_a_stub_raises_instead_of_returning_a_placeholder() -> None:
         workflow_module.process_document(document_request)
 
     with pytest.raises(NotImplementedError):
-        pdf_module.process_pdf_page(pdf_request, 1, Path("page_001"))
+        pdf_module.process_pdf(pdf_request)
 
 
 def test_a_processor_reports_a_state_without_importing_the_orchestrator() -> None:
