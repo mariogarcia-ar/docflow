@@ -112,6 +112,30 @@ class PopplerExecutionError(PopplerError):
         super().__init__(f"{command.value} {outcome}{detail}")
 
 
+class PopplerOutputMissingError(PopplerError):
+    """A Poppler command reported success and the expected artifact is not there.
+
+    A post-condition guard, not a description of a known engine quirk: the command is asked
+    for a single named file and the file is then confirmed to exist. No such case has been
+    observed with Poppler 25.02.0 — every failure it produces, it also reports with a
+    non-zero status. The guard is kept because the alternative to checking is publishing a
+    path that does not exist, which is the silent stand-in ``docs/plan/README.md`` §7
+    forbids, and because a check on the artifact is the only thing that stays true if the
+    engine's reporting ever changes.
+
+    Attributes:
+        command: The binary that reported success.
+        expected_path: The artifact that should have appeared and did not.
+    """
+
+    def __init__(self, command: PopplerCommand, expected_path: Path) -> None:
+        self.command = command
+        self.expected_path = expected_path
+        super().__init__(
+            f"{command.value} reported success but produced no file at {expected_path}"
+        )
+
+
 @dataclass(frozen=True)
 class Engine:
     """The engine that produced an artifact, and its version.

@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PDF-01` … `PDF-14` |
-| Status | `PDF-01`, `PDF-02` **DONE**; `PDF-03`…`PDF-08` signatures landed, bodies `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
+| Status | `PDF-01`, `PDF-02`, `PDF-04` **DONE**; `PDF-03`, `PDF-05`…`PDF-08` signatures landed, bodies `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -33,7 +33,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-01 | Contract types | S | 1 — Foundations | — | `PDFRequest`, `PDFResult`, `PDFPageResult`, `PDFPageMetrics`, `PDFError` | this file §PDF-01 | DONE |
 | PDF-02 | Poppler primitives skeleton | M | 1 — Foundations | PDF-01 | `pdf/primitives/` | this file §PDF-02 | DONE |
 | PDF-03 | Document primitives | M | 2 — Primitives | PDF-02 | `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | this file §PDF-03 | SIGNATURE_ONLY |
-| PDF-04 | Split/extract primitives | M | 2 — Primitives | PDF-02 | `extract_page`, `split_pdf`, `merge_pdfs` | this file §PDF-04 | SIGNATURE_ONLY |
+| PDF-04 | Split/extract primitives | M | 2 — Primitives | PDF-02 | `extract_page`, `split_pdf`, `merge_pdfs` | this file §PDF-04 | DONE |
 | PDF-05 | Render primitive | S | 2 — Primitives | PDF-02 | `render_page_to_image` | this file §PDF-05 | SIGNATURE_ONLY |
 | PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | SIGNATURE_ONLY |
 | PDF-07 | Embedded image primitives | M | 2 — Primitives | PDF-02 | `extract_images_from_page`, `get_image_blocks` | this file §PDF-07 | SIGNATURE_ONLY |
@@ -115,6 +115,13 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given `extract_page` writing to `page_001/source/page.pdf`, when the run completes, then the SHA-256 of the input PDF is unchanged.
 - **Evidence / DoD:** Fixture-based test plus the input-immutability invariant (PDF-13, invariant 2).
 - **Tags:** `# TODO: [MVP]` for `merge_pdfs` (deferred off the happy path).
+- **Status: DONE.** Fixture: `tests/fixtures/matrix/three-invoices.pdf` (3 pages, text layer, no encryption). `src/docflow/pdf/primitives/split.py`, with naming helpers in `primitives/naming.py`; tests in `tests/pdf/primitives/test_split.py`.
+  - `split_pdf` → `page_001.pdf`, `page_002.pdf`, `page_003.pdf`, each verified by content to carry **its own** page, not merely to exist.
+  - `extract_page` → the requested page at the caller's path, creating the parent directory (the engine does not).
+  - Input immutability: SHA-256 compared before and after; mutation (writing to `pdf_path`) fails it.
+  - **Defect found and fixed during this task, not pre-existing in the plan.** `pdfseparate -f 0 -l 0 doc.pdf 'page_%03d.pdf'` exits **0** and splits the *whole* document — a zero bound reads as "no range". The first implementation therefore returned **page 1 for a request for page 0**, renumbered to `page_001` and reported as success. Two independent defences now close it: a 1-based bound check, and a file output path for the single-page case (with a file, the engine refuses a zero range with status 99). Mutation-verified: removing **both** reintroduces the wrong-page result; removing either alone leaves the guard tests green.
+  - `merge_pdfs` exercised off the happy path, with a content-ordered round-trip assertion.
+  - Four QA gates green.
 
 ### PDF-05 — Render primitive
 

@@ -21,8 +21,10 @@ from docflow.pdf.primitives.engine import (
     POPPLER_ENGINE_NAME,
     Engine,
     PopplerCommand,
+    PopplerError,
     PopplerExecutionError,
     PopplerNotAvailableError,
+    PopplerOutputMissingError,
     find_engine_command,
     get_engine,
     get_engine_name,
@@ -149,3 +151,19 @@ def test_the_engine_record_round_trips_through_json() -> None:
     engine = get_engine()
 
     assert Engine(name=engine.name, version=engine.version) == engine
+
+
+def test_the_output_missing_guard_is_a_typed_error_not_a_boolean() -> None:
+    """A missing artifact is reported with the engine and the path that was expected.
+
+    The guard is a post-condition, and it exists so no primitive can publish a path to a
+    file that was never written. It is typed so a caller can classify it rather than
+    reading a ``False`` return, which is what would make the condition easy to ignore.
+    """
+    expected = Path("/tmp/df-output-never-written.pdf")
+    error = PopplerOutputMissingError(PopplerCommand.PDFSEPARATE, expected)
+
+    assert isinstance(error, PopplerError)
+    assert error.command is PopplerCommand.PDFSEPARATE
+    assert error.expected_path == expected
+    assert str(expected) in str(error)
