@@ -50,13 +50,15 @@ _RECOVERABLE: dict[str, bool] = {
     "PAGE_OUT_OF_RANGE": False,
     "IO_ERROR": True,
     "TEXT_EXTRACTION_ERROR": True,
+    "IMAGE_EXTRACTION_ERROR": True,
 }
 """Whether a run can continue without the artifact that failed.
 
-A document-level failure stops the document. The two entries marked recoverable describe a
+A document-level failure stops the document. The three entries marked recoverable describe a
 failure of one artifact rather than of the document: a write at a path the caller controls,
-and a text layer that could not be read. Both leave the rest of the page intact, which is
-what lets ``PDF-09`` report a page as ``PARTIAL`` instead of losing it.
+a text layer that could not be read, and embedded images that could not be written. Each
+leaves the rest of the page intact, which is what lets ``PDF-09`` report a page as
+``PARTIAL`` instead of losing it.
 """
 
 
@@ -224,6 +226,34 @@ def classify_text_failure(
     )
 
 
+def classify_image_failure(
+    pdf_path: Path,
+    failure: Exception,
+    *,
+    page_number: int | None = None,
+) -> PDFPrimitiveError:
+    """Turn an embedded-image failure into a typed one.
+
+    A per-artifact failure like :func:`classify_text_failure`, and marked recoverable for
+    the same reason: a page whose images could not be written still has its render and its
+    native text, so ``PDF-09`` can keep the page and report it as ``PARTIAL``.
+
+    Args:
+        pdf_path: The document that was being read.
+        failure: What went wrong.
+        page_number: Page the failure belongs to.
+
+    Returns:
+        A :class:`PDFPrimitiveError` classified as ``IMAGE_EXTRACTION_ERROR``.
+    """
+    return PDFPrimitiveError(
+        "IMAGE_EXTRACTION_ERROR",
+        f"the embedded images of page {page_number} of {pdf_path} could not be read",
+        page_number=page_number,
+        detail=str(failure),
+    )
+
+
 __all__ = [
     "ENCRYPT_MARKER",
     "PAGE_OUT_OF_RANGE_STATUS",
@@ -231,6 +261,7 @@ __all__ = [
     "PDFPrimitiveError",
     "check_pdf_is_readable",
     "classify_engine_failure",
+    "classify_image_failure",
     "classify_text_failure",
     "declares_encryption",
     "looks_like_a_pdf",

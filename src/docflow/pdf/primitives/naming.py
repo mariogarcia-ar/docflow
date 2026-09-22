@@ -32,6 +32,18 @@ def page_index_name(index: int) -> str:
     return f"page_{index:0{PAGE_PADDING}d}"
 
 
+def image_index_name(index: int) -> str:
+    """Return the zero-padded image name for a 1-based index.
+
+    Args:
+        index: Image position within the page, 1-based.
+
+    Returns:
+        The name, e.g. ``"image_001"``.
+    """
+    return f"image_{index:0{PAGE_PADDING}d}"
+
+
 def engine_page_template(directory: Path) -> str:
     """Return the ``pdfseparate`` output template for a page directory.
 
