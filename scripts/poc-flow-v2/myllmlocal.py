@@ -57,6 +57,13 @@ what keeps a single prompt able to judge an extraction this client never made.
 The prompt is filled in full: a ``{proposal}`` left standing would have the
 reviewer judging that literal string and reporting verdicts about it.
 
+A proposal file that is **this client's own report** is embedded from its
+``answer`` key alone, so passing ``--proposal`` one of the files under `--out`
+points the reviewer at the extraction and not at the run's metadata. Measured,
+the whole report — which carries a document path, a prompt path, a model name and
+three ``null``s — turned one disagreement over six fields into three over seven:
+a reviewer given more to doubt, doubts more.
+
 Every run **writes the report it prints**, so a second consumer does not have to
 reconstruct it from a terminal: one JSON file per question under `--out`
 (default `var/llmlocal/`), named by the document and a digest of the question, so
@@ -113,6 +120,14 @@ TEXT_PLACEHOLDER: Final[str] = "{text}"
 #: is loud — the reviewer answers about a literal `{proposal}` instead of an
 #: extraction, and the report's `proposal` key says none was supplied.
 PROPOSAL_PLACEHOLDER: Final[str] = "{proposal}"
+
+#: Where this client's own report keeps the extraction it is about. A report is a
+#: **record of the question** — the document, the prompt, the model, the token
+#: counts — and `answer` is the only part of it that is an extraction. Handing a
+#: reviewer the whole record shows it metadata and three `null`s and invites it to
+#: grade those too; measured, the whole report turned **one** disagreement over six
+#: fields into **three** over seven.
+ANSWER_KEY: Final[str] = "answer"
 
 #: What this client reads as text directly. `flow.material.read_material` answers
 #: a PDF and an image and reports anything else as `invalid` (*neither a PDF nor
@@ -248,7 +263,9 @@ def _build_parser() -> _Parser:
         metavar="FILE",
         help=f"a JSON file whose text fills {PROPOSAL_PLACEHOLDER!r}, for a "
         "prompt that reviews an extraction (review/invoice.txt); read as "
-        "JSON when it is an object, as raw text otherwise",
+        f"JSON when it is an object, as raw text otherwise, and — when it "
+        f"carries {ANSWER_KEY!r}, as this client's own report does — embedded "
+        "from that key alone",
     )
     parser.add_argument(
         "--out",
@@ -316,6 +333,14 @@ def _read_proposal(path: pathlib.Path) -> str:
     rather than the all-on-one-line form an extractor's report happens to use; any
     other JSON value and a plain text file are passed through as written, because
     re-formatting them would be this client authoring the extraction under review.
+
+    An object carrying an ``answer`` key is this client's own **run report**, and
+    only that key is embedded. The rest of the report is the record of the
+    question, not the extraction, and a reviewer handed it grades the metadata as
+    well — measured, it turned one disagreement over six fields into three over
+    seven. An ``answer`` that is not an object holds no extraction, so it is
+    refused rather than embedded as ``null``: a reviewer shown nothing reports
+    verdicts about nothing, and the refusal names the key.
     """
     body = _read_text(path)
     try:
@@ -324,6 +349,14 @@ def _read_proposal(path: pathlib.Path) -> str:
         return body
     if not isinstance(loaded, dict):
         return body
+    if ANSWER_KEY in loaded:
+        embedded = loaded[ANSWER_KEY]
+        if not isinstance(embedded, dict):
+            raise UsageError(
+                f"{path}: {ANSWER_KEY!r} is {embedded!r}, not an object, so this "
+                "report holds no extraction to review"
+            )
+        loaded = embedded
     return json.dumps(loaded, ensure_ascii=False, indent=2)
 
 

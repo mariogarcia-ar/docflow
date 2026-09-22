@@ -54,14 +54,18 @@ python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
   --prompt 'registry/prompts/extraction/invoice.txt' \
   --schema 'registry/schemas/extraction/invoice.json' \
+  --out 'var/llmlocal/factura/' \
   --model 'qwen2.5:7b-instruct' --pretty
 
 
 python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
-  --prompt 'registry/prompts/extraction/invoice.txt' \
-  --schema 'registry/schemas/extraction/invoice.json' \
+  --prompt 'registry/prompts/review/invoice.txt' \
+  --schema 'registry/schemas/review/invoice.json' \
+  --proposal 'var/llmlocal/factura/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.5ccc4350984f3f7c.json' \
   --model 'gemma3:4b' --pretty
+
+
 
 
 
