@@ -11,7 +11,8 @@ that true is `docs/plan/README.md` §4.1 and the cross-cutting task `GEN-21`; th
 | Tool | Task | Status |
 |---|---|---|
 | [`pdf.py`](pdf.py) | `PDF-14` | ✅ available |
-| `image.py` | `IMG-15` | not started — `procesador-image` has no implementation yet |
+| `image_fixtures.py` | `IMG-03` | ✅ available — rebuilds the committed image fixtures |
+| `image.py` | `IMG-15` | not started — `process_image` does not exist yet |
 | `ocr.py` | `OCR-14` | not started |
 | `llm.py` | `LLM-16` | not started |
 | `workflow.py` | `ORC-20` | not started |
@@ -171,6 +172,35 @@ a whole document run, which the orchestrator is forbidden to do (`GEN-19`). A to
 outside both frontiers. **`workflow.py` will be the exception**, bound by the same
 prohibition the orchestrator is, because it composes the four processors rather than driving
 one.
+
+---
+
+## `image_fixtures.py`
+
+Rebuilds the committed fixtures under `tests/fixtures/image/`. Unlike the other tools this one
+belongs to no product task's command surface — it exists because `IMG-03` needs image bytes that
+are *in the repository*, so a failing test points at a file rather than at whatever a `conftest`
+happened to synthesise that run.
+
+```bash
+python scripts/tools/image_fixtures.py            # write the fixtures
+python scripts/tools/image_fixtures.py --check    # report drift without writing
+```
+
+It is idempotent: running it twice leaves the tree identical, so `--check` is a cheap way to
+confirm the committed files still match their source.
+
+**Requirements:** `numpy`. The PNG encoder is hand-rolled on `zlib`, and the skew rotation is
+hand-written nearest-neighbour, so the fixture bytes do not shift when an image library is
+upgraded. The script deliberately does **not** import `docflow.image.primitives`: a generator built
+on the code under test could not tell "the fixture is wrong" from "the reader is wrong".
+
+| Fixture | What it is for |
+|---|---|
+| `color_layout.png` | Colour that carries information: three pure-primary bars and dark red "text". A pipeline that dropped colour could not tell the bars apart, so this is what proves a VLM variant kept it. |
+| `skewed_text.png` | A text-like page rotated by 4°, for the deskew path. |
+| `embedded_logo.png` | A small logo-like mark, standing in for a logo lifted out of a PDF. |
+| `corrupt.png` | Keeps its PNG signature and a valid header, then has a damaged `IDAT` stream. This is the file that distinguishes `DECODE_ERROR` from `UNSUPPORTED_FORMAT`: it is *recognised* as a PNG and then fails to decode. |
 
 ---
 

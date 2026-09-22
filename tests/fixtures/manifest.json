@@ -1,7 +1,7 @@
 {
   "root": "tests/fixtures",
-  "files": 99,
-  "bytes": 73193814,
+  "files": 103,
+  "bytes": 73197462,
   "pdf_detector": "voucherflow",
   "by_folder": {
     "blur": {
@@ -43,6 +43,10 @@
     "pdf_large": {
       "files": 1,
       "bytes": 1013781
+    },
+    "image": {
+      "files": 4,
+      "bytes": 3648
     }
   },
   "excluded": [

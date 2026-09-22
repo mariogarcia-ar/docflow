@@ -15,9 +15,7 @@ from __future__ import annotations
 # pylint: disable=duplicate-code
 # Same skeleton shape as `analysis.py`; the reason is stated in full there. `IMG-05` replaces
 # each body and this disable goes with the last of them.
-from types import ModuleType
-
-from docflow.image.primitives.engine import EngineChoice
+from docflow.image.primitives.engine import EngineChoice, ImageArray
 from docflow.image.primitives.failures import ImagePrimitiveError
 
 INTERPOLATION_FOR_SHRINK = "area"
@@ -28,7 +26,7 @@ shrink would drop detail and make a legibility measure meaningless.
 """
 
 
-def rotate_image(image: ModuleType, degrees: float, engine: EngineChoice) -> ModuleType:
+def rotate_image(image: ImageArray, degrees: float, engine: EngineChoice) -> ImageArray:
     """Rotate an image about its centre.
 
     Args:
@@ -47,7 +45,7 @@ def rotate_image(image: ModuleType, degrees: float, engine: EngineChoice) -> Mod
     raise NotImplementedError
 
 
-def deskew_image(image: ModuleType, angle: float, engine: EngineChoice) -> ModuleType:
+def deskew_image(image: ImageArray, angle: float, engine: EngineChoice) -> ImageArray:
     """Straighten an image by the given small angle.
 
     Args:
@@ -67,8 +65,8 @@ def deskew_image(image: ModuleType, angle: float, engine: EngineChoice) -> Modul
 
 
 def resize_image(
-    image: ModuleType, width: int, height: int, engine: EngineChoice
-) -> ModuleType:
+    image: ImageArray, width: int, height: int, engine: EngineChoice
+) -> ImageArray:
     """Scale an image to exact pixel dimensions.
 
     Args:
@@ -88,7 +86,7 @@ def resize_image(
     raise NotImplementedError
 
 
-def convert_to_grayscale(image: ModuleType, engine: EngineChoice) -> ModuleType:
+def convert_to_grayscale(image: ImageArray, engine: EngineChoice) -> ImageArray:
     """Drop colour, keeping luminance.
 
     Args:
@@ -107,8 +105,8 @@ def convert_to_grayscale(image: ModuleType, engine: EngineChoice) -> ModuleType:
 
 
 def binarize_image(
-    image: ModuleType, engine: EngineChoice, threshold: int = 128
-) -> ModuleType:
+    image: ImageArray, engine: EngineChoice, threshold: int = 128
+) -> ImageArray:
     """Reduce an image to two tones.
 
     Destructive by design, and the reason ``IMG-07`` only applies it when a metric justifies
@@ -130,7 +128,7 @@ def binarize_image(
     raise NotImplementedError
 
 
-def denoise_image(image: ModuleType, engine: EngineChoice) -> ModuleType:
+def denoise_image(image: ImageArray, engine: EngineChoice) -> ImageArray:
     """Suppress sensor and compression noise.
 
     Args:
@@ -148,7 +146,7 @@ def denoise_image(image: ModuleType, engine: EngineChoice) -> ModuleType:
     raise NotImplementedError
 
 
-def sharpen_image(image: ModuleType, engine: EngineChoice) -> ModuleType:
+def sharpen_image(image: ImageArray, engine: EngineChoice) -> ImageArray:
     """Increase local edge contrast.
 
     Args:
@@ -166,7 +164,7 @@ def sharpen_image(image: ModuleType, engine: EngineChoice) -> ModuleType:
     raise NotImplementedError
 
 
-def normalize_contrast(image: ModuleType, engine: EngineChoice) -> ModuleType:
+def normalize_contrast(image: ImageArray, engine: EngineChoice) -> ImageArray:
     """Stretch luminance to use the full available range.
 
     Args:
@@ -184,7 +182,7 @@ def normalize_contrast(image: ModuleType, engine: EngineChoice) -> ModuleType:
     raise NotImplementedError
 
 
-def normalize_brightness(image: ModuleType, engine: EngineChoice) -> ModuleType:
+def normalize_brightness(image: ImageArray, engine: EngineChoice) -> ImageArray:
     """Shift luminance towards a mid-range target.
 
     Args:
@@ -203,8 +201,8 @@ def normalize_brightness(image: ModuleType, engine: EngineChoice) -> ModuleType:
 
 
 def convert_image_format(
-    image: ModuleType, format_name: str, engine: EngineChoice
-) -> ModuleType:
+    image: ImageArray, format_name: str, engine: EngineChoice
+) -> ImageArray:
     """Re-encode an image into another format.
 
     Args:
@@ -223,7 +221,7 @@ def convert_image_format(
     raise NotImplementedError
 
 
-def compress_image(image: ModuleType, quality: int, engine: EngineChoice) -> ModuleType:
+def compress_image(image: ImageArray, quality: int, engine: EngineChoice) -> ImageArray:
     """Re-encode an image at a chosen quality.
 
     Args:

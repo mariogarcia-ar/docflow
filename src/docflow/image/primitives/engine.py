@@ -31,6 +31,30 @@ import sys
 from dataclasses import dataclass
 from enum import StrEnum
 from types import ModuleType
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import numpy as np
+    from numpy.typing import NDArray
+
+    ImageArray = NDArray[np.uint8]
+    """An image as a ``(height, width, channels)`` array of 8-bit samples, channels in RGB order.
+
+    This is the *engine-agnostic* image the rest of the processor passes around, and it is what
+    makes the two engines swappable without the contract noticing. The engines disagree on the
+    channel order - OpenCV decodes to BGR, Pillow to RGB - so the conversion happens once, inside
+    :mod:`docflow.image.primitives.load`, and nothing downstream has to know which engine ran.
+
+    A grayscale image is ``(height, width)`` with no trailing axis, exactly as both engines
+    represent it.
+    """
+else:
+    # `Any` at runtime, `NDArray[np.uint8]` to a type checker; the real type is named above, only
+    # for static analysis. A module-level `import numpy` would turn a missing numpy into a bare
+    # ImportError at `import docflow.image.primitives` - exactly the untyped failure
+    # `array_module` exists to prevent - so the runtime annotation is deliberately wider. It still
+    # resolves, which is what keeps `typing.get_type_hints` working on every primitive.
+    ImageArray = Any
 
 OPENCV_ENGINE_NAME = "opencv"
 """Name under which the OpenCV-backed implementation records its provenance."""
@@ -45,6 +69,12 @@ Not an engine: it does not decode or transform anything on its own. It is record
 separately in ``metadata.json`` because the numeric types a measurement returns depend on
 it, so a re-run is only comparable when its version is known too.
 """
+
+CHANNEL_COUNT_RGB = 3
+"""Channels in a colour :data:`ImageArray`."""
+
+CHANNEL_RANK_GRAYSCALE = 2
+"""Shape rank of a grayscale :data:`ImageArray`; its axes are height and width with no channels."""
 
 
 class EngineChoice(StrEnum):
@@ -63,6 +93,18 @@ _MODULE_BY_ENGINE: dict[EngineChoice, str] = {
     EngineChoice.OPENCV: "cv2",
     EngineChoice.PILLOW: "PIL",
 }
+
+_OPERATIONS_MODULE_BY_ENGINE: dict[EngineChoice, str] = {
+    EngineChoice.OPENCV: "cv2",
+    EngineChoice.PILLOW: "PIL.Image",
+}
+"""Where each engine's *operations* live, which is not where its version lives.
+
+OpenCV's package is its whole API, so one name covers both. Pillow splits them: the version is
+``PIL.__version__`` but the API is ``PIL.Image``, and importing ``PIL`` alone does **not** make
+``PIL.Image`` reachable - it is a lazily imported submodule. That asymmetry is a fact about the
+engines, so it is recorded here rather than rediscovered in every primitive.
+"""
 
 
 class ImageEngineError(RuntimeError):
@@ -153,6 +195,28 @@ def engine_module(engine: EngineChoice) -> ModuleType:
         ImageEngineNotAvailableError: The library is not importable.
     """
     name = _MODULE_BY_ENGINE[engine]
+    try:
+        return importlib.import_module(name)
+    except ImportError as failure:
+        raise ImageEngineNotAvailableError(name, engine) from failure
+
+
+def operations_module(engine: EngineChoice) -> ModuleType:
+    """Import and return the module an engine's operations live in.
+
+    Distinct from :func:`engine_module` because "where the version lives" and "where the API
+    lives" are the same place for OpenCV and two different places for Pillow.
+
+    Args:
+        engine: The engine whose operations are needed.
+
+    Returns:
+        The engine's operations module.
+
+    Raises:
+        ImageEngineNotAvailableError: The library is not importable.
+    """
+    name = _OPERATIONS_MODULE_BY_ENGINE[engine]
     try:
         return importlib.import_module(name)
     except ImportError as failure:
@@ -287,11 +351,14 @@ def loaded_engines() -> list[str]:
 
 __all__ = [
     "ARRAY_LIBRARY_NAME",
+    "CHANNEL_COUNT_RGB",
+    "CHANNEL_RANK_GRAYSCALE",
     "OPENCV_ENGINE_NAME",
     "PILLOW_ENGINE_NAME",
     "Engine",
     "EngineChoice",
     "EngineProvenance",
+    "ImageArray",
     "ImageEngineError",
     "ImageEngineExecutionError",
     "ImageEngineNotAvailableError",
@@ -303,4 +370,5 @@ __all__ = [
     "get_provenance",
     "is_engine_available",
     "loaded_engines",
+    "operations_module",
 ]

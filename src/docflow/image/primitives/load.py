@@ -1,42 +1,89 @@
 """Load and store primitives - reading an image and its technical facts.
 
-The rule that shapes this module is at the end of its name: **nothing here writes back to the
-source**. ``save_image`` refuses a destination equal to the image it read, because a processor
-that overwrote its input could not be re-run and would destroy the only copy of the original.
+The rule that shapes this module is at the end of its name: **nothing here writes back to a file
+that already exists**. :func:`save_image` refuses an occupied destination, because a processor that
+clobbered its own input could not be re-run and would destroy the only copy of the original.
 
-Phase 1 declares the shapes; ``IMG-03`` fills them in.
+Three engine asymmetries were measured rather than assumed, and all three are resolved here so
+nothing downstream has to know which engine ran:
+
+* **Channel order.** OpenCV decodes to BGR and Pillow to RGB. Every colour image leaving this module
+  is in **RGB**, converted exactly once inside :func:`load_image`.
+* **How failure is signalled.** ``cv2.imread`` returns ``None`` for a file it cannot decode while
+  writing the reason to file descriptor 2; Pillow raises. Both become a typed
+  :class:`ImagePrimitiveError`, and the descriptor noise is silenced because the same information
+  travels through the contract.
+* **How the format is named.** Pillow parses the header and reports ``JPEG`` perfectly. OpenCV
+  offers only a yes/no header check, so identifying the format through it would mean falling back
+  to the **file extension** - and a ``.jpg`` that actually holds a PNG would be reported as a JPEG.
+  The format is therefore read from the file's magic bytes, which is both engine-independent and
+  the only answer that matches the header rather than the file name.
 """
 
 from __future__ import annotations
 
-# pylint: disable=duplicate-code
-# Same skeleton shape as `analysis.py` and `transform.py`; the reason is stated once there, in
-# the `duplicate-code` block above `PRIMITIVE_ERROR_TYPES`' sibling module. `IMG-03` replaces
-# each body and this disable goes with the last of them.
+import contextlib
+import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 
-from docflow.image.primitives.engine import EngineChoice
+from docflow.image.primitives.engine import (
+    CHANNEL_COUNT_RGB,
+    CHANNEL_RANK_GRAYSCALE,
+    EngineChoice,
+    ImageArray,
+    array_module,
+    operations_module,
+)
+from docflow.image.primitives.failures import (
+    classify_decode_failure,
+    classify_input_failure,
+    classify_write_failure,
+)
 
 SUPPORTED_FORMATS: frozenset[str] = frozenset(
-    {"PNG", "JPEG", "JPG", "TIFF", "TIF", "BMP", "WEBP", "GIF"}
+    {"PNG", "JPEG", "TIFF", "BMP", "WEBP", "GIF"}
 )
-"""The formats the engine is allowed to decode.
+"""The formats the processor is allowed to decode.
 
-A closed set rather than "whatever the engine accepts", so an unsupported file is reported as
-``UNSUPPORTED_FORMAT`` instead of being coerced into a format the rest of the pipeline does not
-expect.
+Canonical names, not aliases: ``JPEG`` covers both ``.jpg`` and ``.jpeg``, because those are two
+spellings of one format and a set listing both would invite code that treats them as different.
 """
+
+COLOUR_ORDER = "RGB"
+"""The channel order of every colour image leaving this module, whichever engine decoded it."""
+
+MAX_HEADER_BYTES = 12
+"""How many leading bytes are needed to identify every format in :data:`SUPPORTED_FORMATS`."""
+
+_MAGIC_SIGNATURES: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "PNG"),
+    (b"\xff\xd8\xff", "JPEG"),
+    (b"II*\x00", "TIFF"),
+    (b"MM\x00*", "TIFF"),
+    (b"BM", "BMP"),
+    (b"GIF87a", "GIF"),
+    (b"GIF89a", "GIF"),
+)
+"""Leading bytes that identify a format, longest first where a prefix could be ambiguous."""
+
+_WEBP_PREFIX = b"RIFF"
+_WEBP_MARKER = b"WEBP"
+"""WebP is a RIFF container, so its ``WEBP`` marker sits at offset 8 rather than at the start."""
+
+_PILLOW_MODES = {True: "L", False: "RGB"}
+"""Pillow's mode names by whether the image is single-channel."""
 
 
 @dataclass(frozen=True)
 class ImageFileFacts:
-    """What can be known about an image file without decoding it.
+    """What can be known about an image file without decoding its pixels.
 
     Attributes:
         path: The file's own path, read but never written.
-        format: Format name as the file declares it, upper-cased.
+        format: Format name from the file's header, in the canonical spelling of
+            :data:`SUPPORTED_FORMATS`.
         size: The file's size in bytes.
     """
 
@@ -58,84 +105,317 @@ class ImageDimensions:
     height: int
 
 
-def load_image(path: Path, engine: EngineChoice) -> ModuleType:
-    """Decode an image file into an engine-native image.
+def load_image(
+    path: Path, engine: EngineChoice, *, grayscale: bool = False
+) -> ImageArray:
+    """Decode an image file into an engine-agnostic array.
+
+    The result is always RGB for colour and single-channel for grayscale, whichever engine ran.
+    That normalisation is why this is not a one-line delegation: OpenCV would hand back BGR, and a
+    caller comparing two engines' output would see an unexplained channel swap.
 
     Args:
         path: The file to read.
         engine: The engine to decode with, named explicitly.
+        grayscale: When true, decode one channel instead of RGB.
 
     Returns:
-        The engine's own image object.
+        The decoded pixels, in RGB order or grayscale.
 
     Raises:
-        ImageEngineNotAvailableError: The engine is missing.
-        ImagePrimitiveError: The file cannot be decoded, typed ``DECODE_ERROR`` or
-            ``UNSUPPORTED_FORMAT`` rather than raising the engine's own exception.
-
-    # TODO: [MVP] decode for real; the skeleton raises before touching the file.
+        ImageEngineNotAvailableError: The engine or the array library is missing.
+        ImagePrimitiveError: ``INVALID_INPUT`` when the file cannot be read, ``UNSUPPORTED_FORMAT``
+            when its header names a format outside :data:`SUPPORTED_FORMATS`, or ``DECODE_ERROR``
+            when a supported format fails to decode.
     """
-    raise NotImplementedError
+    facts = get_image_metadata(path, engine)
+
+    if engine is EngineChoice.OPENCV:
+        return _load_with_opencv(path, facts, grayscale=grayscale)
+    return _load_with_pillow(path, engine, facts, grayscale=grayscale)
 
 
-def save_image(image: ModuleType, path: Path, engine: EngineChoice) -> Path:
-    """Write an engine-native image to a destination path.
+def save_image(image: ImageArray, path: Path, engine: EngineChoice) -> Path:
+    """Write an array to a destination path that must not already exist.
 
-    The destination is chosen by the caller and is never the source path: the primitive checks
-    the two differ rather than trusting the caller to remember.
+    The plan states the rule as "``save_image`` must never target ``image_path``". This implements
+    the enforceable form of it, because a primitive holding an array cannot prove which file the
+    array came from: a guard comparing against a caller-supplied source path would pass while the
+    source was destroyed. An existing file is either that source or a previous run's artifact, so
+    replacing one is a decision the caller makes visibly.
 
     Args:
-        image: The engine-native image to write.
-        path: Where to write it; must not be the path the image was read from.
+        image: The array to write, in RGB order or grayscale.
+        path: Where to write it; must not already exist.
         engine: The engine to encode with.
 
     Returns:
         The path written.
 
     Raises:
-        ImagePrimitiveError: The destination is the source path, or the write fails.
-
-    # TODO: [MVP] encode for real; the skeleton raises before touching the file.
+        ImageEngineNotAvailableError: The engine is missing.
+        ImagePrimitiveError: ``WRITE_ERROR`` when the destination exists, the format is
+            unsupported, or the library cannot encode or write the image.
     """
-    raise NotImplementedError
+    if path.exists():
+        raise classify_write_failure(
+            str(path),
+            "refusing to overwrite an existing file: the destination may be the source image or "
+            "a previous run's artifact",
+        )
+
+    target_format = _format_from_extension(path)
+    if target_format is None or target_format not in SUPPORTED_FORMATS:
+        raise classify_write_failure(
+            str(path),
+            f"the destination extension names no supported format; expected one of "
+            f"{sorted(SUPPORTED_FORMATS)}",
+        )
+
+    if engine is EngineChoice.OPENCV:
+        _save_with_opencv(image, path)
+    else:
+        _save_with_pillow(image, path, engine)
+    return path
 
 
 def get_image_metadata(path: Path, engine: EngineChoice) -> ImageFileFacts:
     """Read a file's format and size without decoding its pixels.
 
+    The format comes from the file's magic bytes, never from its extension: a ``.jpg`` that holds a
+    PNG is reported as a PNG, because the extension is a naming convention and the header is the
+    fact. Reading the bytes directly also makes this identical under either engine, so the answer
+    cannot drift when the engine is swapped.
+
     Args:
         path: The file to read.
-        engine: The engine to read with.
+        engine: The engine that will read it, resolved first so a missing engine is not reported as
+            a bad file.
 
     Returns:
         The file's facts.
 
     Raises:
         ImageEngineNotAvailableError: The engine is missing.
-        ImagePrimitiveError: The file is not an image this engine can read.
-            ``UNSUPPORTED_FORMAT`` when the format is not in :data:`SUPPORTED_FORMATS`.
-
-    # TODO: [MVP] read the header for real.
+        ImagePrimitiveError: ``INVALID_INPUT`` when the file cannot be read, or
+            ``UNSUPPORTED_FORMAT`` when its header names a format outside
+            :data:`SUPPORTED_FORMATS`.
     """
-    raise NotImplementedError
+    if not path.is_file():
+        raise classify_input_failure(str(path), "file does not exist or is not a file")
+
+    # Resolving the engine before reading means a missing engine is reported as such rather than as
+    # an unreadable file, which would send the operator to the wrong problem.
+    operations_module(engine)
+
+    format_name = _format_from_header(path)
+    if format_name is None:
+        raise classify_decode_failure(
+            str(path),
+            None,
+            "the file's header does not name a format this processor reads",
+        )
+    if format_name not in SUPPORTED_FORMATS:
+        raise classify_decode_failure(
+            str(path),
+            format_name,
+            f"format {format_name} is outside the supported set "
+            f"{sorted(SUPPORTED_FORMATS)}",
+        )
+    return ImageFileFacts(path=path, format=format_name, size=path.stat().st_size)
 
 
-def get_image_dimensions(image: ModuleType, engine: EngineChoice) -> ImageDimensions:
-    """Read an already-decoded image's pixel dimensions.
+def get_image_dimensions(image: ImageArray, engine: EngineChoice) -> ImageDimensions:
+    """Read an already-decoded array's pixel dimensions.
+
+    Takes the array rather than a path, so a caller does not decode a second time to learn
+    something the first decode already knew.
 
     Args:
-        image: The engine-native image.
-        engine: The engine that produced it.
+        image: The decoded pixels.
+        engine: The engine that produced them; an array's shape is the same fact under either
+            engine, so this is read for symmetry with the other primitives.
 
     Returns:
         The dimensions.
 
-    # TODO: [MVP] read the shape for real.
+    Raises:
+        ImagePrimitiveError: ``INVALID_INPUT`` when the array has no usable shape.
     """
-    raise NotImplementedError
+    _ = engine
+    shape = getattr(image, "shape", None)
+    if shape is None or len(shape) < CHANNEL_RANK_GRAYSCALE:
+        raise classify_input_failure(
+            "<array>", f"expected a 2D or 3D array, got shape {shape!r}"
+        )
+    height, width = int(shape[0]), int(shape[1])
+    if height <= 0 or width <= 0:
+        raise classify_input_failure(
+            "<array>", f"expected positive dimensions, got {width}x{height}"
+        )
+    return ImageDimensions(width=width, height=height)
+
+
+def _format_from_header(path: Path) -> str | None:
+    """Identify a file's format from its magic bytes.
+
+    Args:
+        path: The file to identify.
+
+    Returns:
+        The canonical format name, or ``None`` when no known signature matches.
+    """
+    header = path.read_bytes()[:MAX_HEADER_BYTES]
+    if header[: len(_WEBP_PREFIX)] == _WEBP_PREFIX and header[8:12] == _WEBP_MARKER:
+        return "WEBP"
+    for signature, name in _MAGIC_SIGNATURES:
+        if header.startswith(signature):
+            return name
+    return None
+
+
+def _format_from_extension(path: Path) -> str | None:
+    """Identify the format a destination file name asks for.
+
+    Used only for writing, where the extension is the only statement of intent available: a save
+    has to choose one codec before any bytes exist.
+
+    Args:
+        path: The destination path.
+
+    Returns:
+        The canonical format name, or ``None`` when the extension names nothing supported.
+    """
+    suffix = path.suffix.lstrip(".").upper()
+    return {"JPG": "JPEG", "TIF": "TIFF"}.get(suffix, suffix) or None
+
+
+def _load_with_opencv(
+    path: Path, facts: ImageFileFacts, *, grayscale: bool
+) -> ImageArray:
+    """Decode with OpenCV and normalise to RGB.
+
+    Args:
+        path: The file to read.
+        facts: Its already-read facts, so the failure can name the format without re-sniffing.
+        grayscale: Whether to decode a single channel.
+
+    Returns:
+        The decoded array, in RGB order when colour.
+
+    Raises:
+        ImagePrimitiveError: ``DECODE_ERROR`` when OpenCV reports it cannot read the file.
+    """
+    opencv = operations_module(EngineChoice.OPENCV)
+    # The engine's own constant, never a hand-copied value: `-1` reads like the obvious "grayscale"
+    # sentinel and is actually `IMREAD_UNCHANGED`, which returns three channels.
+    mode = opencv.IMREAD_GRAYSCALE if grayscale else opencv.IMREAD_COLOR
+    with _engine_stderr_silenced():
+        decoded = opencv.imread(str(path), mode)
+    if decoded is None:
+        # OpenCV signals a decode failure by returning None rather than raising. The file already
+        # passed the format check, so this is a damaged file, not an unsupported one.
+        raise classify_decode_failure(
+            str(path), facts.format, "the image failed to decode"
+        )
+    return decoded if grayscale else opencv.cvtColor(decoded, opencv.COLOR_BGR2RGB)
+
+
+def _load_with_pillow(
+    path: Path, engine: EngineChoice, facts: ImageFileFacts, *, grayscale: bool
+) -> ImageArray:
+    """Decode with Pillow and normalise to RGB.
+
+    Args:
+        path: The file to read.
+        engine: The engine to decode with.
+        facts: Its already-read facts, used to type the failure.
+        grayscale: Whether to decode a single channel.
+
+    Returns:
+        The decoded array, in RGB order when colour.
+
+    Raises:
+        ImagePrimitiveError: ``DECODE_ERROR`` when Pillow cannot decode the file.
+    """
+    pillow = operations_module(engine)
+    try:
+        with pillow.open(str(path)) as opened:
+            return array_module().asarray(opened.convert(_PILLOW_MODES[grayscale]))
+    except OSError as failure:
+        # Pillow raises OSError for a broken stream, and UnidentifiedImageError - a subclass - for
+        # an unrecognised one. Both are decode failures here: the format was already checked.
+        raise classify_decode_failure(
+            str(path), facts.format, str(failure)
+        ) from failure
+
+
+@contextlib.contextmanager
+def _engine_stderr_silenced() -> Iterator[None]:
+    """Silence the engine's error channel while it decodes.
+
+    OpenCV's codecs write diagnostics such as ``libpng error: IDAT: invalid window size`` straight
+    to file descriptor 2. That is not :data:`sys.stderr`, so ``contextlib.redirect_stderr`` does not
+    catch it and the text leaks into test output as noise that reads like a failure. Nothing is lost
+    by hiding it: the same condition is reported as a typed :class:`ImagePrimitiveError` through the
+    contract, which is where a caller can act on it. The descriptor is restored in a ``finally``, so
+    a silenced block cannot poison the rest of the process.
+
+    Yields:
+        Nothing; the block runs with descriptor 2 redirected to the null device.
+    """
+    saved = os.dup(2)
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, 2)
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(devnull)
+        os.close(saved)
+
+
+def _save_with_opencv(image: ImageArray, path: Path) -> None:
+    """Encode with OpenCV, converting RGB back to the BGR order it expects.
+
+    Args:
+        image: The array to write, in RGB order or grayscale.
+        path: Destination.
+
+    Raises:
+        ImagePrimitiveError: ``WRITE_ERROR`` when OpenCV cannot write the file.
+    """
+    opencv = operations_module(EngineChoice.OPENCV)
+    to_write = image
+    if getattr(image, "ndim", 0) == 3 and image.shape[2] == CHANNEL_COUNT_RGB:
+        to_write = opencv.cvtColor(image, opencv.COLOR_RGB2BGR)
+    if not opencv.imwrite(str(path), to_write):
+        raise classify_write_failure(
+            str(path), "the engine reported it could not write the image"
+        )
+
+
+def _save_with_pillow(image: ImageArray, path: Path, engine: EngineChoice) -> None:
+    """Encode with Pillow.
+
+    Args:
+        image: The array to write, in RGB order or grayscale.
+        path: Destination.
+        engine: The engine to encode with.
+
+    Raises:
+        ImagePrimitiveError: ``WRITE_ERROR`` when Pillow cannot write the file.
+    """
+    pillow = operations_module(engine)
+    mode = _PILLOW_MODES[getattr(image, "ndim", 0) == CHANNEL_RANK_GRAYSCALE]
+    try:
+        pillow.fromarray(image, mode).save(str(path))
+    except (OSError, ValueError) as failure:
+        raise classify_write_failure(str(path), str(failure)) from failure
 
 
 __all__ = [
+    "COLOUR_ORDER",
     "SUPPORTED_FORMATS",
     "ImageDimensions",
     "ImageFileFacts",

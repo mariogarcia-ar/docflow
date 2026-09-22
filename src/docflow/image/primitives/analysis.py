@@ -21,9 +21,8 @@ from __future__ import annotations
 # to the three skeleton modules rather than to the config, so the rule still guards every other
 # module in the project.
 from dataclasses import dataclass
-from types import ModuleType
 
-from docflow.image.primitives.engine import EngineChoice
+from docflow.image.primitives.engine import EngineChoice, ImageArray
 
 BINARIZATION_THRESHOLD = 128
 """Luminance cut for binarization, on the engine's 0-255 scale.
@@ -75,7 +74,7 @@ class OrientationReading:
     method: str
 
 
-def calculate_blur_score(image: ModuleType, engine: EngineChoice) -> float:
+def calculate_blur_score(image: ImageArray, engine: EngineChoice) -> float:
     """Measure how blurry an image is.
 
     Args:
@@ -90,7 +89,7 @@ def calculate_blur_score(image: ModuleType, engine: EngineChoice) -> float:
     raise NotImplementedError
 
 
-def calculate_sharpness_score(image: ModuleType, engine: EngineChoice) -> float:
+def calculate_sharpness_score(image: ImageArray, engine: EngineChoice) -> float:
     """Measure how sharp an image is.
 
     Args:
@@ -105,7 +104,7 @@ def calculate_sharpness_score(image: ModuleType, engine: EngineChoice) -> float:
     raise NotImplementedError
 
 
-def calculate_contrast_score(image: ModuleType, engine: EngineChoice) -> float:
+def calculate_contrast_score(image: ImageArray, engine: EngineChoice) -> float:
     """Measure an image's global contrast.
 
     Args:
@@ -120,7 +119,7 @@ def calculate_contrast_score(image: ModuleType, engine: EngineChoice) -> float:
     raise NotImplementedError
 
 
-def calculate_brightness_score(image: ModuleType, engine: EngineChoice) -> float:
+def calculate_brightness_score(image: ImageArray, engine: EngineChoice) -> float:
     """Measure an image's mean luminance.
 
     Args:
@@ -135,7 +134,7 @@ def calculate_brightness_score(image: ModuleType, engine: EngineChoice) -> float
     raise NotImplementedError
 
 
-def calculate_noise_score(image: ModuleType, engine: EngineChoice) -> float:
+def calculate_noise_score(image: ImageArray, engine: EngineChoice) -> float:
     """Measure how noisy an image is.
 
     Args:
@@ -150,7 +149,7 @@ def calculate_noise_score(image: ModuleType, engine: EngineChoice) -> float:
     raise NotImplementedError
 
 
-def detect_orientation(image: ModuleType, engine: EngineChoice) -> OrientationReading:
+def detect_orientation(image: ImageArray, engine: EngineChoice) -> OrientationReading:
     """Decide how far a page is rotated from upright.
 
     Args:
@@ -165,7 +164,7 @@ def detect_orientation(image: ModuleType, engine: EngineChoice) -> OrientationRe
     raise NotImplementedError
 
 
-def detect_skew_angle(image: ModuleType, engine: EngineChoice) -> float:
+def detect_skew_angle(image: ImageArray, engine: EngineChoice) -> float:
     """Measure a small rotation from horizontal, in degrees.
 
     Distinct from :func:`detect_orientation`: skew is the residue after orientation is
@@ -184,7 +183,7 @@ def detect_skew_angle(image: ModuleType, engine: EngineChoice) -> float:
 
 
 def detect_text_regions(
-    image: ModuleType, engine: EngineChoice
+    image: ImageArray, engine: EngineChoice
 ) -> tuple[TextRegion, ...]:
     """Locate the rectangles that appear to hold text.
 
@@ -201,7 +200,7 @@ def detect_text_regions(
 
 
 def calculate_text_coverage(
-    image: ModuleType, engine: EngineChoice, regions: tuple[TextRegion, ...]
+    image: ImageArray, engine: EngineChoice, regions: tuple[TextRegion, ...]
 ) -> float:
     """Measure how much of an image is text.
 

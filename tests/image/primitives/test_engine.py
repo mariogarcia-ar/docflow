@@ -44,7 +44,7 @@ from docflow.image.primitives.engine import (
     loaded_engines,
 )
 
-WORKSPACE = __file__.split("/tests/")[0]
+WORKSPACE = __file__.split("/tests/", maxsplit=1)[0]
 
 
 @contextlib.contextmanager

@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`, `IMG-02` **DONE** - contracts frozen, engine seam in place; `IMG-03` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`, `IMG-02`, `IMG-03` **DONE** - contracts frozen, engine seam in place, images read and written; `IMG-04` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -125,6 +125,46 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given `corrupt.png`, when `load_image` runs, then a typed `ImageError` (`DECODE_ERROR` or `UNSUPPORTED_FORMAT`) is produced instead of an exception escaping the contract.
 - **Evidence / DoD:** Fixture-based unit test on `color_layout.png` and `corrupt.png`.
 - **Tags:** —
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/load.py` implements
+  `load_image`, `save_image`, `get_image_metadata` and `get_image_dimensions`. Both WBS acceptance
+  criteria hold under **either engine**, not just OpenCV: dimensions and format match
+  `color_layout.png`, and `corrupt.png` raises a typed `ImagePrimitiveError` of kind
+  `DECODE_ERROR` rather than letting an engine exception escape. The four fixtures the subplan
+  names are committed under `tests/fixtures/image/` and rebuilt by
+  `scripts/tools/image_fixtures.py` (idempotent, `--check` reports drift).
+
+  Three engine asymmetries were **measured rather than assumed**, and each is resolved here so
+  nothing downstream knows which engine ran:
+  1. OpenCV decodes to **BGR**, Pillow to **RGB**; the conversion happens once, inside
+     `load_image`, and a test asserts the two engines produce byte-identical pixels.
+  2. OpenCV signals a decode failure by returning **`None`** while writing the reason to file
+     descriptor 2; Pillow raises. Both become the same typed error, and the descriptor noise is
+     silenced because the same information travels through the contract. A test asserts the noise
+     is gone — without it every corrupt-file test printed a `libpng error` line that read like a
+     failure.
+  3. OpenCV exposes only a yes/no header check, so identifying a format through it would mean
+     falling back to the **file extension**. The format is read from the file's magic bytes
+     instead, which is engine-independent and the only answer that matches the header rather than
+     the name.
+
+  The "never write to the source" rule is implemented in its **enforceable** form: `save_image`
+  refuses an occupied destination. The plan states the rule as "must never target `image_path`",
+  but a primitive holding an array cannot prove which file the array came from, so a guard
+  comparing against a caller-supplied source path would pass while the source was destroyed.
+
+- **Defects found and fixed during the task.** (1) A hand-copied `IMREAD_GRAYSCALE` of `-1` was
+  in fact `IMREAD_UNCHANGED`, so grayscale decoding returned three channels under OpenCV and one
+  under Pillow — caught by the cross-engine test, invisible to a per-engine test. (2) The first
+  implementation read OpenCV's format from the extension, contradicting its own docstring and
+  reporting a misnamed file as what it was called — caught by a test, then fixed by reading magic
+  bytes. (3) The `libpng` stderr leak described above.
+
+- **Mutation evidence.** Seven mutations applied, each detected, each restored: dropping the
+  BGR→RGB conversion (3 tests fail), using `IMREAD_UNCHANGED` (2), allowing `save_image` to
+  overwrite (3), reporting a corrupt file as `UNSUPPORTED_FORMAT` (1), reading the format from
+  the extension (2), returning 0x0 instead of raising on a shapeless array (1), promoting a
+  grayscale save to RGB (1).
 
 ### IMG-04 — Analysis primitives
 
