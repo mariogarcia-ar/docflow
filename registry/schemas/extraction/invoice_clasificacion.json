@@ -1,7 +1,11 @@
 {
-  "$comment": "The CLASSIFICATION step of the layered extraction. It asks for a JUDGEMENT about the document rather than a reading of it, which is a different task from the reading and tax steps and the reason it gets its own artifact. `categoria_gasto` also feeds the line-of-business step, so this step must settle before `invoice_rubro.json` can run. `centro_de_costo` is answered 'null' here on purpose: it is completed by a later classification step, and the contract keeps the key so a consumer reads one shape.",
+  "$comment": "The CLASSIFICATION step of the layered extraction. It asks for a JUDGEMENT about the document rather than a reading of it. `analisis_evidencia_rubro` comes first: it forces the model to name the printed evidence for a line-of-business BEFORE picking one of the eight enum values, which is the guard against rule 4 (never invent categoria_gasto from the provider's name alone). `categoria_gasto` also feeds the line-of-business step, so this step must settle before `invoice_rubro.json` can run. `centro_de_costo` is answered 'null' here on purpose: it is completed by a later classification step, and the contract keeps the key so a consumer reads one shape.",
   "type": "object",
   "properties": {
+    "analisis_evidencia_rubro": {
+      "type": "string",
+      "description": "terse note: what printed items or concept point to a line of business, as distinct from the provider's name alone. If there is no clear printed evidence, say so here — that is what drives categoria_gasto to 'null' below, per rule 4"
+    },
     "categoria_gasto": {
       "type": "string",
       "enum": [
@@ -27,6 +31,7 @@
     }
   },
   "required": [
+    "analisis_evidencia_rubro",
     "categoria_gasto",
     "descripcion",
     "centro_de_costo"

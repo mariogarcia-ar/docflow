@@ -1,34 +1,38 @@
 {
-  "$comment": "The TAX BREAKDOWN step of the layered extraction. It is a SEPARATE artifact from `invoice.json` because it is a different domain of knowledge: reading a printed amount is not the same as understanding Argentine IVA mechanics (net vs gross, why a rate is discriminated, what 'no gravado' means). A receipt that does not discriminate IVA has nothing to put here. The partition of the 23 fields across the five steps is verified by `test_the_extraction_steps_partition_every_field`.",
+  "$comment": "The TAX BREAKDOWN step of the layered extraction. It is a SEPARATE artifact from `invoice.json` because it is a different domain of knowledge: reading a printed amount is not the same as understanding Argentine IVA mechanics (net vs gross, why a rate is discriminated, what 'no gravado' means). `analisis_condicion_iva` comes FIRST on purpose: it forces the model to settle the emitter's IVA condition and whether rates are discriminated BEFORE it commits to any amount, which is the actual judgement call in this step (rule 3's Factura C branch). Grammar-constrained decoding (Ollama's `format` param) generates properties in declaration order, so this genuinely happens first, not as an afterthought. A receipt that does not discriminate IVA has nothing to put in the amount fields. The partition of the 23 fields across the five steps is verified by `test_the_extraction_steps_partition_every_field`.",
   "type": "object",
   "properties": {
+    "analisis_condicion_iva": {
+      "type": "string",
+      "description": "terse note: what IVA condition legend the emitter declares (if any), and whether the document discriminates IVA at all (does it show a rate + amount, or just a bottom-line total?). This decides whether rule 3 (Factura C branch, everything '0') applies below"
+    },
     "subtotal": {
       "type": "string",
-      "description": "the net taxable amount as printed, or the total when the receipt does not discriminate - never reformatted into a number"
+      "description": "net amount, or the total if not discriminated"
     },
     "iva": {
       "type": "string",
-      "description": "the IVA AMOUNT in pesos as printed, or '0' - never the rate"
+      "description": "IVA amount in pesos, or \"0\" (rule 2)"
     },
     "impuestos_internos": {
       "type": "string",
-      "description": "as printed, or '0'"
+      "description": "printed amount, or \"0\""
     },
     "percepcion_iibb": {
       "type": "string",
-      "description": "as printed, or '0'"
+      "description": "printed amount, or \"0\""
     },
     "otros_impuestos": {
       "type": "string",
-      "description": "as printed, or '0'"
+      "description": "printed amount, or \"0\""
     },
     "monto_no_gravado": {
       "type": "string",
-      "description": "as printed, or '0'. Not the same as 'exento': a non-taxed amount is outside the IVA base, an exempt one is inside it and taxed at 0%"
+      "description": "printed amount, or \"0\". Not the same as 'exento': a non-taxed amount is outside the IVA base, an exempt one is inside it and taxed at 0%"
     },
     "importe_total_facturado": {
       "type": "string",
-      "description": "the total as printed, with no adjustment. It lives HERE, and not in the base step, because the arithmetic rule that can CONFIRM it is the subtotal-plus-IVA combination (§6.4): a field whose only strong evidence is a combination belongs with that combination's other terms, and the step that holds them is the step that can settle it"
+      "description": "total as printed, with no adjustments"
     },
     "condicion_impositiva_dominante": {
       "type": "string",
@@ -40,14 +44,15 @@
         "Consumidor Final",
         "null"
       ],
-      "description": "the EMITTER's IVA condition, as the document declares it (RG 259/98 legends), or 'null' when it declares none. Never a tax rate - rates belong in alicuotas_detectadas"
+      "description": "emitter's condition (rule 3), or 'null'. Same conclusion as analisis_condicion_iva above, in the fixed legend form"
     },
     "alicuotas_detectadas": {
       "type": "string",
-      "description": "every IVA rate printed on the document, as AFIP codes separated by '|': 0, 2_5, 5, 10_5, 21, 27"
+      "description": "printed rates, separated by '|' (rule 4)"
     }
   },
   "required": [
+    "analisis_condicion_iva",
     "subtotal",
     "iva",
     "impuestos_internos",
