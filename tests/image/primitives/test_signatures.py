@@ -86,23 +86,15 @@ def _primitive(module: object, name: str) -> Callable[..., object]:
     return typing.cast("Callable[..., object]", getattr(module, name))
 
 
-@pytest.mark.parametrize("name", LOAD_PRIMITIVES)
-def test_the_load_primitives_are_implemented_not_stubs(name: str) -> None:
-    """IMG-03 is done, so this module's surface must no longer refuse to answer.
+@pytest.mark.parametrize("name", LOAD_PRIMITIVES + ANALYSIS_PRIMITIVES)
+def test_the_implemented_primitives_are_not_stubs(name: str) -> None:
+    """IMG-03 and IMG-04 are done, so their surfaces must no longer refuse to answer.
 
-    The inverse of the analysis and transformation guards below: when IMG-04 and IMG-05 land, their
-    entries move up to this test and the stub lists shrink to empty.
+    The inverse of the transformation guard below: when IMG-05 lands, its entries move up to this
+    test and the stub list shrinks to empty.
     """
-    primitive = _locate(name)
-    source = inspect.getsource(primitive)
+    source = inspect.getsource(_locate(name))
     assert "raise NotImplementedError" not in source, f"{name} is still a stub"
-
-
-@pytest.mark.parametrize("name", ANALYSIS_PRIMITIVES)
-def test_the_analysis_primitives_are_declared_and_still_stubs(name: str) -> None:
-    """IMG-04's surface exists and refuses to answer until it is implemented."""
-    with pytest.raises(NotImplementedError):
-        _call(_primitive(analysis, name))
 
 
 @pytest.mark.parametrize("name", TRANSFORM_PRIMITIVES)

@@ -152,6 +152,34 @@ class ImageEngineExecutionError(ImageEngineError):
         super().__init__(f"{message}: {detail}" if detail else message)
 
 
+class ImageEngineCapabilityError(ImageEngineError):
+    """The engine is installed but does not provide an operation the primitive needs.
+
+    This is the honest answer at an engine boundary that has been reached and cannot be crossed.
+    The two engines are not equivalent: OpenCV is an image-processing library and Pillow is a codec,
+    so the measuring and transforming primitives are built on OpenCV and a Pillow-only deployment
+    cannot compute a blur score at all. The alternative is to reimplement filtering and
+    thresholding on raw arrays, which is the "scope creep into a full image-processing library" the
+    subplan lists as a risk and forbids.
+
+    The plan requires that a swap change only ``primitives/`` and never the contract; it does not
+    require every operation to exist under every engine. Reporting the gap as a type keeps the
+    choice visible instead of failing in whatever way an attribute lookup happens to fail.
+
+    Attributes:
+        operation: The operation that is missing.
+        engine: The engine that lacks it.
+    """
+
+    def __init__(self, operation: str, engine: EngineChoice) -> None:
+        self.operation = operation
+        self.engine = engine
+        super().__init__(
+            f"the {engine.value} engine provides no {operation!r}; it is a codec, not an "
+            f"image-processing library - use an engine that implements it, or port the primitive"
+        )
+
+
 @dataclass(frozen=True)
 class Engine:
     """An engine and its version, for an artifact's provenance.
@@ -221,6 +249,31 @@ def operations_module(engine: EngineChoice) -> ModuleType:
         return importlib.import_module(name)
     except ImportError as failure:
         raise ImageEngineNotAvailableError(name, engine) from failure
+
+
+def engine_operation(engine: EngineChoice, name: str) -> object:
+    """Return one of an engine's operations, or report that it has none.
+
+    Primitives reach the engine through this rather than through attribute access, so a missing
+    operation is a typed :class:`ImageEngineCapabilityError` naming the operation and the engine
+    instead of a bare ``AttributeError`` naming neither.
+
+    Args:
+        engine: The engine to look in.
+        name: The operation's name as the engine spells it.
+
+    Returns:
+        The operation, ready to call.
+
+    Raises:
+        ImageEngineNotAvailableError: The engine is missing.
+        ImageEngineCapabilityError: The engine is present but has no such operation.
+    """
+    module = operations_module(engine)
+    found = getattr(module, name, None)
+    if found is None:
+        raise ImageEngineCapabilityError(name, engine)
+    return found
 
 
 def array_module() -> ModuleType:
@@ -359,12 +412,14 @@ __all__ = [
     "EngineChoice",
     "EngineProvenance",
     "ImageArray",
+    "ImageEngineCapabilityError",
     "ImageEngineError",
     "ImageEngineExecutionError",
     "ImageEngineNotAvailableError",
     "array_library_version",
     "array_module",
     "engine_module",
+    "engine_operation",
     "engine_version",
     "get_engine",
     "get_provenance",

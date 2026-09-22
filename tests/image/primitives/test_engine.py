@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import json
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -41,7 +42,6 @@ from docflow.image.primitives.engine import (
     get_engine,
     get_provenance,
     is_engine_available,
-    loaded_engines,
 )
 
 WORKSPACE = __file__.split("/tests/", maxsplit=1)[0]
@@ -74,35 +74,67 @@ def test_the_engine_choices_are_named_and_have_no_automatic_member() -> None:
     assert not [choice for choice in EngineChoice if "AUTO" in choice.name]
 
 
-def test_importing_the_seam_loads_no_engine() -> None:
-    """The seam must be cheap and side-effect free to import."""
-    assert loaded_engines() == []
+def _engines_loaded_by_importing(statement: str) -> list[str]:
+    """Return the engines present in a fresh interpreter after running ``statement``.
 
-
-def test_probing_for_an_engine_does_not_import_it() -> None:
-    """Asking whether an engine exists must not pay for loading it."""
-    assert is_engine_available(EngineChoice.OPENCV) in (True, False)
-    assert loaded_engines() == []
-
-
-def test_a_clean_interpreter_imports_the_seam_without_an_engine() -> None:
-    """The strongest form of the laziness guard: a fresh process, engines absent.
-
-    A module-level ``import cv2`` or ``from PIL import Image`` anywhere in the package shows up
-    here as a leaked module, which is why this runs in a subprocess rather than in-process where
-    an earlier test may already have loaded something.
+    Run in a subprocess rather than in-process because "importing this loads no engine" is a
+    property of a *fresh* interpreter. Asserting it against the current process makes the test
+    depend on whichever other test ran first - it passed until ``test_analysis.py`` started
+    legitimately loading Pillow, and would have passed for the wrong reason all along.
     """
     program = (
-        "import sys;"
+        "import sys, json;"
         f"sys.path.insert(0, {WORKSPACE + '/src'!r});"
-        "import docflow.image.primitives.engine as seam;"
-        "leaked = [m for m in ('cv2', 'PIL') if m in sys.modules];"
-        "print(leaked)"
+        f"{statement};"
+        "print(json.dumps([m for m in ('cv2', 'PIL') if m in sys.modules]))"
     )
     result = subprocess.run(
         [sys.executable, "-c", program], capture_output=True, text=True, check=True
     )
-    assert result.stdout.strip() == "[]"
+    return json.loads(result.stdout.strip())
+
+
+def test_importing_the_seam_loads_no_engine() -> None:
+    """The seam must be cheap and side-effect free to import."""
+    assert _engines_loaded_by_importing("import docflow.image.primitives.engine") == []
+
+
+def test_probing_for_an_engine_does_not_import_it() -> None:
+    """Asking whether an engine exists must not pay for loading it."""
+    assert (
+        _engines_loaded_by_importing(
+            "import docflow.image.primitives.engine as seam;"
+            "seam.is_engine_available(seam.EngineChoice.OPENCV)"
+        )
+        == []
+    )
+
+
+def test_importing_the_analysis_primitives_loads_no_engine() -> None:
+    """The measuring primitives resolve the engine through the seam, not by importing it.
+
+    This is the guard that catches a stray ``import cv2`` at the top of ``analysis.py`` - which
+    happened once while implementing IMG-04, and which would otherwise have shipped, since the
+    module never used the name it imported.
+    """
+    assert (
+        _engines_loaded_by_importing(
+            "import docflow.image.primitives.analysis;"
+            "import docflow.image.primitives.load"
+        )
+        == []
+    )
+
+
+def test_a_clean_interpreter_imports_the_seam_without_an_engine() -> None:
+    """The same property for the whole package, in a fresh process."""
+    assert (
+        _engines_loaded_by_importing(
+            "import docflow.image.primitives.engine as seam;"
+            "leaked = [m for m in ('cv2', 'PIL') if m in sys.modules]"
+        )
+        == []
+    )
 
 
 def test_a_missing_engine_raises_instead_of_substituting_the_other() -> None:

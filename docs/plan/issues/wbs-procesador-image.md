@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`, `IMG-02`, `IMG-03` **DONE** - contracts frozen, engine seam in place, images read and written; `IMG-04` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`…`IMG-04` **DONE** - contracts frozen, engine seam in place, images read and written, metrics measured; `IMG-05` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -31,7 +31,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-01 | Contract dataclasses | S | 1 - Contracts & seam | - | `ImageRequest`, `ImageResult`, `ImageMetrics`, `ImageOptions`, `ImageClassification`, `ImageValidation`, `ImageError` | this file §IMG-01 | DONE |
 | IMG-02 | Image-ops primitives skeleton | M | 1 - Contracts & seam | IMG-01 | `image/primitives/` (OpenCV, Pillow fallback) | this file §IMG-02 | DONE |
 | IMG-03 | Load/store primitives | S | 1 — Contracts & seam | IMG-02 | `load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions` | this file §IMG-03 | NOT_STARTED |
-| IMG-04 | Analysis primitives | M | 2 — Analysis | IMG-03 | `calculate_*_score`, `detect_orientation`, `detect_skew_angle`, `detect_text_regions`, `calculate_text_coverage` | this file §IMG-04 | NOT_STARTED |
+| IMG-04 | Analysis primitives | M | 2 — Analysis | IMG-03 | `calculate_*_score`, `detect_orientation`, `detect_skew_angle`, `detect_text_regions`, `calculate_text_coverage` | this file §IMG-04 | DONE |
 | IMG-05 | Transformation primitives | M | 2 — Analysis | IMG-03 | `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` | this file §IMG-05 | NOT_STARTED |
 | IMG-06 | `analyze_image` → `ImageMetrics` | S | 2 — Analysis | IMG-04 | `analyze_image` (side-effect-free) | this file §IMG-06 | NOT_STARTED |
 | IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png` | this file §IMG-07 | NOT_STARTED |
@@ -181,6 +181,60 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given `color_layout.png`, when `calculate_text_coverage` runs, then the value is a fraction between 0 and 1 inclusive.
 - **Evidence / DoD:** Fixture-based unit tests; repeated runs produce the same values for the same input and library version.
 - **Tags:** `# TODO: [MVP]` on provisional metric thresholds.
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/analysis.py` implements all nine
+  primitives. Both WBS acceptance criteria hold: `detect_skew_angle` reports a non-zero angle on
+  `skewed_text.png` with the fixture's hash unchanged, and `calculate_text_coverage` returns a
+  fraction in `[0, 1]`. The angle is not merely non-zero - it reads **+4.00** on a fixture the
+  generator rotated by exactly 4.0°, and rotating by the detected angle straightens the page to
+  within 0.5°, so the reading is a usable correction rather than a number of the right magnitude.
+
+  **Metrics are measurements, not placeholders.** Each score is tested in the direction it claims
+  to measure: blurring the image lowers the Laplacian variance and the Tenengrad score, adding
+  grain raises the noise estimate, a flat page scores no contrast and a known grey scores its own
+  value. A test asserting only that a float came back would pass on a hardcoded constant, and one
+  mutation - replacing the blur score with a constant - confirms the difference.
+
+  **Side-effect freedom is structural.** The module imports no file-writing API at all, and a test
+  asserts both that a fixture's hash is unchanged and that the forbidden names are absent from the
+  source, so the guarantee does not depend on a test having exercised the right path.
+
+- **Two limits of the problem, recorded rather than hidden.**
+  1. **Orientation is coarse by nature.** The ink projection of a 180-degree turn is identical to
+     the upright one, so a half-turned page reads as upright. Resolving it needs a script detector
+     or a classifier and this processor is forbidden both. The narrower answer is reported, and a
+     test pins the ambiguity so it stays a documented property instead of being rediscovered as a
+     bug.
+  2. **Skew is a bounded reading.** It is the tilt of the ink rectangle, folded into `(-45, 45]`,
+     so it is meaningful for the residual rotations a scanner produces rather than for arbitrary
+     angles. The sign was established by experimenting with the engine rather than by reasoning:
+     the reading moves *opposite* to the rotation applied, and a test now fails loudly on a sign
+     flip because a flipped correction would double the tilt instead of removing it.
+
+- **One engine boundary, made explicit.** The primitives resolve engine operations through
+  `engine_operation`, so a missing operation is a typed `ImageEngineCapabilityError` naming the
+  operation and the engine. This matters because the two engines are not equivalent: **OpenCV is an
+  image-processing library and Pillow is a codec**, so Pillow provides none of `cvtColor`,
+  `Laplacian`, `Sobel`, `filter2D`, `adaptiveThreshold`, `morphologyEx` or `minAreaRect`. Every
+  metric in this module therefore requires OpenCV. The plan requires that a swap change only
+  `primitives/` and never the contract; it does not require every operation to exist under every
+  engine. Reimplementing filtering on raw arrays to close the gap is the "scope creep into a full
+  image-processing library" the subplan lists as a risk, so the gap is reported as a type instead.
+
+- **Defects found and fixed during the task.** (1) A stray `import cv2` at module level in
+  `analysis.py` that nothing used - it would have broken the package-level laziness invariant that
+  `GEN-01` guards, and it is now caught by a test that imports the primitives in a fresh
+  interpreter. (2) Two of `IMG-02`'s own laziness tests asserted `loaded_engines() == []` against
+  the *current* process, so they passed only while no other test loaded an engine and would have
+  gone on passing for the wrong reason; they now run in a subprocess. (3) A duplicated local
+  `TextRegion` in `analysis.py` with an `int` bbox, contradicting the contract's `float` bbox - the
+  primitives now import the contract's type, following the precedent `pdf/primitives/text.py` set
+  with `TextBlock`.
+
+- **Mutation evidence.** Eight mutations applied, each detected, each restored: blur score replaced
+  by a constant (2 tests fail), luminance replaced by a crude channel mean (29), skew pinned to
+  zero (3), skew sign flipped (3), orientation pinned upright (2), coverage pinned to 0.5 (1),
+  noise estimate pinned to zero (1), capability gap silenced instead of raised (2).
 
 ### IMG-05 — Transformation primitives
 
