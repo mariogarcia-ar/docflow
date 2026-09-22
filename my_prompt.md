@@ -45,12 +45,6 @@ python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
   --prompt 'registry/prompts/extraction/invoice.txt' \
   --schema 'registry/schemas/extraction/invoice.json' \
-  --model 'deepseek-r1:8b' --pretty
-
-python scripts/poc-flow-v2/myllmlocal.py \
-  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
-  --prompt 'registry/prompts/extraction/invoice.txt' \
-  --schema 'registry/schemas/extraction/invoice.json' \
   --model 'qwen2.5:7b-instruct' --pretty
 
 
