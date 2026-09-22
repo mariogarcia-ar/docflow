@@ -34,14 +34,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 K_KERNEL="${DOCFLOW_KERNEL:-docflow-kernel}"
 
-#: The default local model. `deepseek-r1:1.5b`, not `smollm2:latest`: on
+#: The default local model. `deepseek-r1:7b`, not `smollm2:latest`: on
 #: `chicos/22f0e9af-...-p1.txt` (a 1 589-byte file) `smollm2` intermittently ran away
 #: into an unbounded repetition loop - measured once in 5 calls with no token
 #: ceiling - and a sequential driver with a 600 s per-call ceiling stalls on it with
 #: no output between files. `deepseek-r1:1.5b` answered 10 of 10 on the same file in
 #: 4-11 s each, and refuses an oversized prompt with HTTP 400 rather than dropping it
 #: silently. Override with `--model` or `KERNEL_LLM_MODEL`.
-DEFAULT_MODEL="deepseek-r1:1.5b"
+DEFAULT_MODEL="deepseek-r1:7b"
 
 #: A vision-capable model, which is a different requirement from a text model.
 DEFAULT_VISION_MODEL="qwen2.5vl:3b"
@@ -66,7 +66,7 @@ usage() {
 Usage: scripts/kernel/kernel-llm.sh [--model <tag>] [--frontier-model <p:m>]
                                    [-v|--verbose]
 
-  --model <tag>           the local model to call. Default: deepseek-r1:1.5b
+  --model <tag>           the local model to call. Default: deepseek-r1:7b
   --frontier-model <p:m>  the frontier model, as provider:model.
                           Default: anthropic:claude-sonnet-4-6
   -v, --verbose           print the command each line came from, as it ran.

@@ -18,17 +18,24 @@ of it.
 pip install -e ".[dev]"      # pytest, ruff, pylint
 pip install httpx            # the transport
 ollama serve                 # the runtime, if it is not already running
-ollama pull deepseek-r1:1.5b  # the default local model
+ollama pull deepseek-r1:7b   # the default local model
 ```
 
-**`deepseek-r1:1.5b` is the default, and the reason is measured.** On the 1 589-byte
-`chicos/22f0e9af-…-p1.txt`, `smollm2:latest` **intermittently runs away** into an
-unbounded repetition loop (1 in 5 calls with no token ceiling); because a batch driver
-is sequential and the adapter's per-call ceiling is 600 s, one runaway stalls a whole
-run with no output between files. `deepseek-r1:1.5b` answered **10 of 10** calls on
-that same file in 4–11 s each. It also **refuses** an oversized prompt with `HTTP 400
-exceed_context_size_error` instead of dropping it past the window silently — see
-*The silent cut* below for why that matters.
+**`deepseek-r1:7b` is the default.** The model *family* holds the slot for a reason
+measured on the **1.5B** tag: on the 1 589-byte `chicos/22f0e9af-…-p1.txt`,
+`smollm2:latest` **intermittently runs away** into an unbounded repetition loop (1 in
+5 calls with no token ceiling); because a batch driver is sequential and the adapter's
+per-call ceiling is 600 s, one runaway stalls a whole run with no output between files.
+`deepseek-r1:1.5b` answered **10 of 10** calls on that same file in 4–11 s each. It also
+**refuses** an oversized prompt with `HTTP 400 exceed_context_size_error` instead of
+dropping it past the window silently — see *The silent cut* below for why that matters.
+
+The tag is **7b** rather than 1.5B, and that too is measured. On
+`tests/fixtures-txt/casos/66cd35e9-…txt` the 1.5B model read `fecha_emision` — an
+`alta`-severity field with no stronger reader to outvote it — as `"2026"`, and
+took `nro_comprobante` from the prompt's own rule-1 example (`"99-9"`); with that
+example removed it answered correctly. **7b returned the printed date 3 of 3 runs**
+at ~27 s a call.
 
 The adapter speaks Ollama's **HTTP API directly** through `httpx`, not the `ollama`
 Python package. The package is one option; speaking the API keeps the response
@@ -149,7 +156,7 @@ r.value            # None
 r.reason.code      # 'model_not_pulled'
 r.reason.message   # "the model 'no-existe:9b' is not present in this Ollama runtime.
                    #  Pull it first: `ollama pull no-existe:9b`. The available models
-                   #  are ['deepseek-r1:1.5b', 'granite3.1-moe:1b', ...]; no default
+                   #  are ['deepseek-r1:7b', 'granite3.1-moe:1b', ...]; no default
                    #  is substituted."
 r.evidence.observed['available']   # every model the runtime does hold, sorted
 ```
@@ -235,8 +242,8 @@ r.evidence.measurements['prompt_tokens']       # 130.0   what was read
 A caller comparing the two can see they disagree. The adapter does not smooth the
 difference into a confidence it does not have.
 
-**The cut is a property of the model, not of the runtime alone.** Measured on
-today's default: `deepseek-r1:1.5b` **refuses** an oversized prompt outright, with
+**The cut is a property of the model, not of the runtime alone.** Measured on the
+`deepseek-r1` family (on its 1.5B tag): it **refuses** an oversized prompt outright, with
 `HTTP 400 exceed_context_size_error` —
 `request (5004 tokens) exceeds the available context size (4096 tokens)` — naming both
 `n_prompt_tokens` and `n_ctx`. The same 15 000-character prompt handed to
@@ -528,7 +535,7 @@ line, as it does for all eight drivers (`lab-cli.md`):
 ```console
 $ scripts/kernel/kernel-llm.sh
 
-  local model      deepseek-r1:1.5b  (default)
+  local model      deepseek-r1:7b  (default)
   vision model     qwen2.5vl:3b  (default)
   frontier model   anthropic:claude-sonnet-4-6  (default)
   image            tests/fixtures/matrix/page.png
@@ -554,7 +561,9 @@ overridable: `--model`, `--frontier-model`, or `KERNEL_LLM_MODEL` /
 `deepseek-r1:1.5b` replaced `smollm2:latest` because `smollm2` intermittently runs
 away on a small real document and stalls a sequential driver for the adapter's full
 600 s ceiling; `deepseek-r1:1.5b` did not, across 10 consecutive calls, and it refuses
-an oversized prompt with `HTTP 400` instead of dropping it in silence. The reason is
+an oversized prompt with `HTTP 400` instead of dropping it in silence. The tag has
+since moved to **7b**, which keeps that behaviour and reads the date field the 1.5B
+tag got wrong (above). The reason is
 recorded at the declaration in `scripts/kernel/kernel-llm.sh` and in
 `llm_local.TEXT_MODEL`, so it is not re-litigated by preference later. The vision
 default (`qwen2.5vl:3b`) is unchanged: vision is a different requirement from text

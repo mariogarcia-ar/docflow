@@ -42,7 +42,7 @@ from docflow.kernels.types import Bytes  # noqa: E402 - see the note above
 __all__: list[str] = []
 
 #: The text-only model. A small instruct model, so a probe is a couple of seconds
-#: rather than a couple of minutes. **`deepseek-r1:1.5b` and not `smollm2:latest`**,
+#: rather than a couple of minutes. **`deepseek-r1:7b` and not `smollm2:latest`**,
 #: and the reason is measured rather than a preference:
 #:
 #: - **`smollm2` runs away.** On `chicos/22f0e9af-…-p1.txt` (1 589 bytes - *not*
@@ -62,7 +62,7 @@ __all__: list[str] = []
 #:   but it does mean the default no longer depends on that detector to be safe.
 #:   `deepseek-r1` declares `completion` and `thinking`, so it emits reasoning
 #:   tokens; they were measured to stay inside the schema-constrained channel.
-TEXT_MODEL: str = "deepseek-r1:1.5b"
+TEXT_MODEL: str = "deepseek-r1:7b"
 
 #: The vision model. Both are named as the caller names them, which is the whole
 #: point of the tag: `qwen2.5vl` is a moving tag, and the digest is the identity.
