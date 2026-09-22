@@ -20,10 +20,12 @@ Three properties are non-negotiable, and most of the rules below exist to protec
 
 ---
 
-## Status: Phase 0 — the skeleton, and nothing else
+## Status: Phase 1 — the PDF engine seam has landed
 
-Contracts, the stage-state vocabulary, the three identities and the tooling exist. **No
-processor is implemented.** Every entry point is a typed signature whose body raises:
+Phase 0 is closed, and Phase 1 has started with `procesador-pdf`. Its engine seam — the
+single module that knows Poppler — is implemented and tested, and the signatures of
+`PDF-03`…`PDF-08` are in place. **No processor entry point is implemented yet**, so every
+one of them is still a typed signature whose body raises:
 
 ```python
 >>> import docflow.pdf as pdf
@@ -37,16 +39,30 @@ would be a silent stand-in, which this project forbids at every stage.
 | Phase | What | Owner |
 |---|---|---|
 | **0 — contracts & skeleton** | ✅ **done** | `GEN-01`…`GEN-06` |
-| 1 — processors, independently | `pdf`, `image`, `ocr`, `llm` | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
+| **1 — processors, independently** | ⏳ **in progress** — `pdf`: `PDF-01`, `PDF-02` done; `PDF-03`…`PDF-08` signatures only. `image`, `ocr`, `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
-| 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` || 5 — lab tools | one operator CLI per processor | `GEN-21`, `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` |
+| 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
+| 5 — lab tools | one operator CLI per processor | `GEN-21`, `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` |
+
+Per-task status is authoritative in [`docs/plan/issues/wbs-procesador-pdf.md`](docs/plan/issues/wbs-procesador-pdf.md)
+(`DONE` / `SIGNATURE_ONLY` / `NOT_STARTED`).
+
 ---
 
 ## Requirements
 
 - **Python ≥ 3.11** (the shared vocabulary uses `enum.StrEnum`). Verified on 3.13.9.
-- No engine is required yet. Poppler, OpenCV/Docling and a provider arrive in Phase 1.
+- **`procesador-pdf` needs Poppler on `PATH`** — `pdfinfo`, `pdftotext`, `pdfimages`,
+  `pdfseparate`, `pdftoppm`, `pdfunite`. Verified against Poppler 25.02.0.
+  ```bash
+  brew install poppler        # macOS
+  apt-get install poppler-utils   # Debian/Ubuntu
+  ```
+  The engine is explicit: if a binary is missing the processor raises a typed
+  `PopplerNotAvailableError` rather than substituting another reader. No other processor
+  needs an engine yet.
+
 
 ## Setup
 

@@ -7,9 +7,11 @@
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PDF-01` … `PDF-14` |
-| Status | All issues `NOT_STARTED` |
+| Status | `PDF-01`, `PDF-02` **DONE**; `PDF-03`…`PDF-08` signatures landed, bodies `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
+
+**Status vocabulary.** `NOT_STARTED` — nothing landed. `SIGNATURE_ONLY` — the typed signatures are committed and import cleanly (Wave 1 of the subplan §5), but every body still raises `NotImplementedError`; the task's own acceptance criteria are **not** met. `DONE` — the task's Definition of Done in §9 holds, including any mutation-falsified invariant it touches. Only `DONE` means the task is closed.
 
 ## 1. Summary
 
@@ -28,14 +30,14 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 | ID | Task (short) | Effort | Wave | Depends on | Deliverable artifact(s) | Issue file | Status |
 |---|---|---|---|---|---|---|---|
-| PDF-01 | Contract types | S | 1 — Foundations | — | `PDFRequest`, `PDFResult`, `PDFPageResult`, `PDFPageMetrics`, `PDFError` | this file §PDF-01 | NOT_STARTED |
-| PDF-02 | Poppler primitives skeleton | M | 1 — Foundations | PDF-01 | `pdf/primitives/` | this file §PDF-02 | NOT_STARTED |
-| PDF-03 | Document primitives | M | 2 — Primitives | PDF-02 | `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | this file §PDF-03 | NOT_STARTED |
-| PDF-04 | Split/extract primitives | M | 2 — Primitives | PDF-02 | `extract_page`, `split_pdf`, `merge_pdfs` | this file §PDF-04 | NOT_STARTED |
-| PDF-05 | Render primitive | S | 2 — Primitives | PDF-02 | `render_page_to_image` | this file §PDF-05 | NOT_STARTED |
-| PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | NOT_STARTED |
-| PDF-07 | Embedded image primitives | M | 2 — Primitives | PDF-02 | `extract_images_from_page`, `get_image_blocks` | this file §PDF-07 | NOT_STARTED |
-| PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | NOT_STARTED |
+| PDF-01 | Contract types | S | 1 — Foundations | — | `PDFRequest`, `PDFResult`, `PDFPageResult`, `PDFPageMetrics`, `PDFError` | this file §PDF-01 | DONE |
+| PDF-02 | Poppler primitives skeleton | M | 1 — Foundations | PDF-01 | `pdf/primitives/` | this file §PDF-02 | DONE |
+| PDF-03 | Document primitives | M | 2 — Primitives | PDF-02 | `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | this file §PDF-03 | SIGNATURE_ONLY |
+| PDF-04 | Split/extract primitives | M | 2 — Primitives | PDF-02 | `extract_page`, `split_pdf`, `merge_pdfs` | this file §PDF-04 | SIGNATURE_ONLY |
+| PDF-05 | Render primitive | S | 2 — Primitives | PDF-02 | `render_page_to_image` | this file §PDF-05 | SIGNATURE_ONLY |
+| PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | SIGNATURE_ONLY |
+| PDF-07 | Embedded image primitives | M | 2 — Primitives | PDF-02 | `extract_images_from_page`, `get_image_blocks` | this file §PDF-07 | SIGNATURE_ONLY |
+| PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | SIGNATURE_ONLY |
 | PDF-09 | Page entry point | M | 3 — Composition | PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | `process_pdf_page`, `page_001/metadata.json` | this file §PDF-09 | NOT_STARTED |
 | PDF-10 | Document entry point | M | 3 — Composition | PDF-03, PDF-09 | `process_pdf`, `metadata.json` | this file §PDF-10 | NOT_STARTED |
 | PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | NOT_STARTED |
@@ -60,6 +62,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Then no function body in the contract module performs file or engine access.
 - **Evidence / DoD:** Type hints complete; Google-style docstrings; `ruff check .` and `pylint src tests` clean on the new module.
 - **Tags:** `# TODO: [MVP]` on any field kept deliberately permissive for the PoC (e.g. unvalidated option combinations).
+- **Status: DONE.** Evidence: `src/docflow/pdf/contracts.py` — all thirteen types land, every required field rejects omission (`tests/pdf/test_contracts.py`, `tests/test_skeleton.py::test_no_contract_field_carries_an_undocumented_default`), no engine access in the module (`test_the_five_sub_packages_import_in_a_clean_interpreter`). All four gates green.
 
 ### PDF-02 — Poppler primitives skeleton
 
@@ -76,6 +79,10 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given a missing engine binary, then a typed failure path exists rather than an implicit substitute.
 - **Evidence / DoD:** Import of `pdf/primitives/` succeeds; engine/version retrieval is exposed; four QA gates green on the skeleton.
 - **Tags:** `# TODO: [MVP]` for real engine-availability probing; `# TODO: [RELEASE]` for engine licensing posture.
+- **Status: DONE.** Evidence: `src/docflow/pdf/primitives/engine.py` is the single module that names Poppler; it exposes the engine name, a probed version (`poppler 25.02.0` on the development machine) and one typed entry point per binary. The signatures of `PDF-03`…`PDF-08` are declared in their own modules and raise, per Wave 1 of §5.
+  - **Invariant — no silent substitute.** Mutation: `find_engine_command` returns `/usr/bin/<cmd>` instead of raising → `test_a_missing_binary_raises_instead_of_substituting_an_engine` FAILED (`DID NOT RAISE PopplerNotAvailableError`); restore → green.
+  - **Invariant — one seam.** Mutation: `import subprocess` added to `split.py` → `test_no_primitive_reaches_an_engine_except_through_the_seam` FAILED (`{'split.py': ['subprocess']}`); restore → green.
+  - Engine version is read from **stderr**: `pdftotext -v` writes nothing to stdout, a fact the test suite pins (`test_the_runner_returns_standard_output_and_does_not_conflate_streams`).
 
 ### PDF-03 — Document primitives
 
