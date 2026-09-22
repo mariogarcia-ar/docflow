@@ -1,223 +1,608 @@
-# flujo principal
-* Definir cada llamada a LLM como un **nodo estándar** con entrada, procesamiento y salida estructurada.
-* Cada nodo debe soportar:
+# Procesador de Llamadas LLM
 
-  * prompts parametrizados;
+## Objetivo
+
+El módulo `procesador-llm-call` tiene como responsabilidad exclusiva **preparar, ejecutar y validar llamadas a modelos LLM/VLM**.
+
+Debe recibir entradas ya preparadas por otros módulos y transformarlas en solicitudes estructuradas al modelo.
+
+Este módulo **no procesa PDFs**, **no normaliza imágenes**, **no ejecuta OCR** y **no decide qué fuente documental usar**. Esa coordinación pertenece al `workflow/orchestrator`.
+
+---
+
+# Flujo principal
+
+* Recibir una solicitud LLM ya definida.
+* Preparar:
+
+  * prompt;
+  * template;
+  * variables;
   * texto;
   * imágenes;
   * contexto adicional;
-  * esquema de salida JSON tipado.
-* Implementar un **motor de templates** para inyectar dinámicamente:
+  * schema de salida.
+* Construir el payload requerido por el proveedor.
+* Ejecutar la llamada al modelo.
+* Capturar:
 
-  * `<doc>` → contenido principal;
-  * `<extra>` → contexto adicional;
-  * `<schema>` → estructura esperada de salida.
-* Sanitizar y escapar el contenido inyectado para evitar que el documento rompa la estructura del prompt.
-* Modelar el flujo como un **grafo/DAG** compuesto por nodos de:
+  * respuesta;
+  * metadata;
+  * tokens;
+  * tiempo;
+  * errores.
+* Parsear la salida.
+* Validar la respuesta contra el schema esperado.
+* Persistir el resultado.
+* Permitir reutilizar la salida como entrada de otro nodo.
+* Permitir:
 
-  * clasificación;
-  * extracción;
-  * validación;
-  * comparación;
-  * consolidación.
-* Permitir **enrutamiento condicional** según la salida de cada nodo.
-* Permitir ejecutar **múltiples modelos o prompts en paralelo** sobre la misma entrada.
-* Comparar resultados mediante:
-
-  * consenso;
-  * validaciones de esquema;
-  * reglas de negocio;
-  * análisis de discrepancias.
-* Si existen diferencias o baja confianza, ejecutar:
-
-  * retry;
-  * nueva extracción;
-  * nodo validador;
-  * revisión manual.
-* Persistir cada salida en el **estado del grafo** para que pueda ser utilizada por nodos posteriores.
-* Mantener trazabilidad completa de:
-
-  * prompt utilizado;
-  * modelo;
-  * input;
-  * output;
-  * validaciones;
   * retries;
-  * decisión final.
-* Flujo general: **entrada → template → LLM → salida estructurada → validación → comparación → decisión → resultado final**.
+  * comparación de resultados;
+  * múltiples modelos;
+  * múltiples prompts;
+  * ejecución paralela.
+* Mantener trazabilidad completa de cada llamada.
 
-# funciones 
-Podés mantener la misma arquitectura en **tres capas: primitivas, utilitarios y helpers**, pero ahora aplicada a la capa LLM/orquestación.
+---
 
-### 1. Primitivas
+# Contrato del módulo
 
-Funciones de bajo nivel que encapsulan `ollama`, SDKs de LLM, `pydantic`, motores de templates, etc.
+## Entrada
 
-* `load_model(model_name)`
-* `check_model_available(model_name)`
+El módulo debería recibir una estructura similar a:
+
+```text id="5ybng9"
+LLMRequest
+├── model
+├── provider
+├── template
+├── variables
+├── text
+├── images[]
+├── extra_context
+├── schema
+├── options
+└── metadata
+```
+
+Ejemplo conceptual:
+
+```json id="haipcc"
+{
+  "provider": "ollama",
+  "model": "qwen2.5-vl",
+
+  "template": "extract_invoice",
+
+  "variables": {
+    "doc": "document.md",
+    "extra": "business_rules.json"
+  },
+
+  "images": [
+    "normalized.png"
+  ],
+
+  "schema": "invoice.schema.json",
+
+  "options": {
+    "temperature": 0,
+    "max_tokens": 4096
+  }
+}
+```
+
+---
+
+## Salida
+
+```text id="8f8k2a"
+LLMResult
+├── request_id
+├── model
+├── provider
+├── raw_response
+├── parsed_response
+├── schema_valid
+├── validation_errors[]
+├── usage
+├── timing
+├── status
+└── metadata
+```
+
+Ejemplo:
+
+```json id="f84h0c"
+{
+  "request_id": "run_001",
+
+  "model": "qwen2.5-vl",
+  "provider": "ollama",
+
+  "parsed_response": {
+    "document_type": "invoice",
+    "invoice_number": "0001-12345"
+  },
+
+  "schema_valid": true,
+
+  "validation_errors": [],
+
+  "status": "success"
+}
+```
+
+---
+
+# 1. Primitivas
+
+Funciones de bajo nivel que encapsulan proveedores y librerías externas como:
+
+* `ollama`;
+* APIs compatibles con OpenAI;
+* SDKs específicos;
+* `pydantic`;
+* JSON Schema.
+
+## Modelos
+
 * `list_models()`
-* `generate_text(model, prompt, options=None)`
-* `generate_multimodal(model, prompt, images, options=None)`
-* `generate_structured(model, prompt, schema, options=None)`
-* `stream_response(model, prompt, options=None)`
-* `embed_text(model, text)`
-* `count_tokens(model, content)`
-* `load_prompt_template(path)`
-* `render_template(template, variables)`
+* `check_model_available(model_name)`
+* `get_model_info(model_name)`
+
+## Llamadas
+
+* `generate_text(model, messages, options=None)`
+* `generate_multimodal(model, messages, images, options=None)`
+* `generate_structured(model, messages, schema, options=None)`
+* `stream_response(model, messages, options=None)`
+
+## Payload
+
+* `build_provider_payload(messages, images=None, schema=None, options=None)`
+* `prepare_image_payload(image_path)`
+* `encode_image_base64(image_path)`
+
+## Schema
+
 * `load_schema(path)`
 * `validate_schema(data, schema)`
 * `parse_json_response(response)`
-* `encode_image_base64(image_path)`
-* `prepare_image_payload(image_path)`
+
+## Tokens / modelo
+
+* `count_tokens(model, content)`
+* `get_context_window(model)`
+
+## Persistencia básica
+
 * `save_llm_response(response, path)`
 
-### 2. Utilitarios
+Las primitivas deben conocer el proveedor, pero no el flujo documental completo.
 
-Funciones que combinan primitivas y representan operaciones completas del pipeline.
+---
 
-* `process_prompt(template, variables, schema=None)`
+# 2. Utilitarios
 
-  * carga template;
-  * inyecta variables;
-  * sanitiza contenido;
-  * agrega schema;
-  * genera prompt final.
+Funciones que combinan primitivas y representan operaciones completas de la capa LLM.
 
-* `process_template(template_path, context)`
+## `process_prompt(template, variables, schema=None)`
 
-  * resuelve `<doc>`, `<extra>`, `<schema>` y otras variables.
+Responsable de construir el prompt final.
 
-* `process_schema(schema_path, response)`
+Debe:
 
-  * carga el schema;
-  * parsea respuesta;
-  * valida tipos y campos;
-  * devuelve errores si corresponde.
+* cargar template;
+* resolver variables;
+* inyectar `<doc>`;
+* inyectar `<extra>`;
+* inyectar `<schema>`;
+* sanitizar contenido;
+* validar variables requeridas;
+* devolver el prompt final.
 
-* `process_image_input(image_path, model)`
+---
 
-  * valida imagen;
-  * adapta formato;
-  * prepara payload multimodal.
+## `process_template(template_path, context)`
 
-* `process_text_input(text, model)`
+Debe:
 
-  * normaliza contenido;
-  * controla tamaño/tokens;
-  * prepara payload textual.
+* cargar el template;
+* identificar variables;
+* verificar variables faltantes;
+* renderizar el contenido;
+* devolver el template hidratado.
 
-* `process_llm_request(request)`
+---
 
-  * arma prompt;
-  * prepara texto/imágenes;
-  * selecciona modelo;
-  * ejecuta llamada;
-  * valida salida;
-  * registra metadata.
+## `process_schema(schema_path, response)`
 
-* `process_llm_node(node_config, state)`
+Debe:
 
-  * obtiene inputs desde el estado;
-  * procesa template;
-  * ejecuta modelo;
-  * valida schema;
-  * persiste resultado.
+* cargar schema;
+* extraer JSON;
+* parsear respuesta;
+* validar tipos;
+* validar campos requeridos;
+* devolver:
 
-* `process_page(page_dir, workflow)`
+  * resultado;
+  * errores;
+  * estado de validación.
 
-  * lee `metadata.json`;
-  * selecciona `text.txt`, `page.png` o ambos;
-  * ejecuta los nodos correspondientes;
-  * almacena resultados.
+---
 
-* `classify_document(page_data)`
+## `process_text_input(text, model, options=None)`
 
-  * ejecuta nodo clasificador.
+Prepara texto para una llamada LLM.
 
-* `extract_document_data(page_data, schema)`
+Debe:
 
-  * ejecuta nodo extractor.
+* normalizar contenido;
+* verificar tamaño;
+* contar tokens;
+* truncar o rechazar según configuración;
+* devolver representación lista para el request.
 
-* `validate_extraction(extraction, rules)`
+---
 
-  * valida salida con schema y reglas de negocio.
+## `process_image_input(image_path, model, options=None)`
 
-* `compare_outputs(outputs)`
+Prepara una imagen ya normalizada.
 
-  * compara resultados de múltiples modelos/prompts.
+Debe:
 
-* `calculate_consensus(outputs)`
+* validar existencia;
+* validar formato soportado por el modelo;
+* generar payload;
+* devolver representación multimodal.
 
-  * determina coincidencias y discrepancias.
+No debe:
 
-* `retry_llm_request(request, errors)`
+* rotar;
+* redimensionar;
+* mejorar;
+* aplicar OCR.
 
-  * crea nuevo intento utilizando errores/contexto anterior.
+Eso pertenece a otros módulos.
 
-* `select_next_node(node_result, routing_rules)`
+---
 
-  * implementa el routing condicional.
+## `process_llm_request(request)`
 
-* `execute_workflow(workflow, initial_state)`
+Función central del módulo.
 
-  * ejecuta el grafo completo.
+Debe:
 
-### 3. Helpers
+* validar `LLMRequest`;
+* procesar template;
+* preparar texto;
+* preparar imágenes;
+* cargar schema;
+* construir mensajes;
+* construir payload;
+* ejecutar modelo;
+* capturar respuesta;
+* parsear salida;
+* validar schema;
+* persistir metadata;
+* devolver `LLMResult`.
+
+Flujo:
+
+```text id="v54b1x"
+LLMRequest
+     ↓
+process_prompt()
+     ↓
+prepare inputs
+     ↓
+build messages
+     ↓
+LLM primitive
+     ↓
+parse response
+     ↓
+validate schema
+     ↓
+LLMResult
+```
+
+---
+
+## `process_llm_node(node_config, state)`
+
+Ejecuta una llamada LLM dentro de un grafo.
+
+Debe:
+
+* leer inputs requeridos desde `state`;
+* construir `LLMRequest`;
+* llamar a `process_llm_request()`;
+* almacenar la salida en `state`;
+* devolver el resultado del nodo.
+
+No debe decidir qué página, OCR o texto nativo debe procesarse.
+
+Ese input debe venir ya definido por el orquestador.
+
+---
+
+## `compare_outputs(outputs, fields=None)`
+
+Compara salidas de múltiples llamadas.
+
+Puede comparar:
+
+* igualdad exacta;
+* campos individuales;
+* valores numéricos;
+* estructura JSON;
+* similitud semántica cuando corresponda.
+
+Devuelve:
+
+```text id="jbyzu1"
+ComparisonResult
+├── matches
+├── conflicts
+├── agreement
+└── metadata
+```
+
+---
+
+## `calculate_consensus(outputs)`
+
+Calcula acuerdo entre múltiples salidas.
+
+Puede trabajar:
+
+* por documento;
+* por campo;
+* por valor.
+
+No debe decidir acciones de negocio posteriores.
+
+Solo devuelve métricas de consenso.
+
+---
+
+## `retry_llm_request(request, validation_errors, retry_config)`
+
+Permite repetir una llamada cuando:
+
+* el JSON es inválido;
+* falla el schema;
+* faltan campos;
+* existe una condición explícita de retry.
+
+Debe generar un nuevo request conservando trazabilidad del intento anterior.
+
+---
+
+## `execute_llm_graph(graph, initial_state)`
+
+Ejecuta únicamente el **subgrafo LLM**.
+
+Puede contener nodos como:
+
+```text id="9dsy7v"
+classify
+   ↓
+extract_a ─┐
+           ├─ compare
+extract_b ─┘
+           ↓
+validate
+           ↓
+consolidate
+```
+
+Este grafo conoce:
+
+* prompts;
+* modelos;
+* schemas;
+* resultados LLM.
+
+No conoce:
+
+* procesamiento PDF;
+* procesamiento de imagen;
+* OCR;
+* estructura física de páginas.
+
+---
+
+# 3. Helpers
 
 Funciones pequeñas y reutilizables.
 
+## Mensajes y requests
+
 * `build_messages(system, user, images=None)`
 * `build_llm_request(model, messages, schema=None)`
-* `build_node_context(state, required_fields)`
-* `merge_contexts(*contexts)`
+* `build_request_id()`
+* `build_node_id()`
+
+## Templates
+
 * `sanitize_prompt_input(text)`
 * `escape_xml_content(text)`
 * `inject_doc(template, document)`
 * `inject_extra(template, extra)`
 * `inject_schema(template, schema)`
+* `validate_template_variables(template, variables)`
+
+## Contexto
+
+* `build_node_context(state, required_fields)`
+* `merge_contexts(*contexts)`
+* `get_state_value(state, key)`
+* `set_state_value(state, key, value)`
+
+## Tokens
+
 * `truncate_to_token_limit(content, max_tokens)`
 * `calculate_available_tokens(model, prompt_tokens)`
+* `is_context_limit_exceeded(model, content)`
+
+## Responses
+
 * `normalize_llm_response(response)`
 * `extract_json_from_response(response)`
 * `is_valid_json(value)`
+* `normalize_structured_output(data)`
+
+## Comparación
+
 * `compare_field_values(value_a, value_b)`
 * `calculate_output_similarity(output_a, output_b)`
 * `detect_field_conflicts(outputs)`
 * `calculate_confidence(outputs)`
-* `should_retry(validation_result)`
+
+## Retry
+
+* `should_retry(validation_result, retry_config)`
 * `build_retry_context(errors, previous_output)`
+* `increment_attempt(metadata)`
+
+## Trazabilidad
+
 * `build_run_id()`
-* `build_node_id()`
+* `append_trace(trace_path, event)`
+* `build_request_metadata(request)`
+* `build_response_metadata(response)`
 * `write_json(path, data)`
 * `read_json(path)`
-* `append_trace(trace_path, event)`
 
-Conceptualmente:
+---
 
-```text
+# Responsabilidades que NO pertenecen a este módulo
+
+Eliminar del alcance cualquier función similar a:
+
+```text id="h7ypgh"
 process_page()
-      ↓
-select input
-(text / image / both)
-      ↓
-process_llm_node()
-      ↓
-process_prompt()
-      ↓
-template + doc + extra + schema
-      ↓
-LLM primitive
-(Ollama / API / VLM)
-      ↓
-process_schema()
-      ↓
-validate_extraction()
-      ↓
-compare_outputs()
-      ↓
-consensus / retry / route
-      ↓
-next node
+process_pdf()
+process_document()
+run_ocr()
+normalize_image()
+select_document_source()
+select_ocr_or_vlm()
 ```
 
-La regla de separación sería la misma que venís usando: **las primitivas conocen Ollama y los SDKs; los utilitarios conocen el flujo LLM y documental; los helpers resuelven transformación, validación, contexto y trazabilidad.**
+Tampoco debe hacer:
+
+```text id="pnp56a"
+if page.type == IMAGE:
+    run_ocr()
+```
+
+Esa lógica pertenece al orquestador.
+
+---
+
+# Separación entre Orquestador y LLM Graph
+
+Es importante distinguir los dos niveles.
+
+## Workflow documental
+
+Responsabilidad del orquestador:
+
+```text id="qdaglg"
+PDF
+ ↓
+page
+ ↓
+image
+ ↓
+OCR
+ ↓
+selección de fuente
+ ↓
+LLM
+```
+
+## Workflow LLM
+
+Responsabilidad de `procesador-llm-call`:
+
+```text id="ub2s0y"
+Prepared Input
+      ↓
+ classify
+      ↓
+ ┌────┴────┐
+ ▼         ▼
+extract_A extract_B
+ └────┬────┘
+      ↓
+   compare
+      ↓
+   validate
+      ↓
+   result
+```
+
+El segundo puede existir independientemente del primero.
+
+---
+
+# Integración con el sistema
+
+El orquestador prepara algo como:
+
+```text id="ry4bif"
+PreparedDocumentInput
+├── document
+├── images[]
+├── extra_context
+└── metadata
+```
+
+y lo transforma en:
+
+```text id="df45ou"
+LLMRequest
+```
+
+A partir de ahí:
+
+```text id="crwzgu"
+ORCHESTRATOR
+      ↓
+prepared input
+      ↓
+procesador-llm-call
+      ↓
+LLM Graph
+      ↓
+LLMResult
+      ↓
+ORCHESTRATOR
+```
+
+---
+
+# Principio de diseño
+
+`procesador-llm-call` debe cumplir una regla simple:
+
+> **Recibe información preparada, ejecuta una o varias operaciones LLM y devuelve resultados estructurados y trazables.**
+
+No conoce Poppler.
+
+No conoce Docling.
+
+No procesa imágenes con OpenCV.
+
+No decide qué representación del documento utilizar.
+
+No coordina el pipeline documental.
+
+Sí puede conocer y orquestar un **grafo interno de llamadas LLM**, porque esa es parte de su responsabilidad específica.
