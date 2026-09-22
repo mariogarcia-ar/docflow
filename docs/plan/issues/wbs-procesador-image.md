@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | All issues `NOT_STARTED` |
+| Status | `IMG-01`, `IMG-02` **DONE** - contracts frozen, engine seam in place; `IMG-03` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -28,8 +28,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 | ID | Task (short) | Effort | Wave | Depends on | Deliverable artifact(s) | Issue file | Status |
 |---|---|---|---|---|---|---|---|
-| IMG-01 | Contract dataclasses | S | 1 — Contracts & seam | — | `ImageRequest`, `ImageResult`, `ImageMetrics`, `ImageOptions`, `ImageClassification`, `ImageValidation`, `ImageError` | this file §IMG-01 | NOT_STARTED |
-| IMG-02 | Image-ops primitives skeleton | M | 1 — Contracts & seam | IMG-01 | `image/primitives/` (OpenCV, Pillow fallback) | this file §IMG-02 | NOT_STARTED |
+| IMG-01 | Contract dataclasses | S | 1 - Contracts & seam | - | `ImageRequest`, `ImageResult`, `ImageMetrics`, `ImageOptions`, `ImageClassification`, `ImageValidation`, `ImageError` | this file §IMG-01 | DONE |
+| IMG-02 | Image-ops primitives skeleton | M | 1 - Contracts & seam | IMG-01 | `image/primitives/` (OpenCV, Pillow fallback) | this file §IMG-02 | DONE |
 | IMG-03 | Load/store primitives | S | 1 — Contracts & seam | IMG-02 | `load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions` | this file §IMG-03 | NOT_STARTED |
 | IMG-04 | Analysis primitives | M | 2 — Analysis | IMG-03 | `calculate_*_score`, `detect_orientation`, `detect_skew_angle`, `detect_text_regions`, `calculate_text_coverage` | this file §IMG-04 | NOT_STARTED |
 | IMG-05 | Transformation primitives | M | 2 — Analysis | IMG-03 | `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` | this file §IMG-05 | NOT_STARTED |
@@ -62,6 +62,16 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Type hints complete; Google-style docstrings; `ruff check .` and `pylint src tests` clean.
 - **Tags:** —
 
+- **Status: DONE.** Evidence: `src/docflow/image/contracts.py` carries every type the scope
+  names - `ImageRequest`, `ImageOptions`, `ImageContext`, `ImageResult`, `ImageSourceRef`,
+  `ArtifactRef`, `ImageVariants`, `ImageMetrics`, `ImageQualityMetrics`, `ImageDimensions`,
+  `TextRegion`, `ImageClassification`, `ImageValidationState`, `ImageError`, `ImageErrorType`,
+  `ImageStatus`, `ImageArtifactKind`, `ImageMetadata`. Every required field rejects omission
+  (`test_a_missing_required_option_is_rejected_instead_of_defaulted`), and the classification and
+  validation literals are exactly the subplan's set and nothing else. The
+  `ImageRequest → ImageResult` round-trip is proven with an in-memory fake
+  (`tests/image/test_contracts.py`, 7 tests) before any engine exists. All four gates green.
+
 ### IMG-02 — Image-ops primitives skeleton
 
 - **Type:** Skeleton
@@ -77,6 +87,28 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the engine is replaced by its alternative, then the contract of `ImageRequest → ImageResult` is unchanged.
 - **Evidence / DoD:** Import of `image/primitives/` succeeds; engine/version retrieval exposed; four QA gates green on the skeleton.
 - **Tags:** `# TODO: [MVP]` for real engine-availability probing.
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/engine.py` is the single module
+  that names an image library. `EngineChoice` is an explicit named enum with no `AUTO` member,
+  so there is no code path that picks an engine on the caller's behalf. The engine is resolved
+  lazily through `engine_module`, which is why importing `image/primitives/` pulls in no engine
+  at all (`test_a_clean_interpreter_imports_the_seam_without_an_engine` runs a fresh interpreter
+  and asserts `cv2` and `PIL` are absent from `sys.modules`). An absent engine raises
+  `ImageEngineNotAvailableError`, naming only its own library - never the other engine's - so
+  the Pillow alternative is documented and reachable but never activated implicitly
+  (`test_a_missing_engine_raises_instead_of_substituting_the_other`). `get_provenance` surfaces
+  engine and library versions for `metadata.json`; a library reporting no version is an error,
+  not a blank string. `failures.py` mirrors the contract's seven error kinds and
+  `tests/image/primitives/test_failures.py` fails the moment the two lists drift. The signatures
+  of IMG-03, IMG-04 and IMG-05 are declared in `load.py`, `analysis.py` and `transform.py`, each
+  body raising `NotImplementedError` with a `# TODO: [MVP]` tag. Verified on this machine:
+  OpenCV 5.0.0, numpy 2.3.5, Pillow present. All four gates green; `pylint src tests` 10.00/10.
+
+- **Mutation evidence.** Six mutations applied, each detected, each restored:
+  substituting the other engine when one is absent (5 tests fail), importing the engine eagerly
+  at module level (3), returning a blank version instead of raising (1), adding an `AUTO`
+  member (3), drifting the primitive vocabulary from the contract (2), dropping the path from a
+  rendered failure (1).
 
 ### IMG-03 — Load/store primitives
 
