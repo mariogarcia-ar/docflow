@@ -138,14 +138,19 @@ is: it reaches the four processors only through their public contracts.
 
 | Tool | Task | Exposes |
 |---|---|---|
-| `pdf.py` | `PDF-14` | `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` |
+| `pdf.py` | `PDF-14` | ✅ `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` |
 | `image.py` | `IMG-15` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run`, `crop` |
 | `ocr.py` | `OCR-14` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics`, `diff` |
 | `llm.py` | `LLM-16` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `workflow.py` | `ORC-20` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 
-None of these exist yet: each is built after its processor's own acceptance evidence is
-green. Two design notes worth knowing before they are written — `ocr.py` has **no** `--engine`
+**Only `pdf.py` exists so far** — see [`scripts/tools/README.md`](scripts/tools/README.md)
+for its command surface, output layout, exit codes and worked examples, and for the
+boundaries every tool must respect. The other four are built once their processor's own
+acceptance evidence is green, so a missing tool means a missing processor rather than
+unfinished packaging.
+
+Two design notes worth knowing before they are written — `ocr.py` has **no** `--engine`
 flag, because Docling is fixed and never user-selectable; and `llm.py` requires `--provider`
 and `--model` on every inference subcommand, because a default model is exactly the silent
 stand-in this project forbids. Its `fake` subcommand is first-class, not a hidden test flag:
