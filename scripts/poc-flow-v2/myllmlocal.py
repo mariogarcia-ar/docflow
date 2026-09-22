@@ -30,6 +30,12 @@ Run:
     python scripts/poc-flow-v2/myllmlocal.py <document> --prompt <file> \\
         --schema var/fields.json
 
+    # a reviewer: the same document plus the extraction it has to judge
+    python scripts/poc-flow-v2/myllmlocal.py <document> \\
+        --prompt registry/prompts/review/invoice.txt \\
+        --proposal var/extraction.json \\
+        --schema registry/schemas/review/invoice.json
+
     # read the answer with jq, since stdout is one JSON object
     python scripts/poc-flow-v2/myllmlocal.py <document> --prompt <file> | jq .answer
 
@@ -41,20 +47,27 @@ Run:
     # without reading a document or calling a model
     python scripts/poc-flow-v2/myllmlocal.py --show-env
 
-``--model`` is the only dial. A prompt and a schema are *inputs*, and that is why
-neither is derived from the other: pairing them here would make this client
-decide which question the caller asked.
+``--model`` is the only dial. A prompt, a proposal and a schema are *inputs*, and
+that is why none is derived from another: pairing a prompt with a schema here is
+how ``--prompt invoice_deteccion.txt`` came to answer the *base* extraction.
+
+A **reviewer's** prompt carries two placeholders, ``{text}`` and ``{proposal}``,
+and `--proposal` is how the second is filled — one file per question, which is
+what keeps a single prompt able to judge an extraction this client never made.
+The prompt is filled in full: a ``{proposal}`` left standing would have the
+reviewer judging that literal string and reporting verdicts about it.
+
+Every run **writes the report it prints**, so a second consumer does not have to
+reconstruct it from a terminal: one JSON file per question under `--out`
+(default `var/llmlocal/`), named by the document and a digest of the question, so
+the same question overwrites its own file and a different one cannot. The path
+goes to stderr; stdout stays one JSON object, so ``| jq`` keeps working.
 
 `--show-env` is the one mode that needs neither a document nor a prompt: it
 reports the three sources of a sampling option — an exported variable, the
 `.env` file, and the flow's own declaration — and the value each one settled on,
 so *did my `.env` get read* is answerable without spending a call. It runs before
-any document is opened.
-
-Stdout is one JSON object — the answer with the call's own numbers beside it, so
-``| jq`` works. The route and the window go to stderr: a run that reported only
-the answer would leave *by which route this text was produced* and *whether the
-prompt fitted the window* to be found by opening a file.
+any document is opened, and its report is saved like any other.
 
 Exit codes: ``0`` a value, ``2`` a typed refusal, ``4`` a malformed invocation.
 ``kernel-cli.md`` §5 splits a refusal into ``2`` (the document answered) and
@@ -71,6 +84,7 @@ from __future__ import annotations
 # pylint: disable=import-outside-toplevel
 import argparse
 import dataclasses
+import hashlib
 import json
 import os
 import pathlib
@@ -88,6 +102,18 @@ __all__: list[str] = []
 #: question while the report reads like a reading of the file.
 TEXT_PLACEHOLDER: Final[str] = "{text}"
 
+#: Where the extraction under review is substituted into a reviewer's prompt
+#: (`registry/prompts/review/invoice.txt` carries both placeholders). A template
+#: that keeps it sends the reviewer the literal string to judge, and its verdicts
+#: then describe that string rather than the extraction.
+#:
+#: Declared here rather than imported from `flow.extract`, which owns the flow's
+#: own copies: a module-level import of that package would drag Docling and OpenCV
+#: into `--help`. The literal is the interface with the registry asset, and a drift
+#: is loud — the reviewer answers about a literal `{proposal}` instead of an
+#: extraction, and the report's `proposal` key says none was supplied.
+PROPOSAL_PLACEHOLDER: Final[str] = "{proposal}"
+
 #: What this client reads as text directly. `flow.material.read_material` answers
 #: a PDF and an image and reports anything else as `invalid` (*neither a PDF nor
 #: an image*), so a text file is the one route a caller owns.
@@ -97,6 +123,18 @@ TEXT_SUFFIXES: Final[frozenset[str]] = frozenset({".txt", ".md", ".text"})
 #: nothing more. A default naming the registry's fields would be this client
 #: deciding which question the prompt asked.
 UNCONSTRAINED_SCHEMA: Final[dict[str, object]] = {"type": "object"}
+
+#: Where a run's report is written when the caller names no directory. `var/` is
+#: git-ignored, so a probe's output never reaches a commit.
+DEFAULT_OUT: Final[pathlib.Path] = pathlib.Path("var/llmlocal")
+
+#: How much of a question's digest names its file: long enough that two questions
+#: do not collide, short enough to read and to paste.
+DIGEST_LENGTH: Final[int] = 16
+
+#: The stem a `--show-env` report is saved under. That mode has no document, and
+#: naming its file after one would be a claim about what the file holds.
+ENV_STEM: Final[str] = "show-env"
 
 #: The exit codes this client reports.
 EXIT_OK: Final[int] = 0
@@ -153,6 +191,29 @@ class Text:
     notes: list[str]
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class Question:
+    """What a caller asked: the files it named, and nothing derived from them.
+
+    Grouped rather than passed three at a time, because the three together are
+    what names a question — the report's identity, the file it is saved under, and
+    the value the reviewer is handed all come from the same set. A function taking
+    them separately can be called with two of the three swapped and still type
+    check, which is how a report comes to be filed under another question's name.
+
+    Attributes:
+        document: The document under test.
+        prompt: The prompt file, which the caller names in every mode but
+            ``--show-env``.
+        proposal: The extraction a reviewer judges, when one was supplied.
+
+    """
+
+    document: pathlib.Path | None
+    prompt: pathlib.Path | None
+    proposal: pathlib.Path | None
+
+
 def _build_parser() -> _Parser:
     """Build the argument parser: the document and what to ask about it."""
     parser = _Parser(
@@ -179,6 +240,23 @@ def _build_parser() -> _Parser:
         metavar="FILE",
         help="a JSON schema the answer must satisfy (default: an object, "
         "unconstrained)",
+    )
+    parser.add_argument(
+        "--proposal",
+        type=pathlib.Path,
+        default=None,
+        metavar="FILE",
+        help=f"a JSON file whose text fills {PROPOSAL_PLACEHOLDER!r}, for a "
+        "prompt that reviews an extraction (review/invoice.txt); read as "
+        "JSON when it is an object, as raw text otherwise",
+    )
+    parser.add_argument(
+        "--out",
+        type=pathlib.Path,
+        default=DEFAULT_OUT,
+        metavar="DIR",
+        help=f"where the report is written, one JSON file per question "
+        f"(default: {DEFAULT_OUT})",
     )
     parser.add_argument(
         "--model",
@@ -208,19 +286,45 @@ def _read_text(path: pathlib.Path) -> str:
         raise UsageError(f"{path}: {problem}") from problem
 
 
-def _substituted(template: str, text: str) -> str:
+def _substituted(template: str, text: str, proposal: str | None = None) -> str:
     """The prompt with the document's text in it, or a usage error.
 
     A template with no placeholder cannot be answered *about* the document: the
     model is asked the template's own question, answers plausibly, and nothing in
     the result says the text was never sent.
+
+    A reviewer's template is the one case that carries a second placeholder. It is
+    filled with the raw text of an absent proposal rather than refused, so a
+    reviewer called without one is visibly asking about nothing — an operator
+    debugging the *answer* wants to see that, not to be stopped before the call.
     """
     if TEXT_PLACEHOLDER not in template:
         raise UsageError(
             f"the prompt does not contain {TEXT_PLACEHOLDER!r}: without it the "
             "document's own text never reaches the model"
         )
-    return template.replace(TEXT_PLACEHOLDER, text)
+    filled = template.replace(TEXT_PLACEHOLDER, text)
+    if PROPOSAL_PLACEHOLDER in filled:
+        filled = filled.replace(PROPOSAL_PLACEHOLDER, proposal or "null")
+    return filled
+
+
+def _read_proposal(path: pathlib.Path) -> str:
+    """A proposal file as the text a reviewer's prompt carries.
+
+    A **JSON object** is re-serialised, so what the reviewer reads is a document
+    rather than the all-on-one-line form an extractor's report happens to use; any
+    other JSON value and a plain text file are passed through as written, because
+    re-formatting them would be this client authoring the extraction under review.
+    """
+    body = _read_text(path)
+    try:
+        loaded = json.loads(body)
+    except json.JSONDecodeError:
+        return body
+    if not isinstance(loaded, dict):
+        return body
+    return json.dumps(loaded, ensure_ascii=False, indent=2)
 
 
 def _read_schema(path: pathlib.Path) -> dict[str, object]:
@@ -230,10 +334,7 @@ def _read_schema(path: pathlib.Path) -> dict[str, object]:
     except json.JSONDecodeError as problem:
         raise UsageError(f"{path} is not valid JSON: {problem}") from problem
     if not isinstance(loaded, dict):
-        raise UsageError(
-            f"{path} is not a JSON object: the model is asked for an object, and "
-            "a schema has to say which one"
-        )
+        raise UsageError(f"{path} is not a JSON object: {loaded!r} was read")
     return loaded
 
 
@@ -383,9 +484,8 @@ def _call(
 
 
 def _report(  # pylint: disable=too-many-arguments, too-many-positional-arguments
-    document: pathlib.Path,
+    question: Question,
     text: Text,
-    prompt: pathlib.Path,
     model: str,
     *,
     answer: dict[str, object] | None,
@@ -400,10 +500,11 @@ def _report(  # pylint: disable=too-many-arguments, too-many-positional-argument
     its value, never from the report's layout.
     """
     return {
-        "document": str(document),
+        "document": str(question.document),
         "route": text.route,
         "characters": len(text.body or ""),
-        "prompt": str(prompt),
+        "prompt": str(question.prompt),
+        "proposal": None if question.proposal is None else str(question.proposal),
         "model": model,
         "answer": answer,
         "refusal": refusal,
@@ -412,9 +513,7 @@ def _report(  # pylint: disable=too-many-arguments, too-many-positional-argument
     }
 
 
-def _without_a_call(
-    document: pathlib.Path, text: Text, prompt: pathlib.Path, model: str
-) -> dict[str, object]:
+def _without_a_call(question: Question, text: Text, model: str) -> dict[str, object]:
     """The report for a document that produced no text: no model is paid.
 
     Two codes, and they are different findings (B.9): `ESC_DEGRADED_MATERIAL` is
@@ -425,9 +524,8 @@ def _without_a_call(
 
     refused = ESC_DEGRADED_MATERIAL if text.body is None else "blank_page"
     return _report(
-        document,
+        question,
         text,
-        prompt,
         model,
         answer=None,
         refusal=refused,
@@ -436,10 +534,9 @@ def _without_a_call(
     )
 
 
-def _answer(
-    document: pathlib.Path,
+def _answer(  # pylint: disable=too-many-arguments
+    question: Question,
     text: Text,
-    prompt_path: pathlib.Path,
     prompt: str,
     model: str,
     schema: dict[str, object],
@@ -448,9 +545,8 @@ def _answer(
     attempt = _engine().structured(model, prompt, schema)
     refusal, message, call = _call(attempt)
     return _report(
-        document,
+        question,
         text,
-        prompt_path,
         model,
         answer=None if attempt.value is None else dict(attempt.value),
         refusal=refusal,
@@ -459,13 +555,37 @@ def _answer(
     )
 
 
-def _announce(report: dict[str, object]) -> None:
-    """Print the route and the window on stderr, keeping stdout one document."""
+def _prepare_out(out: pathlib.Path) -> None:
+    """Create the report directory, or refuse the invocation.
+
+    Done **before** the model is paid: a `--out` that cannot be written to is a
+    malformed invocation, and discovering it after a generation would charge the
+    caller for an answer with nowhere to go. The directory existing as a file is
+    the case this is for — `mkdir` then raises `FileExistsError`, and reporting
+    that as exit `4` keeps *the caller's argv was wrong* apart from *the code has
+    a bug*, which is what `kernel-cli.md` §5 reserves exit `1` for.
+    """
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError as problem:
+        raise UsageError(
+            f"{out}: cannot write the report there: {problem}"
+        ) from problem
+
+
+def _announce(report: dict[str, object], saved: pathlib.Path | None) -> None:
+    """Print the route, the window and the report's path on stderr.
+
+    Everything but the report goes here, so stdout stays one JSON object a pipe
+    can read: a consumer that had to strip a progress line would be parsing a
+    human's view of the run.
+    """
     print(
         f"route       {report['route']} · {report['characters']} character(s)",
         file=sys.stderr,
     )
     print(f"prompt      {report['prompt']}", file=sys.stderr)
+    print(f"proposal    {report['proposal']}", file=sys.stderr)
     print(f"model       {report['model']}", file=sys.stderr)
     call = report["call"]
     if isinstance(call, dict):
@@ -477,6 +597,73 @@ def _announce(report: dict[str, object]) -> None:
         )
     else:
         print(f"refused     {report['refusal']}: {report['message']}", file=sys.stderr)
+    print(f"saved       {saved}", file=sys.stderr)
+
+
+def _persist(
+    report: dict[str, object],
+    question: Question,
+    out: pathlib.Path,
+    pretty: bool,
+) -> pathlib.Path | None:
+    """Save the report, reporting a write that failed instead of raising.
+
+    The directory was made writable before the model was paid (`_prepare_out`),
+    so a failure here is the disk rather than the invocation. It is reported on
+    stderr and the run continues: the answer is already bought, and losing it
+    because its copy could not be written would trade a useful result for a
+    tidy exit code.
+    """
+    try:
+        return _save(report, question, out, pretty)
+    except OSError as problem:
+        print(f"error: could not save the report: {problem}", file=sys.stderr)
+        return None
+
+
+def _question_digest(question: Question, out: pathlib.Path) -> str:
+    """A short digest of *which question* a run asked.
+
+    Built from the paths the caller named, absolute so two spellings of one file
+    are one question, and **including `out`** so a run redirected elsewhere is a
+    different name — otherwise its file would replace the original's, and the
+    earlier result would be gone with nothing saying so.
+    """
+    named = [question.document, question.prompt, question.proposal, out]
+    canonical = json.dumps(
+        [None if path is None else str(path.resolve()) for path in named],
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:DIGEST_LENGTH]
+
+
+def _save(
+    report: dict[str, object],
+    question: Question,
+    out: pathlib.Path,
+    pretty: bool,
+) -> pathlib.Path:
+    """Write the report, beside the other runs of this probe.
+
+    The bytes written are the bytes printed: one serialisation, so the file a
+    consumer reads and the object a pipe read cannot be two renderings that
+    disagree. The name is a digest of *which question* was asked, so a re-run of
+    the same question replaces its own file and never another's.
+
+    The directory is ``_prepare_out``'s to create; this function only writes.
+
+    `# TODO: [MVP]` The write is not atomic (temp + rename, as `flow/journal.py`
+    does). A probe's report is a record of a call already made, not an input a
+    resumed run trusts, so a truncated one costs the report and nothing else.
+    """
+    stem = ENV_STEM if question.document is None else question.document.stem
+    digest = _question_digest(question, out)
+    path = out / f"{stem}.{digest}.json"
+    path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2 if pretty else None),
+        encoding="utf-8",
+    )
+    return path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -484,18 +671,33 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    # The report directory is settled **before** anything is read or paid: a
+    # `--out` that cannot be written to is a malformed invocation, and failing
+    # after a generation would charge the caller for an answer with nowhere to go.
+    try:
+        _prepare_out(args.out)
+    except UsageError as problem:
+        print(f"error: {problem}", file=sys.stderr)
+        return EXIT_USAGE
+
     # `--show-env` answers before any document is read or any model is called: it
     # is the question *what would this run send*, and paying for a PDF read to
     # answer it would make the flag unusable on the machine where it is needed —
-    # the one with a broken setup.
+    # the one with a broken setup. Its report is saved like any other, because
+    # *which source supplied this value* is exactly what someone later has to
+    # check, after the shell has moved on.
     if args.show_env:
+        environment = _sampling_environment()
+        question = Question(document=None, prompt=None, proposal=None)
+        saved = _persist(environment, question, args.out, args.pretty)
         print(
             json.dumps(
-                _sampling_environment(),
-                ensure_ascii=False,
-                indent=2 if args.pretty else None,
+                environment, ensure_ascii=False, indent=2 if args.pretty else None
             )
         )
+        # `_announce` is the *call* report's; the environment report has no route,
+        # no model and no window of its own, so only the path is announced here.
+        print(f"saved       {saved}", file=sys.stderr)
         return EXIT_OK
 
     if args.document is None:
@@ -511,7 +713,8 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         text = _document_text(document)
-        prompt = _substituted(_read_text(args.prompt), text.body or "")
+        proposal = None if args.proposal is None else _read_proposal(args.proposal)
+        prompt = _substituted(_read_text(args.prompt), text.body or "", proposal)
         schema = (
             UNCONSTRAINED_SCHEMA if args.schema is None else _read_schema(args.schema)
         )
@@ -523,12 +726,17 @@ def main(argv: list[str] | None = None) -> int:
     # `.strip()` and not the truthiness of the string: a document of whitespace
     # is not text, and asking a model about it spends a generation to be told
     # what an empty page already says.
+    question = Question(document=document, prompt=args.prompt, proposal=args.proposal)
+    # `.strip()` and not the truthiness of the string: a document of whitespace
+    # is not text, and asking a model about it spends a generation to be told
+    # what an empty page already says.
     if text.body is None or not text.body.strip():
-        report = _without_a_call(document, text, args.prompt, model)
+        report = _without_a_call(question, text, model)
     else:
-        report = _answer(document, text, args.prompt, prompt, model, schema)
+        report = _answer(question, text, prompt, model, schema)
 
-    _announce(report)
+    saved = _persist(report, question, args.out, args.pretty)
+    _announce(report, saved)
     print(json.dumps(report, ensure_ascii=False, indent=2 if args.pretty else None))
     return EXIT_OK if report["refusal"] is None else EXIT_REFUSED
 

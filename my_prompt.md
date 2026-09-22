@@ -1,5 +1,8 @@
 creo que en v3 vamos a tener que ajustar los pasos porque ahora se especializaron los prompts (extraction/review) y los schemas
 
+un tema es donde dejamos los artefactos intermedios
+
+
 en v1 usamos bien las primitivas
 en v2 mejoramos todo framework de recupero
 vn v3 vamos a mejorar el uso de los prompts 

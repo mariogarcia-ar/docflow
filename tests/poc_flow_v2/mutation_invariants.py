@@ -202,8 +202,8 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
     (
         "probe: the document's text is substituted with nothing",
         CLIENT,
-        "    return template.replace(TEXT_PLACEHOLDER, text)",
-        '    return template.replace(TEXT_PLACEHOLDER, "")',
+        "    filled = template.replace(TEXT_PLACEHOLDER, text)",
+        '    filled = template.replace(TEXT_PLACEHOLDER, "")',
         {"test_the_document_text_reaches_the_model"},
     ),
     (
@@ -249,6 +249,71 @@ MUTATIONS: list[tuple[str, pathlib.Path, str, str, set[str]]] = [
         '            {"type": "object", "properties": {"total": {"type": "string"}}} '
         "if args.schema is None else _read_schema(args.schema)",
         {"test_the_schema_is_an_object_when_the_caller_names_none"},
+    ),
+    (
+        "probe: a reviewer's {proposal} is left standing, so it judges a literal",
+        CLIENT,
+        "    if PROPOSAL_PLACEHOLDER in filled:\n"
+        '        filled = filled.replace(PROPOSAL_PLACEHOLDER, proposal or "null")',
+        "    if False:\n"
+        '        filled = filled.replace(PROPOSAL_PLACEHOLDER, proposal or "null")',
+        {"test_the_proposal_reaches_a_reviewers_prompt"},
+    ),
+    (
+        "probe: the proposal file is passed through without re-serialising it",
+        CLIENT,
+        "    if not isinstance(loaded, dict):\n        return body",
+        "    return body",
+        {"test_a_proposal_is_re_serialised_as_a_document"},
+    ),
+    (
+        "probe: a reviewer with no --proposal is refused instead of calling",
+        CLIENT,
+        "    if PROPOSAL_PLACEHOLDER in filled:",
+        "    if args.proposal is None:\n"
+        "        raise UsageError('no proposal')\n"
+        "    if PROPOSAL_PLACEHOLDER in filled:",
+        {"test_a_reviewer_with_no_proposal_is_not_refused"},
+    ),
+    (
+        "probe: the report is printed and never written to --out",
+        CLIENT,
+        "    saved = _persist(report, question, args.out, args.pretty)",
+        "    saved = None",
+        {"test_the_report_is_written_beside_the_other_runs"},
+    ),
+    (
+        "probe: the file name ignores the question, so two runs share one file",
+        CLIENT,
+        "    digest = _question_digest(question, out)",
+        "    digest = _question_digest(Question(None, None, None), out)",
+        {"test_the_same_question_overwrites_its_own_report_and_no_other"},
+    ),
+    (
+        "probe: the report directory is never created, so a run writes nowhere",
+        CLIENT,
+        "        out.mkdir(parents=True, exist_ok=True)",
+        "        pass",
+        {"test_a_run_at_the_default_directory_still_saves"},
+    ),
+    (
+        "probe: a --show-env report is named after a document it never had",
+        CLIENT,
+        "    stem = ENV_STEM if question.document is None else question.document.stem",
+        '    stem = "document"',
+        {"test_show_env_saves_its_report_under_its_own_name"},
+    ),
+    (
+        "probe: an unwritable --out is discovered after the model is paid",
+        CLIENT,
+        # The anchor is the whole guard, split across two literals so no source
+        # line has to be 89 characters wide.
+        "    try:\n        _prepare_out(args.out)\n"
+        "    except UsageError as problem:\n"
+        '        print(f"error: {problem}", file=sys.stderr)\n'
+        "        return EXIT_USAGE",
+        "    pass",
+        {"test_an_unwritable_out_is_exit_four_before_a_model_is_paid"},
     ),
 ]
 

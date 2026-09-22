@@ -54,16 +54,42 @@ DOCFLOW_OLLAMA_NUM_CTX=16384 python scripts/poc-flow-v2/myllmlocal.py <document>
   --prompt <file>
 ```
 
-`--model` es el único *dial*; `--prompt` y `--schema` son *entradas*, y por eso
-ninguno se deriva del otro: emparejarlos acá sería este cliente decidiendo qué
-pregunta hizo el llamador. Sin `--prompt`/`--schema` **no** se lee el registry.
+**Revisar una extracción** — el prompt de review lleva *dos* placeholders,
+`{text}` y `{proposal}`, y `--proposal` es quien llena el segundo con el archivo
+que el revisor tiene que juzgar:
+
+```bash
+python scripts/poc-flow-v2/myllmlocal.py <document> \
+  --prompt registry/prompts/review/invoice.txt \
+  --proposal var/llmlocal/factura.<digest>.json \
+  --schema registry/schemas/review/invoice.json
+```
+
+El prompt se llena entero: un `{proposal}` que quedara en pie haría que el revisor
+juzgue esa cadena literal. Sin `--proposal`, el placeholder queda en `null` y la
+llamada igual se hace — es justo lo que alguien quiere ver cuando depura *qué dice
+el revisor sobre nada*, y la clave `proposal` del reporte es la que dice que no se
+pasó ninguno.
+
+**Todo run escribe el reporte que imprime** — un JSON por pregunta bajo `--out`
+(por defecto `var/llmlocal/`), nombrado por el documento y un digest de la
+pregunta, así que la misma pregunta pisa su propio archivo y otra no. El path va a
+`stderr`; `stdout` sigue siendo un objeto JSON, así que `| jq` sigue funcionando.
+Un `--out` que no se pueda escribir se rechaza **antes** de pagar el modelo
+(exit `4`) — un `mkdir` a medias no puede cobrarte una respuesta sin destino.
+
+`--model` es el único *dial*; `--prompt`, `--proposal` y `--schema` son *entradas*,
+y por eso ninguna se deriva de otra: emparejar acá un prompt con un schema es cómo
+`--prompt invoice_deteccion.txt` llegó a responder la extracción *base*. Sin
+`--prompt`/`--schema` **no** se lee el registry.
 
 La ruta del documento a texto es la del flujo, nunca un segundo lector: un `.txt`
 se lee tal cual, un PDF con capa de texto pasa por `pdftotext -layout`, una página
 sin capa se renderiza y va a OCR, y una imagen pasa por el filtro de legibilidad y
 OCR. Sólo se envía **texto** — la lane de visión es la de `myflow.py`. `stdout` es
-**un** objeto JSON; la ruta, el modelo y la ventana van a `stderr`.
-Códigos de salida: `0` valor, `2` rechazo tipado, `4` invocación mal formada.
+**un** objeto JSON; la ruta, el modelo, la ventana y el path del reporte guardado
+van a `stderr`. Códigos de salida: `0` valor, `2` rechazo tipado, `4` invocación
+mal formada.
 
 **Qué NO hace**: no clasifica el documento (`flow.classify` decide si la *corrida*
 procede, y eso es una decisión del pipeline, no de una llamada al modelo) y no
