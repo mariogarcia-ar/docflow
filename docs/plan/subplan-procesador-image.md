@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-Implement `procesador-image` (module `image`, import name `docflow.kernels.image`) as a single-responsibility processor whose only job is to **analyze, normalize and technically prepare images** for downstream processors. It turns one `ImageRequest` into one `ImageResult` by validating the input, computing technical metrics without mutating the source, producing a `normalized.png` plus optional `ocr_ready.png` and `vlm_ready.png` variants, classifying the image technically, validating the outputs, and atomically publishing everything inside the `image/` artifact namespace together with a `metadata.json`. The engine is hidden behind a port/adapter seam (OpenCV or Pillow). This processor is built standalone in Phase 1: it imports no other processor and makes no workflow decisions.
+Implement `procesador-image` (module `processors/image`, import name `processors.image`) as a single-responsibility processor whose only job is to **analyze, normalize and technically prepare images** for downstream processors. It turns one `ImageRequest` into one `ImageResult` by validating the input, computing technical metrics without mutating the source, producing a `normalized.png` plus optional `ocr_ready.png` and `vlm_ready.png` variants, classifying the image technically, validating the outputs, and atomically publishing everything inside the `image/` artifact namespace together with a `metadata.json`. The image engine (OpenCV or Pillow) is encapsulated in `image/primitives/`. This processor is built standalone in Phase 1: it imports no other processor and makes no workflow decisions.
 
 ## 2. Context (BA)
 
@@ -92,9 +92,14 @@ Low-level functions that encapsulate the image library; none knows the document 
 - **Orientation:** `detect_orientation`, `detect_skew_angle`, `rotate_image`, `deskew_image`
 - **Visual analysis:** `detect_text_regions`, `calculate_text_coverage`, `crop_region`
 
-### Engine / adapter dependency
+### Engine encapsulation
 
-The kernel `docflow/kernels/image.py` depends only on a port interface (an image-ops port such as `ImageEngine`), never on a concrete library. A thin adapter (`docflow/adapters/`) implements it with **OpenCV** (Pillow as the documented alternative). The port is injected, so the kernel stays vendor-free. Per repo rules, **no adapter is imported from a port**, and no default engine is silently substituted. Naming of this port is an open decision (the frozen port list names `PdfSource`, `OcrEngine`, `LlmEngine`, `ArtifactStore`, `Registry` — an image-ops port must be added deliberately).
+The image engine is **OpenCV** (Pillow as the documented alternative), as the idea's
+§"Implementaciones reemplazables" fixes. All engine access lives inside
+`image/primitives/`; no other processor, and never the orchestrator, touches the engine
+directly. The processor's public contract (`ImageRequest → procesador-image →
+ImageResult`) is engine-agnostic: replacing OpenCV with Pillow changes only `primitives/`,
+never the contract or the workflow. No engine is silently substituted.
 
 ### Determinism class
 
@@ -111,7 +116,7 @@ Errors are classified technically into a typed `ImageError` with a `recoverable`
 | ID | Task | Effort | Depends on |
 |---|---|---|---|
 | IMG-01 | Define contract dataclasses: `ImageRequest`, `ImageResult`, `ImageMetrics`, `ImageOptions`, `ImageClassification`, `ImageValidation`, `ImageError` (no defaults on required fields) | S | — |
-| IMG-02 | Define the image-ops port (`ImageEngine`) and an OpenCV adapter (Pillow fallback) behind it | M | IMG-01 |
+| IMG-02 | Implement the image-ops primitives skeleton in `image/primitives/` (OpenCV, Pillow fallback) | M | IMG-01 |
 | IMG-03 | Implement load/store primitives (`load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions`) | S | IMG-02 |
 | IMG-04 | Implement analysis primitives (blur, sharpness, contrast, brightness, noise, orientation, skew, text regions/coverage) | M | IMG-03 |
 | IMG-05 | Implement transformation primitives (rotate, deskew, resize, grayscale, binarize, denoise, sharpen, contrast/brightness, format conversion/compression) | M | IMG-03 |
@@ -178,12 +183,12 @@ Scenario: Leave the source untouched
 
 **Definition of Ready**
 - `ImageRequest` / `ImageResult` / `ImageMetrics` / `ImageError` fields are ratified against `docs/idea/procesador-image.md` and `docs/idea/readme.md`.
-- The image-ops port name and the OpenCV-vs-Pillow choice are recorded (open decision listed).
+- The image-ops primitives skeleton and the OpenCV-vs-Pillow choice are recorded (decision below).
 - The artifact namespace `image/` and atomic-publication rule are agreed.
 - Fixtures for the happy path and the three invariants exist.
 
 **Definition of Done**
-- `process_image` maps `ImageRequest → ImageResult` with no import of any other processor module and no workflow decision inside the kernel.
+- `process_image` maps `ImageRequest → ImageResult` with no import of any other processor module and no workflow decision inside the processor.
 - Input image is immutable; outputs are published atomically under `image/` only.
 - OCR and VLM variants are produced independently (never assumed equal).
 - All shortcuts carry explicit `# TODO: [MVP]` or `# TODO: [RELEASE]` tags.
@@ -202,10 +207,10 @@ Scenario: Leave the source untouched
 | Over-eager enhancement degrades information (e.g. binarization destroying color) | Wrong OCR/VLM inputs | Apply transformations only when justified by metrics + explicit options; record every transformation |
 | Assuming OCR image == VLM image | VLM loses color/layout context | Enforce independent `prepare_image_for_ocr` / `prepare_image_for_vlm` pipelines; invariant test guards it |
 | Partially written artifact seen as valid by the orchestrator | Reused corrupt outputs | Atomic publish (`.tmp` → validate → rename) |
-| Scope creep into a full image-processing library | Over-engineering in PoC | Happy path only; tag shortcuts; port keeps OpenCV/Pillow swappable |
+| Scope creep into a full image-processing library | Over-engineering in PoC | Happy path only; tag shortcuts; primitives keep OpenCV/Pillow swappable |
 | No labelled golden set to judge "legibility" | Cannot prove quality objectively | Use technical thresholds + mutation-falsified invariants; defer golden set per general plan |
 
-## 9. Out of scope & open decisions
+## 9. Out of scope & resolved decisions
 
 **Out of scope (this subplan / Phase 1)**
 - PDF splitting, rendering and page extraction (owned by `procesador-pdf`).
@@ -215,9 +220,16 @@ Scenario: Leave the source untouched
 - Multi-document corpus batching and distributed execution.
 - Labelled golden-set quality scoring (deferred per the general plan).
 
-**Open decisions**
-1. **Image-ops port name.** The frozen port list names `PdfSource`, `OcrEngine`, `LlmEngine`, `ArtifactStore`, `Registry`; an image-ops port (e.g. `ImageEngine` / `ImageOps`) must be added — name to be ratified.
-2. **Primary engine.** OpenCV chosen first, Pillow as fallback; confirm OpenCV is acceptable in the environment (Docker/emulator-independent, but a native dependency).
-3. **Module vs. sub-package.** Whether `image` stays a single module or becomes a sub-package with `primitives`/`utils` (general-plan open decision #2).
-4. **Metric thresholds.** Concrete numeric thresholds for `LOW_QUALITY` classification and OCR binarization are not yet ratified; initial values will be explicit constants marked `# TODO: [MVP]`.
-5. **Kernel naming mapping.** `procesador-image` maps to `docflow.kernels.image` per the general plan's `src/` layout; final ratification follows general-plan open decision #1.
+**Resolved decisions**
+1. **Image-ops engine — RESOLVED: OpenCV** (Pillow as fallback), per the idea's
+   §"Implementaciones reemplazables"; encapsulated in `image/primitives/`.
+2. **Primary engine — RESOLVED:** OpenCV first, Pillow as the drop-in alternative behind
+   the same contract.
+3. **Module vs. sub-package — RESOLVED:** sub-package `image/` with
+   `primitives/` / `utils/` / `helpers/`, per the idea's §"Estructura del proyecto".
+4. **Metric thresholds — RESOLVED for PoC.** Concrete numeric thresholds for
+   `LOW_QUALITY` classification and OCR binarization are explicit constants marked
+   `# TODO: [MVP]`; their exact values are fixed when IMG-06/IMG-08 start.
+5. **Naming mapping — RESOLVED:** code uses `processors/image/` with the entry points the
+   idea names (`process_image`, `process_image_from_page`); the Spanish `procesador-image`
+   remains only as the idea document's title.

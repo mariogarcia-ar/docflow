@@ -139,8 +139,14 @@ Validation: `validate_pdf_result(result)`, `validate_pdf_page_result(page_result
 
 The primitives know PDF libraries; they do **not** know OpenCV, OCR, Docling, LLM or the workflow.
 
-### Engine / adapter behind a port
-The kernel depends only on the `PdfSource` port (`ports/`), never on a concrete engine. A thin adapter (`adapters/`) implements the port. **First implementation: PyMuPDF** (single Python dependency, no system binary). Poppler (CLI/`pdftotext`/`pdfimages`) is a drop-in alternative behind the same port. Rule carried in: **no adapter imported from a port**; the kernel takes the engine via the port (dependency injection), so the engine is always explicit — never a silent default.
+### Engine encapsulation
+
+The PDF engine is **Poppler** (`pdftotext` / `pdfimages` / `pdfseparate`), as the idea's
+§"Implementaciones reemplazables" fixes. All engine access lives inside `pdf/primitives/`;
+no other processor, and never the orchestrator, touches Poppler directly. The processor's
+public contract (`PDFRequest → procesador-pdf → PDFResult`) is engine-agnostic: replacing
+Poppler with another PDF reader changes only `primitives/`, never the contract or the
+workflow. The engine is always explicit — never a silent default.
 
 ### Determinism class
 **Deterministic.** Same PDF + same normalized options + same processor/engine versions → same logical artifacts and same classification. Enforced by: normalized option ordering, preserved page order, deterministic artifact names (`page_001/…`, `image_001.png`), stable formats, and recording `processor`, `processor_version`, `engine`, `engine_version` in `metadata.json`. Volatile metadata (timing) is kept out of functional content.
@@ -161,7 +167,7 @@ Typed results, not thrown exceptions, where a result is the contract. Failures a
 | ID | Task | Effort | Depends on |
 |---|---|---|---|
 | PDF-01 | Contract types: `PDFRequest`, `PDFResult`, `PDFPageResult`, `PDFPageMetrics`, `PDFError`, statuses | S | — |
-| PDF-02 | `PdfSource` port + PyMuPDF adapter skeleton (DI, no defaults) | M | PDF-01 |
+| PDF-02 | Poppler primitives skeleton in `pdf/primitives/` (encapsulation, no silent default) | M | PDF-01 |
 | PDF-03 | Document primitives: `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | M | PDF-02 |
 | PDF-04 | Split/extract primitives: `extract_page`, `split_pdf`, `merge_pdfs` | M | PDF-02 |
 | PDF-05 | Render primitive: `render_page_to_image` | S | PDF-02 |
@@ -175,8 +181,8 @@ Typed results, not thrown exceptions, where a result is the contract. Failures a
 | PDF-13 | Committed fixtures + happy-path and invariant tests | M | PDF-01, PDF-02 |
 
 ### Order / waves
-- **Wave 1 (foundations):** PDF-01, PDF-02, and fixture preparation for PDF-13 (contracts and port land first; everything imports from them).
-- **Wave 2 (primitives, parallel):** PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 — independent once the port exists.
+- **Wave 1 (foundations):** PDF-01, PDF-02, and fixture preparation for PDF-13 (contracts and primitives land first; everything imports from them).
+- **Wave 2 (primitives, parallel):** PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 — independent once the primitives skeleton exists.
 - **Wave 3 (composition):** PDF-09 (page entry point), then PDF-10 (document entry point).
 - **Wave 4 (hardening):** PDF-11, PDF-12, then finalize PDF-13 and run the four QA gates.
 
@@ -234,7 +240,7 @@ Each invariant test must FAIL when the invariant is broken — proven by mutatin
 
 ### Definition of Ready
 - Contract types (`PDFRequest`, `PDFResult`, `PDFPageResult`) match `docs/idea/procesador-pdf.md` and the general plan Phase 0 — field lists ratified.
-- The `PdfSource` port interface is defined; one concrete engine (PyMuPDF) is chosen; no silent engine default.
+- The Poppler primitives skeleton under `pdf/primitives/` is defined; one concrete engine (Poppler) is chosen; no silent engine default.
 - Classification thresholds are explicit named constants (not magic numbers, not implicit defaults).
 - Artifact ownership (`source/`, `render/`, `native_text/`, `embedded_images/`, `metadata.json`) and the atomic-publication rule are stated.
 - The committed fixtures listed in §6 exist and are named for the failure they provoke.
@@ -261,14 +267,14 @@ pylint src tests
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Engine/library drift (PyMuPDF/Poppler versions) | Silent output or classification differences | Pin versions; record `engine` + `engine_version` in every artifact's `metadata.json`; deterministic ordering. |
-| Engine licensing (PyMuPDF AGPL, Poppler GPL) | Distribution/legal constraint | Keep the `PdfSource` seam; swap adapter without touching the kernel; decide license posture as an open decision before Release. |
+| Engine/library drift (Poppler versions) | Silent output or classification differences | Pin versions; record `engine` + `engine_version` in every artifact's `metadata.json`; deterministic ordering. |
+| Engine licensing (Poppler GPL) | Distribution/legal constraint | Keep the engine behind the `Request → Processor → Result` contract; swap the engine in `pdf/primitives/` without touching the processor or the workflow; decide license posture before Release. |
 | Encrypted / unsupported / corrupt PDFs | Unexpected failure or crash | `validate_pdf` fail-fast with typed `PDFError` (`ENCRYPTED_PDF`, `CORRUPTED_PDF`, `UNSUPPORTED_PDF`); never guess. |
 | Large PDFs exhausting memory | OOM during full-document processing | Process page-by-page via `process_pdf_page`; render/extract one page at a time; no full-document buffer. |
 | Arbitrary classification thresholds | Inconsistent/unsupported classification | Explicit named constants; classification is descriptive and never drives routing (orchestrator owns decisions). |
 | Partially written artifacts observed downstream | Downstream reads incomplete data | Atomic publication (`.tmp` → validate → rename); partial pages keep only valid artifacts with `status = PARTIAL`. |
 
-## 9. Out of scope & open decisions
+## 9. Out of scope & resolved decisions
 
 ### Out of scope
 - Image normalization / `ocr_ready` / `vlm_ready` preparation (→ `procesador-image`).
@@ -279,10 +285,16 @@ pylint src tests
 - Telemetry, caching, HA, security hardening (`# TODO: [RELEASE]`).
 - Any writing outside `source/`, `render/`, `native_text/`, `embedded_images/`, `metadata.json`.
 
-### Open decisions
-1. **Final engine:** PyMuPDF (single dep, AGPL) vs Poppler CLI (system binary, GPL) — first implementation picks PyMuPDF; license posture ratified at the Release gate.
-2. **Classification thresholds:** exact numeric constants for `TEXT` / `IMAGE` / `MIXED` boundaries (e.g. text-coverage and image-coverage cutoffs) to be fixed before PDF-08 starts.
-3. **Render defaults:** confirm `dpi = 200` and PNG as the only render format for Phase 1 (no TIFF/JPEG variants yet).
-4. **`merge_pdfs` scope:** keep as a generic PDF utility in Phase 1 or defer to a later phase (it is not on the happy path).
-5. **Layout:** module `pdf` as a single module vs sub-package (`primitives`/`utils`) — mirrors general plan Open Decision #2; assume single module `src/docflow/kernels/pdf.py` with the port in `ports/` and adapter in `adapters/`.
-6. **Naming mapping:** Spanish `procesador-pdf` (docs) vs English `pdf` module/`docflow.kernels.pdf` — code follows the English `src/` layout per the repo instruction file; `docs/idea/` stays as-is.
+### Resolved decisions
+1. **Final engine — RESOLVED: Poppler** (the idea's §"Implementaciones reemplazables").
+   It is encapsulated in `pdf/primitives/`; license posture is reviewed at the Release gate.
+2. **Classification thresholds — RESOLVED for PoC.** Explicit named constants
+   (`TEXT_CHAR_MIN`, `IMAGE_COVERAGE_MIN`, …) with values to be fixed at PDF-08 start;
+   the classification stays descriptive and never drives routing.
+3. **Render defaults — RESOLVED:** `dpi = 200`, PNG as the only render format for Phase 1.
+4. **`merge_pdfs` scope — RESOLVED:** defer to a later phase (not on the happy path).
+5. **Layout — RESOLVED:** sub-package `pdf/` with `primitives/`, `utils/`, `helpers/`,
+   matching the idea's §"Estructura del proyecto".
+6. **Naming mapping — RESOLVED:** code and modules use the English names the idea itself
+   uses (`processors/pdf/`, `process_pdf`, `process_pdf_page`); the Spanish
+   `procesador-pdf` remains only as the title of the idea document.

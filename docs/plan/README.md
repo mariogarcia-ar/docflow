@@ -13,7 +13,7 @@
 
 One subplan per processor, each following the same section structure (Objective /
 Context (BA) / Design (SA) / Execution plan (PM) / Acceptance criteria / Test plan /
-DoR-DoD / Risks / Out of scope & open decisions):
+DoR-DoD / Risks / Out of scope & resolved decisions):
 
 | Subplan | Processor / component | Phase |
 |---|---|---|
@@ -120,25 +120,56 @@ Two workflow levels exist and **must not mix**:
 
 ## 4. Proposed package layout
 
-The idea names a `processors/` tree. The repo instruction file
-(`.github/copilot-instructions.md`) names a `docflow` library with a `src/` layout and
-kernel/port/adapter layers. This plan adopts the **`src/` layout and English naming** from
-the instruction file and maps the idea's five processors onto it; the exact mapping is
-Open Decision #1 (§9) until it is ratified.
+`docs/idea/readme.md` §"Estructura del proyecto" fixes the layout: a `processors/` tree
+with one sub-package per processor, each holding `primitives`, `utils` and `helpers`, plus
+a `workflow/` sub-package that is the orchestrator. The same document's §"Naming" fixes
+the entry-point names. Both are adopted verbatim:
 
 ```
-src/docflow/
-├── kernels/             # processors as kernels (no vendor deps)
-│   ├── orchestrator.py  #   procesador-orquestador
-│   ├── pdf.py           #   procesador-pdf
-│   ├── image.py         #   procesador-image
-│   ├── ocr.py           #   procesador-ocr
-│   └── llm_call.py      #   procesador-llm-call
-├── ports/               # the five port interfaces
-├── adapters/            # thin adapters (Docling, Poppler, OpenCV/Pillow, Ollama/API)
-└── cli.py               # the `docflow` product surface
-tests/                   # mirrors src/docflow, one module per source module
+processors/
+├── pdf/                 # procesador-pdf
+│   ├── primitives/      # low-level PDF ops (Poppler encapsulated here)
+│   ├── utils/
+│   └── helpers/
+├── image/               # procesador-image
+│   ├── primitives/      # low-level image ops (OpenCV / Pillow encapsulated here)
+│   ├── utils/
+│   └── helpers/
+├── ocr/                 # procesador-ocr
+│   ├── primitives/      # low-level Docling ops (the only OCR engine)
+│   ├── utils/
+│   └── helpers/
+├── llm/                 # procesador-llm-call
+│   ├── primitives/      # low-level provider ops (Ollama / vLLM / API)
+│   ├── utils/
+│   └── helpers/
+└── workflow/            # procesador-orquestador — the only workflow-aware component
+    ├── process_document()
+    ├── process_page()
+    ├── resolve_stage()
+    ├── select_source()
+    ├── select_extraction_strategy()
+    ├── build_llm_input()
+    ├── invalidate_downstream()
+    ├── resume_document()
+    └── execute_document_workflow()
 ```
+
+Entry-point names (from the idea, `readme.md` §"Naming"):
+
+```text
+process_document()  process_page()        → workflow/  (orchestrator; reserved global names)
+process_pdf()       process_pdf_page()    → pdf/
+process_image()     process_image_from_page() → image/
+process_ocr_image()                       → ocr/
+process_llm_request()  process_llm_node() → llm/
+```
+
+There is no separate `ports/` / `adapters/` layer in the idea: engines are replaceable
+*implementations* behind each processor's public contract (`Request → Processor → Result`),
+encapsulated inside that processor's `primitives/`. Swapping an engine (Poppler ↔ another
+PDF reader, OpenCV ↔ Pillow, Ollama ↔ vLLM ↔ a hosted API) never changes the contract or
+the workflow.
 
 **Contract discipline** (from the idea, `readme.md` §"Contratos entre módulos"):
 
@@ -174,7 +205,9 @@ within a phase, independent processors may proceed in parallel.
 
 **Deliverables**
 
-- Package skeleton under `src/docflow/` with the five modules and their public signatures.
+- Package skeleton under `processors/` — five sub-packages (`pdf/`, `image/`, `ocr/`,
+  `llm/`, `workflow/`), each with `primitives/`, `utils/`, `helpers/`, and the entry-point
+  signatures fixed by the idea's §"Naming".
 - The Request/Result contract types, one per processor, as typed dataclasses with no
   defaults on required fields:
 
@@ -205,13 +238,14 @@ in-memory fake end to end; the four QA gates (§7) pass on the skeleton.
 its primitives (no workflow decisions inside any of them):
 
 - `procesador-pdf` — split pages, render, extract native text/blocks/images, per-page
-  metrics and `TEXT`/`IMAGE`/`MIXED` classification. Engine behind an adapter
-  (Poppler/PyMuPDF).
+  metrics and `TEXT`/`IMAGE`/`MIXED` classification. Engine: **Poppler**, encapsulated in
+  `pdf/primitives/`.
 - `procesador-image` — load, analyse (dimensions, blur, sharpness, orientation, skew,
-  contrast, text coverage), normalize, prepare `ocr_ready`/`vlm_ready` variants
-  (OpenCV/Pillow behind an adapter).
-- `procesador-ocr` — Docling behind an adapter: text, markdown, JSON, tables, layout,
-  reading order; stable intermediate representation; deterministic output ordering.
+  contrast, text coverage), normalize, prepare `ocr_ready`/`vlm_ready` variants.
+  Engine: **OpenCV / Pillow**, encapsulated in `image/primitives/`.
+- `procesador-ocr` — **Docling** (the only OCR engine), encapsulated in `ocr/primitives/`:
+  text, markdown, JSON, tables, layout, reading order; stable intermediate representation;
+  deterministic output ordering.
 - `procesador-llm-call` — `process_llm_request` for one call: template render, prompt
   build, `request_key`, provider call, parse, schema validation; the internal graph is a
   follow-up inside this same phase.
@@ -300,7 +334,7 @@ Within Phase 1 the four processors are independent and parallel; the orchestrato
 ### The four QA gates (all must pass before a task is `done`)
 
 ```bash
-pytest                  # tests green (src/ on the path via pyproject)
+pytest                  # tests green (processors/ on the path via pyproject)
 ruff check .            # linter, includes import order
 ruff format --check .   # formatter
 pylint src tests        # fixme disabled; the rest clean
@@ -317,7 +351,8 @@ pylint src tests        # fixme disabled; the rest clean
 - No silent stand-in (no empty string, `0`, `[]`, or default model/engine/threshold used
   in place of a real answer).
 - No domain noun (invoice, field, verdict, pipeline code) in a processor API.
-- No adapter imported from a port.
+- A concrete engine/library is reached only from a processor's own `primitives/` — never
+  from the orchestrator and never across processors.
 
 ---
 
@@ -333,17 +368,19 @@ pylint src tests        # fixme disabled; the rest clean
 
 ---
 
-## 9. Open decisions
+## 9. Resolved decisions
 
-1. **Naming/layer mapping.** The idea names five `procesador-*` modules under
-   `processors/`; the repo instruction file names `docflow` with `kernels`/`ports`/
-   `adapters`. This plan assumes the `docflow` `src/` layout (§4) but the mapping is not
-   ratified.
-2. **Package vs. flat modules.** Whether each processor is a single module (Phase 0
-   skeleton) or a sub-package with `primitives`/`utils`/`helpers` (the idea's
-   `readme.md` §"Estructura del proyecto").
-3. **Concrete engines.** PDF → Poppler vs PyMuPDF; image → OpenCV vs Pillow; LLM →
-   Ollama local vs a hosted API. The idea lists all as replaceable behind the contracts;
-   the first implementation should pick one per contract and keep the seam.
-4. **English-only output** (repo instruction) vs. the Spanish names in `docs/idea/`.
-   Code and new docs follow the instruction file (English); `docs/idea/` stays as-is.
+Each was open; each is now **resolved from `docs/idea/`** (the source of truth).
+
+1. **Naming / layer mapping — RESOLVED.** The layout is the idea's `readme.md`
+   §"Estructura del proyecto": `processors/{pdf,image,ocr,llm,workflow}`. The orchestrator
+   is `workflow/`. There is no `kernels` / `ports` / `adapters` layer.
+2. **Package vs. flat modules — RESOLVED.** Each processor is a **sub-package** with
+   `primitives/`, `utils/`, `helpers/`, exactly as the idea lists it.
+3. **Concrete engines — RESOLVED** by the idea's §"Implementaciones reemplazables":
+   PDF → **Poppler**; Image → **OpenCV / Pillow**; OCR → **Docling** (only); LLM →
+   **Ollama / vLLM / API**. The first implementation uses one engine per contract; each is
+   swappable behind `Request → Processor → Result` without touching the contract.
+4. **Language / naming — RESOLVED.** Directories, modules and entry points use the English
+   names the idea itself uses (`processors/…`, `process_document`, `process_pdf`, …). The
+   Spanish `procesador-*` names remain only as titles of the `docs/idea/` documents.

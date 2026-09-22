@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-The `orchestrator` component (`src/docflow/kernels/orchestrator.py`) owns the complete document workflow. It is the single component that decides what processor runs, in what order, with what artifacts, whether OCR or vision runs, which document source is selected, when to reuse / skip / force / resume, how to handle errors and fallbacks, and how to consolidate pages and the document. It receives a `DocumentRequest` and returns a `DocumentResult`, persisting and controlling all execution state in between, and it never implements any PDF, image, OCR, or LLM logic itself.
+The `orchestrator` component (`processors/workflow/`, import name `processors.workflow`) owns the complete document workflow. It is the single component that decides what processor runs, in what order, with what artifacts, whether OCR or vision runs, which document source is selected, when to reuse / skip / force / resume, how to handle errors and fallbacks, and how to consolidate pages and the document. It receives a `DocumentRequest` and returns a `DocumentResult`, persisting and controlling all execution state in between, and it never implements any PDF, image, OCR, or LLM logic itself.
 
 ## 2. Context (BA)
 
@@ -326,14 +326,14 @@ pylint src tests
 | File-existence falsely treated as a valid result | Wrong reuse of stale/partial output | Reuse requires `processing_key` match + artifact hash validation, never existence alone |
 | Force not invalidating dependents | Downstream uses stale input silently | `invalidate_downstream` + invariant test #2; invalidated artifacts are preserved but never reused |
 | Interrupted run leaves `RUNNING` forever | Resume deadlock | Recover interrupted `RUNNING` → `READY` when no active worker; claim/release transitions are atomic |
-| State persistence is in-memory (`# TODO: [MVP]`) | State lost across process restarts | Tag explicitly; real `ArtifactStore` behind the port in a later phase; atomic `.tmp` → validate → rename for all published artifacts |
+| State persistence is in-memory (`# TODO: [MVP]`) | State lost across process restarts | Tag explicitly; file-backed `DocumentContext` JSON in a later phase; atomic `.tmp` → validate → rename for all published artifacts |
 | Parallel-page execution race on shared state | Duplicate or lost stage executions | Sequential first in PoC; `claim_stage` atomic `READY → RUNNING`; `parallel_pages` flagged `# TODO: [MVP]` |
 
-## 9. Out of scope & open decisions
+## 9. Out of scope & resolved decisions
 
 **Out of scope (this subplan)**
 
-- Real PDF/image/OCR/LLM engines and adapters (owned by Phase 1 processors).
+- Real PDF/image/OCR/LLM engines (owned by the Phase 1 processors' `primitives/`).
 - The LLM inference subgraph (`classify → extract → compare → validate`) — internal to `procesador-llm-call`.
 - Multi-document corpus batching and distributed execution.
 - Real retry queues and GPU-competition policy.
@@ -341,10 +341,18 @@ pylint src tests
 - Domain-specific extraction rules; the pipeline stays generic (prompt/schema assets are data, not code).
 - Persistent cross-process storage and observability (telemetry/caching/HA) — deferred behind `# TODO: [RELEASE]`.
 
-**Open decisions**
+**Resolved decisions**
 
-1. **Layer mapping.** Whether the five processors become `kernels/` (per the repo instruction file) or a `processors/` tree; this subplan assumes `src/docflow/kernels/orchestrator.py`.
-2. **Durable state backend.** In-memory (PoC) vs. a file-backed `DocumentContext` JSON from day one; affects how `save/load_document_context` are written.
-3. **Parallelism now vs. later.** Whether `parallel_pages` is implemented sequentially-but-tagged in Phase 2 or deferred to Phase 4.
-4. **Fallback depth.** Which `handle_processor_error` fallbacks (e.g. OCR fail → VLM-only, → `REVIEW_REQUIRED`) are in the PoC happy path vs. deferred.
-5. **Stop/claim coordination.** How a running stage is interrupted when no per-processor cancel mechanism exists yet (graceful finish vs. external kill).
+1. **Layer mapping — RESOLVED.** The five components live under `processors/`, with the
+   orchestrator at `processors/workflow/`, exactly as the idea's §"Estructura del
+   proyecto" fixes. There is no `kernels/` layer.
+2. **Durable state backend — RESOLVED for PoC.** In-memory `DocumentContext` first;
+   `save`/`load` serialise to JSON with atomic writes, so the shape is real even if the
+   store is transient (`# TODO: [MVP]` for a durable backend).
+3. **Parallelism now vs. later — RESOLVED.** `parallel_pages` is implemented sequentially
+   but declared, tagged `# TODO: [MVP]`; true parallelism is deferred to Phase 4.
+4. **Fallback depth — RESOLVED.** PoC happy path keeps only `retry processor` and
+   `REVIEW_REQUIRED`; richer fallbacks (OCR fail → VLM-only) are deferred (`# TODO: [MVP]`).
+5. **Stop/claim coordination — RESOLVED.** A running stage finishes gracefully (no
+   per-processor cancel in PoC); the interrupted `RUNNING → READY` recovery is handled on
+   resume. External kill is deferred.

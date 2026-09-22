@@ -2,7 +2,7 @@
 
 ## 1. Objective
 
-Implement `procesador-llm-call` (module `docflow.kernels.llm_call`) as an independently
+Implement `procesador-llm-call` (module `processors/llm`, import name `processors.llm`) as an independently
 usable processor whose single responsibility is to **prepare, execute, validate, persist
 and coordinate calls to LLM/VLM models**. It consumes an already-defined inference task
 (`LLMInput`) and returns a structured, validated, traceable result (`LLMResult`), running
@@ -142,7 +142,7 @@ flowchart TB
     PREP --> KEY["calculate request_key"]
     KEY --> MSG["build_messages"]
     MSG --> PAY["build provider payload"]
-    PAY --> CALL["provider request (adapter)"]
+    PAY --> CALL["provider request (llm/primitives)"]
     CALL --> PARSE["parse response"]
     PARSE --> CHK{"validate schema / rules"}
     CHK -->|invalid| RETRY{"retryable?"}
@@ -218,18 +218,20 @@ the prompt changed, the schema changed, the model changed, the options changed, 
 was invalidated downstream, or an explicit `FORCE` was requested. In every other case:
 `REUSE`.
 
-### Provider adapter behind a port
+### Provider encapsulation
 
-Provider engines live behind the `LlmEngine` port interface (`docflow.ports`), with thin
-adapters (`docflow.adapters`) for:
+Provider engines live inside `llm/primitives/`, with primitive wrappers for:
 
 - **Ollama** (local);
 - **vLLM** (OpenAI-compatible local);
 - **hosted OpenAI-compatible API**.
 
-No adapter is imported from a port, and the processor never imports another processor's
-module. `LlmEngine` exposes the minimal surface needed: `generate_text`, `generate_multimodal`,
-`generate_structured`, `list_models`, `check_model_available`, `get_context_window`.
+No other processor, and never the orchestrator, reaches a provider directly, and the
+processor never imports another processor's module. The primitives expose the minimal
+surface needed: `generate_text`, `generate_multimodal`, `generate_structured`,
+`list_models`, `check_model_available`, `get_context_window`. Providers are swappable
+behind the `LLMInput → LLMResult` contract — a different provider changes only
+`llm/primitives/`, never the contract or the workflow.
 
 ### Error-handling posture
 
@@ -247,14 +249,14 @@ graph; a retry always preserves prior attempts (`LLMAttempt` history). Documenta
 | ID | Task | Effort | Depends on |
 |---|---|---|---|
 | LLM-01 | Contract dataclasses: `LLMInput`, `LLMResult`, `LLMNodeResult`, `LLMGraphState`, `LLMAttempt`, `ComparisonResult`, `Usage`, `Timing`, stage-state enums | S | — |
-| LLM-02 | `LlmEngine` port interface + `LLMProvider` result/error types | S | LLM-01 |
-| LLM-03 | In-memory fake provider implementing `LlmEngine` + committed template/schema fixtures | S | LLM-02 |
+| LLM-02 | Provider primitive interface + `LLMProvider` result/error types (in `llm/primitives/`) | S | LLM-01 |
+| LLM-03 | In-memory fake provider implementing the primitive interface + committed template/schema fixtures | S | LLM-02 |
 | LLM-04 | Template render & prompt build: variable injection, `<doc>`/`<extra>`/`<schema>` resolution, sanitize | M | LLM-01 |
 | LLM-05 | `calculate_request_key` + idempotency helpers (`find_reusable_node_result`, `is_node_reusable`, `validate_cached_result`) | M | LLM-01 |
 | LLM-06 | `process_llm_request` single-call happy path (template → prompt → key → payload → call → parse → validate) | M | LLM-03, LLM-04, LLM-05 |
 | LLM-07 | Parse + schema validation (`load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result`) | M | LLM-06 |
 | LLM-08 | Retry + attempt history (`retry_llm_request`, `should_retry`, `increment_attempt`) | M | LLM-07 |
-| LLM-09 | Provider adapters: Ollama local + OpenAI-compatible (`# TODO: [MVP]` real transport) | L | LLM-02 |
+| LLM-09 | Provider primitives: Ollama local + OpenAI-compatible (`# TODO: [MVP]` real transport) | L | LLM-02 |
 | LLM-10 | Node execution: `process_llm_node`, node-state transitions, `claim_node` atomic `READY→RUNNING` | M | LLM-06 |
 | LLM-11 | Graph persistence in `llm/` namespace, atomic writes, load/save of `LLMGraphState` | L | LLM-01 |
 | LLM-12 | `execute_llm_graph`: dependencies, routing, parallel branches, subgraph lifecycle | L | LLM-10, LLM-11 |
@@ -336,7 +338,7 @@ reports `status == "SUCCESS"`, `schema_valid == true`, non-empty `usage` and `ti
   `<extra>` and `<schema>` placeholders, used verbatim by the happy-path and invariant tests.
 - A JSON schema fixture (`fixtures/llm/schema/simple.schema.json`) exercising required
   fields and types.
-- A fake `LlmEngine` provider (in-memory) that returns deterministic valid JSON and can be
+- A fake provider (in-memory) that returns deterministic valid JSON and can be
   scripted to return invalid JSON / raise timeouts for retry tests, with a call counter to
   prove reuse (invariant 1) and attempt tracking (invariant 2 / retry scenario).
 
@@ -350,12 +352,12 @@ reports `status == "SUCCESS"`, `schema_valid == true`, non-empty `usage` and `ti
 - A fake provider fixture and at least one template + schema fixture are committed.
 - The subgraph shape (`classify → extract_a/extract_b → compare → validate → consolidate`)
   and the two-level separation are agreed with the orchestrator owner.
-- All open decisions in §9 are either resolved or explicitly deferred with an owner.
+- All decisions in §9 are resolved.
 
 ### Definition of Done
 
-- `docflow.kernels.llm_call` implements the single call and the internal subgraph behind
-  the `LlmEngine` port; no import of another processor; no domain noun in any API.
+- `processors.llm` implements the single call and the internal subgraph with providers
+  reached only through `llm/primitives/`; no import of another processor; no domain noun in any API.
 - Every shortcut carries an explicit `# TODO: [MVP]` (real provider transport, real
   persistence) or `# TODO: [RELEASE]` (telemetry, HA, caching).
 - The happy-path test and the three invariant tests in §6 pass, and each invariant test has
@@ -381,7 +383,7 @@ pylint src tests
 | Context overflow / truncated prompt | Degraded extraction | Explicit `count_tokens` / `truncate_to_token_limit` with metadata, never silent truncation |
 | Scope creep into a full workflow engine | Over-engineering in PoC | Happy path first; orchestrator owns documental decisions; `# TODO` tags mark deferrals |
 
-## 9. Out of scope & open decisions
+## 9. Out of scope & resolved decisions
 
 ### Out of scope
 
@@ -392,15 +394,17 @@ pylint src tests
 - Domain-specific extraction rules; prompts and schemas are data assets, not code.
 - Observability/telemetry beyond per-attempt `usage`/`timing` records.
 
-### Open decisions
+### Resolved decisions
 
-1. **Graph language:** a small declarative descriptor (`graph: {nodes, depends_on}` in
-   `LLMInput`) vs. a Python-defined graph. PoC leans to the declarative descriptor.
-2. **Parallelism mechanism:** `asyncio` vs threads for parallel `extract_a`/`extract_b`;
-   PoC may run them sequentially first and tag `# TODO: [MVP]` for true concurrency.
-3. **Concrete first adapter:** Ollama (local, zero external cost) vs an OpenAI-compatible
-   hosted API. PoC picks Ollama local with a scripted fake for tests.
-4. **Persistence backend:** in-memory dict + JSON files under `llm/` for PoC
-   (`# TODO: [MVP]`), vs. a real store later — no schema/DB introduced in Phase 1.
-5. **`model_version` source:** whether it comes from `LLMInput.metadata`, the provider's
-   `get_model_info`, or both; it must be part of `request_key` either way.
+1. **Graph language — RESOLVED:** a small declarative descriptor (`graph: {nodes,
+   depends_on}` in `LLMInput`), per the idea's §"Grafo LLM" (the subgraph shape is data,
+   not code).
+2. **Parallelism mechanism — RESOLVED for PoC:** run `extract_a`/`extract_b` sequentially
+   first, tagged `# TODO: [MVP]`; true concurrency is deferred.
+3. **Concrete first provider — RESOLVED:** Ollama (local, zero external cost) first, with
+   a scripted fake for tests; the idea's §"Implementaciones reemplazables" lists Ollama /
+   vLLM / API as interchangeable behind the contract.
+4. **Persistence backend — RESOLVED for PoC:** in-memory dict + JSON files under `llm/`
+   (`# TODO: [MVP]`); no schema/DB introduced in Phase 1.
+5. **`model_version` source — RESOLVED:** from the provider's `get_model_info` when
+   available, else `LLMInput.metadata`; it is part of `request_key` either way.
