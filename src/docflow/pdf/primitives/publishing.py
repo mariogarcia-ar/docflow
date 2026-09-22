@@ -13,6 +13,7 @@ land in the same directory, which is the point of a reproducible run.
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +68,32 @@ def publish_json(final_path: Path, payload: dict[str, Any]) -> Path:
     )
 
 
+def publish_file(source_path: Path, final_path: Path) -> Path:
+    """Copy a file into place atomically.
+
+    Used for the immutable reference copy at ``source/document.pdf``. The staging file is
+    used here for the same reason as for text: a reader must never find a half-written
+    document under the published name.
+
+    Args:
+        source_path: The file to copy. Read only: never written to.
+        final_path: Where the artifact is published. Its parent is created if absent.
+
+    Returns:
+        ``final_path``, once the copy is complete.
+
+    Raises:
+        OSError: The source cannot be read or the copy cannot be written. Propagated rather
+            than swallowed: a missing reference copy is a failure to report, and the caller
+            is the one that can classify it.
+    """
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    staged = temp_path(final_path)
+    shutil.copyfile(source_path, staged)
+    staged.replace(final_path)
+    return final_path
+
+
 def discard(path: Path) -> None:
     """Remove a path, ignoring its absence.
 
@@ -92,6 +119,7 @@ __all__ = [
     "TEMP_SUFFIX",
     "discard",
     "discard_staged",
+    "publish_file",
     "publish_json",
     "publish_text",
     "temp_path",

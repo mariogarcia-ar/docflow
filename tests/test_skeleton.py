@@ -210,14 +210,21 @@ def test_no_contract_field_carries_an_undocumented_default() -> None:
     )
 
 
-def test_a_processor_that_is_not_implemented_raises_instead_of_placeholding() -> None:
-    """An unimplemented entry point raises; a caller cannot mistake it for a result.
+def test_the_remaining_entry_points_raise_rather_than_placeholding() -> None:
+    """The two entry points still awaiting their task raise, rather than returning a stand-in.
 
-    Phase 0 asserted this for both PDF entry points. ``PDF-09`` implemented
-    ``process_pdf_page``, so the assertion now covers ``process_document`` (``ORC-14``) and
-    ``process_pdf`` (``PDF-10``) — the entry points still awaiting their task. Keeping the
-    check pointed at what is genuinely a stub is the point: asserting it against code that
-    now works would fail for a reason that is not a defect.
+    Phase 0 asserted this for both PDF entry points plus ``process_document``. ``PDF-09``
+    implemented ``process_pdf_page`` and ``PDF-10`` implemented ``process_pdf``, so the two
+    that remain are ``process_document`` (``ORC-14``) and the whole of ``docflow.workflow``.
+
+    Pointing the check at what is genuinely unimplemented is the point: asserting it against
+    a working entry point would fail for a reason that is not a defect. The PDF processor's
+    own behaviour is now covered by ``tests/pdf/test_entrypoints.py`` and
+    ``tests/pdf/test_document_entrypoint.py``.
+
+    ``process_pdf`` is no longer a stub, so it is called with a path that does not exist: that
+    is the observable difference between "not implemented" and "implemented but unable to
+    read the document".
     """
     workflow_module = importlib.import_module("docflow.workflow")
     pdf_module = importlib.import_module("docflow.pdf")
@@ -229,7 +236,12 @@ def test_a_processor_that_is_not_implemented_raises_instead_of_placeholding() ->
         workflow_module.process_document(document_request)
 
     with pytest.raises(NotImplementedError):
+        workflow_module.process_page(document_request, 1, Path("page_001"))
+
+    # Implemented, so it fails for a reason that is about the document rather than the code.
+    with pytest.raises(Exception) as failure:
         pdf_module.process_pdf(pdf_request)
+    assert not isinstance(failure.value, NotImplementedError)
 
 
 def test_a_processor_reports_a_state_without_importing_the_orchestrator() -> None:

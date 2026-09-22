@@ -23,10 +23,13 @@ from typing import Final
 from docflow.pdf.contracts import (
     PDFContext,
     PDFError,
+    PDFMetadata,
     PDFOptions,
     PDFPageMetadata,
     PDFPageResult,
     PDFPageValidation,
+    PDFResult,
+    PDFValidation,
 )
 
 VALID = "VALID"
@@ -176,6 +179,104 @@ def validate_pdf_page_result(
     return PDFPageValidation(status=PARTIAL, errors=errors, missing_artifacts=missing)
 
 
+def document_metadata(
+    engine_name: str,
+    engine_version: str,
+    processor: str,
+    processor_version: str,
+    page_count: int,
+    context: PDFContext,
+    timing: dict[str, float],
+) -> PDFMetadata:
+    """Assemble the provenance record for a document.
+
+    Args:
+        engine_name: The engine's name.
+        engine_version: The engine's version.
+        processor: The processor's name.
+        processor_version: The processor's version.
+        page_count: Pages the engine reported for the document.
+        context: The request's correlation context, echoed unchanged.
+        timing: Wall-clock seconds by stage.
+
+    Returns:
+        The provenance record. ``page_count`` is the engine's figure rather than the number
+        of pages actually processed: the two differing is a fact worth being able to see,
+        and using the processed count would hide a dropped page.
+    """
+    return PDFMetadata(
+        processor=processor,
+        processor_version=processor_version,
+        engine=engine_name,
+        engine_version=engine_version,
+        page_count=page_count,
+        context=context,
+        timing=timing,
+    )
+
+
+def validate_pdf_result(
+    result: PDFResult, options: PDFOptions | None = None
+) -> PDFValidation:
+    """Validate a document result structurally.
+
+    Two checks, both about the document as a whole rather than about any page:
+
+    * **Page completeness** — the number of page results equals the number of pages the
+      engine reported. This is invariant 1 of ``subplan-procesador-pdf.md`` §6, and it is
+      the check that catches a page loop which dropped its last page: every individual page
+      result would still be valid, so only the document can see the gap.
+    * **Per-page verdicts** — a document cannot be ``VALID`` when one of its pages is not.
+
+    Args:
+        result: The document result to validate.
+        options: The options the document was processed under. Accepted for symmetry with
+            the page-level validator and used to report whether an incomplete document was
+            an omission or an oversight.
+
+    Returns:
+        The verdict. ``VALID`` when the page count matches and every page is valid,
+        ``PARTIAL`` when some pages survived, ``INVALID`` when the document produced
+        nothing.
+
+    Note:
+        The function never returns a workflow action, for the same reason as the page-level
+        validator.
+    """
+    del options  # Reserved: PDF-11 owns the option-aware document checks.
+
+    errors: list[PDFError] = []
+    missing: list[Path] = []
+
+    processed = len(result.pages)
+    expected = result.metadata.page_count
+    if processed != expected:
+        errors.append(
+            PDFError(
+                type="INTERNAL_ERROR",
+                page_number=None,
+                message=(
+                    f"the document reports {expected} page(s) but {processed} were processed"
+                ),
+                recoverable=False,
+                metadata={"page_count": expected, "pages_processed": processed},
+            )
+        )
+
+    incomplete = [page for page in result.pages if page.validation.status != VALID]
+    if incomplete:
+        errors.extend(error for page in incomplete for error in page.validation.errors)
+        missing.extend(
+            path for page in incomplete for path in page.validation.missing_artifacts
+        )
+
+    if not errors:
+        return PDFValidation(status=VALID, errors=[], missing_artifacts=[])
+    if not result.pages:
+        return PDFValidation(status=INVALID, errors=errors, missing_artifacts=missing)
+    return PDFValidation(status=PARTIAL, errors=errors, missing_artifacts=missing)
+
+
 def page_validation_with(
     status: str,
     errors: list[PDFError],
@@ -242,11 +343,14 @@ def page_metadata(
 
 
 __all__ = [
+    "ARTIFACT_CAPABILITIES",
     "ERROR",
     "INVALID",
     "PARTIAL",
     "VALID",
+    "document_metadata",
     "page_metadata",
     "page_validation_with",
     "validate_pdf_page_result",
+    "validate_pdf_result",
 ]

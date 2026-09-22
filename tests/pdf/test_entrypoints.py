@@ -23,7 +23,7 @@ from docflow.pdf import PDFContext, PDFOptions, PDFRequest
 from docflow.pdf.entrypoints import process_pdf_page
 from docflow.pdf.primitives.failures import PDFPrimitiveError
 from docflow.pdf.primitives.publishing import TEMP_SUFFIX
-from tests.factories import build_pdf_options
+from tests.factories import build_pdf_request_for
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 TEXT_PDF = FIXTURES / "matrix" / "three-invoices.pdf"
@@ -37,18 +37,8 @@ OTHER_PROCESSOR_NAMESPACES = ("image", "ocr", "llm")
 
 
 def build_request(tmp_path: Path, source: Path = TEXT_PDF) -> PDFRequest:
-    """Return a request whose options ask for everything the page can produce.
-
-    The options come from :func:`tests.factories.build_pdf_options` rather than being spelled
-    out here: the same set is needed by the contract round-trip tests, and a second literal
-    would be a second thing to keep in step.
-    """
-    return PDFRequest(
-        pdf_path=source,
-        output_dir=tmp_path,
-        options=build_pdf_options(),
-        context=PDFContext(document_id="doc-1", workflow_run_id="run-1"),
-    )
+    """Return a request whose options ask for everything the page can produce."""
+    return build_pdf_request_for(source, tmp_path)
 
 
 def process(tmp_path: Path, page_number: int = TEXT_PAGE, source: Path = TEXT_PDF):

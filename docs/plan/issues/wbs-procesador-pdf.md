@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PDF-01` … `PDF-14` |
-| Status | `PDF-01`…`PDF-09` **DONE** — Wave 2 closed and Wave 3 began; `PDF-10`…`PDF-14` `NOT_STARTED` |
+| Status | `PDF-01`…`PDF-10` **DONE** — Wave 3 closed; `PDF-11`…`PDF-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -39,7 +39,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-07 | Embedded image primitives | M | 2 — Primitives | PDF-02 | `extract_images_from_page`, `get_image_blocks` | this file §PDF-07 | DONE |
 | PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | DONE |
 | PDF-09 | Page entry point | M | 3 — Composition | PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | `process_pdf_page`, `page_001/metadata.json` | this file §PDF-09 | DONE |
-| PDF-10 | Document entry point | M | 3 — Composition | PDF-03, PDF-09 | `process_pdf`, `metadata.json` | this file §PDF-10 | NOT_STARTED |
+| PDF-10 | Document entry point | M | 3 — Composition | PDF-03, PDF-09 | `process_pdf`, `metadata.json` | this file §PDF-10 | DONE |
 | PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | NOT_STARTED |
 | PDF-12 | Atomic persistence | S | 4 — Hardening | PDF-09, PDF-10 | `.tmp` → validate → rename across all artifacts | this file §PDF-12 | NOT_STARTED |
 | PDF-13 | Fixtures + tests | M | 4 — Hardening | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 | `fixtures/pdf_sample_*.pdf`, `tests/` | this file §PDF-13 | NOT_STARTED |
@@ -284,6 +284,17 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the run completes, then `metadata.json` records `processor`, `processor_version`, `engine`, `engine_version` and page order is preserved.
 - **Evidence / DoD:** Happy-path test `process_pdf` over the committed fixture; page-completeness invariant (PDF-13, invariant 1).
 - **Tags:** `# TODO: [MVP]` for real per-document validation; `# TODO: [RELEASE]` for resource caps on very large PDFs.
+- **Status: DONE.** `src/docflow/pdf/entrypoints.py` (the page loop and the document assembly), `primitives/composition.py` (`aggregate_page_metrics`), `primitives/publishing.py` (`publish_file`) and `primitives/validation.py` (`validate_pdf_result`, `document_metadata`). Tests in `tests/pdf/test_document_entrypoint.py`. Fixture: `three-invoices.pdf` — 3 pages, text-dominant.
+  - Run over the fixture: `status=success`, `page_count=3`, `len(pages)=3`, page order `[1,2,3]`, aggregate `462` characters **equal to the per-page sum**, `source/document.pdf` byte-identical to the input, 13 artifacts listed.
+  - **Invariant 1 is the centre of gravity and is mutation-verified.** A page loop that drops its last page still produces valid page results — each independently correct — so no page-level test can see the gap; only the document-level count can. Dropping the last page fails **6** tests.
+  - **A defect found by its own tests:** ``_status_for_document`` had a trailing ``or pages`` that made the ``failed`` branch unreachable for any document with pages — that is, for every document that reaches it. A document whose every page failed reported ``partial``, promising recoverable work that did not exist.
+  - **A false positive found in this session's own guard, not in the code it guards.** The single-seam test forbade ``shutil`` wholesale, and ``publish_file`` legitimately imports it for ``shutil.copyfile`` — copying a file is not reaching an engine. The guard now matches engine-reach per attribute (``shutil.which``, ``subprocess.*``, ``os.system``) rather than by import, which keeps the protection without pushing a helper toward a less visible route.
+  - **The aggregate includes pages that failed, deliberately.** A failed page genuinely contains nothing measurable; its metrics are the honest zeroes of a page that produced no artifacts, not a gap being papered over. Summing only successful pages would produce totals that silently exclude real pages. ``pages_processed`` and ``page_count`` are both recorded so the two can be compared, and the per-page statuses carry the authority.
+  - **Coverage aggregates as a mean, not a sum.** A fraction of a page does not add. ``largest_image_coverage`` is a maximum, pinned by a test so it is not confused with the mean.
+  - `processing_key` is again explicit ``None``, with the same reasoning as the page level.
+  - Two further tests were updated because their phase passed, not to make them green: the Phase 0 placeholder check now points at the entry points still awaiting their task, and the `PDF-04` out-of-range test expects the typed classification.
+  - Mutation-verified, three mutations, each restored green: last page dropped (**6 fail**), aggregate replaced by the first page's metrics (1 fail), all-failed branch removed (1 fail — the original defect).
+  - Four QA gates green.
 
 ### PDF-11 — Validation and error model
 

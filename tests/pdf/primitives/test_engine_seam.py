@@ -27,26 +27,34 @@ ENGINE_MODULE_PATH = Path(engine.__file__)
 PRIMITIVES_DIR = ENGINE_MODULE_PATH.parent
 PRIMITIVES_PACKAGE = "docflow.pdf.primitives"
 
-FORBIDDEN_IMPORTS = frozenset(
-    {"subprocess", "shutil", "fitz", "pypdf", "pypdfium2", "pdf2image"}
-)
+FORBIDDEN_IMPORTS = frozenset({"fitz", "pypdf", "pypdfium2", "pdf2image"})
 
-# A process spawn, however it is spelled. `os.system` and `os.popen` reach an engine just
-# as effectively as `subprocess` does. Matched against *calls*, never against prose: a
-# primitive is allowed to mention `subprocess` in a docstring explaining why it does not
-# use one.
-PROCESS_SPAWN_CALLS = frozenset(
+FORBIDDEN_MODULE_ATTRIBUTES = frozenset(
     {
+        # `subprocess` itself is checked as an import, since every use of it spawns a
+        # process. `shutil` is checked per attribute because the module is also where
+        # `copyfile` lives, and copying a file is not reaching an engine. An earlier version
+        # of this guard forbade `shutil` wholesale and flagged the atomic-copy helper in
+        # `publishing.py` — a false positive that would have pushed that helper into
+        # reaching the engine by a less visible route.
         "subprocess.run",
         "subprocess.Popen",
         "subprocess.call",
         "subprocess.check_call",
         "subprocess.check_output",
+        "shutil.which",
         "os.system",
         "os.popen",
         "os.spawnv",
     }
 )
+"""Engine reach expressed as a module attribute, for imports too broad to forbid outright."""
+
+# A process spawn, however it is spelled. `os.system` and `os.popen` reach an engine just
+# as effectively as `subprocess` does. Matched against *calls*, never against prose: a
+# primitive is allowed to mention `subprocess` in a docstring explaining why it does not
+# use one.
+PROCESS_SPAWN_CALLS = FORBIDDEN_MODULE_ATTRIBUTES
 
 
 def imported_roots(source: str) -> set[str]:
@@ -124,19 +132,29 @@ def test_the_seam_module_imports() -> None:
 
 
 def test_no_primitive_reaches_an_engine_except_through_the_seam() -> None:
-    """Only ``engine.py`` imports ``subprocess``, ``shutil`` or a PDF library directly.
+    """Only ``engine.py`` spawns a process or reads a PDF with another library.
+
+    Two shapes of violation, because the remedy differs:
+
+    * a PDF library imported anywhere but the seam — ``fitz``, ``pypdf``, ``pdf2image``;
+    * a process spawned, or the engine located on ``PATH``, outside it — ``subprocess``,
+      ``os.system``, ``shutil.which``.
+
+    ``shutil`` is matched per attribute rather than by import, because ``shutil.copyfile`` is
+    how a file is copied and has nothing to do with reaching an engine.
 
     Mutation that breaks it: add ``import subprocess`` to ``split.py`` and call
-    ``subprocess.run(["pdfseparate", …])`` there. The assertion fails — the engine is now
-    reachable from two places, and swapping Poppler means finding both.
+    ``subprocess.run([...])`` there. The assertion fails — the engine is now reachable from
+    two places, and swapping Poppler means finding both.
     """
     violations: dict[str, list[str]] = {}
 
     for path in primitive_modules():
-        roots = imported_roots(path.read_text(encoding="utf-8"))
-        forbidden = sorted(roots & FORBIDDEN_IMPORTS)
-        if forbidden:
-            violations[path.name] = forbidden
+        source = path.read_text(encoding="utf-8")
+        found = sorted(imported_roots(source) & FORBIDDEN_IMPORTS)
+        found += sorted(spawn_calls(source))
+        if found:
+            violations[path.name] = found
 
     assert not violations, (
         "these primitives reach an engine directly instead of going through "

@@ -25,6 +25,7 @@ otherwise, because reporting a fraction of nothing would be a number with no mea
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from docflow.pdf.contracts import (
@@ -177,6 +178,59 @@ def analyze_pdf_page(page_data: PageContent) -> PDFPageMetrics:
     )
 
 
+def aggregate_page_metrics(pages: list[PDFPageMetrics]) -> PDFPageMetrics:
+    """Sum per-page metrics into the document's aggregate.
+
+    **The sum includes pages that failed, because a failed page genuinely contains nothing
+    measurable** — its metrics are the honest zeroes of a page that produced no artifacts,
+    not a gap being papered over. The aggregate therefore describes what the document
+    yielded, not what it could have yielded, and the per-page ``status`` and ``validation``
+    are the authority on whether the sum is complete. ``PDFResult.errors`` carries the
+    reasons.
+
+    The alternative — summing only the pages that succeeded — would produce a document whose
+    totals silently exclude real pages, which is the kind of plausible-but-wrong number
+    ``docs/plan/README.md`` §7 exists to prevent.
+
+    Args:
+        pages: The per-page measurements, in page order.
+
+    Returns:
+        The aggregate. An empty document sums to zeroes rather than raising: a PDF with no
+        pages is an empty document, not an error.
+    """
+    return PDFPageMetrics(
+        characters=sum(page.characters for page in pages),
+        words=sum(page.words for page in pages),
+        text_blocks=sum(page.text_blocks for page in pages),
+        images=sum(page.images for page in pages),
+        # Coverage is a fraction of a page, so summing would be meaningless. The document's
+        # coverage is the mean over its pages: the fraction of a typical page that carries
+        # text, which is the comparison a caller actually wants across documents.
+        text_coverage=_mean(page.text_coverage for page in pages),
+        image_coverage=_mean(page.image_coverage for page in pages),
+        largest_image_coverage=max(
+            (page.largest_image_coverage for page in pages), default=0.0
+        ),
+    )
+
+
+def _mean(values: Iterable[float]) -> float:
+    """Return the mean of a sequence of floats, or ``0.0`` when it is empty.
+
+    Args:
+        values: The numbers to average.
+
+    Returns:
+        The arithmetic mean. An empty sequence has no mean, and ``0.0`` is the honest answer
+        for a document with no pages rather than a division by zero.
+    """
+    numbers = list(values)
+    if not numbers:
+        return 0.0
+    return sum(numbers) / len(numbers)
+
+
 def classify_pdf_page(metrics: PDFPageMetrics) -> PDFPageClassification:
     """Classify a page descriptively from its measurements alone.
 
@@ -222,6 +276,7 @@ __all__ = [
     "TEXT_COVERAGE_MIN",
     "WORD_MIN",
     "PageContent",
+    "aggregate_page_metrics",
     "analyze_pdf_page",
     "classify_pdf_page",
 ]

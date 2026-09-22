@@ -75,6 +75,21 @@ def build_pdf_request(tmp_path: Path) -> PDFRequest:
     )
 
 
+def build_pdf_request_for(source: Path, output_dir: Path) -> PDFRequest:
+    """Return a request for a real document, asking for every capability.
+
+    Shared by the page-level and document-level entry-point tests, which both need a request
+    that exercises all four capabilities against a committed fixture. Keeping one builder
+    means the two suites cannot drift into testing different option sets.
+    """
+    return PDFRequest(
+        pdf_path=source,
+        output_dir=output_dir,
+        options=build_pdf_options(),
+        context=PDFContext(document_id="doc-1", workflow_run_id="run-1"),
+    )
+
+
 def build_image_options() -> ImageOptions:
     """Return a fully specified set of image transformations."""
     return ImageOptions(

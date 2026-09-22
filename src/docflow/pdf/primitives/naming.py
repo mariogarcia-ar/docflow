@@ -20,6 +20,21 @@ sort step.
 _SPLIT_PATTERN = re.compile(r"^page_(\d+)\.pdf$")
 
 
+def iter_page_indexes(page_count: int) -> range:
+    """Return the 1-based page indexes of a document.
+
+    One place decides that page numbering starts at 1 and is contiguous, so the document
+    loop and the primitives cannot disagree about it.
+
+    Args:
+        page_count: Pages the engine reported.
+
+    Returns:
+        The range ``1 … page_count``.
+    """
+    return range(1, page_count + 1)
+
+
 def page_index_name(index: int) -> str:
     """Return the zero-padded page name for a 1-based index.
 
