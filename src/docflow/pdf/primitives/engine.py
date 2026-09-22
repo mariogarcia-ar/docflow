@@ -159,6 +159,41 @@ def get_engine_name() -> str:
     return POPPLER_ENGINE_NAME
 
 
+def require_positive_page_range(page_range: tuple[int, int] | None) -> None:
+    """Reject a page range the Poppler tools would silently reinterpret.
+
+    Both tools this processor drives read a **non-positive bound as "no range"** and then
+    operate on the whole document instead of failing:
+
+    * ``pdfseparate -f 0 -l 0 doc.pdf 'page_%03d.pdf'`` exits 0 and splits every page.
+    * ``pdftoppm -singlefile -f 0 -l 0 doc.pdf out.png`` exits 0 and renders page **1** —
+      byte-identical to an explicit request for page 1, which is what makes it undetectable
+      downstream.
+
+    The guard lives here, in the seam, rather than in each primitive: the hazard belongs to
+    the engine, and two copies of the rule would be two places to forget it. It is a
+    genuine safety net rather than documentation of a caller error — no caller wants the
+    whole document when it asked for page 0.
+
+    Args:
+        page_range: The requested ``(first, last)`` range, or ``None`` for every page.
+
+    Raises:
+        ValueError: Either bound is below 1, or the range is inverted.
+    """
+    if page_range is None:
+        return
+
+    first, last = page_range
+    if first < 1 or last < 1:
+        raise ValueError(
+            f"page numbers are 1-based; got the range {first}-{last}. The engine reads a "
+            "non-positive bound as 'no range' and would process every page"
+        )
+    if first > last:
+        raise ValueError(f"page range {first}-{last} is empty")
+
+
 def find_engine_command(command: PopplerCommand) -> Path:
     """Locate one Poppler binary on ``PATH``.
 
@@ -185,7 +220,6 @@ def find_engine_command(command: PopplerCommand) -> Path:
 
 def get_engine_version() -> str:
     """Probe the engine for its version.
-
     Returns:
         The version string the engine reports, e.g. ``"25.02.0"``.
 

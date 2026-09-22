@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PDF-01` … `PDF-14` |
-| Status | `PDF-01`, `PDF-02`, `PDF-04` **DONE**; `PDF-03`, `PDF-05`…`PDF-08` signatures landed, bodies `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
+| Status | `PDF-01`, `PDF-02`, `PDF-04`, `PDF-05` **DONE**; `PDF-03`, `PDF-06`…`PDF-08` signatures landed, bodies `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -34,7 +34,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-02 | Poppler primitives skeleton | M | 1 — Foundations | PDF-01 | `pdf/primitives/` | this file §PDF-02 | DONE |
 | PDF-03 | Document primitives | M | 2 — Primitives | PDF-02 | `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | this file §PDF-03 | SIGNATURE_ONLY |
 | PDF-04 | Split/extract primitives | M | 2 — Primitives | PDF-02 | `extract_page`, `split_pdf`, `merge_pdfs` | this file §PDF-04 | DONE |
-| PDF-05 | Render primitive | S | 2 — Primitives | PDF-02 | `render_page_to_image` | this file §PDF-05 | SIGNATURE_ONLY |
+| PDF-05 | Render primitive | S | 2 — Primitives | PDF-02 | `render_page_to_image` | this file §PDF-05 | DONE |
 | PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | SIGNATURE_ONLY |
 | PDF-07 | Embedded image primitives | M | 2 — Primitives | PDF-02 | `extract_images_from_page`, `get_image_blocks` | this file §PDF-07 | SIGNATURE_ONLY |
 | PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | SIGNATURE_ONLY |
@@ -138,6 +138,17 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given `render: false` in `PDFOptions`, then no render artifact is produced and no error is raised.
 - **Evidence / DoD:** Fixture-based test asserting file existence and dimensions.
 - **Tags:** —
+- **Status: DONE.** `src/docflow/pdf/primitives/render.py`; tests in `tests/pdf/primitives/test_render.py`. Fixture: `tests/fixtures/matrix/three-invoices.pdf` (612 × 792 pt, so the expected pixels are a real prediction: `points / 72 × dpi`, not a restatement of the output).
+  - Dimensions verified at 72, 150, 200 and 300 DPI; page identity verified by rendering two pages and comparing bytes, not only sizes.
+  - The published path is exactly the caller's — no engine suffix leaks (`page.png.png` is the failure this prevents) and no staged file survives.
+  - Input immutability re-checked; `render: false` is the caller's decision (`PDF-09`), so no option handling lives here.
+  - **Three engine hazards found by probing Poppler 25.02.0, not from the plan:**
+    1. **Any page below 1 renders page 1.** `-f 0 -l 0` exits 0 and writes a file byte-identical to the page-1 render, so a forwarded zero is undetectable downstream. Unlike `PDF-04`, **the range guard is the only defence here** — `pdftoppm` accepts no `%d` template that would make it refuse the bound.
+    2. **`-r 0` is accepted and silently renders at the engine's own 150 DPI.** Forwarding it would record a DPI in `metadata.json` that no image on disk has, so the resolution is bounded by `MIN_RENDER_DPI`.
+    3. The tool takes a **prefix** and appends its own suffix, so the final name is staged and renamed rather than handed to the engine.
+  - **Shared guard.** The page-range check moved into the seam as `require_positive_page_range`, because both `pdfseparate` and `pdftoppm` share the hazard; `split.py` now calls it instead of keeping its own copy.
+  - Mutation-verified, four mutations, each restored green: guard removed (2 fail), DPI guard removed (1 fail), `-r` dropped (**4 fail — and the 150 DPI case correctly stayed green, since 150 *is* the engine default**), engine handed the published path (11 fail).
+  - Four QA gates green.
 
 ### PDF-06 — Native text primitives
 

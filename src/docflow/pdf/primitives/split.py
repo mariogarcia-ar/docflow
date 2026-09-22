@@ -23,7 +23,9 @@ than assumed:
 
 Two independent defences close that, and both are needed:
 
-1. :func:`_require_positive_pages` rejects a bound below 1 before the engine is invoked.
+1. :func:`~docflow.pdf.primitives.engine.require_positive_page_range`, called before the
+   engine is invoked. It lives in the seam because ``pdftoppm`` has the same hazard
+   (``PDF-05``), so the rule is stated once.
 2. The single-page path hands the engine a **file** output path rather than a template.
    With a file, ``-f 0 -l 0`` is refused outright (``must contain '%d'``, status 99), so the
    engine is a second line of defence rather than the source of the ambiguity.
@@ -40,36 +42,12 @@ from pathlib import Path
 from docflow.pdf.primitives.engine import (
     PopplerCommand,
     PopplerOutputMissingError,
+    require_positive_page_range,
     run_engine_command,
 )
 from docflow.pdf.primitives.naming import engine_page_template, renumber_split_output
 
 _SPLIT_GLOB = "page_*.pdf"
-
-
-def _require_positive_pages(page_range: tuple[int, int] | None) -> None:
-    """Reject a page range the engine would silently reinterpret.
-
-    Args:
-        page_range: The requested ``(first, last)`` range, or ``None`` for every page.
-
-    Raises:
-        ValueError: Either bound is below 1, or the range is inverted. Checked here because
-            the engine treats 0 as "no range given" and would split the entire document, so
-            the mistake would otherwise reach the caller as a plausible wrong page rather
-            than as a failure.
-    """
-    if page_range is None:
-        return
-
-    first, last = page_range
-    if first < 1 or last < 1:
-        raise ValueError(
-            f"page numbers are 1-based; got the range {first}-{last}. The engine reads a "
-            "zero bound as 'no range' and would split every page"
-        )
-    if first > last:
-        raise ValueError(f"page range {first}-{last} is empty")
 
 
 def _split_range_to_directory(
@@ -92,7 +70,7 @@ def _split_range_to_directory(
         PopplerExecutionError: The engine failed.
         PopplerOutputMissingError: The engine reported success and wrote nothing.
     """
-    _require_positive_pages(page_range)
+    require_positive_page_range(page_range)
     output_directory.mkdir(parents=True, exist_ok=True)
     template = engine_page_template(output_directory)
 
@@ -132,7 +110,7 @@ def extract_page(pdf_path: Path, page_number: int, output_path: Path) -> Path:
             with status 99.
         PopplerOutputMissingError: The engine reported success and wrote nothing.
     """
-    _require_positive_pages((page_number, page_number))
+    require_positive_page_range((page_number, page_number))
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # A file path rather than a `%d` template, deliberately: with an explicit file the
