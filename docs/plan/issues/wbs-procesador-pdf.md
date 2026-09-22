@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PDF-01` … `PDF-14` |
-| Status | `PDF-01`…`PDF-07` **DONE**; `PDF-08` signature landed, body `NOT_STARTED`; `PDF-09`…`PDF-14` `NOT_STARTED` |
+| Status | `PDF-01`…`PDF-08` **DONE** — Wave 2 complete; `PDF-09`…`PDF-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -37,7 +37,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-05 | Render primitive | S | 2 — Primitives | PDF-02 | `render_page_to_image` | this file §PDF-05 | DONE |
 | PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | DONE |
 | PDF-07 | Embedded image primitives | M | 2 — Primitives | PDF-02 | `extract_images_from_page`, `get_image_blocks` | this file §PDF-07 | DONE |
-| PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | SIGNATURE_ONLY |
+| PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | DONE |
 | PDF-09 | Page entry point | M | 3 — Composition | PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | `process_pdf_page`, `page_001/metadata.json` | this file §PDF-09 | NOT_STARTED |
 | PDF-10 | Document entry point | M | 3 — Composition | PDF-03, PDF-09 | `process_pdf`, `metadata.json` | this file §PDF-10 | NOT_STARTED |
 | PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | NOT_STARTED |
@@ -209,7 +209,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Status: DONE.** `src/docflow/pdf/primitives/images.py`; tests in `tests/pdf/primitives/test_images.py`. Fixture: `pdf_aptos_layout/36744cc6-…pdf` — a page with **three images and two masks**, which is the case that breaks naive extraction; plus `matrix/scan150.pdf` (a full-page scan) and `matrix/three-invoices.pdf` (no embedded image at all).
   - **Masks are not images.** `pdfimages` writes one file per ``-list`` row, so this fixture yields **5 files for 3 images**. The listing's ``type`` column is the authority; the first implementation paired files to records by position and failed on the first document tried. Pairing is now by the engine's own index.
   - **Mask files are removed, not published.** ``PDF-09`` treats every file under ``embedded_images/`` as a page artifact, so a leftover ``_staged-*`` file would be published as an extra image the records do not describe.
-  - **`bbox` is always `None`, and that is an engine limitation.** `pdfimages` reports **no geometry at all** — there is no position column in ``-list`` and no flag that adds one (checked against the full ``-h`` output). `subplan-procesador-pdf.md` §3 makes ``bbox`` optional for exactly this; zeroing it would place every image at the page origin and silently corrupt the ``image_coverage`` arithmetic of `PDF-08`.
+  - **`bbox` is always `None`, and that is an engine limitation — but the drawn area is not.** `pdfimages` reports **no rectangle**: there is no position column in ``-list`` and no flag that adds one. It does report **``x-ppi``/``y-ppi``**, and ``pixels / ppi × 72`` gives the image's size in points. Verified against an independent reader: ``pdftohtml -zoom 1`` reports ``w=63 h=14``, ``w=201 h=73``, ``w=77 h=77`` for this fixture's three images, and the arithmetic gives 63.5 × 13.6, 201.0 × 73.0, 77.0 × 77.0. That is what makes `image_coverage` measurable in `PDF-08` rather than a stand-in. The resolution is therefore kept on the contract record's ``metadata``.
   - **`pdftohtml` was rejected as a placement source.** It does report ``<image top= left= width= height=>`` in its XML, but it writes its image files **beside the input PDF** — which violates the immutable-input invariant (PDF-13, invariant 2) by modifying the caller's directory. Probing it also littered the fixtures tree with 42 side-effect files, which were removed with ``git clean`` after verifying each was untracked. Recorded so the next task does not rediscover it.
   - **Zero bound, fifth tool:** `pdfimages -f 0 -l 0` extracts the whole document. Same hazard as `pdfseparate`, `pdftoppm`, `pdftotext` and `pdfinfo`; the shared seam guard runs here too.
   - `IMAGE_EXTRACTION_ERROR` is marked recoverable, so `PDF-09` can report a page as ``PARTIAL`` rather than losing it.
@@ -232,6 +232,15 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given only `PDFPageMetrics` as input, then the returned value is always one of the three literals and depends on nothing else.
 - **Evidence / DoD:** Unit test over crafted metric vectors plus the classification-vocabulary-and-purity invariant (PDF-13, invariant 3); thresholds are named constants, no defaults.
 - **Tags:** `# TODO: [MVP]` on the provisional threshold values.
+- **Status: DONE.** `src/docflow/pdf/primitives/composition.py`; tests in `tests/pdf/primitives/test_composition.py`. Verified against real bytes on three fixtures: a text-dominant page → `TEXT`, a full-page scan → `IMAGE` (coverage exactly `1.0000`), and an invoice carrying three images → `TEXT` with `image_coverage 0.0429`.
+  - **Coverage is measured, not assumed.** Text coverage from the blocks' bounding boxes; image coverage from each image's pixel size and reported resolution. The scan computes to exactly `1.0` — 826 × 1169 px at 72 ppi on an 826 × 1169 pt page — which is the arithmetic checking itself.
+  - **`image_coverage` was at risk of being a stand-in.** `PDF-07` found that `pdfimages` reports no rectangle. Without the ppi derivation, this task would have had to publish `0.0` for every page, saying "no image here" about a page that is nothing but image. The gap was closed by cross-checking the derivation against `pdftohtml -zoom 1`.
+  - **A degenerate page is refused rather than zeroed.** A page reporting no area while carrying content raises: `0.0` would be a fabricated fraction and a division would be a crash. A page with nothing on it legitimately measures `0.0`.
+  - **``bbox`` is optional in practice.** `PDF-07` returns `None` boxes by design and `PDF-06` returns them when the engine omits geometry, so an unplaced block counts toward `text_blocks` while contributing no area — rather than being invented a rectangle or dropped from the count.
+  - **Classification is pure and its vocabulary is closed.** Asserted on the signature *and* in a fresh interpreter that never imports `docflow.workflow`, because a signature can be honest while a module-level import quietly reaches for a workflow decision.
+  - Mutation-verified, four mutations, each restored green: dominant test removed (1 fail), `TEXT` as fall-through (**4 fail**), a fourth value returned (3 fail — invariant 3's documented mutation), pixel count used as area (**2 fail, after a gap was closed**).
+  - **That last mutation passed all 19 tests on the first attempt.** `scan150` sits at exactly 72 ppi, where pixels and points coincide numerically, so the check that looked strongest was blind to it. Two vectors at 170/144 ppi were added; the file now records that the scan test is *not* the guard it appears to be.
+  - Four QA gates green.
 
 ### PDF-09 — Page entry point
 

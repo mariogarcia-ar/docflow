@@ -283,12 +283,15 @@ def test_extraction_never_modifies_the_source(masked_pdf: Path, tmp_path: Path) 
     beside the input — the mistake ``pdftohtml`` would have made had it been used here.
     """
     before = hashlib.sha256(masked_pdf.read_bytes()).hexdigest()
+    before_tree = sorted(path.name for path in masked_pdf.parent.iterdir())
 
     extract_images_from_page(masked_pdf, MASKED_PAGE, tmp_path / "images")
     get_image_blocks(masked_pdf, MASKED_PAGE)
 
     assert hashlib.sha256(masked_pdf.read_bytes()).hexdigest() == before
-    assert not [path for path in masked_pdf.parent.iterdir() if path.suffix == ".png"]
+    # Compared against the directory as it was, so the test reports its own pollution rather
+    # than asserting an absolute that may already be false for unrelated reasons.
+    assert sorted(path.name for path in masked_pdf.parent.iterdir()) == before_tree
 
 
 def test_parsing_rejects_a_row_that_looks_like_data_but_is_not() -> None:
@@ -324,6 +327,8 @@ def test_the_record_maps_onto_the_contract_type() -> None:
         image_type=IMAGE_TYPE,
         width=10,
         height=20,
+        x_ppi=72.0,
+        y_ppi=72.0,
         color="rgb",
         encoding="image",
         size="1K",
@@ -335,3 +340,81 @@ def test_the_record_maps_onto_the_contract_type() -> None:
     assert (image.width, image.height) == (10, 20)
     assert image.metadata["engine_index"] == "7"
     assert image.bbox is None
+
+
+def test_the_drawn_size_is_derived_from_the_reported_resolution(
+    masked_pdf: Path,
+) -> None:
+    """The image's size on the page comes from its pixels and its resolution.
+
+    The engine reports no rectangle, but it does report the resolution the image is placed
+    at, and ``pixels / ppi * 72`` gives the size in PDF points. Verified against
+    ``pdftohtml -zoom 1``, which reports the rectangles independently — the two agreeing is
+    what makes this a measurement rather than an inference.
+
+    Mutation that breaks it: return the raw pixel count from ``size_in_points``. The first
+    image is 150 x 32 px at 170 ppi, so the derived 63.5 x 13.6 pts become 150 x 32 and the
+    assertion fails.
+    """
+    images = get_image_blocks(masked_pdf, MASKED_PAGE)
+
+    first = images[0]
+    assert first.metadata["x_ppi"] == "170.0"
+    assert first.width / float(first.metadata["x_ppi"]) * 72 == pytest.approx(
+        63.5, abs=0.1
+    )
+
+
+@pytest.mark.parametrize(
+    ("pixels", "ppi", "expected_points"),
+    [
+        ((72, 72), (72.0, 72.0), (72.0, 72.0)),
+        ((144, 144), (72.0, 72.0), (144.0, 144.0)),
+    ],
+)
+def test_size_in_points_scales_with_resolution(
+    pixels: tuple[int, int],
+    ppi: tuple[float, float],
+    expected_points: tuple[float, float],
+) -> None:
+    """Doubling the resolution halves the drawn size for the same pixel count."""
+    record = EmbeddedImageRecord(
+        page_number=1,
+        index=0,
+        image_type=IMAGE_TYPE,
+        width=pixels[0],
+        height=pixels[1],
+        x_ppi=ppi[0],
+        y_ppi=ppi[1],
+        color="gray",
+        encoding="image",
+        size="1K",
+    )
+
+    assert record.size_in_points() == pytest.approx(expected_points)
+    assert record.area_in_points() == pytest.approx(
+        expected_points[0] * expected_points[1]
+    )
+
+
+def test_a_missing_resolution_does_not_produce_an_infinite_area() -> None:
+    """A zero resolution falls back to the pixel count instead of dividing by zero.
+
+    Some colour spaces report no resolution. Dividing by zero would be an exception; the
+    fallback is an approximation, which is why it is documented rather than silent.
+    """
+    record = EmbeddedImageRecord(
+        page_number=1,
+        index=0,
+        image_type=IMAGE_TYPE,
+        width=50,
+        height=40,
+        x_ppi=0.0,
+        y_ppi=0.0,
+        color="gray",
+        encoding="image",
+        size="1K",
+    )
+
+    assert record.size_in_points() == (50.0, 40.0)
+    assert record.area_in_points() == 2000.0

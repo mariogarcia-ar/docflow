@@ -7,13 +7,20 @@ Owned by ``PDF-08``. Two separate jobs, in this order:
 
 The classification is **data, not routing**. ``subplan-procesador-pdf.md`` §2 is explicit:
 the value is recorded in the page result and the orchestrator is the only component that
-turns it into a decision. This module therefore reads no workflow flag, imports nothing
-from ``docflow.workflow`` and depends on nothing but its argument.
+turns it into a decision. This module therefore reads no workflow flag, imports nothing from
+``docflow.workflow`` and depends on nothing but its argument.
 
 The thresholds are named module constants rather than literals at the comparison site, so
 the boundaries are reviewable in one place. Their *values* are provisional for the PoC and
 tagged as such; their *existence* is not, because a bare number in a comparison is exactly
 the silent default ``docs/plan/README.md`` §7 forbids.
+
+Coverage is measured in square PDF points and divided by the page area. Text coverage comes
+from the blocks' bounding boxes; image coverage from each image's pixel dimensions and the
+resolution the engine reports for it — the derivation that closed the gap left by
+``pdfimages`` exposing no rectangle. A page whose usable area is zero cannot have a coverage
+computed, and that is reported as ``0.0`` for a page with nothing on it and raised about
+otherwise, because reporting a fraction of nothing would be a number with no meaning.
 """
 
 from __future__ import annotations
@@ -27,8 +34,6 @@ from docflow.pdf.contracts import (
     TextBlock,
 )
 
-# Provisional thresholds (PDF-08). Named so the boundary is reviewable, and typed as
-# floats because every coverage measurement is a fraction of the page area.
 TEXT_CHAR_MIN = 100
 """Characters below which a page carries too little native text to be called ``TEXT``."""
 
@@ -43,6 +48,9 @@ IMAGE_COVERAGE_MIN = 0.50
 
 DOMINANT_IMAGE_COVERAGE_MIN = 0.80
 """Fraction covered by a *single* image for the page to be called ``IMAGE`` outright."""
+
+POINTS_PER_INCH = 72.0
+"""PDF points in an inch, for the pixel-to-point conversion."""
 
 
 @dataclass(frozen=True)
@@ -59,7 +67,6 @@ class PageContent:
         text_blocks: The page's native text blocks.
         embedded_images: The page's embedded images.
         page_dimensions: The page's ``(width, height)`` in PDF points.
-        image_placements: Placement of each embedded image, when known.
     """
 
     page_number: int
@@ -67,7 +74,70 @@ class PageContent:
     text_blocks: list[TextBlock]
     embedded_images: list[EmbeddedImage]
     page_dimensions: tuple[float, float]
-    image_placements: list[tuple[float, float, float, float]]
+
+
+def _rect_area(bbox: tuple[float, float, float, float]) -> float:
+    """Return the area of a bounding box, or ``0.0`` when it is degenerate.
+
+    Args:
+        bbox: ``(x_min, y_min, x_max, y_max)`` in PDF points.
+
+    Returns:
+        The area in square points. An inverted box contributes nothing rather than a
+        negative area, which would subtract from the total.
+    """
+    x_min, y_min, x_max, y_max = bbox
+    return max(0.0, x_max - x_min) * max(0.0, y_max - y_min)
+
+
+def _image_area(image: EmbeddedImage) -> float:
+    """Return an image's drawn area in square PDF points.
+
+    Args:
+        image: The embedded image.
+
+    Returns:
+        The area, derived from the image's pixel size and the resolution the engine reported.
+        An image whose resolution is missing falls back to its pixel count — an approximation
+        that is documented rather than a division by zero.
+    """
+    try:
+        x_ppi = float(image.metadata.get("x_ppi", "0"))
+        y_ppi = float(image.metadata.get("y_ppi", "0"))
+    except ValueError:
+        x_ppi = y_ppi = 0.0
+
+    if x_ppi <= 0 or y_ppi <= 0:
+        return float(image.width) * float(image.height)
+    return (image.width / x_ppi * POINTS_PER_INCH) * (
+        image.height / y_ppi * POINTS_PER_INCH
+    )
+
+
+def _coverage(area: float, page_area: float, page_number: int) -> float:
+    """Return ``area / page_area``, refusing to divide by nothing.
+
+    Args:
+        area: The measured area in square points.
+        page_area: The page's area in square points.
+        page_number: Page index, for the error message.
+
+    Returns:
+        The fraction of the page covered, or ``0.0`` when there is nothing to cover.
+
+    Raises:
+        ValueError: The page has an area of zero while something claims to sit on it. A
+            fraction of an empty page is not a number worth reporting, and inventing one
+            would put a fabricated measurement into ``PDFPageMetrics``.
+    """
+    if page_area <= 0:
+        if area <= 0:
+            return 0.0
+        raise ValueError(
+            f"page {page_number} reports no area, so a coverage fraction cannot be "
+            "computed for content that claims to be on it"
+        )
+    return area / page_area
 
 
 def analyze_pdf_page(page_data: PageContent) -> PDFPageMetrics:
@@ -81,12 +151,30 @@ def analyze_pdf_page(page_data: PageContent) -> PDFPageMetrics:
         an error: the measurement is honest about an empty page.
 
     Raises:
-        NotImplementedError: Phase 1 declares the signature only.
-
-    # TODO: [MVP] compute the seven measurements; the layout-aware coverage is derived from
-    # the page area and the blocks' bounding boxes (PDF-08).
+        ValueError: The page reports no area while carrying content.
     """
-    raise NotImplementedError("analyze_pdf_page is implemented in Phase 1 by PDF-08")
+    text = page_data.text
+    page_width, page_height = page_data.page_dimensions
+    page_area = page_width * page_height
+
+    text_area = sum(
+        _rect_area(block.bbox)
+        for block in page_data.text_blocks
+        if block.bbox is not None
+    )
+    image_areas = [_image_area(image) for image in page_data.embedded_images]
+
+    return PDFPageMetrics(
+        characters=len(text),
+        words=len(text.split()),
+        text_blocks=len(page_data.text_blocks),
+        images=len(page_data.embedded_images),
+        text_coverage=_coverage(text_area, page_area, page_data.page_number),
+        image_coverage=_coverage(sum(image_areas), page_area, page_data.page_number),
+        largest_image_coverage=_coverage(
+            max(image_areas, default=0.0), page_area, page_data.page_number
+        ),
+    )
 
 
 def classify_pdf_page(metrics: PDFPageMetrics) -> PDFPageClassification:
@@ -99,10 +187,41 @@ def classify_pdf_page(metrics: PDFPageMetrics) -> PDFPageClassification:
     Returns:
         Exactly one of ``"TEXT"``, ``"IMAGE"`` or ``"MIXED"``.
 
-    Raises:
-        NotImplementedError: Phase 1 declares the signature only.
+    The order of the tests is what makes the answer deterministic, and it is chosen so that
+    the clearest evidence wins:
 
-    # TODO: [MVP] apply the named thresholds above; their values are provisional until the
-    # fixtures are measured (PDF-08).
+    1. A single image covering most of the page is ``IMAGE`` whatever text sits on top of it,
+       because that is what the page is.
+    2. A page with essentially no text — by characters, words and coverage together — is
+       ``IMAGE`` if it carries images at all, and ``MIXED`` if it does not, since a page with
+       neither is not a text page.
+    3. A page with real text and negligible image area is ``TEXT``.
+    4. Anything else is ``MIXED``.
     """
-    raise NotImplementedError("classify_pdf_page is implemented in Phase 1 by PDF-08")
+    has_text = (
+        metrics.characters >= TEXT_CHAR_MIN
+        and metrics.words >= WORD_MIN
+        and metrics.text_coverage >= TEXT_COVERAGE_MIN
+    )
+    has_visual = metrics.image_coverage >= IMAGE_COVERAGE_MIN
+
+    if metrics.largest_image_coverage >= DOMINANT_IMAGE_COVERAGE_MIN:
+        return "IMAGE"
+    if not has_text:
+        return "IMAGE" if metrics.images > 0 else "MIXED"
+    if not has_visual:
+        return "TEXT"
+    return "MIXED"
+
+
+__all__ = [
+    "DOMINANT_IMAGE_COVERAGE_MIN",
+    "IMAGE_COVERAGE_MIN",
+    "POINTS_PER_INCH",
+    "TEXT_CHAR_MIN",
+    "TEXT_COVERAGE_MIN",
+    "WORD_MIN",
+    "PageContent",
+    "analyze_pdf_page",
+    "classify_pdf_page",
+]

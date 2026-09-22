@@ -59,6 +59,9 @@ another image. They are extracted by the engine as separate files, so they have 
 excluded explicitly rather than assumed absent.
 """
 
+POINTS_PER_INCH = 72.0
+"""PDF points in an inch. The unit every geometry in this processor is expressed in."""
+
 LIST_HEADER_ROWS = 2
 """``pdfimages -list`` prints a column header and a rule before the data rows."""
 
@@ -83,6 +86,8 @@ class EmbeddedImageRecord:
         image_type: ``image``, ``smask`` or ``mask``.
         width: Pixel width.
         height: Pixel height.
+        x_ppi: Horizontal resolution in pixels per inch that the engine reports.
+        y_ppi: Vertical resolution in pixels per inch.
         color: Colour space name.
         encoding: Encoding name.
         size: Size string as printed, e.g. ``"11.5K"``.
@@ -93,9 +98,37 @@ class EmbeddedImageRecord:
     image_type: str
     width: int
     height: int
+    x_ppi: float
+    y_ppi: float
     color: str
     encoding: str
     size: str
+
+    def size_in_points(self) -> tuple[float, float]:
+        """Return the image's drawn size in PDF points.
+
+        The engine reports no geometry, but it does report the resolution the image is
+        placed at, and ``pixels / ppi * 72`` is the size on the page. Verified against
+        ``pdftohtml -zoom 1``, which reports the same rectangles independently — the two
+        engines agreeing is what makes this a measurement rather than an inference.
+
+        Returns:
+            The ``(width, height)`` in points. Falls back to the pixel count when a
+            resolution is missing or zero, which is the case for some colour spaces: a
+            zero would make the area silently infinite, which is worse than an
+            approximation that is documented.
+        """
+        if self.x_ppi <= 0 or self.y_ppi <= 0:
+            return (float(self.width), float(self.height))
+        return (
+            self.width / self.x_ppi * POINTS_PER_INCH,
+            self.height / self.y_ppi * POINTS_PER_INCH,
+        )
+
+    def area_in_points(self) -> float:
+        """Return the image's drawn area in square PDF points."""
+        width, height = self.size_in_points()
+        return width * height
 
 
 def parse_image_list(output: str) -> list[EmbeddedImageRecord]:
@@ -129,9 +162,11 @@ def parse_image_list(output: str) -> list[EmbeddedImageRecord]:
                     image_type=image_type,
                     width=int(width),
                     height=int(height),
+                    x_ppi=float(fields[12]),
+                    y_ppi=float(fields[13]),
                     color=color,
                     encoding=encoding,
-                    size=fields[-2] if len(fields) >= _MIN_LIST_COLUMNS else "",
+                    size=fields[-2],
                 )
             )
         except ValueError as failure:
@@ -203,6 +238,11 @@ def as_embedded_image(record: EmbeddedImageRecord) -> EmbeddedImage:
             "engine_type": record.image_type,
             "color": record.color,
             "engine_size": record.size,
+            # The resolution is what makes the image's drawn area computable at all, since
+            # the engine reports no rectangle. Kept on the contract record so `PDF-08` can
+            # measure coverage without going back to the engine.
+            "x_ppi": str(record.x_ppi),
+            "y_ppi": str(record.y_ppi),
         },
     )
 
@@ -409,6 +449,7 @@ def get_image_blocks(pdf_path: Path, page_number: int) -> list[EmbeddedImage]:
 
 __all__ = [
     "IMAGE_TYPE",
+    "POINTS_PER_INCH",
     "EmbeddedImageRecord",
     "as_embedded_image",
     "embedded_image_records",
