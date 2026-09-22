@@ -32,8 +32,7 @@ from docflow.image.primitives.analysis import (
     calculate_contrast_score,
 )
 from docflow.image.primitives.engine import EngineChoice, ImageArray
-from docflow.image.primitives.failures import ImagePrimitiveError
-from docflow.image.primitives.load import get_image_dimensions, save_image
+from docflow.image.primitives.publishing import publish_artifact
 from docflow.image.primitives.transform import (
     deskew_image,
     normalize_brightness,
@@ -172,26 +171,13 @@ def prepare_normalized_image(
     if not options.normalize:
         return None
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    destination = output_dir / NORMALIZED_FILE_NAME
-    if destination.exists():
-        # A previous run's artifact. Removed explicitly rather than overwritten silently, because
-        # `save_image` refuses an occupied destination and that refusal is a real safety property.
-        destination.unlink()
-
-    try:
-        save_image(image, destination, engine)
-    except ImagePrimitiveError as failure:
-        failure.detail["transformations"] = list(transformations)
-        raise
-    dimensions = get_image_dimensions(image, engine)
-    return ArtifactRef(
-        path=destination,
-        kind=NORMALIZED_ARTIFACT_KIND,
-        width=dimensions.width,
-        height=dimensions.height,
-        format=destination.suffix.lstrip(".").upper(),
-        size=destination.stat().st_size,
+    return publish_artifact(
+        image,
+        output_dir,
+        NORMALIZED_FILE_NAME,
+        NORMALIZED_ARTIFACT_KIND,
+        transformations,
+        engine,
     )
 
 

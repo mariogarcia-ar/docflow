@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`…`IMG-07` **DONE** - contracts frozen, engine seam in place, images read, measured, aggregated and published as `normalized.png`; `IMG-08` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`…`IMG-08` **DONE** - contracts frozen, engine seam in place, images read, measured and published as `normalized.png` plus two independent variants; `IMG-09` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -35,7 +35,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-05 | Transformation primitives | M | 2 — Analysis | IMG-03 | `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` | this file §IMG-05 | DONE |
 | IMG-06 | `analyze_image` → `ImageMetrics` | S | 2 — Analysis | IMG-04 | `analyze_image` (side-effect-free) | this file §IMG-06 | DONE |
 | IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png` | this file §IMG-07 | DONE |
-| IMG-08 | `prepare_image_for_ocr` / `prepare_image_for_vlm` | M | 3 — Outputs | IMG-05, IMG-06 | `image/ocr_ready.png`, `image/vlm_ready.png` (distinct pipelines) | this file §IMG-08 | NOT_STARTED |
+| IMG-08 | `prepare_image_for_ocr` / `prepare_image_for_vlm` | M | 3 — Outputs | IMG-05, IMG-06 | `image/ocr_ready.png`, `image/vlm_ready.png` (distinct pipelines) | this file §IMG-08 | DONE |
 | IMG-09 | `classify_image` | S | 3 — Outputs | IMG-06 | `TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY` | this file §IMG-09 | NOT_STARTED |
 | IMG-10 | `validate_image_result` + typed error classification | S | 3 — Outputs | IMG-06 | `validate_image_result`, `ImageError` kinds | this file §IMG-10 | NOT_STARTED |
 | IMG-11 | Atomic persistence + `metadata.json` | M | 4 — Publish | IMG-07, IMG-08, IMG-10 | `image/.tmp/` → rename; `image/metadata.json` | this file §IMG-11 | NOT_STARTED |
@@ -451,6 +451,57 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given only `prepare_for_vlm=true`, then no `ocr_ready.png` is produced.
 - **Evidence / DoD:** Scenario test for independent variants plus the OCR≠VLM invariant (IMG-13, invariant 2).
 - **Tags:** `# TODO: [MVP]` on binarization thresholds.
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/variants.py` implements both pipelines and
+  `publish_variants`; `src/docflow/image/primitives/publishing.py` holds the write both this and
+  IMG-07 use. Both WBS acceptance criteria hold, and the plan's named mutation for this task -
+  *"make `prepare_image_for_vlm` alias/return the `ocr_ready` path"* - is falsified by **9 tests**,
+  the widest blast radius of any mutation in the project so far.
+
+- **A real defect the smoke run found, in the same family as the named mutation.** Preparing an
+  unrequested variant returned **the input image**, which is indistinguishable from a prepared one,
+  so a caller doing the obvious thing - publishing whatever it was handed - wrote an
+  `ocr_ready.png` nobody had asked for. It was not a missing assertion: the first draft of the test
+  suite asserted the file was absent and would have passed, because the test happened not to publish.
+  The fix was structural - `None` now encodes "not requested" and is the only thing
+  `publish_artifact` refuses to write - so the mistake is unavailable rather than merely tested for.
+
+- **The OCR pipeline's steps and their order were each measured.**
+  1. **Grayscale first**, because every later step is a luminance operation.
+  2. **Denoise conditionally, before the threshold.** At a standard deviation of 18 the raw grained
+     page yields **one merged region covering 0.249 of the frame**, while the denoised one yields two
+     covering 0.210 - essentially the clean page's 0.202. After binarization the difference
+     disappears, so this step earns its place only ahead of the threshold. The threshold itself is
+     calibrated: the fixtures measure 0.57, 1.48 and 0.21, synthetic grain crosses 3.0 from about the
+     fourth step of a rising scale.
+  3. **Deskew before binarization**, so the rotation interpolates eight-bit pixels rather than
+     two-valued ones.
+  4. **Binarize last**, because it is the one step that destroys information - measured, it doubles
+     the contrast-limited signal (97.72 to 122.35) and produces more text regions, which is the whole
+     point of the variant.
+
+- **The VLM pipeline is one step, and the restraint is the point.** It deskews and does nothing else.
+  No grayscale, no binarization, no denoising, no contrast stretch, no brightness shift - each
+  rejected for a measured reason rather than by omission: denoising **lowers the blur score**
+  (2529.8 to 2446.6), which is the sharpness a model reads edges with; the contrast stretch moves a
+  washed-out page's contrast only from 39.05 to 39.70; and re-centring a page's mean would turn paper
+  grey. The pipeline's *source* is asserted to contain none of those calls, because a behavioural
+  test can miss the destruction on a page where it happens to be invisible.
+
+- **A defect in IMG-03's decoder, found because the artifacts made it matter.** `load_image` read
+  every file with `IMREAD_COLOR`, so an `ocr_ready.png` this processor had just written from its
+  grayscale stage came back as three channels - an artifact unreadable as what it is. The OpenCV path
+  now uses `IMREAD_UNCHANGED` when the caller has no preference, and the Pillow path keeps Pillow's
+  own single-channel modes rather than collapsing them all to `L` (which would rescale the wider
+  ones). Both were needed: fixing only OpenCV left the mutation alive, because the channel-count test
+  exercised one engine; it now round-trips through **all four writer/reader engine combinations**.
+
+- **Mutation evidence.** Ten mutations applied; **one survived the first run**, and closing it is the
+  two-engine test above. After closing it, all ten are detected: the VLM pipeline aliased onto the OCR
+  one (9 tests fail), colour dropped from the VLM variant (4), the VLM variant binarized (9), the
+  grayscale step skipped (2), denoising applied unconditionally (1), binarization moved ahead of
+  denoising (1), an unrequested variant publishing the input again (3), the VLM flag ignored (2),
+  single-channel promotion on read under OpenCV (2), and the same under Pillow (1).
 
 ### IMG-09 — `classify_image`
 

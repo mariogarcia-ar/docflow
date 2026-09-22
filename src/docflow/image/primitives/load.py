@@ -101,8 +101,13 @@ _WEBP_PREFIX = b"RIFF"
 _WEBP_MARKER = b"WEBP"
 """WebP is a RIFF container, so its ``WEBP`` marker sits at offset 8 rather than at the start."""
 
-_PILLOW_MODES = {True: "L", False: "RGB"}
-"""Pillow's mode names by whether the image is single-channel."""
+_PILLOW_SINGLE_CHANNEL_MODES: frozenset[str] = frozenset({"L", "1", "I", "F"})
+"""Pillow modes that carry one channel, in its several spellings.
+
+`L` is 8-bit luminance, `1` is bilevel, and `I` and `F` are wider integer and float samples.
+They are grouped here rather than collapsed to `L`, because converting a wider mode to
+`L` would rescale its values.
+"""
 
 
 @dataclass(frozen=True)
@@ -424,21 +429,26 @@ def _load_with_opencv(
 ) -> ImageArray:
     """Decode with OpenCV and normalise to RGB.
 
+    A single-channel file is returned as one channel rather than promoted to three. An artifact this
+    processor wrote from its own grayscale stage - ``ocr_ready.png`` - is a one-channel file, and
+    reading it back as three would mean a variant could not be re-analyzed as what it actually is.
+
     Args:
         path: The file to read.
         facts: Its already-read facts, so the failure can name the format without re-sniffing.
-        grayscale: Whether to decode a single channel.
+        grayscale: Whether the caller wants one channel regardless of what the file holds.
 
     Returns:
-        The decoded array, in RGB order when colour.
+        The decoded array, in RGB order when the file is colour.
 
     Raises:
         ImagePrimitiveError: ``DECODE_ERROR`` when OpenCV reports it cannot read the file.
     """
     opencv = operations_module(EngineChoice.OPENCV)
-    # The engine's own constant, never a hand-copied value: `-1` reads like the obvious "grayscale"
-    # sentinel and is actually `IMREAD_UNCHANGED`, which returns three channels.
-    mode = opencv.IMREAD_GRAYSCALE if grayscale else opencv.IMREAD_COLOR
+    # `IMREAD_UNCHANGED` when the caller has no preference, so the file's own channel count
+    # survives. The earlier version used `IMREAD_COLOR` here, which silently promoted a
+    # single-channel file to three and lost the distinction the artifacts depend on.
+    mode = opencv.IMREAD_GRAYSCALE if grayscale else opencv.IMREAD_UNCHANGED
     with _engine_stderr_silenced():
         decoded = opencv.imread(str(path), mode)
     if decoded is None:
@@ -447,7 +457,17 @@ def _load_with_opencv(
         raise classify_decode_failure(
             str(path), facts.format, "the image failed to decode"
         )
-    return decoded if grayscale else opencv.cvtColor(decoded, opencv.COLOR_BGR2RGB)
+    if grayscale or decoded.ndim == CHANNEL_RANK_GRAYSCALE:
+        return decoded
+    if decoded.ndim == 3 and decoded.shape[2] == CHANNEL_COUNT_RGB:
+        return opencv.cvtColor(decoded, opencv.COLOR_BGR2RGB)
+    # Four-channel files are not something this processor produces; converting them would be a
+    # guess about which channel to drop, so they are reported rather than silently reshaped.
+    raise classify_decode_failure(
+        str(path),
+        facts.format,
+        f"expected a grayscale or 3-channel image, got shape {decoded.shape!r}",
+    )
 
 
 def _load_with_pillow(
@@ -455,14 +475,19 @@ def _load_with_pillow(
 ) -> ImageArray:
     """Decode with Pillow and normalise to RGB.
 
+    A single-channel file stays single-channel unless the caller asks otherwise, which is what the
+    OpenCV path does and what makes the two engines agree: ``ocr_ready.png`` is written from a
+    grayscale stage, and reading it back as three channels would make an artifact of this processor
+    unreadable as what it is.
+
     Args:
         path: The file to read.
         engine: The engine to decode with.
         facts: Its already-read facts, used to type the failure.
-        grayscale: Whether to decode a single channel.
+        grayscale: Whether the caller wants one channel regardless of what the file holds.
 
     Returns:
-        The decoded array, in RGB order when colour.
+        The decoded array, in RGB order when the file is colour.
 
     Raises:
         ImagePrimitiveError: ``DECODE_ERROR`` when Pillow cannot decode the file.
@@ -470,13 +495,31 @@ def _load_with_pillow(
     pillow = operations_module(engine)
     try:
         with pillow.open(str(path)) as opened:
-            return array_module().asarray(opened.convert(_PILLOW_MODES[grayscale]))
+            target = "L" if grayscale else _pillow_mode_for(opened.mode)
+            return array_module().asarray(opened.convert(target))
     except OSError as failure:
         # Pillow raises OSError for a broken stream, and UnidentifiedImageError - a subclass - for
         # an unrecognised one. Both are decode failures here: the format was already checked.
         raise classify_decode_failure(
             str(path), facts.format, str(failure)
         ) from failure
+
+
+def _pillow_mode_for(source_mode: str) -> str:
+    """Return the Pillow mode to convert a decoded image into.
+
+    The single-channel modes are kept as they are; everything else becomes ``RGB``. Pillow has
+    several one-channel spellings - ``L`` for 8-bit luminance, ``1`` for bilevel, and
+    ``I`` and ``F`` for wider samples.
+    wider samples - and collapsing them all to ``L`` would rescale the wider ones.
+
+    Args:
+        source_mode: The mode Pillow reported for the file.
+
+    Returns:
+        The mode to convert into.
+    """
+    return "L" if source_mode in _PILLOW_SINGLE_CHANNEL_MODES else "RGB"
 
 
 @contextlib.contextmanager
@@ -536,7 +579,7 @@ def _save_with_pillow(image: ImageArray, path: Path, engine: EngineChoice) -> No
         ImagePrimitiveError: ``WRITE_ERROR`` when Pillow cannot write the file.
     """
     pillow = operations_module(engine)
-    mode = _PILLOW_MODES[getattr(image, "ndim", 0) == CHANNEL_RANK_GRAYSCALE]
+    mode = "L" if getattr(image, "ndim", 0) == CHANNEL_RANK_GRAYSCALE else "RGB"
     try:
         pillow.fromarray(image, mode).save(str(path))
     except (OSError, ValueError) as failure:
