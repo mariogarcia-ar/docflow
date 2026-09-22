@@ -2,96 +2,165 @@
 
 ## Objetivo
 
-El módulo `procesador-pdf` tiene como responsabilidad exclusiva **descomponer, inspeccionar y extraer artefactos nativos de un archivo PDF**.
+El módulo `procesador-pdf` tiene como responsabilidad exclusiva **inspeccionar, descomponer y extraer los artefactos nativos de un archivo PDF**.
 
-Debe recibir un PDF y producir una estructura organizada por páginas con:
+Debe recibir un PDF y producir una representación organizada del documento y de cada una de sus páginas.
 
-* PDF de página individual;
-* render de página;
+Puede generar:
+
+* PDF individual por página;
+* render visual de cada página;
 * texto nativo;
+* bloques de texto;
 * imágenes embebidas;
-* metadata técnica.
+* métricas de composición;
+* clasificación técnica;
+* metadata del documento;
+* metadata por página.
 
-Este módulo **no normaliza imágenes**, **no ejecuta OCR**, **no llama a LLM/VLM** y **no decide el workflow posterior**. Esa coordinación pertenece al `workflow/orchestrator`.
+El módulo:
+
+* no normaliza imágenes;
+* no ejecuta OCR;
+* no llama a LLM/VLM;
+* no selecciona la fuente documental final;
+* no decide si ejecutar OCR;
+* no decide si ejecutar visión;
+* no compara fuentes;
+* no controla el workflow documental.
+
+Su responsabilidad empieza cuando recibe:
+
+```text
+PDFRequest
+```
+
+y termina cuando devuelve:
+
+```text
+PDFResult
+```
+
+---
+
+# Principio de diseño
+
+`procesador-pdf` responde:
+
+> **“¿Qué contiene nativamente este PDF y qué artefactos puedo extraer de cada página?”**
+
+No responde:
+
+> **“¿Qué debo hacer posteriormente con esos artefactos?”**
+
+La regla fundamental es:
+
+> **Extraer primero, decidir después.**
+
+El procesador PDF describe el documento.
+
+El orquestador decide cómo utilizarlo.
+
+---
+
+# Separación de responsabilidades
+
+```text
+procesador-orquestador
+    =
+decide si procesar PDF
++ administra estado
++ idempotencia
++ stop/resume
++ skip/force
++ routing
++ fallbacks
++ selección de fuentes
+
+procesador-pdf
+    =
+inspecciona PDF
++ separa páginas
++ renderiza
++ extrae texto nativo
++ extrae imágenes embebidas
++ genera metadata
+
+procesador-image
+    =
+prepara técnicamente renders o imágenes
+
+procesador-ocr
+    =
+extrae contenido desde imágenes
+
+procesador-llm-call
+    =
+realiza inferencia
+```
 
 ---
 
 # Flujo principal
 
-* Recibir un PDF.
-* Validar que el archivo sea procesable.
-* Crear una carpeta principal para el documento.
-* Obtener metadata general:
+1. Recibir `PDFRequest`.
+2. Validar archivo.
+3. Tratar el PDF original como input inmutable.
+4. Obtener metadata global:
 
-  * cantidad de páginas;
-  * dimensiones;
-  * información básica del documento.
-* Dividir conceptualmente el procesamiento por página.
-* Para cada página:
+   * cantidad de páginas;
+   * dimensiones;
+   * versión PDF;
+   * metadata disponible.
+5. Crear estructura de salida.
+6. Procesar cada página.
+7. Para cada página:
 
-  * generar un PDF individual;
-  * renderizar la página a imagen;
-  * extraer texto nativo preservando layout;
-  * extraer imágenes embebidas;
-  * calcular métricas básicas de composición;
-  * clasificar técnicamente la página como:
-
-    * `TEXT`
-    * `IMAGE`
-    * `MIXED`
-  * generar `metadata.json`.
-* Conservar todos los artefactos generados.
-* Devolver al orquestador la estructura resultante.
-
-La clasificación sirve como **metadata descriptiva**.
-
-El módulo no debe decidir directamente:
-
-* ejecutar OCR;
-* ejecutar VLM;
-* usar texto nativo;
-* usar imagen;
-* combinar fuentes.
-
-Eso pertenece al orquestador.
+   * generar `page.pdf`;
+   * renderizar `page.png`;
+   * extraer texto nativo;
+   * extraer bloques;
+   * extraer imágenes embebidas;
+   * calcular métricas;
+   * clasificar composición;
+   * generar metadata.
+8. Validar artefactos.
+9. Consolidar páginas.
+10. Persistir `metadata.json`.
+11. Devolver `PDFResult`.
 
 ---
 
-# Estructura de salida
+# Flujo general
 
-Ejemplo para un PDF de 10 páginas:
-
-```text id="gd90e4"
-document/
-├── source/
-│   └── document.pdf
-│
-├── metadata.json
-│
-├── page_001/
-│   ├── source/
-│   │   └── page.pdf
-│   │
-│   ├── render/
-│   │   └── page.png
-│   │
-│   ├── native_text/
-│   │   └── text.txt
-│   │
-│   ├── embedded_images/
-│   │   ├── image_001.png
-│   │   └── image_002.jpg
-│   │
-│   └── metadata.json
-│
-├── page_002/
-│   └── ...
-│
-└── page_010/
-    └── ...
+```text
+PDFRequest
+    ↓
+validate_pdf()
+    ↓
+inspect_pdf()
+    ↓
+PDF metadata
+    ↓
+iterate pages
+    ↓
+process_pdf_page()
+    ↓
+ ┌──────────┬──────────┬──────────────┬────────────────┐
+ ▼          ▼          ▼              ▼
+page.pdf   page.png   native text   embedded images
+    └──────────┬──────────┬──────────────┘
+               ↓
+       analyze_pdf_page()
+               ↓
+      classify_pdf_page()
+               ↓
+       PDFPageResult
+               ↓
+        consolidate
+               ↓
+          PDFResult
 ```
-
-Cada página debe funcionar como una **unidad autocontenida de procesamiento**.
 
 ---
 
@@ -99,60 +168,88 @@ Cada página debe funcionar como una **unidad autocontenida de procesamiento**.
 
 ## Entrada
 
-```text id="68v7dq"
+```text
 PDFRequest
 ├── pdf_path
 ├── output_dir
-└── options
+├── options
+└── context
 ```
 
-Opciones posibles:
+Ejemplo:
 
-```json id="1awz7j"
+```json
 {
-  "render": true,
-  "extract_text": true,
-  "extract_images": true,
-  "layout": true,
-  "dpi": 200
+  "pdf_path": "document.pdf",
+
+  "output_dir": "document/",
+
+  "options": {
+    "extract_pages": true,
+    "render": true,
+    "extract_text": true,
+    "extract_images": true,
+    "layout": true,
+    "dpi": 200
+  },
+
+  "context": {
+    "document_id": "doc_001",
+    "workflow_run_id": "run_001"
+  }
 }
 ```
 
+`context` se utiliza exclusivamente para:
+
+* correlación;
+* trazabilidad;
+* metadata.
+
+El módulo no modifica el estado global del workflow.
+
 ---
 
-## Salida
+# Salida
 
-```text id="yvppxs"
+```text
 PDFResult
-├── document_id
 ├── source_path
 ├── metadata
 ├── pages[]
+├── metrics
+├── artifacts
+├── validation
 └── status
 ```
 
 Cada página devuelve:
 
-```text id="vf3wru"
+```text
 PDFPageResult
 ├── page_number
 ├── page_pdf
 ├── page_image
 ├── native_text
+├── text_blocks[]
 ├── embedded_images[]
 ├── metrics
 ├── classification
+├── artifacts
+├── validation
 └── metadata
 ```
 
-Ejemplo conceptual:
+Ejemplo:
 
-```json id="pl3xg4"
+```json
 {
   "page_number": 1,
 
   "page_pdf": "page_001/source/page.pdf",
+
   "page_image": "page_001/render/page.png",
+
   "native_text": "page_001/native_text/text.txt",
 
   "embedded_images": [
@@ -167,8 +264,226 @@ Ejemplo conceptual:
     "largest_image_coverage": 0.05
   },
 
-  "classification": "TEXT"
+  "classification": "TEXT",
+
+  "validation": {
+    "status": "VALID"
+  },
+
+  "status": "success"
 }
+```
+
+---
+
+# Estructura de salida
+
+Ejemplo:
+
+```text
+document/
+├── source/
+│   └── document.pdf
+│
+├── metadata.json
+│
+├── page_001/
+│   ├── source/
+│   │   └── page.pdf
+│   │
+│   ├── render/
+│   │   └── page.png
+│   │
+│   ├── native_text/
+│   │   ├── text.txt
+│   │   └── blocks.json
+│   │
+│   ├── embedded_images/
+│   │   ├── image_001.png
+│   │   └── image_002.jpg
+│   │
+│   └── metadata.json
+│
+├── page_002/
+│   └── ...
+│
+└── page_010/
+    └── ...
+```
+
+Cada página debe funcionar como una **unidad autocontenida**.
+
+---
+
+# Ownership de artefactos
+
+El procesador PDF es dueño únicamente de:
+
+```text
+source/
+render/
+native_text/
+embedded_images/
+metadata.json
+```
+
+No debe escribir dentro de:
+
+```text
+image/
+ocr/
+llm/
+```
+
+Esos namespaces pertenecen a otros procesadores.
+
+---
+
+# Input inmutable
+
+El PDF original debe considerarse inmutable.
+
+Nunca debe ser modificado en el lugar.
+
+Ejemplo correcto:
+
+```text
+document.pdf
+    ↓
+procesador-pdf
+    ↓
+document/source/document.pdf
+```
+
+o simplemente conservar referencia al original cuando la política de almacenamiento así lo permita.
+
+Nunca:
+
+```text
+document.pdf
+    ↓
+modificar
+    ↓
+document.pdf
+```
+
+---
+
+# Relación con idempotencia
+
+La idempotencia global pertenece al orquestador.
+
+`procesador-pdf` no decide:
+
+```text
+REUSE
+SKIP
+FORCE
+RESUME
+```
+
+El flujo correcto es:
+
+```text
+PDF stage
+    ↓
+orchestrator
+    ↓
+ ┌──────────┬──────────┬──────────┐
+ ▼          ▼          ▼
+REUSE      SKIP      EXECUTE
+                       ↓
+                procesador-pdf
+```
+
+Si recibe un `PDFRequest`, debe asumir:
+
+> **La ejecución fue autorizada y debe realizarse según la configuración recibida.**
+
+---
+
+# Determinismo técnico
+
+El módulo debe favorecer reproducibilidad.
+
+Idealmente:
+
+```text
+mismo PDF
++
+misma configuración
++
+misma versión del procesador
+──────────────────────────
+mismos artefactos lógicos
+```
+
+Para ello debe:
+
+* normalizar opciones;
+* preservar orden de páginas;
+* generar nombres determinísticos;
+* mantener formatos estables;
+* registrar versiones;
+* evitar metadata volátil dentro del contenido funcional.
+
+---
+
+# Metadata global
+
+`metadata.json` del documento puede contener:
+
+```text
+PDFMetadata
+├── processor
+├── processor_version
+├── engine
+├── engine_version
+├── page_count
+├── pdf_version
+├── document_info
+├── options
+├── validation
+├── timing
+└── context
+```
+
+Ejemplo:
+
+```json
+{
+  "processor": "procesador-pdf",
+
+  "processor_version": "1.0.0",
+
+  "engine": "poppler",
+
+  "page_count": 10,
+
+  "options": {
+    "render": true,
+    "extract_text": true,
+    "extract_images": true,
+    "dpi": 200
+  }
+}
+```
+
+---
+
+# Metadata por página
+
+Cada página puede registrar:
+
+```text
+PDFPageMetadata
+├── page_number
+├── dimensions
+├── metrics
+├── classification
+├── artifacts
+├── validation
+└── timing
 ```
 
 ---
@@ -180,94 +495,159 @@ Funciones de bajo nivel que encapsulan:
 * Poppler;
 * `python-poppler`;
 * Poppler CLI;
-* utilidades auxiliares de PDF.
+* otras librerías PDF auxiliares.
 
-## Documento
+Las primitivas conocen PDF.
 
-* `get_pdf_metadata(pdf_path)`
-* `get_page_count(pdf_path)`
-* `get_page_dimensions(pdf_path, page_number)`
+No conocen:
 
-## Separación y unión
-
-* `extract_page(pdf_path, page_number, output_path)`
-* `split_pdf(pdf_path, output_dir)`
-* `merge_pdfs(pdf_paths, output_path)`
-
-## Render
-
-* `render_page_to_image(pdf_path, page_number, output_path, dpi=200)`
-
-## Texto nativo
-
-* `extract_text_from_page(pdf_path, page_number, layout=True)`
-* `get_text_blocks(pdf_path, page_number)`
-
-## Imágenes embebidas
-
-* `extract_images_from_page(pdf_path, page_number, output_dir)`
-* `get_image_blocks(pdf_path, page_number)`
-
-Las primitivas conocen Poppler y operaciones PDF, pero no conocen OCR, OpenCV ni LLM.
+* OpenCV como pipeline de normalización;
+* OCR;
+* Docling;
+* LLM;
+* workflow documental.
 
 ---
 
-# 2. Utilitarios
+## Documento
 
-Funciones que combinan primitivas para resolver operaciones completas sobre PDFs.
+```text
+get_pdf_metadata(pdf_path)
 
-## `process_pdf(pdf_path, output_dir, options=None)`
+get_page_count(pdf_path)
+
+get_page_dimensions(pdf_path, page_number)
+```
+
+---
+
+## Separación y unión
+
+```text
+extract_page(pdf_path, page_number, output_path)
+
+split_pdf(pdf_path, output_dir)
+
+merge_pdfs(pdf_paths, output_path)
+```
+
+`merge_pdfs()` es una utilidad PDF genérica.
+
+No debe utilizar resultados OCR o LLM.
+
+---
+
+## Render
+
+```text
+render_page_to_image(
+    pdf_path,
+    page_number,
+    output_path,
+    dpi=200
+)
+```
+
+---
+
+## Texto nativo
+
+```text
+extract_text_from_page(
+    pdf_path,
+    page_number,
+    layout=True
+)
+
+get_text_blocks(
+    pdf_path,
+    page_number
+)
+```
+
+---
+
+## Imágenes embebidas
+
+```text
+extract_images_from_page(
+    pdf_path,
+    page_number,
+    output_dir
+)
+
+get_image_blocks(
+    pdf_path,
+    page_number
+)
+```
+
+---
+
+# 2. Procesamiento principal
+
+## `process_pdf(request)`
 
 Función principal del módulo.
 
 Debe:
 
-* validar PDF;
-* crear estructura del documento;
-* conservar el PDF original;
-* obtener metadata;
-* obtener cantidad de páginas;
-* iterar sobre todas las páginas;
-* llamar a `process_pdf_page()`;
-* consolidar resultados;
-* generar `metadata.json`;
-* devolver `PDFResult`.
+1. validar `PDFRequest`;
+2. validar PDF;
+3. preparar output temporal;
+4. obtener metadata;
+5. obtener cantidad de páginas;
+6. procesar páginas;
+7. validar resultados;
+8. consolidar `PDFResult`;
+9. generar metadata;
+10. publicar artefactos;
+11. devolver resultado.
 
-Flujo:
-
-```text id="z1ks0v"
+```text
 process_pdf()
+     ↓
+validate_pdf_request()
      ↓
 validate_pdf()
      ↓
-get_pdf_metadata()
+inspect_pdf()
      ↓
 iterate pages
      ↓
 process_pdf_page()
+     ↓
+validate_pdf_result()
+     ↓
+commit artifacts
      ↓
 PDFResult
 ```
 
 ---
 
-## `process_pdf_page(pdf_path, page_number, output_dir, options=None)`
+# 3. Procesamiento por página
 
-Procesa exclusivamente una página PDF.
+## `process_pdf_page(...)`
+
+Procesa exclusivamente una página.
 
 Debe:
 
-* crear carpeta de página;
-* generar `page.pdf`;
-* generar `page.png`;
-* extraer texto nativo;
-* extraer imágenes embebidas;
-* calcular métricas;
-* clasificar técnicamente la página;
-* generar metadata;
-* devolver `PDFPageResult`.
+1. validar número de página;
+2. preparar directorio;
+3. generar `page.pdf`;
+4. renderizar `page.png` cuando se solicite;
+5. extraer texto cuando se solicite;
+6. extraer bloques;
+7. extraer imágenes embebidas;
+8. analizar composición;
+9. clasificar;
+10. validar artefactos;
+11. generar metadata;
+12. devolver `PDFPageResult`.
 
-```text id="m77pk1"
+```text
 process_pdf_page()
        ↓
 extract_page()
@@ -276,188 +656,965 @@ render_page_to_image()
        ↓
 extract_text_from_page()
        ↓
+get_text_blocks()
+       ↓
 extract_images_from_page()
        ↓
 analyze_pdf_page()
        ↓
 classify_pdf_page()
        ↓
+validate_pdf_page_result()
+       ↓
 PDFPageResult
 ```
 
 ---
 
+# Opciones por página
+
+No todas las operaciones necesitan ejecutarse siempre.
+
+Ejemplo:
+
+```json
+{
+  "extract_pages": true,
+  "render": true,
+  "extract_text": true,
+  "extract_images": false
+}
+```
+
+El módulo ejecuta exactamente las capacidades solicitadas.
+
+No decide cuáles necesita el workflow.
+
+---
+
+# 4. Inspección del documento
+
+## `inspect_pdf(pdf_path)`
+
+Agrupa información general.
+
+Puede devolver:
+
+```text
+PDFDocumentInfo
+├── page_count
+├── pdf_version
+├── metadata
+├── encrypted
+├── dimensions[]
+└── technical_info
+```
+
+No interpreta semánticamente el documento.
+
+---
+
+# 5. Análisis de página
+
 ## `analyze_pdf_page(page_data)`
 
-Calcula métricas sobre la composición nativa del PDF.
+Calcula métricas nativas.
 
 Puede analizar:
 
-* cantidad de caracteres;
-* cantidad de palabras;
-* cantidad de bloques de texto;
-* cantidad de imágenes;
-* área de texto;
-* área de imágenes;
-* cobertura de texto;
-* cobertura de imágenes;
-* imagen dominante.
+```text
+characters
+
+words
+
+text_blocks
+
+embedded_images
+
+text_area
+
+image_area
+
+text_coverage
+
+image_coverage
+
+largest_image_coverage
+```
 
 Devuelve:
 
-```text id="rbtgpp"
+```text
 PDFPageMetrics
 ```
 
 ---
 
+# PDFPageMetrics
+
+```text
+PDFPageMetrics
+├── characters
+├── words
+├── text_blocks
+├── images
+├── text_coverage
+├── image_coverage
+└── largest_image_coverage
+```
+
+Estas métricas pueden utilizarse posteriormente por el orquestador.
+
+El módulo solamente las calcula.
+
+---
+
+# 6. Clasificación técnica
+
 ## `classify_pdf_page(metrics)`
 
-Clasifica la composición de la página.
+Clasifica composición PDF.
 
-Posibles valores:
+Valores:
 
-```text id="4g4syb"
+```text
 TEXT
+
 IMAGE
+
 MIXED
 ```
 
-Ejemplo conceptual:
+Interpretación:
 
-```text id="nr8vd7"
+```text
 TEXT
-- contenido nativo predominantemente textual
+    contenido nativo predominantemente textual
 
 IMAGE
-- poco o ningún texto nativo
-- imagen dominante sobre la página
+    poco o ningún texto nativo
+    y representación visual dominante
 
 MIXED
-- combinación relevante de texto e imágenes
+    combinación relevante de texto e imágenes
 ```
 
-Esta función **solo describe la composición PDF**.
+Esta clasificación es exclusivamente descriptiva.
+
+---
+
+# Clasificación no implica routing
+
+Incorrecto:
+
+```text
+TEXT
+  ↓
+usar LLM texto
+
+IMAGE
+  ↓
+ejecutar OCR
+
+MIXED
+  ↓
+ejecutar VLM
+```
+
+Correcto:
+
+```text
+classification
+     ↓
+PDFPageResult
+     ↓
+orchestrator
+     ↓
+routing decision
+```
+
+---
+
+# 7. Texto nativo
+
+El módulo puede extraer:
+
+```text
+native_text/text.txt
+```
+
+y opcionalmente:
+
+```text
+native_text/blocks.json
+```
+
+El texto debe preservar layout cuando sea posible según las opciones.
+
+No debe:
+
+* corregirse mediante LLM;
+* mezclarse con OCR;
+* reemplazarse por OCR;
+* evaluarse semánticamente.
+
+---
+
+# Texto vacío
+
+El módulo puede detectar:
+
+```text
+native_text_empty = true
+```
+
+pero solamente como metadata.
 
 No debe interpretar:
 
-```text id="xltr9v"
-TEXT  → usar LLM texto
-IMAGE → ejecutar OCR
-MIXED → ejecutar VLM
+```text
+native_text_empty
+       ↓
+run OCR
 ```
 
-Esas decisiones pertenecen al orquestador.
+Eso corresponde al orquestador.
 
 ---
 
-## `reprocess_pdf_page(pdf_path, page_number, output_dir)`
+# 8. Render de página
 
-Permite regenerar los artefactos de una página concreta sin reprocesar todo el documento.
+El render producido por PDF debe representar fielmente la página.
 
-Útil para:
+Salida:
 
-* errores de extracción;
-* cambios de DPI;
-* cambios de parámetros;
-* debugging.
+```text
+render/page.png
+```
+
+Debe ser suficiente para que posteriormente pueda procesarlo:
+
+```text
+procesador-image
+```
+
+El procesador PDF puede controlar parámetros técnicos propios del render:
+
+```text
+dpi
+format
+page dimensions
+```
+
+No debe:
+
+* deskew;
+* sharpen;
+* denoise;
+* ajustar contraste;
+* preparar específicamente para OCR;
+* preparar específicamente para VLM.
+
+Eso corresponde a `procesador-image`.
 
 ---
+
+# 9. Imágenes embebidas
+
+El módulo puede extraer imágenes nativas del PDF.
+
+Ejemplo:
+
+```text
+embedded_images/
+├── image_001.png
+├── image_002.jpg
+└── image_003.png
+```
+
+Debe conservar cuando sea posible:
+
+* formato;
+* dimensiones;
+* relación con la página;
+* posición;
+* identificador.
+
+Puede registrar:
+
+```text
+EmbeddedImage
+├── image_id
+├── path
+├── bbox
+├── width
+├── height
+├── format
+└── metadata
+```
+
+No debe decidir si una imagen embebida es relevante para OCR o VLM.
+
+---
+
+# 10. Validación
+
+## `validate_pdf_result(result)`
+
+Debe verificar calidad técnica.
+
+Estados posibles:
+
+```text
+VALID
+PARTIAL
+INVALID
+ERROR
+```
+
+Puede evaluar:
+
+* PDF procesable;
+* páginas esperadas;
+* artefactos presentes;
+* renders válidos;
+* extracción completa;
+* errores por página.
+
+---
+
+# Validación por página
+
+## `validate_pdf_page_result(page_result)`
+
+Puede devolver:
+
+```text
+VALID
+
+PARTIAL
+
+RENDER_ERROR
+
+TEXT_EXTRACTION_ERROR
+
+IMAGE_EXTRACTION_ERROR
+
+ERROR
+```
+
+La validación describe qué ocurrió.
+
+No decide el fallback posterior.
+
+---
+
+# 11. Errores
+
+Errores posibles:
+
+```text
+INVALID_INPUT
+
+UNSUPPORTED_PDF
+
+ENCRYPTED_PDF
+
+CORRUPTED_PDF
+
+PAGE_EXTRACTION_ERROR
+
+RENDER_ERROR
+
+TEXT_EXTRACTION_ERROR
+
+IMAGE_EXTRACTION_ERROR
+
+IO_ERROR
+
+INTERNAL_ERROR
+```
+
+Puede devolver:
+
+```text
+PDFError
+├── type
+├── page_number
+├── message
+├── recoverable
+└── metadata
+```
+
+El módulo puede indicar si el error parece técnicamente recuperable.
+
+El orquestador decide:
+
+```text
+retry
+fallback
+partial
+stop
+review
+```
+
+---
+
+# 12. Persistencia
+
+Los artefactos deben publicarse solamente después de completarse.
+
+Ejemplo:
+
+```text
+page.png.tmp
+      ↓
+write
+      ↓
+validate
+      ↓
+atomic rename
+      ↓
+page.png
+```
+
+La misma regla aplica a:
+
+```text
+page.pdf
+text.txt
+blocks.json
+metadata.json
+embedded_images/*
+```
+
+---
+
+# Directorios temporales
+
+Puede utilizarse:
+
+```text
+document/.tmp/
+```
+
+o:
+
+```text
+page_001/.tmp/
+```
+
+durante procesamiento.
+
+Flujo:
+
+```text
+processing
+    ↓
+temporary artifacts
+    ↓
+validate
+    ↓
+commit
+    ↓
+PDFPageResult
+```
+
+Esto evita exponer artefactos incompletos al orquestador.
+
+---
+
+# 13. Procesamiento parcial
+
+El módulo debe soportar resultados parciales técnicamente válidos.
+
+Ejemplo:
+
+```text
+page.pdf              SUCCESS
+page.png              SUCCESS
+native_text           ERROR
+embedded_images       SUCCESS
+```
+
+La página puede devolver:
+
+```text
+status = PARTIAL
+```
+
+y preservar los artefactos válidos.
+
+El procesador no decide si el workflow puede continuar.
+
+---
+
+# 14. Stop / Resume
+
+El módulo no administra el `stop/resume` global.
+
+Esto pertenece al orquestador.
+
+Sin embargo, el procesamiento PDF tiene una particularidad:
+
+> **Un PDF contiene múltiples páginas y cada página es una unidad natural de trabajo.**
+
+Por eso el procesador debe permitir procesamiento aislado mediante:
+
+```text
+process_pdf_page()
+```
+
+Esto permite que el orquestador pueda reanudar trabajo a nivel de página sin volver a procesar el PDF completo.
+
+---
+
+# Resume a nivel documental
+
+Ejemplo:
+
+```text
+page_001 SUCCESS
+page_002 SUCCESS
+page_003 FAILED
+page_004 NOT_STARTED
+```
+
+El orquestador puede decidir:
+
+```text
+page_001 REUSE
+page_002 REUSE
+page_003 EXECUTE
+page_004 EXECUTE
+```
+
+y llamar exclusivamente:
+
+```text
+process_pdf_page()
+```
+
+sobre las páginas necesarias.
+
+El módulo PDF no decide cuáles reutilizar.
+
+---
+
+# Stop entre páginas
+
+Cuando sea posible, una ejecución multipágina debe permitir que el caller deje de solicitar nuevas páginas.
+
+Conceptualmente:
+
+```text
+P1 complete
+ ↓
+P2 complete
+ ↓
+stop requested by orchestrator
+ ↓
+do not start P3
+```
+
+El estado global de stop pertenece al orquestador.
+
+---
+
+# 15. Skip / Force
+
+El módulo no debe conocer:
+
+```text
+skip PDF
+
+force PDF
+
+skip page 3
+
+force page 4
+
+reuse page
+```
+
+Estas decisiones pertenecen al orquestador.
+
+Si recibe una llamada explícita a:
+
+```text
+process_pdf_page(page=3)
+```
+
+debe ejecutar la página solicitada.
+
+---
+
+# 16. Reprocesamiento
+
+La función:
+
+```text
+reprocess_pdf_page()
+```
+
+no debería contener lógica de idempotencia propia.
+
+Puede mantenerse como wrapper semántico:
+
+```text
+reprocess_pdf_page()
+       ↓
+process_pdf_page()
+```
+
+El orquestador decide previamente si realmente debe ejecutarse.
+
+Flujo:
+
+```text
+orchestrator
+     ↓
+processing_key
+     ↓
+valid result?
+   ┌────┴────┐
+  YES       NO
+   │         │
+ REUSE    process_pdf_page()
+```
+
+---
+
+# 17. Granularidad de processing key
+
+Es recomendable permitir claves diferenciadas por documento y página.
+
+Ejemplo:
+
+```text
+PDF_DOCUMENT_STAGE
+```
+
+puede depender de:
+
+```text
+pdf_hash
+processor_version
+global_options
+```
+
+Mientras cada página puede depender de:
+
+```text
+pdf_hash
+page_number
+processor_version
+page_options
+```
+
+Conceptualmente:
+
+```text
+page_processing_key =
+    hash(
+        pdf_hash
+        + page_number
+        + processor_version
+        + normalized_options
+    )
+```
+
+El cálculo y validación pertenecen al orquestador.
+
+---
+
+# 18. Concurrencia
+
+Las páginas son independientes y pueden procesarse en paralelo cuando la implementación lo permita.
+
+Ejemplo:
+
+```text
+document.pdf
+      ↓
+ ┌────┬────┬────┬────┐
+ ▼    ▼    ▼    ▼
+P1   P2   P3   P4
+```
+
+Cada ejecución de página:
+
+* escribe en su propio directorio;
+* no modifica otras páginas;
+* no comparte estado mutable;
+* conserva `page_number`.
+
+El control de concurrencia pertenece al orquestador.
+
+---
+
+# 19. Rebuild PDF
 
 ## `rebuild_pdf(page_pdfs, output_path)`
 
-Reconstruye un PDF a partir de páginas PDF.
+Puede reconstruir un PDF exclusivamente desde otros PDFs de página.
 
-No debe tomar artefactos de OCR ni LLM.
+```text
+page_001.pdf
+page_002.pdf
+page_003.pdf
+      ↓
+rebuild_pdf()
+      ↓
+document.pdf
+```
+
+No debe utilizar:
+
+```text
+OCR
+normalized images
+LLM results
+```
+
+Es una operación puramente PDF.
 
 ---
 
-# 3. Helpers
-
-Funciones pequeñas y reutilizables.
+# 20. Helpers
 
 ## Directorios y archivos
 
-* `create_document_directory(pdf_path, output_root)`
-* `create_page_directory(document_dir, page_number)`
-* `build_page_filename(page_number, extension)`
-* `normalize_filename(filename)`
-* `ensure_directory(path)`
-* `copy_source_pdf(source, destination)`
-* `write_text(path, content)`
-* `write_json(path, data)`
-* `read_json(path)`
+```text
+create_document_directory()
 
-## Métricas de página
+create_page_directory()
 
-* `calculate_page_area(width, height)`
-* `calculate_bbox_area(bbox)`
-* `calculate_text_coverage(text_blocks, page_size)`
-* `calculate_image_coverage(image_blocks, page_size)`
-* `calculate_largest_image_ratio(image_blocks, page_size)`
-* `count_characters(text)`
-* `count_words(text)`
+build_page_filename()
+
+normalize_filename()
+
+ensure_directory()
+
+copy_source_pdf()
+
+write_text_atomic()
+
+write_json_atomic()
+
+read_json()
+```
+
+---
+
+## Documento
+
+```text
+get_pdf_metadata()
+
+get_page_count()
+
+get_page_dimensions()
+```
+
+---
+
+## Página
+
+```text
+validate_page_number()
+
+build_page_metadata()
+
+build_page_artifact_paths()
+```
+
+---
+
+## Métricas
+
+```text
+calculate_page_area()
+
+calculate_bbox_area()
+
+calculate_text_coverage()
+
+calculate_image_coverage()
+
+calculate_largest_image_ratio()
+
+count_characters()
+
+count_words()
+```
+
+---
 
 ## Validaciones
 
-* `validate_pdf(path)`
-* `validate_page_number(page_number, total_pages)`
-* `is_text_empty(text)`
-* `has_embedded_images(images)`
+```text
+validate_pdf_request()
+
+validate_pdf()
+
+validate_pdf_result()
+
+validate_pdf_page_result()
+
+validate_output_artifacts()
+
+is_text_empty()
+
+has_embedded_images()
+```
+
+---
 
 ## Metadata
 
-* `build_pdf_metadata(pdf_info, page_count)`
-* `build_pdf_page_metadata(metrics, classification, artifacts)`
-* `merge_pdf_metadata(base_metadata, new_metadata)`
+```text
+build_pdf_metadata()
+
+build_pdf_page_metadata()
+
+merge_pdf_metadata()
+
+get_processor_version()
+
+get_engine_version()
+```
 
 ---
 
-# Responsabilidades que NO pertenecen a este módulo
+# 21. Responsabilidades que NO pertenecen a este módulo
 
-Eliminar del alcance cualquier función similar a:
+Eliminar del alcance cualquier lógica similar a:
 
-```text id="banhhn"
+```text
 normalize_image()
+
 deskew_image()
+
 calculate_blur_score()
 
+prepare_image_for_ocr()
+
+prepare_image_for_vlm()
+
 run_ocr()
+
 process_ocr_page()
 
 send_to_llm()
+
 process_llm_request()
 
 select_primary_source()
+
 select_extraction_strategy()
+
 select_ocr_or_vlm()
+
+compare_native_text_with_ocr()
+
+resume_document()
+
+skip_stage()
+
+force_stage()
+
+invalidate_downstream()
 ```
 
 ---
 
-# Diferencia entre extracción y decisión
+# Normalización de imagen
 
-El módulo puede producir simultáneamente:
+El PDF produce:
 
-```text id="3tw6cz"
+```text
+render/page.png
+```
+
+La transformación técnica posterior pertenece a:
+
+```text
+procesador-image
+```
+
+---
+
+# OCR
+
+El módulo puede detectar que:
+
+```text
+native_text = empty
+```
+
+pero no debe ejecutar:
+
+```text
+procesador-ocr
+```
+
+La decisión pertenece al orquestador.
+
+---
+
+# LLM/VLM
+
+El módulo nunca llama directamente modelos.
+
+Tampoco construye:
+
+```text
+LLMInput
+```
+
+ni selecciona:
+
+```text
+TEXT_ONLY
+OCR_ONLY
+VLM_ONLY
+TEXT_PLUS_VLM
+OCR_PLUS_VLM
+```
+
+---
+
+# 22. Diferencia entre extracción y decisión
+
+El módulo puede generar simultáneamente:
+
+```text
 page.pdf
+
 page.png
-text.txt
+
+native_text/text.txt
+
+native_text/blocks.json
+
 embedded_images/
+
 metadata.json
 ```
 
-aunque una página tenga texto nativo suficiente.
+aunque finalmente solamente se utilice uno de esos artefactos.
 
-No debe eliminar artefactos según clasificación.
+No debe eliminar outputs por considerar que "no serán necesarios".
 
-La regla es:
+La regla permanece:
 
 > **Extraer primero, decidir después.**
 
-Esto permite que el orquestador pueda posteriormente elegir entre:
+Esto permite al orquestador elegir posteriormente entre:
 
 * texto nativo;
+* render;
 * imagen normalizada;
 * OCR;
 * VLM;
@@ -465,117 +1622,130 @@ Esto permite que el orquestador pueda posteriormente elegir entre:
 
 ---
 
-# Integración con `procesador-image`
+# 23. Integración con `procesador-image`
 
-El PDF produce un render:
+Flujo:
 
-```text id="el24j5"
+```text
 procesador-pdf
       ↓
-page.png
-```
-
-Ese archivo puede ser entregado por el orquestador a:
-
-```text id="4i3qb0"
+render/page.png
+      ↓
+procesador-orquestador
+      ↓
+ImageRequest
+      ↓
 procesador-image
 ```
 
-para:
+El procesador PDF no debe:
 
-* evaluar calidad;
-* detectar rotación;
-* corregir skew;
-* generar `normalized.png`.
+```text
+detectar blur para corregirlo
+deskew
+denoise
+sharpen
+binarize
+```
 
-`procesador-pdf` no debe hacer ese trabajo.
+Puede producir métricas PDF, pero la calidad visual posterior pertenece al módulo de imagen.
 
 ---
 
-# Integración con `procesador-ocr`
+# 24. Integración con `procesador-ocr`
 
-El PDF puede producir:
+Puede producir:
 
-```text id="14mgho"
+```text
 native_text/text.txt
 ```
 
-pero si el orquestador determina que el texto nativo no es suficiente, puede utilizar:
+y:
 
-```text id="ucws9f"
+```text
 render/page.png
-      ↓
+```
+
+Si el orquestador determina que OCR es necesario:
+
+```text
+render/page.png
+       ↓
 procesador-image
-      ↓
-normalized.png
-      ↓
+       ↓
+ocr_ready.png
+       ↓
 procesador-ocr
 ```
 
-El módulo PDF no conoce esa decisión.
+El módulo PDF no participa de esa decisión.
 
 ---
 
-# Integración con `procesador-llm-call`
+# 25. Integración con `procesador-llm-call`
 
-El módulo PDF nunca llama directamente al LLM.
+El módulo nunca llama directamente a LLM.
 
-El flujo correcto es:
+Flujo correcto:
 
-```text id="tj2p0j"
+```text
 procesador-pdf
-      ↓
+       ↓
 PDFPageResult
-      ↓
-ORCHESTRATOR
-      ↓
-prepared input
-      ↓
+       ↓
+procesador-orquestador
+       ↓
+select_source()
+       ↓
+build_llm_input()
+       ↓
 procesador-llm-call
 ```
 
 ---
 
-# Integración con el sistema
+# 26. Integración completa
 
-El flujo completo puede ser:
-
-```text id="5t4g67"
-                 PDF
-                  ↓
-          procesador-pdf
-                  ↓
-            PDFPageResult
-                  ↓
-             ORCHESTRATOR
-            ┌─────┼──────┐
-            ▼     ▼      ▼
-         native  image   ...
-          text     │
-                   ▼
-           procesador-image
-                   ↓
-             normalized
-                   ↓
-             ORCHESTRATOR
-                   ↓
-             procesador-ocr
-                   ↓
-              OCRResult
-                   ↓
-             ORCHESTRATOR
-                   ↓
-          procesador-llm-call
+```text
+                        PDF
+                         ↓
+                 procesador-orquestador
+                         ↓
+                     PDFRequest
+                         ↓
+                  procesador-pdf
+                         ↓
+                    PDFResult
+                         ↓
+              ┌──────────┴──────────┐
+              ▼                     ▼
+       native_text              render/page
+              │                     │
+              │                     ▼
+              │             procesador-image
+              │                     ↓
+              │              prepared images
+              │                     │
+              └──────────┬──────────┘
+                         ↓
+                 procesador-orquestador
+                         ↓
+                  routing documental
+                   ┌─────┴─────┐
+                   ▼           ▼
+                  OCR         LLM/VLM
 ```
 
 ---
 
-# Independencia del módulo
+# 27. Independencia del módulo
 
-`procesador-pdf` también debe poder utilizarse de forma aislada:
+`procesador-pdf` debe poder ejecutarse de forma aislada:
 
-```text id="wkl9mh"
+```text
 document.pdf
+     ↓
+PDFRequest
      ↓
 procesador-pdf
      ↓
@@ -584,43 +1754,217 @@ PDFResult
 
 Esto permite:
 
-* testear Poppler independientemente;
-* extraer páginas sin OCR;
-* obtener texto nativo sin LLM;
-* cambiar posteriormente el procesador de imágenes;
-* reprocesar páginas individuales;
-* utilizarlo en otros proyectos sin depender del resto del pipeline.
+* tests unitarios;
+* benchmarking de Poppler;
+* extracción de texto nativo;
+* separación de páginas;
+* render independiente;
+* extracción de imágenes embebidas;
+* reprocesamiento de páginas;
+* cambiar posteriormente el motor PDF;
+* reutilizarlo fuera del workflow principal.
 
 ---
 
-# Principio de diseño
+# 28. Reemplazo del motor PDF
 
-`procesador-pdf` debe cumplir una regla simple:
+El resto del sistema no debe depender directamente de Poppler.
 
-> **Recibe un PDF y devuelve sus artefactos nativos organizados por página.**
+La arquitectura debe ser:
 
-Conoce Poppler.
+```text
+PDFRequest
+    ↓
+procesador-pdf
+    ↓
+PDFResult
+```
 
-Conoce la estructura interna del PDF.
+Internamente puede utilizar actualmente:
 
-Puede extraer texto nativo.
+```text
+Poppler
+python-poppler
+CLI
+```
 
-Puede extraer imágenes embebidas.
+y posteriormente reemplazarse por otra implementación.
 
-Puede renderizar páginas.
+Mientras se mantengan:
 
-No conoce OpenCV como pipeline de optimización.
+```text
+PDFRequest
+PDFResult
+PDFPageResult
+```
 
-No conoce Docling.
+el resto del sistema no debería cambiar.
 
-No conoce Ollama.
+---
 
-No construye prompts.
+# 29. Métricas de ejecución
 
-No ejecuta OCR.
+Puede registrar:
 
-No decide qué fuente utilizar.
+```text
+timing
+├── metadata_time
+├── split_time
+├── render_time
+├── text_extraction_time
+├── image_extraction_time
+└── total_time
+```
 
-No coordina el workflow completo.
+Por página:
 
-Su trabajo termina cuando entrega un `PDFResult` consistente, reproducible y autocontenido.
+```text
+page_timing
+├── extract_page
+├── render
+├── text
+├── images
+└── total
+```
+
+También, cuando resulte útil:
+
+```text
+resource_usage
+├── cpu
+├── memory
+└── disk
+```
+
+El módulo mide.
+
+No decide scheduling ni políticas de costo.
+
+---
+
+# 30. Estados técnicos
+
+El procesador puede devolver:
+
+```text
+SUCCESS
+PARTIAL
+FAILED
+```
+
+A nivel página:
+
+```text
+SUCCESS
+PARTIAL
+FAILED
+```
+
+Los estados del workflow:
+
+```text
+REUSED
+SKIPPED
+INVALIDATED
+PAUSED
+```
+
+pertenecen al orquestador.
+
+Esta separación debe mantenerse explícita.
+
+---
+
+# Regla arquitectónica final
+
+`procesador-pdf`:
+
+> **Recibe un PDF y devuelve sus artefactos nativos, métricas y metadata organizados por página.**
+
+Es dueño de:
+
+```text
+validación técnica PDF
+
+metadata PDF
+
+separación de páginas
+
+page.pdf
+
+render/page.png
+
+texto nativo
+
+bloques de texto
+
+imágenes embebidas
+
+métricas de composición
+
+clasificación TEXT / IMAGE / MIXED
+
+validación técnica por página
+
+persistencia de artefactos PDF
+```
+
+No es dueño de:
+
+```text
+normalización de imágenes
+
+OCR
+
+LLM/VLM
+
+selección de fuente documental
+
+routing
+
+decisión OCR/VLM
+
+idempotencia del workflow
+
+stop/resume global
+
+skip/force
+
+fallbacks
+
+invalidación downstream
+
+consolidación semántica
+```
+
+En términos simples:
+
+```text
+procesador-pdf
+    =
+descompone y describe el PDF
+
+procesador-image
+    =
+prepara técnicamente sus imágenes
+
+procesador-ocr
+    =
+lee las imágenes
+
+procesador-llm-call
+    =
+realiza inferencia
+
+procesador-orquestador
+    =
+decide cómo colaboran
+```
+
+La regla operativa fundamental es:
+
+> **El PDF produce evidencia documental; no decide cómo interpretarla.**
+
+Y respecto de reutilización:
+
+> **`procesador-pdf` no decide si una página o un documento previo pueden reutilizarse. Si recibe un `PDFRequest` o una llamada explícita a `process_pdf_page()`, ejecuta la operación solicitada. La decisión `REUSE / SKIP / FORCE / RESUME` pertenece al orquestador.**

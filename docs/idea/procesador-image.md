@@ -2,105 +2,175 @@
 
 ## Objetivo
 
-El módulo `procesador-image` tiene como responsabilidad exclusiva el **análisis, normalización y preparación técnica de imágenes**.
+El módulo `procesador-image` tiene como responsabilidad exclusiva **analizar, normalizar y preparar técnicamente imágenes para su consumo por otros procesadores**.
 
-Debe poder trabajar tanto con:
+Debe poder trabajar con:
 
-* imágenes nativas;
-* imágenes generadas desde páginas de un PDF.
+* imágenes recibidas directamente;
+* imágenes renderizadas desde páginas PDF;
+* imágenes embebidas extraídas previamente;
+* regiones o recortes que le sean entregados explícitamente.
 
-Este módulo **no ejecuta OCR**, **no llama a modelos LLM/VLM** y **no decide el workflow posterior**. Su función es producir una imagen normalizada y metadata suficiente para que el orquestador determine el siguiente paso.
+Su responsabilidad principal consiste en transformar:
+
+```text
+imagen de entrada
+       ↓
+análisis técnico
+       ↓
+normalización
+       ↓
+variantes preparadas
+       ↓
+ImageResult
+```
+
+Puede generar variantes optimizadas para distintos consumidores, por ejemplo:
+
+```text
+normalized.png
+
+ocr_ready.png
+
+vlm_ready.png
+```
+
+pero **no decide cuál de ellas debe utilizarse posteriormente**.
+
+El módulo:
+
+* no procesa PDFs;
+* no ejecuta OCR;
+* no llama a LLM/VLM;
+* no selecciona la fuente documental;
+* no decide si OCR es necesario;
+* no decide si VLM es necesario;
+* no coordina el workflow documental.
+
+Su responsabilidad empieza cuando recibe:
+
+```text
+ImageRequest
+```
+
+y termina cuando devuelve:
+
+```text
+ImageResult
+```
+
+---
+
+# Principio de diseño
+
+`procesador-image` responde:
+
+> **“Dada esta imagen y esta configuración técnica, ¿cómo puedo analizarla y prepararla para procesamiento posterior?”**
+
+No responde:
+
+> **“¿Qué debo hacer después con esta imagen?”**
+
+Ni:
+
+> **“¿Debo ejecutar OCR o VLM?”**
+
+Estas decisiones pertenecen al `procesador-orquestador`.
+
+---
+
+# Separación de responsabilidades
+
+```text
+procesador-orquestador
+    =
+decide si procesar imagen
++ selecciona input
++ selecciona variante posterior
++ controla idempotencia
++ stop/resume
++ skip/force
++ fallbacks
+
+procesador-image
+    =
+analiza
++ normaliza
++ prepara variantes técnicas
+
+procesador-ocr
+    =
+extrae texto y estructura
+
+procesador-llm-call
+    =
+ejecuta inferencia
+```
 
 ---
 
 # Flujo principal
 
-* Recibir una imagen como entrada.
-* Conservar siempre la imagen original.
-* Crear una versión normalizada para procesamiento posterior.
-* Evaluar:
+1. Recibir `ImageRequest`.
+2. Validar archivo.
+3. Conservar referencia al input original.
+4. Cargar imagen.
+5. Analizar:
 
-  * dimensiones;
-  * resolución;
-  * formato;
-  * peso;
-  * nitidez;
-  * blur;
-  * orientación;
-  * inclinación / skew;
-  * presencia estimada de texto;
-  * cobertura estimada de texto.
-* Corregir cuando corresponda:
-
-  * orientación;
-  * rotación;
-  * deskew;
-  * tamaño;
-  * resolución;
-  * formato;
-  * compresión;
-  * contraste;
-  * brillo;
-  * ruido.
-* Clasificar la imagen según sus características:
-
-  * `TEXT_IMAGE`
-  * `VISUAL_IMAGE`
-  * `MIXED_IMAGE`
-  * `LOW_QUALITY`
-* Generar `metadata.json` con:
-
-  * métricas;
-  * clasificación;
-  * transformaciones aplicadas;
-  * paths de los artefactos generados.
-* Entregar al orquestador:
-
-  * imagen original;
-  * imagen normalizada;
-  * metadata.
-
-El módulo no debe decidir si la imagen continúa hacia:
-
-* OCR;
-* Vision LLM;
-* revisión manual;
-* combinación de fuentes.
-
-Esa decisión corresponde al `workflow/orchestrator`.
+   * dimensiones;
+   * resolución;
+   * formato;
+   * peso;
+   * aspect ratio;
+   * blur;
+   * nitidez;
+   * orientación;
+   * skew;
+   * contraste;
+   * brillo;
+   * ruido;
+   * presencia estimada de texto;
+   * cobertura estimada de texto.
+6. Clasificar técnicamente la imagen.
+7. Determinar transformaciones necesarias según configuración recibida.
+8. Generar imagen normalizada.
+9. Generar variantes técnicas solicitadas.
+10. Validar artefactos generados.
+11. Persistir outputs.
+12. Generar `metadata.json`.
+13. Devolver `ImageResult`.
 
 ---
 
-# Estructura de salida
-
-Ejemplo:
+# Flujo general
 
 ```text
-image/
-├── source/
-│   └── original.png
-│
-├── normalized/
-│   └── normalized.png
-│
-└── metadata.json
-```
-
-Si la imagen proviene de una página PDF, debe mantenerse la referencia al origen:
-
-```text
-page_001/
-├── source/
-│   ├── page.pdf
-│   └── page.png
-│
-├── image/
-│   ├── normalized.png
-│   └── metadata.json
-│
-├── native_text/
-├── ocr/
-└── llm/
+ImageRequest
+     ↓
+validate_image_input()
+     ↓
+load_image()
+     ↓
+analyze_image()
+     ↓
+ImageMetrics
+     ↓
+normalize_image()
+     ↓
+normalized.png
+     ↓
+prepare requested variants
+     │
+     ├── ocr_ready.png
+     └── vlm_ready.png
+     ↓
+classify_image()
+     ↓
+validate outputs
+     ↓
+persist
+     ↓
+ImageResult
 ```
 
 ---
@@ -110,33 +180,77 @@ page_001/
 ## Entrada
 
 ```text
-image_path
-context opcional
+ImageRequest
+├── image_path
+├── output_dir
+├── options
+└── context
 ```
 
-El contexto puede incluir:
-
-* `document_id`;
-* `page_number`;
-* `source_type`;
-* metadata previa.
-
-## Salida
-
-```text
-ImageResult
-├── source_path
-├── normalized_path
-├── metadata
-└── classification
-```
-
-Ejemplo conceptual:
+Ejemplo:
 
 ```json
 {
-  "source_path": "source/page.png",
+  "image_path": "page_001/render/page.png",
+
+  "output_dir": "page_001/image",
+
+  "options": {
+    "normalize": true,
+    "prepare_for_ocr": true,
+    "prepare_for_vlm": true,
+    "correct_orientation": true,
+    "deskew": true
+  },
+
+  "context": {
+    "document_id": "doc_001",
+    "page_number": 1,
+    "workflow_run_id": "run_001"
+  }
+}
+```
+
+`context` se utiliza exclusivamente para:
+
+* correlación;
+* trazabilidad;
+* metadata.
+
+El procesador no debe modificar el estado documental global.
+
+---
+
+# Salida
+
+```text
+ImageResult
+├── source
+├── normalized
+├── variants
+│   ├── ocr_ready
+│   └── vlm_ready
+├── metrics
+├── classification
+├── transformations[]
+├── validation
+├── artifacts
+├── metadata
+└── status
+```
+
+Ejemplo:
+
+```json
+{
+  "source_path": "render/page.png",
+
   "normalized_path": "image/normalized.png",
+
+  "variants": {
+    "ocr_ready": "image/ocr_ready.png",
+    "vlm_ready": "image/vlm_ready.png"
+  },
 
   "dimensions": {
     "width": 1600,
@@ -145,6 +259,7 @@ Ejemplo conceptual:
 
   "quality": {
     "blur_score": 184.4,
+    "sharpness_score": 0.82,
     "is_legible": true
   },
 
@@ -163,94 +278,367 @@ Ejemplo conceptual:
 
   "transformations": [
     "deskew",
-    "resize",
-    "compression"
-  ]
+    "resize"
+  ],
+
+  "validation": {
+    "status": "VALID"
+  },
+
+  "status": "success"
 }
 ```
 
 ---
 
-# Funciones
+# Estructura de salida
 
-## 1. Primitivas
+El módulo escribe exclusivamente dentro de su namespace.
 
-Funciones de bajo nivel que encapsulan librerías externas como:
+```text
+image/
+├── normalized.png
+├── ocr_ready.png
+├── vlm_ready.png
+└── metadata.json
+```
 
-* `cv2`;
-* `PIL`;
-* `numpy`.
+Las variantes son opcionales.
 
-### Carga y almacenamiento
+Si solamente se solicita normalización:
 
-* `load_image(path)`
-* `save_image(image, path)`
-* `get_image_metadata(path)`
-* `get_image_dimensions(image)`
+```text
+image/
+├── normalized.png
+└── metadata.json
+```
 
-### Conversión y transformación
+Dentro de una página:
 
-* `convert_image_format(image, format)`
-* `resize_image(image, max_width=None, max_height=None)`
-* `compress_image(image, quality=85)`
-* `convert_to_grayscale(image)`
+```text
+page_001/
+├── source/
+│   └── page.pdf
+│
+├── render/
+│   └── page.png
+│
+├── native_text/
+│   └── text.txt
+│
+├── image/
+│   ├── normalized.png
+│   ├── ocr_ready.png
+│   ├── vlm_ready.png
+│   └── metadata.json
+│
+├── ocr/
+└── llm/
+```
 
-### Mejora de imagen
+Regla:
 
-* `normalize_contrast(image)`
-* `normalize_brightness(image)`
-* `denoise_image(image)`
-* `sharpen_image(image)`
+> **`procesador-image` solamente escribe dentro de `image/`.**
 
-### Calidad
+Nunca debe modificar:
 
-* `calculate_blur_score(image)`
-* `calculate_sharpness_score(image)`
-
-### Orientación
-
-* `detect_orientation(image)`
-* `detect_skew_angle(image)`
-* `rotate_image(image, angle)`
-* `deskew_image(image)`
-
-### Análisis de contenido
-
-* `detect_text_regions(image)`
-* `crop_region(image, bbox)`
-* `calculate_text_coverage(regions, image_size)`
-
-Las primitivas no deben contener lógica de workflow ni dependencias con OCR o LLM.
+```text
+source/
+render/
+native_text/
+ocr/
+llm/
+```
 
 ---
 
-# 2. Utilitarios
+# Input inmutable
 
-Funciones que combinan primitivas para resolver operaciones completas del dominio de imágenes.
+La imagen recibida debe considerarse inmutable.
 
-## `process_image(image_path, output_dir, context=None)`
+El procesador no debe modificar:
 
-Responsabilidad principal del módulo.
+```text
+image_path
+```
 
-Debe:
+en el lugar.
 
-* validar la imagen;
-* crear estructura de salida;
-* conservar el original;
-* cargar la imagen;
-* analizarla;
-* normalizarla;
-* clasificarla;
-* persistir `normalized.png`;
-* generar `metadata.json`;
-* devolver `ImageResult`.
+Siempre debe producir una nueva salida.
+
+Ejemplo:
+
+```text
+render/page.png
+       ↓
+procesador-image
+       ↓
+image/normalized.png
+```
+
+Nunca:
+
+```text
+render/page.png
+       ↓
+sobrescribir
+       ↓
+render/page.png
+```
+
+---
+
+# Relación con idempotencia
+
+La idempotencia global pertenece al orquestador.
+
+`procesador-image` no decide:
+
+```text
+REUSE
+SKIP
+FORCE
+RESUME
+```
 
 Flujo:
 
 ```text
+IMAGE stage
+     ↓
+orchestrator
+     ↓
+ ┌──────────┬──────────┬─────────┐
+ ▼          ▼          ▼
+REUSE      SKIP      EXECUTE
+                       ↓
+               procesador-image
+```
+
+Si el módulo recibe un `ImageRequest`, debe asumir:
+
+> **La ejecución ya fue autorizada y debe producir nuevamente sus artefactos.**
+
+---
+
+# Determinismo técnico
+
+Aunque no controla la idempotencia global, el módulo debe favorecer resultados reproducibles.
+
+Idealmente:
+
+```text
+misma imagen
++
+misma configuración
++
+misma versión del procesador
+──────────────────────────
+misma transformación lógica
+```
+
+Para ello debe:
+
+* normalizar opciones;
+* utilizar criterios técnicos explícitos;
+* registrar todas las transformaciones;
+* evitar modificaciones implícitas;
+* mantener nombres y formatos estables;
+* registrar versiones del procesador y librerías relevantes.
+
+---
+
+# Metadata
+
+`metadata.json` debería contener:
+
+```text
+ImageMetadata
+├── processor
+├── processor_version
+├── libraries
+├── input
+├── input_metrics
+├── output_metrics
+├── classification
+├── transformations[]
+├── variants
+├── validation
+├── timing
+└── context
+```
+
+Ejemplo:
+
+```json
+{
+  "processor": "procesador-image",
+  "processor_version": "1.0.0",
+
+  "input": {
+    "path": "render/page.png"
+  },
+
+  "classification": "TEXT_IMAGE",
+
+  "transformations": [
+    "deskew",
+    "resize"
+  ],
+
+  "variants": {
+    "normalized": "image/normalized.png",
+    "ocr_ready": "image/ocr_ready.png"
+  }
+}
+```
+
+El orquestador puede utilizar:
+
+```text
+input hash
++
+processor version
++
+normalized options
+```
+
+para construir el `processing_key`.
+
+---
+
+# 1. Primitivas
+
+Funciones de bajo nivel que encapsulan librerías como:
+
+* OpenCV;
+* Pillow;
+* NumPy;
+* otras librerías técnicas de imagen.
+
+No conocen el workflow documental.
+
+---
+
+## Carga y almacenamiento
+
+```text
+load_image(path)
+
+save_image(image, path)
+
+get_image_metadata(path)
+
+get_image_dimensions(image)
+```
+
+---
+
+## Conversión
+
+```text
+convert_image_format(image, format)
+
+resize_image(...)
+
+compress_image(...)
+
+convert_to_grayscale(image)
+```
+
+---
+
+## Mejora
+
+```text
+normalize_contrast(image)
+
+normalize_brightness(image)
+
+denoise_image(image)
+
+sharpen_image(image)
+
+binarize_image(image)
+```
+
+---
+
+## Calidad
+
+```text
+calculate_blur_score(image)
+
+calculate_sharpness_score(image)
+
+calculate_contrast_score(image)
+
+calculate_brightness_score(image)
+
+calculate_noise_score(image)
+```
+
+---
+
+## Orientación
+
+```text
+detect_orientation(image)
+
+detect_skew_angle(image)
+
+rotate_image(image, angle)
+
+deskew_image(image)
+```
+
+---
+
+## Análisis visual
+
+```text
+detect_text_regions(image)
+
+calculate_text_coverage(...)
+
+crop_region(image, bbox)
+```
+
+Las primitivas no toman decisiones sobre OCR o LLM.
+
+---
+
+# 2. Procesamiento principal
+
+## `process_image(request)`
+
+Función principal.
+
+Debe:
+
+1. validar `ImageRequest`;
+2. validar imagen;
+3. crear directorio temporal;
+4. cargar imagen;
+5. analizar input;
+6. normalizar imagen;
+7. clasificar;
+8. preparar variantes solicitadas;
+9. analizar outputs;
+10. validar resultados;
+11. persistir artefactos;
+12. generar metadata;
+13. publicar outputs;
+14. devolver `ImageResult`.
+
+```text
 process_image()
       ↓
+validate_image_request()
+      ↓
 validate_image()
+      ↓
+load_image()
       ↓
 analyze_image()
       ↓
@@ -258,50 +646,82 @@ normalize_image()
       ↓
 classify_image()
       ↓
-save artifacts
+prepare_variants()
+      ↓
+validate_image_result()
+      ↓
+persist
       ↓
 ImageResult
 ```
 
 ---
 
-## `process_image_from_page(image_path, page_number, output_dir)`
+# 3. Wrapper para páginas PDF
 
-Wrapper para imágenes provenientes de un PDF.
+## `process_image_from_page(...)`
+
+Wrapper opcional para imágenes generadas por `procesador-pdf`.
 
 Debe:
 
-* mantener `page_number`;
-* conservar referencia al documento original;
+* recibir explícitamente `image_path`;
+* preservar `page_number`;
+* preservar `document_id`;
+* construir `ImageRequest`;
 * llamar internamente a `process_image()`.
-
-No debe implementar un pipeline diferente.
 
 ```text
 process_image_from_page()
         ↓
+build ImageRequest
+        ↓
 process_image()
 ```
 
+No debe:
+
+```text
+abrir PDF
+
+renderizar PDF
+
+extraer página
+
+buscar automáticamente page.png
+```
+
+La imagen debe ser entregada por el orquestador.
+
 ---
+
+# 4. Análisis
 
 ## `analyze_image(image)`
 
-Calcula métricas sin modificar la imagen.
+Calcula métricas sin modificar el input.
 
-Debe analizar:
+Debe analizar, cuando corresponda:
 
-* dimensiones;
-* aspect ratio;
-* resolución;
-* formato;
-* tamaño;
-* blur;
-* nitidez;
-* orientación;
-* skew;
-* regiones de texto;
-* cobertura estimada de texto.
+```text
+dimensions
+aspect_ratio
+resolution
+format
+size
+
+blur
+sharpness
+contrast
+brightness
+noise
+
+orientation
+skew
+
+text_regions
+text_coverage
+```
 
 Devuelve:
 
@@ -311,11 +731,35 @@ ImageMetrics
 
 ---
 
+# ImageMetrics
+
+```text
+ImageMetrics
+├── dimensions
+├── resolution
+├── format
+├── size
+├── quality
+│   ├── blur
+│   ├── sharpness
+│   ├── contrast
+│   ├── brightness
+│   └── noise
+├── orientation
+├── skew
+├── text_regions[]
+└── text_coverage
+```
+
+---
+
+# 5. Normalización
+
 ## `normalize_image(image, metrics, options=None)`
 
-Aplica únicamente las transformaciones necesarias.
+Genera una representación técnica general.
 
-Puede realizar:
+Puede aplicar:
 
 * corrección de orientación;
 * deskew;
@@ -328,15 +772,50 @@ Puede realizar:
 * conversión de formato;
 * compresión.
 
-Debe registrar qué transformaciones fueron aplicadas.
+Debe aplicar únicamente transformaciones justificadas por:
+
+```text
+métricas
++
+configuración explícita
+```
+
+Debe registrar todas las transformaciones realizadas.
 
 ---
 
+# Regla de transformación
+
+Evitar:
+
+```text
+aplicar todas las mejoras siempre
+```
+
+Preferir:
+
+```text
+analyze
+   ↓
+transformation required?
+   │
+ ┌─┴─┐
+NO  YES
+│    │
+skip apply
+```
+
+Una transformación innecesaria también puede degradar información.
+
+---
+
+# 6. Clasificación
+
 ## `classify_image(metrics)`
 
-Clasifica la imagen según sus características.
+Clasifica técnicamente la imagen.
 
-Posibles valores:
+Valores posibles:
 
 ```text
 TEXT_IMAGE
@@ -345,169 +824,1024 @@ MIXED_IMAGE
 LOW_QUALITY
 ```
 
-Esta función únicamente clasifica.
+Esta clasificación describe características.
 
-No debe seleccionar:
+No implica routing.
+
+Incorrecto:
 
 ```text
+TEXT_IMAGE
+    ↓
 OCR
-VLM
-BOTH
-REVIEW
 ```
 
-Esa lógica pertenece al orquestador.
+Correcto:
+
+```text
+TEXT_IMAGE
+    ↓
+metadata
+    ↓
+orchestrator decides
+```
 
 ---
 
+# 7. Variante normalizada
+
+## `prepare_normalized_image(...)`
+
+Produce la representación general del input.
+
+Salida habitual:
+
+```text
+image/normalized.png
+```
+
+Debe buscar una imagen técnicamente limpia pero suficientemente fiel al original.
+
+Esta variante sirve como representación base.
+
+---
+
+# 8. Variante para OCR
+
 ## `prepare_image_for_ocr(image, options=None)`
 
-Genera una variante técnica optimizada para OCR cuando el orquestador la solicite.
+Genera una variante destinada técnicamente a motores OCR.
 
 Puede aplicar:
 
 * grayscale;
 * contraste;
 * denoise;
+* deskew;
 * resolución adecuada;
-* binarización si corresponde.
+* sharpening controlado;
+* binarización cuando corresponda.
+
+Salida:
+
+```text
+image/ocr_ready.png
+```
 
 No ejecuta OCR.
 
+No decide si debe utilizarse.
+
 ---
+
+# 9. Variante para VLM
 
 ## `prepare_image_for_vlm(image, options=None)`
 
-Genera una variante técnica optimizada para modelos multimodales.
+Genera una variante técnicamente adecuada para modelos multimodales.
 
 Puede aplicar:
 
 * resize manteniendo aspect ratio;
 * compresión;
 * conversión de formato;
-* límites máximos de resolución;
-* reducción de peso.
+* límites de resolución;
+* reducción de peso;
+* preservación de información visual relevante.
 
-No llama al VLM.
+Salida:
 
----
+```text
+image/vlm_ready.png
+```
 
-# 3. Helpers
+No ejecuta ningún modelo.
 
-Funciones pequeñas y reutilizables.
-
-### Archivos
-
-* `create_image_directory(output_root, image_name)`
-* `build_output_filename(name, suffix, extension)`
-* `normalize_filename(filename)`
-* `ensure_directory(path)`
-* `copy_source_image(source, destination)`
-* `write_json(path, data)`
-* `read_json(path)`
-
-### Dimensiones
-
-* `calculate_image_area(width, height)`
-* `calculate_bbox_area(bbox)`
-* `calculate_coverage(bboxes, image_size)`
-* `calculate_aspect_ratio(width, height)`
-* `calculate_resize_dimensions(width, height, max_size)`
-
-### Validaciones
-
-* `validate_image(path)`
-* `validate_image_format(format)`
-* `is_resolution_valid(width, height, min_size)`
-* `is_blur_acceptable(score, threshold)`
-* `is_rotation_required(angle, threshold)`
-* `is_text_present(text_coverage, threshold)`
-
-### Metadata
-
-* `build_image_metadata(metrics, transformations, classification)`
-* `merge_image_metadata(base_metadata, new_metadata)`
+No decide si VLM es necesario.
 
 ---
 
-# Responsabilidades que NO pertenecen a este módulo
+# Variantes independientes
 
-Eliminar del alcance de `procesador-image` cualquier función similar a:
+Es importante no asumir que:
+
+```text
+imagen óptima para OCR
+=
+imagen óptima para VLM
+```
+
+Por ejemplo:
+
+```text
+OCR
+    puede beneficiarse de grayscale
+    binarización
+    contraste fuerte
+
+VLM
+    puede necesitar color
+    contexto visual
+    composición completa
+```
+
+Por eso conviene permitir:
+
+```text
+normalized.png
+ocr_ready.png
+vlm_ready.png
+```
+
+como artefactos independientes.
+
+---
+
+# 10. Regiones y crops
+
+El procesador puede generar regiones cuando se soliciten explícitamente.
+
+Ejemplo:
+
+```text
+image/
+├── normalized.png
+└── regions/
+    ├── region_001.png
+    └── region_002.png
+```
+
+Puede utilizar:
+
+```text
+detect_text_regions()
+crop_region()
+```
+
+Pero no debe decidir:
+
+```text
+qué región enviar al LLM
+```
+
+ni:
+
+```text
+qué región ejecutar con OCR
+```
+
+Esa selección pertenece al orquestador.
+
+---
+
+# 11. Validación
+
+## `validate_image_result(result)`
+
+Debe validar exclusivamente calidad técnica.
+
+Estados posibles:
+
+```text
+VALID
+LOW_QUALITY
+INVALID_OUTPUT
+UNSUPPORTED
+ERROR
+```
+
+Puede evaluar:
+
+* archivo generado;
+* formato correcto;
+* dimensiones;
+* tamaño;
+* corrupción;
+* resolución mínima;
+* legibilidad técnica.
+
+---
+
+# La validación no decide workflow
+
+Ejemplo:
+
+```text
+LOW_QUALITY
+```
+
+no significa automáticamente:
+
+```text
+manual review
+```
+
+ni:
+
+```text
+skip OCR
+```
+
+ni:
+
+```text
+use VLM
+```
+
+El módulo devuelve:
+
+```text
+LOW_QUALITY
+```
+
+y el orquestador decide la acción posterior.
+
+---
+
+# 12. Errores
+
+Los errores deben clasificarse técnicamente.
+
+Ejemplo:
+
+```text
+INVALID_INPUT
+UNSUPPORTED_FORMAT
+DECODE_ERROR
+TRANSFORMATION_ERROR
+WRITE_ERROR
+IO_ERROR
+INTERNAL_ERROR
+```
+
+Puede devolver:
+
+```text
+ImageError
+├── type
+├── message
+├── recoverable
+└── metadata
+```
+
+El módulo puede indicar si considera técnicamente recuperable un error.
+
+No decide el fallback del workflow.
+
+---
+
+# 13. Persistencia
+
+Los outputs deben publicarse solamente cuando estén completos.
+
+No conviene escribir directamente:
+
+```text
+normalized.png
+```
+
+mientras todavía está siendo producido.
+
+Preferir:
+
+```text
+normalized.png.tmp
+       ↓
+write
+       ↓
+validate
+       ↓
+atomic rename
+       ↓
+normalized.png
+```
+
+La misma regla aplica a:
+
+```text
+ocr_ready.png
+
+vlm_ready.png
+
+metadata.json
+```
+
+---
+
+# Directorio temporal
+
+Puede utilizarse:
+
+```text
+image/.tmp/
+```
+
+durante la ejecución.
+
+Conceptualmente:
+
+```text
+input
+ ↓
+processing
+ ↓
+temporary artifacts
+ ↓
+validation
+ ↓
+commit
+ ↓
+ImageResult
+```
+
+Esto evita que el orquestador detecte como válido un archivo parcialmente generado.
+
+---
+
+# 14. Stop / Resume
+
+El módulo no administra el `stop/resume` del workflow.
+
+Esto pertenece al orquestador.
+
+Una ejecución de imagen normalmente debe tratarse como una operación atómica:
+
+```text
+ImageRequest
+      ↓
+process_image
+      ↓
+ImageResult
+```
+
+Por lo tanto, al reanudar:
+
+```text
+resultado válido
+    → REUSE
+
+resultado incompleto
+    → EXECUTE
+```
+
+No es necesario implementar un subgrafo de resume interno.
+
+---
+
+# Stop durante procesamiento
+
+Si se solicita stop:
+
+* el orquestador no inicia nuevas etapas;
+* la operación actual puede finalizar;
+* o cancelarse si puede hacerse de forma segura.
+
+Los artefactos temporales no deben considerarse resultados válidos.
+
+---
+
+# 15. Skip / Force
+
+El procesador no debe conocer:
+
+```text
+skip image
+
+force image
+
+reuse image
+
+resume image
+```
+
+Eso pertenece al `StageExecution` administrado por el orquestador.
+
+Si recibe:
+
+```text
+ImageRequest
+```
+
+debe ejecutar el procesamiento solicitado.
+
+---
+
+# 16. Concurrencia
+
+El módulo debe permitir procesar diferentes imágenes simultáneamente.
+
+Ejemplo:
+
+```text
+page_001 → procesador-image
+
+page_002 → procesador-image
+
+page_003 → procesador-image
+```
+
+Cada ejecución:
+
+* recibe su propio `ImageRequest`;
+* escribe en su propio `output_dir`;
+* no comparte estado mutable;
+* no modifica inputs.
+
+La coordinación global pertenece al orquestador.
+
+---
+
+# 17. Reprocesamiento
+
+`procesador-image` no debe decidir cuándo reprocesar.
+
+El flujo correcto es:
+
+```text
+orchestrator
+     ↓
+processing_key
+     ↓
+¿resultado válido?
+     │
+ ┌───┴───┐
+YES      NO
+ │        │
+REUSE   EXECUTE
+          ↓
+   procesador-image
+```
+
+Cambios en opciones como:
+
+```text
+deskew
+resolution
+contrast
+compression
+OCR preparation
+VLM preparation
+```
+
+pueden producir un `processing_key` diferente y provocar una nueva ejecución.
+
+---
+
+# 18. Dependencias downstream
+
+El módulo tampoco invalida:
+
+```text
+OCR
+LLM
+```
+
+directamente.
+
+Ejemplo:
+
+```text
+normalized.png cambia
+       ↓
+ImageResult cambia
+       ↓
+orchestrator
+       ↓
+invalidate OCR
+       ↓
+invalidate LLM
+```
+
+La invalidación pertenece a la capa superior.
+
+---
+
+# 19. Helpers
+
+## Archivos
+
+```text
+create_image_directory()
+
+build_image_output_paths()
+
+ensure_directory()
+
+copy_source_image()
+
+write_json_atomic()
+
+read_json()
+```
+
+---
+
+## Dimensiones
+
+```text
+calculate_image_area()
+
+calculate_bbox_area()
+
+calculate_coverage()
+
+calculate_aspect_ratio()
+
+calculate_resize_dimensions()
+```
+
+---
+
+## Calidad
+
+```text
+calculate_blur_score()
+
+calculate_sharpness_score()
+
+calculate_contrast_score()
+
+calculate_brightness_score()
+
+calculate_noise_score()
+```
+
+---
+
+## Validaciones
+
+```text
+validate_image_request()
+
+validate_image()
+
+validate_image_format()
+
+validate_image_result()
+
+validate_output_artifacts()
+
+is_resolution_valid()
+
+is_blur_acceptable()
+
+is_rotation_required()
+
+is_text_present()
+```
+
+---
+
+## Metadata
+
+```text
+build_image_metadata()
+
+merge_image_metadata()
+
+get_processor_version()
+
+get_library_versions()
+```
+
+---
+
+# 20. Responsabilidades que NO pertenecen a este módulo
+
+Eliminar cualquier lógica similar a:
 
 ```text
 select_image_pipeline()
+
+should_run_ocr()
+
+should_run_vlm()
+
 send_to_ocr()
+
 send_to_vlm()
+
 compare_ocr_with_vlm()
+
 process_llm_image()
+
+select_document_source()
+
+select_extraction_strategy()
+
+resume_document()
+
+skip_stage()
+
+force_stage()
+
+invalidate_downstream()
 ```
-
-El módulo de imagen debe terminar en:
-
-```text
-imagen original
-      ↓
-análisis
-      ↓
-normalización
-      ↓
-clasificación
-      ↓
-metadata + imagen normalizada
-```
-
-A partir de ahí, el `workflow/orchestrator` decide qué hacer.
 
 ---
 
-# Integración con el resto del sistema
+# `select_image_pipeline()`
+
+Si significa:
+
+```text
+¿qué procesador ejecutar después?
+```
+
+pertenece al orquestador.
+
+El módulo sí puede decidir internamente:
+
+```text
+qué transformaciones técnicas aplicar
+```
+
+según la configuración recibida.
+
+---
+
+# `send_to_ocr()`
+
+No pertenece a imagen.
+
+El módulo únicamente puede producir:
+
+```text
+ocr_ready.png
+```
+
+El orquestador decide si invoca:
+
+```text
+procesador-ocr
+```
+
+---
+
+# `send_to_vlm()`
+
+No pertenece a imagen.
+
+Puede producir:
+
+```text
+vlm_ready.png
+```
+
+pero no invocar modelos.
+
+---
+
+# `compare_ocr_with_vlm()`
+
+No pertenece al módulo porque exige conocimiento de resultados externos.
+
+---
+
+# 21. Integración con `procesador-pdf`
+
+Flujo:
 
 ```text
 procesador-pdf
       ↓
-   page.png
+render/page.png
+      ↓
+procesador-orquestador
+      ↓
+ImageRequest
       ↓
 procesador-image
-      ↓
-normalized.png
-+ metadata.json
-      ↓
-   ORCHESTRATOR
-   ┌──────┼───────┐
-   ▼      ▼       ▼
- native  OCR     VLM
- text
 ```
 
-También debe aceptar imágenes directamente:
+El módulo de imagen no debe:
 
 ```text
-image.jpg
-    ↓
-procesador-image
-    ↓
-normalized.png
-+ metadata.json
-    ↓
-ORCHESTRATOR
+abrir PDF
+renderizar PDF
+separar páginas
+extraer texto PDF
 ```
 
 ---
 
-# Principio de diseño
+# 22. Integración con `procesador-ocr`
 
-`procesador-image` debe cumplir una única regla:
+Puede producir:
 
-> **Recibe una imagen y devuelve una imagen preparada más información objetiva sobre ella.**
+```text
+ocr_ready.png
+```
 
-No conoce Docling.
+Flujo:
 
-No conoce Ollama.
+```text
+procesador-image
+      ↓
+ImageResult
+      ↓
+orchestrator
+      ↓
+select image variant
+      ↓
+OCRRequest
+      ↓
+procesador-ocr
+```
 
-No conoce prompts.
+OCR no debe buscar automáticamente la variante.
 
-No conoce schemas LLM.
+El orquestador debe seleccionarla explícitamente.
 
-No ejecuta workflows.
+---
 
-Esto permite mantener el módulo independiente y reutilizable, mientras el orquestador decide cómo combinarlo con PDF, OCR y LLM.
+# 23. Integración con `procesador-llm-call`
+
+Puede producir:
+
+```text
+vlm_ready.png
+```
+
+Flujo:
+
+```text
+procesador-image
+      ↓
+ImageResult
+      ↓
+orchestrator
+      ↓
+select_source()
+      ↓
+build_llm_input()
+      ↓
+procesador-llm-call
+```
+
+El procesador de imagen no conoce:
+
+* prompts;
+* templates;
+* schemas;
+* providers;
+* modelos;
+* grafos LLM.
+
+---
+
+# 24. Integración completa
+
+```text
+                   PDF / IMAGE
+                        ↓
+                procesador-orquestador
+                        ↓
+             ┌──────────┴──────────┐
+             ▼                     ▼
+       procesador-pdf          direct image
+             │                     │
+             ▼                     │
+        render/page.png             │
+             └──────────┬───────────┘
+                        ↓
+                   ImageRequest
+                        ↓
+                procesador-image
+                        ↓
+                   ImageResult
+                        ↓
+          ┌─────────────┼─────────────┐
+          ▼             ▼             ▼
+    normalized     ocr_ready      vlm_ready
+          │             │             │
+          └─────────────┼─────────────┘
+                        ↓
+                 procesador-orquestador
+                        ↓
+               routing documental
+                  ┌─────┴─────┐
+                  ▼           ▼
+                 OCR         LLM/VLM
+```
+
+---
+
+# 25. Independencia del módulo
+
+Debe poder funcionar de manera aislada:
+
+```text
+image.jpg
+    ↓
+ImageRequest
+    ↓
+procesador-image
+    ↓
+ImageResult
+```
+
+Esto permite:
+
+* tests unitarios;
+* benchmarking;
+* experimentar con OpenCV/Pillow;
+* cambiar algoritmos;
+* comparar configuraciones;
+* evaluar normalización;
+* medir calidad;
+* probar preparación OCR;
+* probar preparación VLM;
+* procesar imágenes sin PDF.
+
+---
+
+# 26. Reemplazo de implementación
+
+El resto del sistema no debe depender directamente de OpenCV o Pillow.
+
+Arquitectura:
+
+```text
+ImageRequest
+     ↓
+procesador-image
+     ↓
+ImageResult
+```
+
+Internamente puede existir hoy:
+
+```text
+OpenCV
+Pillow
+NumPy
+```
+
+y mañana otra implementación.
+
+Mientras se mantengan:
+
+```text
+ImageRequest
+ImageResult
+```
+
+el resto del sistema no debería cambiar.
+
+---
+
+# 27. Métricas de ejecución
+
+Puede registrar:
+
+```text
+timing
+├── load_time
+├── analysis_time
+├── normalization_time
+├── variant_time
+├── write_time
+└── total_time
+```
+
+También cuando resulte útil:
+
+```text
+resource_usage
+├── cpu
+├── memory
+└── gpu
+```
+
+El módulo mide.
+
+No toma decisiones globales de costo o scheduling.
+
+---
+
+# Regla arquitectónica final
+
+`procesador-image`:
+
+> **Recibe una imagen y devuelve representaciones técnicamente preparadas más información objetiva sobre ella.**
+
+Es dueño de:
+
+```text
+análisis técnico
+
+métricas de imagen
+
+orientación
+
+deskew
+
+resize
+
+contraste
+
+brillo
+
+denoise
+
+sharpening
+
+conversión
+
+compresión
+
+clasificación técnica
+
+normalized image
+
+OCR-ready image
+
+VLM-ready image
+
+validación técnica
+
+metadata de imagen
+
+persistencia de artefactos de imagen
+```
+
+No es dueño de:
+
+```text
+PDF
+
+OCR
+
+LLM/VLM
+
+selección de fuente
+
+routing documental
+
+decisión OCR/VLM
+
+estado global
+
+idempotencia del workflow
+
+stop/resume
+
+skip/force
+
+fallbacks
+
+invalidación downstream
+
+consolidación documental
+```
+
+En términos simples:
+
+```text
+procesador-pdf
+    =
+descompone el PDF
+
+procesador-image
+    =
+prepara técnicamente la imagen
+
+procesador-ocr
+    =
+lee la imagen
+
+procesador-llm-call
+    =
+realiza inferencia
+
+procesador-orquestador
+    =
+decide cómo colaboran
+```
+
+La regla operativa fundamental es:
+
+> **Preparar no significa decidir.**
+
+El módulo puede generar:
+
+```text
+normalized.png
+ocr_ready.png
+vlm_ready.png
+```
+
+pero solamente el orquestador decide:
+
+```text
+qué variante usar
+
+para qué procesador
+
+y en qué momento
+```
+
+Respecto de reutilización:
+
+> **`procesador-image` no decide si un artefacto previo puede reutilizarse. Si recibe un `ImageRequest`, ejecuta la transformación solicitada. La decisión `REUSE / SKIP / FORCE / RESUME` pertenece al orquestador.**

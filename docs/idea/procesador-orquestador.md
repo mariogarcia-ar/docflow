@@ -2,7 +2,7 @@
 
 ## Objetivo
 
-El módulo `procesador-orquestador` tiene como responsabilidad exclusiva **coordinar el workflow documental completo**.
+El módulo `procesador-orquestador` tiene como responsabilidad exclusiva **coordinar, persistir y controlar el workflow documental completo**.
 
 Debe decidir:
 
@@ -10,15 +10,26 @@ Debe decidir:
 * en qué orden;
 * con qué artefactos;
 * qué fuente documental utilizar;
+* cuándo ejecutar procesamiento de imagen;
 * cuándo ejecutar OCR;
 * cuándo utilizar visión;
 * cuándo invocar el procesador LLM;
-* cómo manejar errores y fallbacks entre procesadores;
-* cómo consolidar resultados por página y por documento.
+* cuándo reutilizar resultados existentes;
+* cuándo omitir una etapa;
+* cuándo forzar su reprocesamiento;
+* cómo detener y reanudar una ejecución;
+* cómo manejar errores y fallbacks;
+* cómo invalidar resultados dependientes;
+* cómo controlar concurrencia;
+* cómo consolidar resultados por página y documento.
 
 El orquestador **no implementa lógica interna de PDF, imagen, OCR o LLM**.
 
-Su responsabilidad empieza cuando recibe un documento y termina cuando devuelve un resultado documental consolidado.
+Su responsabilidad empieza cuando recibe un documento o recupera una ejecución existente y termina cuando:
+
+* devuelve un `DocumentResult`;
+* deja el workflow pausado de forma recuperable;
+* o marca la ejecución como fallida o pendiente de revisión.
 
 ---
 
@@ -26,7 +37,7 @@ Su responsabilidad empieza cuando recibe un documento y termina cuando devuelve 
 
 El orquestador responde:
 
-> **“¿Qué debe hacerse con este documento o página y qué procesador debe ejecutarse a continuación?”**
+> **“¿Qué debe hacerse ahora con este documento o página, utilizando qué artefactos y qué resultados existentes pueden reutilizarse?”**
 
 No responde:
 
@@ -36,49 +47,92 @@ Por lo tanto:
 
 ```text
 procesador-orquestador
-    = qué hacer
+    = decidir
+    + coordinar
+    + administrar estado
+    + controlar ejecución
 
 procesador-pdf
 procesador-image
 procesador-ocr
 procesador-llm-call
-    = cómo hacerlo
+    = ejecutar capacidades específicas
 ```
+
+---
+
+# Principios operativos
+
+El orquestador debe cumplir cinco propiedades fundamentales:
+
+```text
+1. separación de responsabilidades
+2. idempotencia
+3. resumibilidad
+4. trazabilidad
+5. control de costo
+```
+
+La regla central es:
+
+> **Una etapa exitosa no debe ejecutarse nuevamente salvo que haya sido invalidada, forzada o sus entradas/configuración hayan cambiado.**
 
 ---
 
 # Flujo principal
 
-* Recibir una entrada.
-* Detectar si es:
+1. Recibir un `DocumentRequest`.
+2. Identificar el documento.
+3. Crear o recuperar `DocumentContext`.
+4. Crear un `workflow_run_id`.
+5. Detectar tipo de entrada.
+6. Construir el plan de ejecución.
+7. Inspeccionar estados y artefactos existentes.
+8. Determinar por etapa:
 
-  * PDF;
-  * imagen;
-  * formato no soportado.
-* Crear el contexto global del documento.
-* Si es PDF:
+```text
+SKIP
+REUSE
+EXECUTE
+RESUME
+RETRY
+FORCE
+STOP
+```
 
-  * ejecutar `procesador-pdf`;
-  * registrar páginas y artefactos generados.
-* Si es imagen:
+9. Si es PDF:
 
-  * crear una página lógica única.
-* Procesar cada página independientemente.
-* Evaluar qué artefactos existen:
+   * invocar `procesador-pdf` cuando corresponda;
+   * registrar páginas y artefactos.
 
-  * texto nativo;
-  * imagen;
-  * imagen normalizada;
-  * OCR.
-* Ejecutar `procesador-image` cuando sea necesario.
-* Ejecutar `procesador-ocr` cuando corresponda.
-* Seleccionar la fuente documental más adecuada.
-* Construir un `LLMInput` cuando el workflow requiera inferencia.
-* Invocar `procesador-llm-call`.
-* Registrar resultados y decisiones.
-* Consolidar páginas.
-* Consolidar documento.
-* Devolver `DocumentResult`.
+10. Si es imagen:
+
+    * crear una página lógica.
+
+11. Procesar cada página independientemente.
+
+12. Para cada etapa:
+
+    * resolver dependencias;
+    * calcular identidad de procesamiento;
+    * determinar si existe un resultado reutilizable;
+    * ejecutar solamente cuando sea necesario.
+
+13. Seleccionar fuente documental.
+
+14. Construir `LLMInput` si corresponde.
+
+15. Invocar `procesador-llm-call`.
+
+16. Registrar decisiones, estados y artefactos.
+
+17. Consolidar páginas.
+
+18. Consolidar documento.
+
+19. Persistir `DocumentContext`.
+
+20. Devolver `DocumentResult`.
 
 ---
 
@@ -89,51 +143,61 @@ INPUT
   ↓
 ORCHESTRATOR
   ↓
+load/create context
+  ↓
+build execution plan
+  ↓
 detect_input_type()
   │
   ├── PDF
   │    ↓
-  │ procesador-pdf
+  │ resolve_stage(PDF)
+  │    ↓
+  │ procesador-pdf / REUSE
   │    ↓
   │ pages[]
   │
   └── IMAGE
        ↓
-   logical page
+     logical page
 
-        ↓
-    process_page()
-        ↓
-  inspect artifacts
-        ↓
-  image processing?
-        │
-        ▼
- procesador-image
-        ↓
-   image result
-        ↓
-       OCR?
-        │
-        ▼
-  procesador-ocr
-        ↓
-    OCR result
-        ↓
-   select_source()
-        ↓
-   LLM required?
-        │
-        ▼
-   build_llm_input()
-        ↓
-procesador-llm-call
-        ↓
-    LLMResult
-        ↓
-consolidate_page()
-        ↓
-consolidate_document()
+           ↓
+      process_page()
+           ↓
+     resolve IMAGE stage
+      │
+      ├── REUSE
+      ├── SKIP
+      └── EXECUTE
+              ↓
+       procesador-image
+
+           ↓
+      resolve OCR stage
+      │
+      ├── REUSE
+      ├── SKIP
+      └── EXECUTE
+              ↓
+        procesador-ocr
+
+           ↓
+      select_source()
+
+           ↓
+      resolve LLM stage
+      │
+      ├── REUSE
+      ├── SKIP
+      └── EXECUTE
+              ↓
+     procesador-llm-call
+
+           ↓
+     consolidate_page()
+
+           ↓
+   consolidate_document()
 ```
 
 ---
@@ -148,6 +212,7 @@ DocumentRequest
 ├── input_type
 ├── workflow
 ├── policies
+├── execution
 ├── options
 └── metadata
 ```
@@ -157,6 +222,7 @@ Ejemplo:
 ```json
 {
   "input_path": "document.pdf",
+
   "workflow": "invoice_extraction",
 
   "options": {
@@ -166,8 +232,60 @@ Ejemplo:
   "policies": {
     "allow_ocr": true,
     "allow_vlm": true
+  },
+
+  "execution": {
+    "resume": true,
+    "reuse_successful": true,
+    "retry_failed": true,
+    "invalidate_downstream": true
   }
 }
+```
+
+---
+
+# Política de ejecución
+
+Las decisiones operativas deben estar separadas de las políticas documentales.
+
+```text
+ExecutionPolicy
+├── resume
+├── reuse_successful
+├── retry_failed
+├── skip_stages[]
+├── force_stages[]
+├── stop_after_stage
+├── start_from_stage
+├── invalidate_downstream
+├── dry_run
+└── parallel_pages
+```
+
+Ejemplo:
+
+```yaml
+execution:
+
+  resume: true
+
+  reuse_successful: true
+
+  retry_failed: true
+
+  invalidate_downstream: true
+
+  skip_stages: []
+
+  force_stages:
+    - OCR
+
+  stop_after_stage: null
+
+  start_from_stage: null
+
+  dry_run: false
 ```
 
 ---
@@ -177,9 +295,11 @@ Ejemplo:
 ```text
 DocumentResult
 ├── document_id
+├── workflow_run_id
 ├── input
 ├── pages[]
 ├── status
+├── execution_summary
 ├── decisions[]
 ├── errors[]
 ├── metadata
@@ -188,33 +308,97 @@ DocumentResult
 
 ---
 
+# Identidades del sistema
+
+Se deben diferenciar tres identificadores.
+
+## `document_id`
+
+Identifica el documento lógico.
+
+Debe permanecer estable entre múltiples ejecuciones del mismo documento.
+
+---
+
+## `workflow_run_id`
+
+Identifica una ejecución concreta del workflow.
+
+```text
+document_id
+    │
+    ├── workflow_run_001
+    ├── workflow_run_002
+    └── workflow_run_003
+```
+
+---
+
+## `processing_key`
+
+Identifica determinísticamente una operación.
+
+Conceptualmente:
+
+```text
+processing_key =
+    hash(
+        processor
+        + processor_version
+        + input_hashes
+        + normalized_options
+    )
+```
+
+La regla es:
+
+```text
+mismas entradas
++ misma configuración
++ misma versión
+────────────────────
+mismo processing_key
+```
+
+El `processing_key` permite decidir si un resultado existente continúa siendo reutilizable.
+
+---
+
 # Estado global
 
-El orquestador es el único dueño del estado global del documento.
+El orquestador es el único dueño del estado documental global.
 
 ```text
 DocumentContext
 ├── document_id
+├── workflow_run_id
 ├── input
+├── input_hash
 ├── input_type
 ├── workflow
 ├── policies
+├── execution_policy
 ├── pages[]
+├── stages[]
 ├── decisions[]
 ├── errors[]
 ├── status
+├── stop_requested
 └── final_result
 ```
+
+Los procesadores no modifican directamente `DocumentContext`.
 
 ---
 
 # Estado por página
 
-Cada página debe mantener su propio contexto.
+Cada página mantiene su propio contexto.
 
 ```text
 PageContext
 ├── page_number
+│
 ├── artifacts
 │   ├── page_pdf
 │   ├── page_image
@@ -229,6 +413,11 @@ PageContext
 │   ├── ocr_result
 │   └── llm_result
 │
+├── stages
+│   ├── image
+│   ├── ocr
+│   └── llm
+│
 ├── selected_source
 ├── extraction_strategy
 ├── decisions[]
@@ -236,60 +425,229 @@ PageContext
 └── status
 ```
 
-El orquestador mantiene este estado.
+Cada procesador únicamente recibe una solicitud y devuelve su propio resultado.
 
-Cada procesador únicamente devuelve su propio resultado.
+---
+
+# Estado de etapa
+
+La unidad básica de control operativo es:
+
+```text
+document
+   ↓
+page
+   ↓
+stage
+```
+
+Cada etapa debe tener un registro independiente.
+
+```text
+StageExecution
+├── stage_id
+├── stage
+├── processor
+├── processor_version
+├── status
+├── processing_key
+├── input_artifacts[]
+├── output_artifacts[]
+├── options_hash
+├── attempts
+├── started_at
+├── finished_at
+├── skip_reason
+├── force_reason
+├── error
+└── metadata
+```
+
+---
+
+# Estados posibles
+
+```text
+NOT_STARTED
+READY
+RUNNING
+SUCCESS
+FAILED
+PARTIAL
+SKIPPED
+REUSED
+INVALIDATED
+PAUSED
+CANCELLED
+REVIEW_REQUIRED
+```
+
+Diferenciar `SKIPPED` de `REUSED` es importante.
+
+```text
+SKIPPED
+    = la etapa deliberadamente no debe ejecutarse
+
+REUSED
+    = la etapa no se ejecuta porque existe un resultado válido
+```
+
+---
+
+# Artefactos
+
+Cada artefacto debería poder describirse mediante:
+
+```text
+ArtifactDescriptor
+├── artifact_id
+├── artifact_type
+├── path
+├── content_hash
+├── processing_key
+├── producer
+├── producer_version
+├── input_artifacts[]
+├── workflow_run_id
+├── status
+└── metadata
+```
+
+Los procesadores continúan utilizando archivos físicos.
+
+El orquestador mantiene además información que permite determinar:
+
+* quién produjo el artefacto;
+* a partir de qué inputs;
+* mediante qué configuración;
+* si continúa siendo válido.
+
+---
+
+# Ownership de artefactos
+
+Cada procesador escribe exclusivamente en su propio namespace.
+
+```text
+page_001/
+
+├── source/
+├── native_text/
+├── render/
+
+├── image/
+├── ocr/
+└── llm/
+```
+
+Regla:
+
+```text
+PDF
+    → source/
+    → render/
+    → native_text/
+
+IMAGE
+    → image/
+
+OCR
+    → ocr/
+
+LLM
+    → llm/
+```
+
+Un procesador nunca debe sobrescribir artefactos pertenecientes a otro procesador.
 
 ---
 
 # 1. Primitivas
 
-El orquestador debe tener pocas primitivas.
-
-Se utilizan para administrar:
-
-* contexto;
-* estado;
-* artefactos;
-* decisiones;
-* invocación de procesadores.
-
-## Contexto
-
-* `create_document_context(request)`
-* `create_page_context(page_number)`
-* `load_document_context(path)`
-* `save_document_context(context)`
-
-## Estado
-
-* `update_document_state(context, data)`
-* `update_page_state(page_context, data)`
-* `set_document_status(context, status)`
-* `set_page_status(page_context, status)`
-
-## Artefactos
-
-* `register_artifact(context, artifact_type, path)`
-* `register_page_artifact(page_context, artifact_type, path)`
-* `get_artifact(context, artifact_type)`
-* `has_artifact(context, artifact_type)`
-
-## Trazabilidad
-
-* `register_decision(context, decision)`
-* `register_error(context, error)`
-
-## Procesadores
-
-* `get_processor(name)`
-* `execute_processor(processor, request)`
-
-Estas funciones no deben implementar lógica interna de los procesadores.
+El orquestador debe mantener pocas primitivas.
 
 ---
 
-# 2. Utilitarios
+## Contexto
+
+```text
+create_document_context(request)
+load_document_context(path)
+save_document_context(context)
+
+create_page_context(page_number)
+get_page_context(context, page_number)
+```
+
+---
+
+## Estado
+
+```text
+update_document_state(context, data)
+update_page_state(page_context, data)
+
+set_document_status(context, status)
+set_page_status(page_context, status)
+
+get_stage_execution(page_context, stage)
+set_stage_status(stage_execution, status)
+```
+
+---
+
+## Artefactos
+
+```text
+register_artifact(...)
+register_page_artifact(...)
+
+get_artifact(...)
+has_artifact(...)
+
+calculate_artifact_hash(...)
+validate_artifact(...)
+```
+
+---
+
+## Identidad
+
+```text
+calculate_input_hash(...)
+calculate_options_hash(...)
+calculate_processing_key(...)
+```
+
+---
+
+## Ejecución
+
+```text
+get_processor(name)
+execute_processor(processor, request)
+
+claim_stage(stage_execution)
+release_stage(stage_execution)
+```
+
+---
+
+## Trazabilidad
+
+```text
+register_decision(...)
+register_error(...)
+
+append_workflow_trace(...)
+build_decision_record(...)
+```
+
+Las primitivas no implementan lógica interna de los procesadores.
+
+---
+
+# 2. Procesamiento principal
 
 ## `process_document(request)`
 
@@ -297,21 +655,22 @@ Función principal.
 
 Debe:
 
-* validar entrada;
-* crear `DocumentContext`;
-* detectar tipo;
-* ejecutar procesamiento inicial;
-* crear páginas;
-* procesar páginas;
-* consolidar resultados;
-* devolver `DocumentResult`.
+1. validar entrada;
+2. identificar documento;
+3. crear o cargar contexto;
+4. crear `workflow_run_id`;
+5. aplicar `ExecutionPolicy`;
+6. construir plan de ejecución;
+7. ejecutar o simular etapas;
+8. consolidar resultado;
+9. persistir estado.
 
 ```text
 process_document()
       ↓
-detect_input_type()
+initialize_or_resume()
       ↓
-initialize_document()
+build_execution_plan()
       ↓
 prepare_pages()
       ↓
@@ -323,6 +682,83 @@ DocumentResult
 ```
 
 ---
+
+# 3. Plan de ejecución
+
+## `build_execution_plan(context)`
+
+Debe analizar todo el workflow antes de realizar operaciones costosas.
+
+Para cada etapa determina:
+
+```text
+EXECUTE
+REUSE
+SKIP
+FORCE
+WAIT
+BLOCKED
+```
+
+Ejemplo:
+
+```text
+PAGE 1
+
+PDF      REUSE
+IMAGE    REUSE
+OCR      FORCE
+LLM      INVALIDATED → EXECUTE
+```
+
+El plan debe poder generarse sin ejecutar el workflow.
+
+---
+
+# Dry Run
+
+Cuando:
+
+```text
+dry_run = true
+```
+
+el orquestador:
+
+* carga contexto;
+* inspecciona artefactos;
+* calcula `processing_key`;
+* evalúa dependencias;
+* evalúa skips;
+* evalúa forces;
+* calcula invalidaciones;
+* construye el plan;
+
+pero **no ejecuta procesadores**.
+
+Ejemplo:
+
+```text
+ExecutionPlan
+
+Page 1
+PDF     REUSE
+IMAGE   REUSE
+OCR     EXECUTE
+LLM     EXECUTE
+
+Page 2
+PDF     REUSE
+IMAGE   REUSE
+OCR     REUSE
+LLM     REUSE
+```
+
+Esto permite inspeccionar previamente operaciones potencialmente costosas.
+
+---
+
+# 4. Procesamiento de documentos
 
 ## `detect_input_type(input_path)`
 
@@ -342,14 +778,16 @@ No analiza semánticamente el contenido.
 
 Debe:
 
-* construir request para `procesador-pdf`;
-* ejecutar el procesador;
-* registrar `PDFResult`;
-* crear `PageContext` para cada página.
+* construir `PDFRequest`;
+* resolver estado de la etapa;
+* reutilizar `PDFResult` cuando sea válido;
+* ejecutar `procesador-pdf` cuando corresponda;
+* registrar artefactos;
+* crear `PageContext`.
 
 No debe:
 
-* renderizar directamente;
+* renderizar PDF directamente;
 * extraer texto;
 * extraer imágenes.
 
@@ -359,83 +797,505 @@ No debe:
 
 Debe:
 
-* crear una única página lógica;
-* registrar la imagen como artefacto de entrada;
-* derivarla al workflow común de página.
+* crear una página lógica;
+* registrar imagen original;
+* derivarla al workflow normal de página.
 
 ---
+
+# 5. Procesamiento de páginas
 
 ## `process_pages(context)`
 
 Debe:
 
-* iterar páginas;
+* procesar páginas independientemente;
 * permitir ejecución secuencial o paralela;
-* llamar a `process_page()` para cada una;
-* preservar orden lógico.
+* respetar stop requests;
+* preservar orden lógico;
+* mantener aislamiento de estado.
 
 ---
 
 ## `process_page(page_context, workflow, policies)`
 
-Función central del routing documental.
+Función central de routing documental.
 
 Debe:
 
-1. inspeccionar artefactos disponibles;
-2. determinar si necesita procesamiento de imagen;
-3. ejecutar imagen si corresponde;
-4. determinar si necesita OCR;
-5. ejecutar OCR si corresponde;
-6. seleccionar fuente;
-7. definir estrategia de extracción;
-8. construir `LLMInput` si corresponde;
-9. ejecutar procesador LLM;
-10. consolidar resultado de página.
-
-Flujo:
+1. inspeccionar artefactos;
+2. evaluar estado;
+3. resolver procesamiento de imagen;
+4. resolver OCR;
+5. seleccionar fuente;
+6. seleccionar estrategia;
+7. resolver LLM;
+8. consolidar página.
 
 ```text
 process_page()
       ↓
 inspect_page()
       ↓
-should_process_image()
+resolve_stage(IMAGE)
       ↓
-run_image_processing()
-      ↓
-should_run_ocr()
-      ↓
-run_ocr()
+resolve_stage(OCR)
       ↓
 select_source()
       ↓
 select_extraction_strategy()
       ↓
-should_run_llm()
-      ↓
-build_llm_input()
-      ↓
-run_llm()
+resolve_stage(LLM)
       ↓
 consolidate_page_result()
 ```
 
 ---
 
-# 3. Invocación de procesadores
+# 6. Resolución de etapas
+
+## `resolve_stage(stage, context, policy)`
+
+Es una de las funciones principales del orquestador.
+
+Debe decidir:
+
+```text
+SKIP
+FORCE
+REUSE
+EXECUTE
+WAIT
+```
+
+Orden recomendado:
+
+```text
+explicit_skip?
+      ↓ yes
+    SKIP
+
+      no
+      ↓
+explicit_force?
+      ↓ yes
+   EXECUTE
+
+      no
+      ↓
+valid reusable result?
+      ↓ yes
+    REUSE
+
+      no
+      ↓
+   EXECUTE
+```
+
+---
+
+# Skip
+
+Un skip debe ser explícito y persistente.
+
+Puede existir:
+
+```text
+SKIPPED_EXPLICIT
+SKIPPED_BY_POLICY
+```
+
+Ejemplo:
+
+```text
+stage: OCR
+status: SKIPPED
+reason: explicit_skip
+```
+
+Un resultado reutilizado no debe registrarse como skip.
+
+Debe registrarse:
+
+```text
+status: REUSED
+reason: valid_existing_result
+```
+
+---
+
+# Force
+
+`force` obliga a ejecutar una etapa incluso si existe un resultado válido.
+
+Ejemplo:
+
+```text
+force:
+    page: 3
+    stage: OCR
+```
+
+Resultado:
+
+```text
+PDF     REUSE
+IMAGE   REUSE
+OCR     EXECUTE
+LLM     INVALIDATE
+```
+
+---
+
+# Niveles de Force
+
+Se pueden soportar:
+
+```text
+force_document
+force_page
+force_stage
+```
+
+Ejemplo:
+
+```text
+force_document=true
+```
+
+fuerza el documento completo.
+
+```text
+force_page=3
+```
+
+fuerza las etapas correspondientes a la página.
+
+```text
+force_stage:
+    page: 3
+    stage: OCR
+```
+
+fuerza una etapa concreta.
+
+---
+
+# 7. Idempotencia
+
+Una operación es reutilizable cuando:
+
+```text
+input_hash
+      +
+processor_version
+      +
+options_hash
+      ↓
+processing_key
+```
+
+coincide con una ejecución exitosa existente.
+
+## `is_stage_reusable(stage_execution, current_inputs)`
+
+Debe comprobar:
+
+```text
+status == SUCCESS
+
+processing_key == current_processing_key
+
+output artifacts exist
+
+output artifact hashes valid
+```
+
+Si todas las condiciones se cumplen:
+
+```text
+REUSE
+```
+
+---
+
+# Regla de idempotencia
+
+> **La existencia física de un archivo no implica que el resultado sea válido.**
+
+Ejemplo incorrecto:
+
+```text
+ocr/document.json exists
+        ↓
+      reuse
+```
+
+Ejemplo correcto:
+
+```text
+ocr/document.json exists
+        ↓
+processing_key match?
+        ↓
+artifact valid?
+        ↓
+      REUSE
+```
+
+---
+
+# 8. Dependencias e invalidación
+
+Cada etapa debe declarar sus dependencias.
+
+Ejemplo:
+
+```text
+PDF
+ ↓
+IMAGE
+ ↓
+OCR
+ ↓
+LLM
+```
+
+Si cambia una etapa upstream, las dependencias downstream deben invalidarse.
+
+Ejemplo:
+
+```text
+IMAGE processing_key cambia
+          ↓
+OCR INVALIDATED
+          ↓
+LLM INVALIDATED
+```
+
+---
+
+## `invalidate_downstream(stage, page_context)`
+
+Debe:
+
+* encontrar etapas dependientes;
+* marcar sus resultados como `INVALIDATED`;
+* conservar artefactos históricos;
+* impedir su reutilización;
+* registrar causa.
+
+Ejemplo:
+
+```text
+OCR
+status = INVALIDATED
+reason = upstream_image_changed
+```
+
+---
+
+# 9. Stop
+
+El sistema debe poder detener una ejecución de forma segura.
+
+## `request_stop(context)`
+
+Debe registrar:
+
+```text
+stop_requested = true
+```
+
+No debe iniciar nuevas etapas.
+
+La operación actualmente en ejecución debe:
+
+* terminar normalmente;
+* o cancelarse mediante mecanismos seguros del procesador cuando existan.
+
+Luego debe persistirse el estado.
+
+```text
+RUNNING
+   ↓
+STOP REQUEST
+   ↓
+finish current atomic stage
+   ↓
+persist
+   ↓
+PAUSED
+```
+
+---
+
+# Stop seguro
+
+La regla es:
+
+> **Stop no significa destruir el workflow. Significa dejarlo en un estado consistente desde el cual pueda continuar.**
+
+Ejemplo:
+
+```text
+PDF      SUCCESS
+IMAGE    SUCCESS
+OCR      SUCCESS
+LLM      NOT_STARTED
+
+DOCUMENT PAUSED
+```
+
+---
+
+# Stop After Stage
+
+Debe poder configurarse:
+
+```text
+stop_after_stage
+```
+
+Ejemplo:
+
+```text
+stop_after_stage = OCR
+```
+
+Produce:
+
+```text
+PDF
+ ↓
+IMAGE
+ ↓
+OCR
+ ↓
+PAUSE
+```
+
+Esto permite revisar resultados antes de ejecutar operaciones costosas posteriores.
+
+---
+
+# 10. Resume
+
+## `resume_document(document_id)`
+
+Resume una ejecución existente.
+
+Debe:
+
+1. cargar `DocumentContext`;
+2. inspeccionar etapas;
+3. validar artefactos;
+4. revisar estados incompletos;
+5. reconstruir plan;
+6. continuar desde donde corresponde.
+
+No significa volver a ejecutar todo.
+
+---
+
+# Comportamiento de Resume
+
+```text
+SUCCESS
+    → REUSE
+
+REUSED
+    → REUSE
+
+SKIPPED
+    → mantener skip
+
+INVALIDATED
+    → EXECUTE
+
+FAILED
+    → RETRY según policy
+
+NOT_STARTED
+    → EXECUTE
+
+RUNNING
+    → evaluar recuperación
+```
+
+---
+
+# Recuperación de RUNNING
+
+Si una ejecución anterior terminó abruptamente dejando:
+
+```text
+status = RUNNING
+```
+
+el orquestador debe detectar que no existe un worker activo.
+
+Entonces puede convertir:
+
+```text
+RUNNING
+   ↓
+INTERRUPTED
+   ↓
+READY
+```
+
+y decidir retry según política.
+
+---
+
+# 11. Start From
+
+También puede permitirse:
+
+```text
+start_from_stage
+```
+
+Ejemplo:
+
+```text
+start_from_stage = LLM
+```
+
+El orquestador debe verificar primero todas las dependencias.
+
+```text
+required OCR valid?
+required IMAGE valid?
+selected source valid?
+```
+
+Si faltan dependencias:
+
+```text
+BLOCKED
+```
+
+No debe regenerarlas automáticamente salvo que la política lo permita.
+
+---
+
+# 12. Invocación de procesadores
 
 ## `run_image_processing(page_context)`
 
 Debe:
 
-* localizar imagen de entrada;
-* construir request;
+* localizar input;
+* construir `ImageRequest`;
+* resolver `processing_key`;
 * invocar `procesador-image`;
+* validar resultado;
 * registrar `ImageResult`;
-* registrar artefactos nuevos.
+* registrar artefactos.
 
-No procesa la imagen directamente.
+No procesa imágenes directamente.
 
 ---
 
@@ -443,11 +1303,13 @@ No procesa la imagen directamente.
 
 Debe:
 
-* localizar imagen normalizada;
+* localizar imagen seleccionada;
 * construir `OCRRequest`;
+* resolver `processing_key`;
 * invocar `procesador-ocr`;
+* validar resultado técnico;
 * registrar `OCRResult`;
-* registrar artefactos OCR.
+* registrar artefactos.
 
 No ejecuta Docling directamente.
 
@@ -457,24 +1319,28 @@ No ejecuta Docling directamente.
 
 Debe:
 
-* enviar `LLMInput` ya preparado;
+* recibir `LLMInput` ya preparado;
+* resolver estado de etapa;
 * invocar `procesador-llm-call`;
 * registrar `LLMResult`.
 
 No debe:
 
 * renderizar templates;
-* ejecutar retries LLM;
+* construir payload del provider;
+* ejecutar retries internos LLM;
 * validar schemas internamente;
-* decidir nodos del grafo LLM.
+* decidir nodos internos del grafo LLM.
 
 Eso pertenece a `procesador-llm-call`.
 
 ---
 
-# 4. Decisores documentales
+# 13. Decisores documentales
 
-Los decisores pertenecen al orquestador porque determinan el routing entre procesadores.
+Los decisores pertenecen al orquestador porque determinan routing entre procesadores.
+
+---
 
 ## `should_process_image(page_context, policy)`
 
@@ -482,14 +1348,9 @@ Puede evaluar:
 
 * existencia de imagen;
 * clasificación PDF;
+* calidad;
 * necesidad de normalización;
-* workflow solicitado.
-
-Devuelve:
-
-```text
-true / false
-```
+* workflow.
 
 ---
 
@@ -498,49 +1359,37 @@ true / false
 Puede decidir OCR cuando:
 
 * no existe texto nativo;
-* el texto nativo es insuficiente;
-* la página es predominantemente imagen;
-* el workflow requiere OCR;
-* se necesita una segunda fuente textual.
+* texto nativo insuficiente;
+* página predominantemente imagen;
+* workflow requiere OCR;
+* se necesita segunda fuente.
 
 ---
 
 ## `should_run_vlm(page_context, policy)`
 
-Puede determinar si la entrada LLM debe incluir imagen cuando:
+Puede decidir incluir imagen cuando:
 
-* hay contenido visual relevante;
-* la página es `MIXED`;
-* OCR no representa toda la información;
-* el workflow requiere visión.
+* existe información visual relevante;
+* página `MIXED`;
+* OCR no representa todo el contenido;
+* workflow requiere visión.
 
-Importante:
-
-`should_run_vlm()` **no ejecuta el modelo**.
-
-Solo determina si la imagen debe incluirse en `LLMInput`.
+No ejecuta inferencia.
 
 ---
 
 ## `should_run_llm(page_context, workflow)`
 
-Determina si la página requiere una etapa LLM.
-
-Devuelve:
-
-```text
-true / false
-```
+Determina si la página requiere inferencia.
 
 ---
 
-# 5. Selección de fuente
+# 14. Selección de fuente
 
 ## `select_source(page_context, policy)`
 
-Debe seleccionar la representación documental a utilizar.
-
-Posibles fuentes:
+Fuentes posibles:
 
 ```text
 NATIVE_TEXT
@@ -559,15 +1408,15 @@ Ejemplo:
 }
 ```
 
-La decisión debe registrarse.
+La decisión debe quedar registrada.
 
 ---
 
-# 6. Estrategia de extracción
+# 15. Estrategia de extracción
 
 ## `select_extraction_strategy(page_context, workflow, policy)`
 
-Puede devolver:
+Valores posibles:
 
 ```text
 TEXT_ONLY
@@ -577,21 +1426,23 @@ TEXT_PLUS_VLM
 OCR_PLUS_VLM
 ```
 
-Esta función define **qué información será enviada** al siguiente procesador.
+Define qué artefactos se enviarán al siguiente procesador.
 
 No ejecuta inferencia.
 
 ---
 
-# 7. Construcción del input LLM
+# 16. Construcción del LLMInput
 
 ## `build_llm_input(page_context, strategy, workflow)`
 
-Debe transformar artefactos ya seleccionados en:
+Construye:
 
 ```text
 LLMInput
 ├── task
+├── provider
+├── model
 ├── template
 ├── document
 ├── images[]
@@ -613,15 +1464,23 @@ images:
     image/normalized.png
 ```
 
-El orquestador decide **qué enviar**.
+El orquestador decide:
 
-`procesador-llm-call` decide **cómo enviarlo al modelo**.
+```text
+qué enviar
+```
+
+`procesador-llm-call` decide:
+
+```text
+cómo ejecutar la inferencia
+```
 
 ---
 
-# 8. Políticas
+# 17. Políticas documentales
 
-Las decisiones de routing deberían estar desacopladas del código.
+Las decisiones de routing deben estar desacopladas del código.
 
 Ejemplo:
 
@@ -647,11 +1506,9 @@ llm:
   enabled: true
 ```
 
-Las políticas determinan comportamiento sin modificar procesadores.
-
 ---
 
-# 9. Manejo de errores entre procesadores
+# 18. Manejo de errores
 
 El orquestador administra errores a nivel workflow.
 
@@ -662,18 +1519,8 @@ retry processor
 fallback processor
 continue partial
 stop page
+pause document
 review required
-```
-
-Estados posibles:
-
-```text
-PENDING
-PROCESSING
-SUCCESS
-PARTIAL
-FAILED
-REVIEW_REQUIRED
 ```
 
 ---
@@ -685,45 +1532,52 @@ Ejemplo:
 ```text
 OCR FAILED
     ↓
+¿retry permitido?
+    │
+   yes
+    ↓
+ retry OCR
+
+    no
+    ↓
 ¿VLM permitido?
    ┌─┴─┐
   yes  no
    │    │
-image  REVIEW_REQUIRED
-to VLM
+  VLM REVIEW_REQUIRED
 ```
 
 ---
 
 # Diferencia con retry LLM
 
-El orquestador puede reintentar un **procesador completo**:
+El orquestador puede reintentar un procesador completo:
 
 ```text
 procesador-ocr
       ↓
 ERROR
       ↓
-retry / fallback
+retry processor
 ```
 
-`procesador-llm-call` administra retries internos como:
+`procesador-llm-call` administra retries internos:
 
 ```text
 LLM request
       ↓
 invalid JSON
       ↓
-retry LLM
+retry inference
 ```
 
 Los dos niveles no deben mezclarse.
 
 ---
 
-# 10. Comparación de fuentes documentales
+# 19. Comparación de fuentes documentales
 
-Si se necesita comparar:
+Comparaciones como:
 
 ```text
 native text
@@ -736,30 +1590,156 @@ o:
 ```text
 OCR
 vs
-resultado visual
+visual result
 ```
 
-esa comparación pertenece al nivel documental.
+pertenecen al nivel documental.
 
 Funciones posibles:
 
-* `compare_document_sources()`
-* `detect_source_conflicts()`
-* `select_best_source()`
+```text
+compare_document_sources()
+detect_source_conflicts()
+select_best_source()
+```
 
-Estas funciones no deben comparar múltiples respuestas LLM.
-
-Eso pertenece a `procesador-llm-call`.
+La comparación entre múltiples inferencias pertenece a `procesador-llm-call`.
 
 ---
 
-# 11. Consolidación
+# 20. Reprocesamiento
+
+Reprocesar no implica necesariamente ejecutar nuevamente.
+
+Ejemplo:
+
+```text
+reprocess_ocr(page)
+        ↓
+calculate processing_key
+        ↓
+same key?
+   ┌────┴────┐
+  YES       NO
+   │         │
+ REUSE    EXECUTE
+```
+
+Funciones posibles:
+
+```text
+reprocess_document()
+reprocess_page()
+reprocess_image()
+reprocess_ocr()
+reprocess_llm()
+```
+
+---
+
+# 21. Paralelización y concurrencia
+
+Las páginas deben poder procesarse independientemente.
+
+```text
+document.pdf
+     ↓
+procesador-pdf
+     ↓
+
+ ┌────┬────┬────┬────┐
+ ▼    ▼    ▼    ▼    ▼
+P1   P2   P3   P4   P5
+ │    │    │    │    │
+ ▼    ▼    ▼    ▼    ▼
+process_page()
+```
+
+El orquestador controla:
+
+* concurrencia;
+* estado;
+* límites;
+* fallos;
+* stop;
+* orden final.
+
+---
+
+# Claim de etapas
+
+Antes de ejecutar una etapa:
+
+```text
+claim_stage(stage)
+```
+
+debe realizar una transición atómica:
+
+```text
+READY
+   ↓
+RUNNING
+```
+
+Solo un worker debe poder adquirir la etapa.
+
+Si otro worker encuentra:
+
+```text
+RUNNING
+```
+
+debe:
+
+```text
+WAIT
+```
+
+o abandonar según política.
+
+Esto evita ejecuciones duplicadas costosas.
+
+---
+
+# 22. Persistencia atómica
+
+Los artefactos críticos no deben considerarse válidos mientras están siendo escritos.
+
+Ejemplo:
+
+```text
+document.json.tmp
+       ↓
+write
+       ↓
+validate
+       ↓
+atomic rename
+       ↓
+document.json
+```
+
+La misma regla puede aplicarse a:
+
+```text
+metadata.json
+normalized.png
+OCR outputs
+LLM outputs
+DocumentContext
+```
+
+---
+
+# 23. Consolidación
 
 ## `consolidate_page_result(page_context)`
 
 Debe reunir:
 
 * artefactos;
+* stage executions;
 * fuente seleccionada;
 * estrategia;
 * OCR;
@@ -781,94 +1761,124 @@ Debe:
 
 * ordenar páginas;
 * reunir resultados;
-* conservar referencias a artefactos;
+* conservar artefactos;
+* registrar etapas reutilizadas;
+* registrar etapas omitidas;
+* registrar ejecuciones realizadas;
 * consolidar extracción final;
 * generar `DocumentResult`.
 
-No debe alterar los resultados originales de los procesadores.
+No debe alterar resultados originales.
 
 ---
 
-# 12. Reprocesamiento
-
-El orquestador debe permitir ejecutar nuevamente solo una etapa.
-
-Ejemplos:
-
-* `reprocess_page(page_number)`
-* `reprocess_image(page_number)`
-* `reprocess_ocr(page_number)`
-* `reprocess_llm(page_number)`
-
-Debe reutilizar artefactos existentes siempre que sigan siendo válidos.
-
----
-
-# 13. Paralelización
-
-Las páginas deben poder procesarse independientemente.
-
-```text
-document.pdf
-     ↓
-procesador-pdf
-     ↓
- ┌────┬────┬────┬────┐
- ▼    ▼    ▼    ▼    ▼
-P1   P2   P3   P4   P5
- │    │    │    │    │
- ▼    ▼    ▼    ▼    ▼
-process_page()
-```
-
-El orquestador controla:
-
-* concurrencia;
-* estado;
-* fallos;
-* orden final.
-
----
-
-# 14. Helpers
+# 24. Helpers
 
 ## Estado
 
-* `get_page_context(context, page_number)`
-* `set_page_status(page, status)`
-* `set_document_status(context, status)`
+```text
+get_page_context()
+get_stage_execution()
 
-## Artefactos
-
-* `get_artifact(page, artifact_type)`
-* `has_artifact(page, artifact_type)`
-* `register_page_artifact(page, type, path)`
-* `get_best_available_text(page)`
-* `get_best_available_image(page)`
-
-## Routing
-
-* `evaluate_condition(condition, context)`
-* `match_policy(context, policy)`
-* `resolve_next_processor(context, workflow)`
-
-## Errores
-
-* `build_error_record(exception, processor)`
-* `is_recoverable_error(error)`
-* `should_retry_processor(error, policy)`
-
-## Trazabilidad
-
-* `build_workflow_run_id()`
-* `append_workflow_trace(event)`
-* `build_decision_record(rule, result, reason)`
+set_page_status()
+set_document_status()
+set_stage_status()
+```
 
 ---
 
-# Responsabilidades que NO pertenecen al orquestador
+## Idempotencia
 
-Eliminar cualquier implementación directa de:
+```text
+calculate_input_hash()
+calculate_options_hash()
+calculate_processing_key()
+
+is_stage_reusable()
+validate_stage_outputs()
+```
+
+---
+
+## Dependencias
+
+```text
+get_stage_dependencies()
+get_downstream_stages()
+invalidate_stage()
+invalidate_downstream()
+```
+
+---
+
+## Artefactos
+
+```text
+get_artifact()
+has_artifact()
+register_page_artifact()
+
+get_best_available_text()
+get_best_available_image()
+```
+
+---
+
+## Routing
+
+```text
+evaluate_condition()
+match_policy()
+resolve_next_processor()
+resolve_stage()
+```
+
+---
+
+## Stop / Resume
+
+```text
+request_stop()
+should_stop()
+resume_document()
+recover_interrupted_stage()
+```
+
+---
+
+## Concurrencia
+
+```text
+claim_stage()
+release_stage()
+is_stage_running()
+```
+
+---
+
+## Errores
+
+```text
+build_error_record()
+is_recoverable_error()
+should_retry_processor()
+```
+
+---
+
+## Trazabilidad
+
+```text
+build_workflow_run_id()
+append_workflow_trace()
+build_decision_record()
+```
+
+---
+
+# 25. Responsabilidades que NO pertenecen al orquestador
+
+No debe implementar directamente:
 
 ```text
 extract_text_from_pdf()
@@ -893,11 +1903,11 @@ compare_llm_outputs()
 execute_llm_graph()
 ```
 
-Cada una pertenece a su procesador específico.
+Cada operación pertenece a su procesador específico.
 
 ---
 
-# Separación con `procesador-llm-call`
+# 26. Separación con `procesador-llm-call`
 
 ## Orquestador
 
@@ -905,11 +1915,24 @@ Decide:
 
 ```text
 ¿Necesito LLM?
+
 ¿Qué fuente documental uso?
+
 ¿Incluyo imagen?
+
 ¿Qué task ejecutar?
-¿Qué template/schema corresponde al workflow?
-¿Qué hago si falla el procesador LLM completo?
+
+¿Qué template/schema corresponde?
+
+¿Existe un resultado reutilizable?
+
+¿La etapa está invalidada?
+
+¿Debe omitirse?
+
+¿Debe forzarse?
+
+¿Qué hago si falla el procesador?
 ```
 
 Genera:
@@ -928,15 +1951,21 @@ Recibe:
 LLMInput
 ```
 
-Y decide internamente:
+Decide internamente:
 
 ```text
 ¿Cómo renderizo el prompt?
+
 ¿Cómo construyo mensajes?
+
 ¿Cómo llamo al provider?
-¿Cómo valido el schema?
-¿Reintento una inferencia?
+
+¿Cómo valido schema?
+
+¿Reintento la inferencia?
+
 ¿Qué nodo LLM sigue?
+
 ¿Cómo comparo outputs LLM?
 ```
 
@@ -948,7 +1977,7 @@ LLMResult
 
 ---
 
-# Dos grafos separados
+# 27. Dos grafos separados
 
 ## Grafo documental
 
@@ -967,6 +1996,18 @@ SOURCE SELECTION
  ↓
 LLM
 ```
+
+Cada nodo puede resultar:
+
+```text
+EXECUTE
+REUSE
+SKIP
+FORCE
+INVALIDATED
+```
+
+---
 
 ## Grafo de inferencia
 
@@ -987,79 +2028,117 @@ extract_a   extract_b
      result
 ```
 
-Estos grafos no deben compartir responsabilidad.
+Ambos grafos no deben compartir responsabilidad.
 
 ---
 
 # Integración completa
 
 ```text
-                    INPUT
-                      ↓
-             procesador-orquestador
-                      ↓
-                 detect type
-               ┌──────┴──────┐
-               ▼             ▼
-              PDF          IMAGE
-               │             │
-               ▼             │
-        procesador-pdf       │
-               │             │
-               └──────┬──────┘
-                      ▼
-                 PageContext
-                      ↓
-              routing documental
-                      ↓
-             procesador-image
-                      ↓
-                  ImageResult
-                      ↓
-                 ¿OCR?
-                      ↓
-              procesador-ocr
-                      ↓
-                   OCRResult
-                      ↓
-                select_source
-                      ↓
-                build_llm_input
-                      ↓
-             procesador-llm-call
-                      ↓
-                   LLMResult
-                      ↓
-             procesador-orquestador
-                      ↓
-                  consolidate
-                      ↓
-                DocumentResult
+                          INPUT
+                            ↓
+                  procesador-orquestador
+                            ↓
+                    load/create state
+                            ↓
+                   build execution plan
+                            ↓
+                      detect type
+                   ┌────────┴────────┐
+                   ▼                 ▼
+                  PDF              IMAGE
+                   │                 │
+                   ▼                 │
+             resolve PDF stage       │
+                   │                 │
+             execute / reuse         │
+                   │                 │
+                   └────────┬────────┘
+                            ▼
+                       PageContext
+                            ↓
+                      process_page
+                            ↓
+                    resolve IMAGE
+                   ┌────────┴────────┐
+                   │                 │
+                 REUSE            EXECUTE
+                                     ↓
+                              procesador-image
+                                     ↓
+                                 ImageResult
+
+                            ↓
+                      resolve OCR
+                   ┌────────┴────────┐
+                   │                 │
+                 REUSE            EXECUTE
+                                     ↓
+                               procesador-ocr
+                                     ↓
+                                  OCRResult
+
+                            ↓
+                       select_source
+                            ↓
+                       resolve LLM
+                   ┌────────┴────────┐
+                   │                 │
+                 REUSE            EXECUTE
+                                     ↓
+                           procesador-llm-call
+                                     ↓
+                                  LLMResult
+
+                            ↓
+                         consolidate
+                            ↓
+                       DocumentResult
 ```
 
 ---
 
 # Independencia
 
-El orquestador depende de los **contratos públicos** de los procesadores, no de sus implementaciones internas.
-
-Por ejemplo:
+El orquestador depende exclusivamente de los contratos públicos:
 
 ```text
-PDFRequest → PDFResult
+PDFRequest   → PDFResult
+
 ImageRequest → ImageResult
-OCRRequest → OCRResult
-LLMInput → LLMResult
+
+OCRRequest   → OCRResult
+
+LLMInput     → LLMResult
 ```
 
-Esto permite reemplazar:
+Los procesadores:
 
-* Poppler;
-* OpenCV;
-* Docling;
-* Ollama;
+* no conocen `resume`;
+* no conocen `skip`;
+* no conocen `force`;
+* no conocen el workflow completo;
+* no deciden si su resultado debe reutilizarse.
 
-sin modificar el flujo general, siempre que se mantenga el contrato.
+Reciben:
+
+```text
+request
+```
+
+Ejecutan:
+
+```text
+capability
+```
+
+Devuelven:
+
+```text
+result
+```
+
+El orquestador decide cuándo y por qué invocarlos.
 
 ---
 
@@ -1067,32 +2146,106 @@ sin modificar el flujo general, siempre que se mantenga el contrato.
 
 `procesador-orquestador`:
 
-> **Recibe un documento, administra su estado y decide qué procesador debe ejecutarse en cada etapa.**
+> **Recibe o recupera un documento, administra el estado persistente del workflow y decide qué procesador debe ejecutarse, reutilizarse, omitirse, forzarse o invalidarse en cada etapa.**
 
 Es dueño de:
 
-* workflow documental;
-* routing entre procesadores;
-* selección de fuentes;
-* políticas;
-* estado global;
-* fallbacks;
-* consolidación.
+```text
+workflow documental
+
+routing
+
+estado global
+
+estado de etapas
+
+idempotencia
+
+stop / resume
+
+skip / force
+
+dependencias
+
+invalidación downstream
+
+concurrencia
+
+selección de fuentes
+
+políticas
+
+fallbacks
+
+reprocesamiento
+
+consolidación
+```
 
 No es dueño de:
 
-* implementación PDF;
-* implementación de imagen;
-* implementación OCR;
-* inferencia LLM;
-* grafo interno LLM.
+```text
+implementación PDF
+
+procesamiento interno de imagen
+
+implementación OCR
+
+inferencia LLM
+
+retry interno LLM
+
+grafo interno LLM
+```
 
 En términos simples:
 
 ```text
 ORQUESTADOR
-    = coordina el sistema
+    =
+decide
++ coordina
++ recuerda
++ reutiliza
++ controla
 
 PROCESADORES
-    = ejecutan capacidades específicas
+    =
+ejecutan capacidades específicas
+```
+
+La regla operativa fundamental es:
+
+> **No volver a ejecutar trabajo válido sin una razón explícita.**
+
+Una etapa solamente debe ejecutarse nuevamente cuando:
+
+```text
+no existe resultado
+
+o
+
+resultado inválido
+
+o
+
+inputs cambiaron
+
+o
+
+configuración cambió
+
+o
+
+versión cambió
+
+o
+
+force fue solicitado
+```
+
+Todo lo demás debe resolverse mediante:
+
+```text
+REUSE
 ```
