@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`…`IMG-08` **DONE** - contracts frozen, engine seam in place, images read, measured and published as `normalized.png` plus two independent variants; `IMG-09` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`…`IMG-09` **DONE** - contracts frozen, engine seam in place, images read, measured, classified and published as `normalized.png` plus two independent variants; `IMG-10` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -36,7 +36,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-06 | `analyze_image` → `ImageMetrics` | S | 2 — Analysis | IMG-04 | `analyze_image` (side-effect-free) | this file §IMG-06 | DONE |
 | IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png` | this file §IMG-07 | DONE |
 | IMG-08 | `prepare_image_for_ocr` / `prepare_image_for_vlm` | M | 3 — Outputs | IMG-05, IMG-06 | `image/ocr_ready.png`, `image/vlm_ready.png` (distinct pipelines) | this file §IMG-08 | DONE |
-| IMG-09 | `classify_image` | S | 3 — Outputs | IMG-06 | `TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY` | this file §IMG-09 | NOT_STARTED |
+| IMG-09 | `classify_image` | S | 3 — Outputs | IMG-06 | `TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY` | this file §IMG-09 | DONE |
 | IMG-10 | `validate_image_result` + typed error classification | S | 3 — Outputs | IMG-06 | `validate_image_result`, `ImageError` kinds | this file §IMG-10 | NOT_STARTED |
 | IMG-11 | Atomic persistence + `metadata.json` | M | 4 — Publish | IMG-07, IMG-08, IMG-10 | `image/.tmp/` → rename; `image/metadata.json` | this file §IMG-11 | NOT_STARTED |
 | IMG-12 | `process_image` entry point | M | 4 — Publish | IMG-09, IMG-11 | `process_image` | this file §IMG-12 | NOT_STARTED |
@@ -518,6 +518,59 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given only `ImageMetrics` as input, then the returned value is always one of the four literals.
 - **Evidence / DoD:** Unit test over crafted metric vectors including the `LOW_QUALITY` boundary.
 - **Tags:** `# TODO: [MVP]` on the provisional threshold values.
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/classify.py` implements `classify_image`
+  from `ImageMetrics` alone. Both WBS acceptance criteria hold: a page below any quality threshold is
+  `LOW_QUALITY` (parametrised once per measurement that can reject a page, so an implementation
+  checking only sharpness fails), and the result is always one of the four literals - asserted on the
+  fixtures, on the corpus, and on **four hundred randomised quality vectors plus two hundred
+  randomised region layouts**.
+
+- **The discriminator was measured, and the first three candidates failed.** The classification turns
+  on **region height**: lines of text produced regions 7 to 24 pixels tall across every case probed,
+  while figures, logos and solid bars produced 40 to 420, with nothing in between. The plausible
+  alternatives were tried first and rejected on evidence:
+  1. **Ink density inside a region** does not separate them - lines of text measured 0.28 to 1.0 and
+     a chart's bars measured 0.808, the same range.
+  2. **Region area or span** does not either: a widely spaced line covers 0.013 of the frame, exactly
+     like a small detail inside a figure.
+  3. **Colour** is unavailable in principle. `ImageMetrics` has no saturation measure, so no rule may
+     depend on one.
+
+- **A calibration error this task made and its own test caught.** The contrast floor was first set to
+  30 from synthetic pages alone. **Four of the twenty-six real extracted JPEGs in the corpus measure
+  18 to 28** - ordinary pages, every one of them classified unusable. The floor is now 10, and
+  `test_an_ordinary_real_image_is_not_written_off_as_low_quality` runs the whole corpus and fails if
+  it drifts back. The sharpness floor of 1000 was checked the same way and survived: a page blurred
+  beyond recognition scores 177, the lowest real image scores 1019, and the fixtures score 35233.
+
+- **The thresholds that overlap other modules are deliberately different, and the difference is
+  documented in the constants.** `MIN_LEGIBLE_CONTRAST` is 10 where
+  `normalize.MIN_ACCEPTABLE_CONTRAST` is 45, because one asks whether a page is usable and the other
+  asks whether a *correction* is worth applying - a page at 36 needs improvement and is not unusable.
+  `MAX_UNUSABLE_NOISE` is 5.0 where `variants.MAX_ACCEPTABLE_NOISE` is 3.0, because one asks whether
+  grain has replaced the content and the other whether denoising is worth a step.
+
+- **Two limits of the measurements, both pinned as tests.** The classifier sees *markings*, not
+  *characters*: a chart whose bars are 15 pixels tall has the shape of a line of text and reads as
+  `TEXT_IMAGE`. And a blank page is `LOW_QUALITY` rather than `TEXT_IMAGE`, because zero contrast and
+  zero edge structure is the clearest case of nothing to read. What a page *means* is the OCR
+  processor's business.
+
+- **Mutation evidence.** Ten mutations applied; **two survived the first run**, and closing each
+  required a crafted case the suite had missed:
+  1. Removing the dominance branch entirely survived, because the only `MIXED_IMAGE` case went
+     through it and the default return produced the same answer. Closed by a page where the dominance
+     rule and the area rule would agree but the precedence is observable - a short region filling 75%
+     of a wide strip.
+  2. Removing the per-region ink floor survived, because every crafted region was either properly
+     inked or tall. Closed by a page of six short, empty slivers.
+
+  After closing them, all ten are detected: the quality evidence collapsed into an average (9 tests
+  fail), only sharpness checked (4), the contrast floor raised back to the value real images failed
+  (1), the sharpness floor dropped (1), `VISUAL_IMAGE` unreachable (5), region height ignored (7),
+  `MIXED_IMAGE` unreachable through the dominance branch (1), the quality test moved after the shape
+  tests (9), the ink floor ignored (1), `TEXT_IMAGE` unreachable (3).
 
 ### IMG-10 — `validate_image_result` and typed error classification
 
