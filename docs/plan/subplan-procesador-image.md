@@ -122,11 +122,11 @@ Errors are classified technically into a typed `ImageError` with a `recoverable`
 | IMG-05 | Implement transformation primitives (rotate, deskew, resize, grayscale, binarize, denoise, sharpen, contrast/brightness, format conversion/compression) | M | IMG-03 |
 | IMG-06 | Implement `analyze_image` → `ImageMetrics` (side-effect-free) | S | IMG-04 |
 | IMG-07 | Implement `normalize_image` + `prepare_normalized_image` | M | IMG-05, IMG-06 |
-| IMG-08 | Implement `prepare_image_for_ocr` and `prepare_image_for_vlm` (distinct pipelines) | M | IMG-05 |
+| IMG-08 | Implement `prepare_image_for_ocr` and `prepare_image_for_vlm` (distinct pipelines) | M | IMG-05, IMG-06 |
 | IMG-09 | Implement `classify_image` (`TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY`) | S | IMG-06 |
 | IMG-10 | Implement `validate_image_result` + typed `ImageError` classification | S | IMG-06 |
 | IMG-11 | Implement atomic persistence (`.tmp` → validate → rename) and `metadata.json` generation | M | IMG-07, IMG-08, IMG-10 |
-| IMG-12 | Implement `process_image` entry point wiring the full flow | M | IMG-11 |
+| IMG-12 | Implement `process_image` entry point wiring the full flow | M | IMG-09, IMG-11 |
 | IMG-13 | Write happy-path + invariant tests; record mutation-falsification evidence | M | IMG-12 |
 | IMG-14 | Run the four QA gates clean | S | IMG-13 |
 
@@ -134,7 +134,7 @@ Errors are classified technically into a typed `ImageError` with a `recoverable`
 
 - **Wave 1 — Contracts & seam:** IMG-01 → IMG-02 → IMG-03.
 - **Wave 2 — Analysis:** IMG-04 ∥ IMG-05 (parallel after IMG-03) → IMG-06.
-- **Wave 3 — Outputs:** IMG-07, IMG-08 (parallel) and IMG-09, IMG-10 (parallel after IMG-06).
+- **Wave 3 — Outputs:** IMG-07, IMG-09, IMG-10 (after IMG-06) and IMG-08 (after IMG-05 and IMG-06); all four may proceed in parallel once their predecessors are green.
 - **Wave 4 — Publish:** IMG-11 → IMG-12.
 - **Wave 5 — Verify:** IMG-13 → IMG-14.
 

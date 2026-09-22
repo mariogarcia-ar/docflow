@@ -62,9 +62,13 @@ or `# TODO: [RELEASE]` (telemetry/caching/HA/security).
 
 ### Out of scope (first iteration)
 
-- Multi-document corpus batching and distributed execution.
+- Multi-document corpus batching and distributed execution (revisited at the Release gate).
 - A labelled golden set (deferred; see §8 risks).
-- Real retry queues and GPU-competition policy.
+- Real retry queues and GPU-competition policy (revisited at the Release gate).
+- Parallel page execution: the PoC runs pages sequentially and only declares
+  `parallel_pages`, tagged `# TODO: [MVP]` (see `subplan-orquestador.md` §9.3).
+- Durable cross-process workflow state: the PoC keeps an in-memory `DocumentContext`
+  serialised to JSON, tagged `# TODO: [MVP]` (see `subplan-orquestador.md` §9.2).
 - Domain-specific extraction rules (invoice fields, verdicts) — the pipeline is generic;
   the prompt/schema assets are data, not code.
 
@@ -151,17 +155,16 @@ src/docflow/
 │   ├── utils/
 │   └── helpers/
 └── workflow/            # procesador-orquestador — the only workflow-aware component
-    ├── process_document()
-    ├── process_page()
-    ├── resolve_stage()
-    ├── select_source()
-    ├── select_extraction_strategy()
-    ├── build_llm_input()
-    ├── invalidate_downstream()
-    ├── resume_document()
-    └── execute_document_workflow()
+    └── (public symbols, not files: process_document, process_page, resolve_stage,
+         select_source, select_extraction_strategy, build_llm_input,
+         invalidate_downstream, resume_document, execute_document_workflow)
 tests/                   # mirrors src/docflow, one test module per source module
 ```
+
+The `workflow/` block lists **symbols the orchestrator exposes**, not a file tree: they are
+functions of the `docflow.workflow` sub-package, distributed across its own modules as the
+orchestrator's own layout decides. The same reading applies to `primitives/`, `utils/` and
+`helpers/`, which are directories.
 
 Entry-point names (from the idea, `readme.md` §"Naming"):
 
@@ -228,8 +231,9 @@ within a phase, independent processors may proceed in parallel.
   | `DocumentRequest` | `DocumentResult` |
 
 - The stage-state vocabulary (`NOT_STARTED`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`,
-  `SKIPPED`, `REUSED`, `INVALIDATED`, `PAUSED`, …) and the three identities:
-  `document_id`, `workflow_run_id`, `processing_key`.
+  `SKIPPED`, `REUSED`, `INVALIDATED`, `PAUSED`) — that list is **closed**: exactly those
+  nine states, with no further member added without an explicit plan revision — and the
+  three identities: `document_id`, `workflow_run_id`, `processing_key`.
 - Tooling: `pyproject.toml` as the single config home for `pytest`, `ruff`, `pylint`,
   `coverage`.
 
@@ -293,7 +297,10 @@ its downstream dependents; four QA gates pass.
 
 - `select_source()` across `NATIVE_TEXT`, `OCR_TEXT`, `IMAGE`, and their combinations,
   driven by the orchestrator (never by a processor).
-- `build_llm_input()` composition and `consolidate_page` / `consolidate_document`.
+- `build_llm_input()` composition and `consolidate_page_result` /
+  `consolidate_document_result` (the canonical names — `consolidate_page` /
+  `consolidate_document` are accepted aliases of the same seam, not a second
+  implementation; see `subplan-orquestador.md` §9.6).
 - End-to-end run: a real PDF and a real image each produce a `DocumentResult` through the
   full flow, with the orchestrator as the only component calling processors.
 
@@ -369,6 +376,12 @@ pylint src tests        # fixme disabled; the rest clean
 - No domain noun (invoice, field, verdict, pipeline code) in a processor API.
 - A concrete engine/library is reached only from a processor's own `primitives/` — never
   from the orchestrator and never across processors.
+- No processor imports another processor: the orchestrator is the only component that
+  composes them.
+- Every exit criterion has an owning task: Phase 0's fake round-trip per contract and
+  Phase 4's TODO-tag audit are deliverables, not side effects.
+- Naming drift between this plan and a subplan is resolved by recording the canonical name
+  in the subplan and the alias here; two names for one seam is a defect.
 
 ---
 
@@ -404,3 +417,11 @@ Each was open; each is now **resolved from `docs/idea/`** (the source of truth) 
    names the idea itself uses (`docflow.pdf`, `docflow.workflow`, `process_document`,
    `process_pdf`, …). The Spanish `procesador-*` names remain only as titles of the
    `docs/idea/` documents.
+5. **Consolidation naming — RESOLVED.** Canonical names are
+   `consolidate_page_result` / `consolidate_document_result` (as `ORC-17` and
+   `subplan-orquestador.md` §9.6 use); the `consolidate_page` / `consolidate_document`
+   forms this plan used are accepted aliases of the same seam. §5 above has been
+   reconciled to the canonical names.
+6. **Stage-state vocabulary — RESOLVED.** The nine states listed in §5 Phase 0
+   (`NOT_STARTED`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`, `SKIPPED`, `REUSED`,
+   `INVALIDATED`, `PAUSED`) are the closed set; no open ellipsis, no silent alias.

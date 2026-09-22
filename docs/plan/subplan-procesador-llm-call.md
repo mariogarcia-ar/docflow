@@ -266,9 +266,9 @@ graph; a retry always preserves prior attempts (`LLMAttempt` history). Documenta
 
 ### Waves
 
-- **Wave 1 (contracts & primitives):** LLM-01 → LLM-02 → LLM-03, LLM-04, LLM-05.
-- **Wave 2 (single call):** LLM-06 → LLM-07 → LLM-08; LLM-09 in parallel after LLM-02.
-- **Wave 3 (internal graph):** LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14, LLM-15 after LLM-12.
+- **Wave 1 (contracts & primitives):** LLM-01 → LLM-02 → LLM-03; LLM-04 and LLM-05 depend only on LLM-01 and run in parallel with the provider seam (LLM-02/LLM-03).
+- **Wave 2 (single call):** LLM-06 → LLM-07 → LLM-08; LLM-09 in parallel after LLM-02; LLM-15 also starts here (its only predecessor is LLM-06).
+- **Wave 3 (internal graph):** LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12. LLM-15 is completed in Wave 2 by its declared dependency.
 
 Each wave ends with the four QA gates green and its happy-path/invariant tests passing.
 

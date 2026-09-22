@@ -40,7 +40,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-10 | Document entry point | M | 3 — Composition | PDF-03, PDF-09 | `process_pdf`, `metadata.json` | this file §PDF-10 | NOT_STARTED |
 | PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | NOT_STARTED |
 | PDF-12 | Atomic persistence | S | 4 — Hardening | PDF-09, PDF-10 | `.tmp` → validate → rename across all artifacts | this file §PDF-12 | NOT_STARTED |
-| PDF-13 | Fixtures + tests | M | 4 — Hardening | PDF-01, PDF-02 | `fixtures/pdf_sample_*.pdf`, `tests/` | this file §PDF-13 | NOT_STARTED |
+| PDF-13 | Fixtures + tests | M | 4 — Hardening | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 | `fixtures/pdf_sample_*.pdf`, `tests/` | this file §PDF-13 | NOT_STARTED |
 
 ## 3. Detailed issues
 
@@ -241,8 +241,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 - **Type:** Test
 - **Effort:** M
-- **Wave:** 4 — Hardening (fixture preparation starts in Wave 1)
-- **Depends on:** PDF-01, PDF-02
+- **Wave:** 4 — Hardening (fixture *bytes* land in Wave 1; the tests cannot start before PDF-10 and PDF-12 are green)
+- **Depends on:** PDF-01, PDF-02, PDF-10, PDF-11, PDF-12
 - **Blocks:** —
 - **Objective:** Land the committed fixtures and the happy-path plus invariant tests, and prove each invariant test fails under its documented mutation.
 - **Scope / Deliverables:** `fixtures/pdf_sample_text.pdf` (multi-page, text-dominant), `fixtures/pdf_sample_image.pdf` (single page, image-dominant), `fixtures/pdf_sample_mixed.pdf` (text + image), `fixtures/pdf_corrupt.pdf` (truncated header); happy-path test over `process_pdf`; invariant tests 1–3 of the subplan §6; `tests/` mirroring `src/docflow/pdf/`.
@@ -277,16 +277,19 @@ flowchart LR
     PDF10 --> PDF12
     PDF01 --> PDF13["PDF-13 Fixtures + tests"]
     PDF02 --> PDF13
+    PDF10 --> PDF13
+    PDF11 --> PDF13
+    PDF12 --> PDF13
 ```
 
 ## 5. Execution waves
 
 | Wave | Tasks | Entry condition | Exit condition |
 |---|---|---|---|
-| 1 — Foundations | PDF-01, PDF-02, fixture preparation for PDF-13 | Phase 0 exit met; subplan §7 DoR satisfied | Contracts and primitives seam import cleanly; no silent engine default; fixtures committed |
+| 1 — Foundations | PDF-01, PDF-02; the fixture *bytes* for PDF-13 | Phase 0 exit met; subplan §7 DoR satisfied | Contracts and primitives seam import cleanly; no silent engine default; fixtures committed |
 | 2 — Primitives (parallel) | PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | PDF-02 landed | Each primitive returns real data from a committed fixture |
 | 3 — Composition | PDF-09 → PDF-10 | Wave 2 primitives green | `Request → Result` round-trip works with real bytes; page order and namespace ownership hold |
-| 4 — Hardening | PDF-11, PDF-12 → finalize PDF-13 → four QA gates | Wave 3 green | Typed error model and atomic publication in place; invariant tests mutation-falsified; all four gates pass |
+| 4 — Hardening | PDF-11, PDF-12 → PDF-13 (its predecessors must be green) → four QA gates | Wave 3 green | Typed error model and atomic publication in place; invariant tests mutation-falsified; all four gates pass |
 
 ## 6. Critical path
 
@@ -311,7 +314,7 @@ It is critical because nothing can be extracted before the contracts exist (PDF-
 - The task appears as a row in `subplan-procesador-pdf.md` §4 with the same ID, title, effort and dependencies.
 - Its predecessors are `SUCCESS` (or the task is Wave 1 and Phase 0 has exited).
 - For PDF-11/PDF-12: the artifact ownership rule and the atomic-publication rule are agreed; for PDF-08: the threshold constants are named before coding starts.
-- For PDF-13: the four fixtures of subplan §6 exist and are named for the failure they provoke.
+- For PDF-13: the four fixtures of subplan §6 exist and are named for the failure they provoke; PDF-10, PDF-11 and PDF-12 are green, since the happy-path and atomic-publication tests cannot be written against a non-existent `process_pdf`.
 - No open question blocks the happy path; no domain noun is introduced into the processor API.
 
 ## 9. Definition of Done (per task)

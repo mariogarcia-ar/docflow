@@ -236,16 +236,18 @@ result is the contract:
 | OCR-12 | Tests: happy path + invariant tests + committed image fixtures. | M | OCR-11 |
 | OCR-13 | Four QA gates green; mutation-falsify each invariant test and document observations. | S | OCR-12 |
 
+`process_ocr_from_page` is declared in OCR-11 but deferred to Phase 3 integration by §9 resolved decision 5; Phase 1 ships only `process_ocr_image` and the wrapper carries an inline `# TODO: [MVP]`.
+
 ### 4.2 Order / waves
 
 - **Wave 1 — Foundations:** OCR-01, OCR-02 (contracts and the Docling seam first).
 - **Wave 2 — Engine + extraction:** OCR-03, OCR-04, OCR-05 (all Docling access isolated here).
-- **Wave 3 — Outputs:** OCR-06, OCR-07, OCR-08, OCR-09 (representations, tables, metrics, validation).
+- **Wave 3 — Outputs:** OCR-06 ∥ OCR-08 (both after OCR-05), then OCR-07 and OCR-09 (representations; metrics computed in parallel with the output builders; tables and validation close the wave).
 - **Wave 4 — Publish + entry points:** OCR-10, OCR-11 (atomic write, `process_ocr_image`).
 - **Wave 5 — Verification:** OCR-12, OCR-13 (tests, fixtures, QA gates).
 
 Waves are strictly sequential; tasks within a wave that share no dependency may proceed in
-parallel.
+parallel (Wave 3 is the only wave with genuine parallelism in this subplan).
 
 ## 5. Acceptance criteria
 

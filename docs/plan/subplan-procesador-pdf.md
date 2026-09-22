@@ -169,7 +169,7 @@ Typed results, not thrown exceptions, where a result is the contract. Failures a
 | PDF-01 | Contract types: `PDFRequest`, `PDFResult`, `PDFPageResult`, `PDFPageMetrics`, `PDFError`, statuses | S | — |
 | PDF-02 | Poppler primitives skeleton in `pdf/primitives/` (encapsulation, no silent default) | M | PDF-01 |
 | PDF-03 | Document primitives: `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | M | PDF-02 |
-| PDF-04 | Split/extract primitives: `extract_page`, `split_pdf`, `merge_pdfs` | M | PDF-02 |
+| PDF-04 | Split/extract primitives: `extract_page`, `split_pdf`, `merge_pdfs` (`# TODO: [MVP]` — `merge_pdfs` is a generic utility, not on the happy path) | M | PDF-02 |
 | PDF-05 | Render primitive: `render_page_to_image` | S | PDF-02 |
 | PDF-06 | Native text primitives: `extract_text_from_page`, `get_text_blocks` | M | PDF-02 |
 | PDF-07 | Embedded image primitives: `extract_images_from_page`, `get_image_blocks` | M | PDF-02 |
@@ -178,13 +178,13 @@ Typed results, not thrown exceptions, where a result is the contract. Failures a
 | PDF-10 | Document entry point: `process_pdf` + consolidation + `PDFResult` | M | PDF-03, PDF-09 |
 | PDF-11 | Validation + error model: `validate_pdf_result`, `validate_pdf_page_result` | S | PDF-09, PDF-10 |
 | PDF-12 | Atomic persistence (`.tmp` → validate → rename) across all artifacts | S | PDF-09, PDF-10 |
-| PDF-13 | Committed fixtures + happy-path and invariant tests | M | PDF-01, PDF-02 |
+| PDF-13 | Committed fixtures + happy-path and invariant tests | M | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 |
 
 ### Order / waves
-- **Wave 1 (foundations):** PDF-01, PDF-02, and fixture preparation for PDF-13 (contracts and primitives land first; everything imports from them).
+- **Wave 1 (foundations):** PDF-01, PDF-02, and the fixture *bytes* for PDF-13 (contracts and primitives land first; everything imports from them). The fixtures are committed here; the tests that consume them belong to Wave 4.
 - **Wave 2 (primitives, parallel):** PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 — independent once the primitives skeleton exists.
 - **Wave 3 (composition):** PDF-09 (page entry point), then PDF-10 (document entry point).
-- **Wave 4 (hardening):** PDF-11, PDF-12, then finalize PDF-13 and run the four QA gates.
+- **Wave 4 (hardening):** PDF-11, PDF-12, then PDF-13 (the tests need `process_pdf` and the atomic-publication guarantee to exist), and run the four QA gates.
 
 ## 5. Acceptance criteria
 

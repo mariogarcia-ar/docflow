@@ -220,11 +220,11 @@ A failed stage is **reported, not propagated**: the orchestrator records the sta
 | ORC-07 | `resolve_stage` decision order: explicit skip → force → valid reusable → execute | M | ORC-02, ORC-06 |
 | ORC-08 | Reuse check: `is_stage_reusable`, `validate_stage_outputs` | M | ORC-02, ORC-04 |
 | ORC-09 | Dependency graph + `invalidate_downstream` (preserve historical artifacts, record cause) | M | ORC-04, ORC-08 |
-| ORC-10 | `prepare_pdf_document` / `prepare_image_document` (build requests, create `PageContext`, reuse or execute PDF) | M | ORC-07 |
-| ORC-11 | `process_pages` / `process_page` (sequential first; `parallel_pages` flagged `# TODO: [MVP]`) | L | ORC-03, ORC-06 |
+| ORC-10 | `prepare_pdf_document` / `prepare_image_document` (build requests, create `PageContext`, reuse or execute PDF) | M | ORC-03, ORC-05, ORC-07 |
+| ORC-11 | `process_pages` / `process_page` (sequential first; `parallel_pages` flagged `# TODO: [MVP]`) | L | ORC-03, ORC-06, ORC-10, ORC-14 |
 | ORC-12 | `select_source` + `select_extraction_strategy` | M | ORC-11 |
 | ORC-13 | `build_llm_input` (task, document, images[], schema, options) | M | ORC-12 |
-| ORC-14 | Processor invocation helpers: `run_image_processing`, `run_ocr`, `run_llm` (call fakes behind contracts, register artifacts) | M | ORC-07, ORC-08 |
+| ORC-14 | Processor invocation helpers: `run_image_processing`, `run_ocr`, `run_llm` (call fakes behind contracts, register artifacts) | M | ORC-03, ORC-07, ORC-08 |
 | ORC-15 | `request_stop` / `resume_document` / recover interrupted `RUNNING` stage | L | ORC-03, ORC-09 |
 | ORC-16 | `handle_processor_error`, error records, `REVIEW_REQUIRED` / fallback decisions | M | ORC-11 |
 | ORC-17 | `consolidate_page_result` / `consolidate_document_result` (order pages, preserve results, build `execution_summary`) | M | ORC-11, ORC-13 |
@@ -233,9 +233,9 @@ A failed stage is **reported, not propagated**: the orchestrator records the sta
 
 **Order / waves:**
 
-1. **Wave 1 — Foundation:** ORC-01 → ORC-02 → ORC-03 → ORC-04 (contracts, identities, durable state, stage claims).
-2. **Wave 2 — Decision core:** ORC-05 → ORC-06 → ORC-07 → ORC-08 → ORC-09 (type detection, plan, resolve/reuse, invalidation).
-3. **Wave 3 — Execution path:** ORC-10 → ORC-11 → ORC-12 → ORC-13 → ORC-14 (document/page processing, source selection, LLM input, processor invocation).
+1. **Wave 1 — Foundation:** ORC-01 → ORC-02 → ORC-03 → ORC-04; ORC-05 in parallel (its only predecessor is ORC-01) — contracts, identities, durable state, stage claims, input-type detection.
+2. **Wave 2 — Decision core:** ORC-06 → ORC-07 → ORC-08 → ORC-09 (plan, resolve/reuse, invalidation).
+3. **Wave 3 — Execution path:** ORC-03 + ORC-07 → ORC-10 → ORC-11 (document preparation, then per-page execution); ORC-14 completes before ORC-11 consumes it; then ORC-12 → ORC-13.
 4. **Wave 4 — Resilience:** ORC-15 → ORC-16 (stop/resume, error containment).
 5. **Wave 5 — Consolidation & QA:** ORC-17 → ORC-18 → ORC-19 (consolidate, trace, gates).
 
@@ -356,3 +356,8 @@ pylint src tests
 5. **Stop/claim coordination — RESOLVED.** A running stage finishes gracefully (no
    per-processor cancel in PoC); the interrupted `RUNNING → READY` recovery is handled on
    resume. External kill is deferred.
+6. **Consolidation naming — RESOLVED.** The canonical names are the ones this subplan and
+   ORC-17 use: `consolidate_page_result` / `consolidate_document_result`.
+   `docs/plan/README.md` §5 names them `consolidate_page` / `consolidate_document`; those
+   are accepted **aliases of the same seam**, not a second implementation, and `README.md`
+   §5 has been reconciled to the canonical names.

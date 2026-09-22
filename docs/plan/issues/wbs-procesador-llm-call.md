@@ -42,7 +42,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | LLM-12 | `execute_llm_graph` | L | 3 — Internal graph | LLM-10, LLM-11 | dependencies, routing, parallel branches, subgraph lifecycle | this file §LLM-12 | NOT_STARTED |
 | LLM-13 | Resume / stop / skip / force | L | 3 — Internal graph | LLM-12 | `resume_llm_graph`, `request_graph_stop`, `invalidate_downstream_nodes` | this file §LLM-13 | NOT_STARTED |
 | LLM-14 | Comparison / consensus / consolidate | M | 3 — Internal graph | LLM-12 | `compare_outputs`, `calculate_consensus` | this file §LLM-14 | NOT_STARTED |
-| LLM-15 | Usage, timing and context-window control | M | 3 — Internal graph | LLM-06 | `count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded` | this file §LLM-15 | NOT_STARTED |
+| LLM-15 | Usage, timing and context-window control | M | 2 — Single call | LLM-06 | `count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded` | this file §LLM-15 | NOT_STARTED |
 
 > The subplan records LLM-01, LLM-02 and LLM-03 as `S`; LLM-04 … LLM-08, LLM-10, LLM-14, LLM-15 as `M`; and LLM-09, LLM-11, LLM-12, LLM-13 as `L`.
 
@@ -276,7 +276,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 - **Type:** Primitive
 - **Effort:** M
-- **Wave:** 3 — Internal graph
+- **Wave:** 2 — Single call (its only predecessor is LLM-06; it does not wait for the graph)
 - **Depends on:** LLM-06
 - **Blocks:** —
 - **Objective:** Account for tokens, latency and cost per attempt and make context truncation explicit rather than silent.
@@ -316,8 +316,8 @@ flowchart LR
 | Wave | Tasks | Entry condition | Exit condition |
 |---|---|---|---|
 | 1 — Contracts & primitives | LLM-01 → LLM-02 → LLM-03, LLM-04, LLM-05 | Phase 0 exit met; subplan §7 DoR satisfied | Contracts frozen, provider seam typed, deterministic fake provider and committed template/schema fixtures in place |
-| 2 — Single call | LLM-06 → LLM-07 → LLM-08; LLM-09 in parallel after LLM-02 | Wave 1 green | One call round-trips `LLMInput → LLMResult` with schema validation and attempt history; provider primitives implemented |
-| 3 — Internal graph | LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14, LLM-15 after LLM-12 | Wave 2 green | Subgraph executes, persists, resumes, forces with downstream invalidation, compares and consolidates |
+| 2 — Single call | LLM-06 → LLM-07 → LLM-08; LLM-09 in parallel after LLM-02; LLM-15 in parallel after LLM-06 | Wave 1 green | One call round-trips `LLMInput → LLMResult` with schema validation, attempt history and token/context control; provider primitives implemented |
+| 3 — Internal graph | LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12 | Wave 2 green | Subgraph executes, persists, resumes, forces with downstream invalidation, compares and consolidates |
 
 Each wave ends with the four QA gates green and its happy-path / invariant tests passing.
 

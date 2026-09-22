@@ -23,7 +23,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | ID range | ORC-01 … ORC-19 |
 | # tasks | 19 |
 | Effort distribution | S ×3 (ORC-02, 05, 18) · M ×13 (ORC-01, 03, 04, 06, 07, 08, 09, 10, 12, 13, 14, 16, 17) · L ×3 (ORC-11, 15, 19) |
-| Critical path | `ORC-01 → ORC-02 → ORC-06 → ORC-07 → ORC-10 → ORC-11 → ORC-12 → ORC-13 → ORC-17 → ORC-19` |
+| Critical path | `ORC-01 → ORC-02 → ORC-06 → ORC-07 → ORC-10 → ORC-14 → ORC-11 → ORC-12 → ORC-13 → ORC-17 → ORC-19` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
 **Scope paragraph.** The orchestrator turns a `DocumentRequest` into a `DocumentResult` by planning the run, resolving each stage against persisted state and artifact validity, executing only what is not reusable, selecting the documentary source and the extraction strategy, composing the LLM input, and consolidating the per-page and per-document results — reporting failures instead of propagating them, and never implementing PDF, image, OCR or LLM logic.
@@ -36,16 +36,16 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | ORC-02 | Identity primitives | S | 1 — Foundation | ORC-01 | `input_hash`, `options_hash`, `processing_key`, `build_workflow_run_id` | this file §ORC-02 | NOT_STARTED |
 | ORC-03 | Context primitives | M | 1 — Foundation | ORC-01 | create / load / save `DocumentContext`, create / get `PageContext`, atomic persistence | this file §ORC-03 | NOT_STARTED |
 | ORC-04 | Stage primitives | M | 1 — Foundation | ORC-01 | `StageExecution`, `set_stage_status`, `claim_stage`, `release_stage` | this file §ORC-04 | NOT_STARTED |
-| ORC-05 | `detect_input_type` | S | 2 — Decision core | ORC-01 | `detect_input_type` (PDF / IMAGE / UNSUPPORTED) | this file §ORC-05 | NOT_STARTED |
+| ORC-05 | `detect_input_type` | S | 1 — Foundation | ORC-01 | `detect_input_type` (PDF / IMAGE / UNSUPPORTED) | this file §ORC-05 | NOT_STARTED |
 | ORC-06 | `build_execution_plan` + dry-run | M | 2 — Decision core | ORC-02, ORC-04 | `build_execution_plan`, dry-run plan | this file §ORC-06 | NOT_STARTED |
 | ORC-07 | `resolve_stage` decision order | M | 2 — Decision core | ORC-02, ORC-06 | `resolve_stage` (skip → force → reusable → execute) | this file §ORC-07 | NOT_STARTED |
 | ORC-08 | Reuse check | M | 2 — Decision core | ORC-02, ORC-04 | `is_stage_reusable`, `validate_stage_outputs` | this file §ORC-08 | NOT_STARTED |
 | ORC-09 | Dependency graph + `invalidate_downstream` | M | 2 — Decision core | ORC-04, ORC-08 | `invalidate_downstream` (preserve artifacts, record cause) | this file §ORC-09 | NOT_STARTED |
-| ORC-10 | `prepare_pdf_document` / `prepare_image_document` | M | 3 — Execution path | ORC-07 | request builders, `PageContext` creation, PDF reuse-or-execute | this file §ORC-10 | NOT_STARTED |
-| ORC-11 | `process_pages` / `process_page` | L | 3 — Execution path | ORC-03, ORC-06 | per-page processing (sequential first) | this file §ORC-11 | NOT_STARTED |
+| ORC-10 | `prepare_pdf_document` / `prepare_image_document` | M | 3 — Execution path | ORC-03, ORC-05, ORC-07 | request builders, `PageContext` creation, PDF reuse-or-execute | this file §ORC-10 | NOT_STARTED |
+| ORC-11 | `process_pages` / `process_page` | L | 3 — Execution path | ORC-03, ORC-06, ORC-10, ORC-14 | per-page processing (sequential first) | this file §ORC-11 | NOT_STARTED |
 | ORC-12 | `select_source` + `select_extraction_strategy` | M | 3 — Execution path | ORC-11 | `NATIVE_TEXT` / `OCR_TEXT` / `IMAGE` (+ combinations); `TEXT_ONLY` / `OCR_ONLY` / `VLM_ONLY` / `TEXT_PLUS_VLM` / `OCR_PLUS_VLM` | this file §ORC-12 | NOT_STARTED |
 | ORC-13 | `build_llm_input` | M | 3 — Execution path | ORC-12 | `LLMInput` (task, document, images[], schema, options) | this file §ORC-13 | NOT_STARTED |
-| ORC-14 | Processor invocation helpers | M | 3 — Execution path | ORC-07, ORC-08 | `run_image_processing`, `run_ocr`, `run_llm` | this file §ORC-14 | NOT_STARTED |
+| ORC-14 | Processor invocation helpers | M | 3 — Execution path | ORC-03, ORC-07, ORC-08 | `run_image_processing`, `run_ocr`, `run_llm` | this file §ORC-14 | NOT_STARTED |
 | ORC-15 | `request_stop` / `resume_document` / `RUNNING` recovery | L | 4 — Resilience | ORC-03, ORC-09 | `request_stop`, `resume_document`, `RUNNING → READY` recovery | this file §ORC-15 | NOT_STARTED |
 | ORC-16 | `handle_processor_error` | M | 4 — Resilience | ORC-11 | error records, `REVIEW_REQUIRED` / fallback decisions | this file §ORC-16 | NOT_STARTED |
 | ORC-17 | `consolidate_page_result` / `consolidate_document_result` | M | 5 — Consolidation & QA | ORC-11, ORC-13 | ordered pages, preserved results, `execution_summary` | this file §ORC-17 | NOT_STARTED |
@@ -124,9 +124,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 - **Type:** Primitive
 - **Effort:** S
-- **Wave:** 2 — Decision core
+- **Wave:** 1 — Foundation (its only predecessor is ORC-01)
 - **Depends on:** ORC-01
-- **Blocks:** —
+- **Blocks:** ORC-10
 - **Objective:** Classify the input as `PDF`, `IMAGE` or `UNSUPPORTED` before any plan is built.
 - **Scope / Deliverables:** `detect_input_type` honouring an explicit `input_type` when provided and otherwise inspecting the input.
 - **Out of bounds:** No page creation, no processor invocation, no PDF or image parsing logic (that belongs to the processors); an unknown input must be reported as `UNSUPPORTED`, never guessed into a supported type.
@@ -205,7 +205,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Type:** Entry point
 - **Effort:** M
 - **Wave:** 3 — Execution path
-- **Depends on:** ORC-07
+- **Depends on:** ORC-03, ORC-05, ORC-07
 - **Blocks:** ORC-11
 - **Objective:** Turn a detected input into the document skeleton: build the processor request, create the page contexts and run (or reuse) the PDF stage.
 - **Scope / Deliverables:** `prepare_pdf_document` and `prepare_image_document` building `PDFRequest` / logical `PageContext` entries, resolving whether the PDF stage is reused or executed, and registering the produced artifacts.
@@ -221,7 +221,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Type:** Entry point
 - **Effort:** L
 - **Wave:** 3 — Execution path
-- **Depends on:** ORC-03, ORC-06
+- **Depends on:** ORC-03, ORC-06, ORC-10, ORC-14
 - **Blocks:** ORC-12, ORC-16, ORC-17
 - **Objective:** Process each page as a self-contained unit of parallelism, recovery and reprocessing, preserving logical order.
 - **Scope / Deliverables:** `process_pages` / `process_page` resolving the IMAGE stage then the OCR stage per page, recording each `StageExecution`, isolating per-page state, and keeping only the failed page re-processable.
@@ -269,8 +269,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Type:** Primitive
 - **Effort:** M
 - **Wave:** 3 — Execution path
-- **Depends on:** ORC-07, ORC-08
-- **Blocks:** —
+- **Depends on:** ORC-03, ORC-07, ORC-08
+- **Blocks:** ORC-11
 - **Objective:** Call the four Phase 1 processors behind their contracts and register the artifacts they return, so no processor internal ever appears in the orchestrator.
 - **Scope / Deliverables:** `run_image_processing`, `run_ocr`, `run_llm` (plus the PDF invocation used by ORC-10), each calling the contract, applying the resolved action, and registering input/output artifacts into the `StageExecution`.
 - **Out of bounds:** No processor internals, no engine access (Poppler, OpenCV, Docling or a provider) from the orchestrator; a processor failure must be returned as a typed result, never as an exception that aborts the run.
@@ -377,13 +377,17 @@ flowchart LR
     ORC04 --> ORC08
     ORC04 --> ORC09["ORC-09 Dependency graph + invalidate_downstream"]
     ORC08 --> ORC09
-    ORC07 --> ORC10["ORC-10 prepare_pdf / prepare_image"]
+    ORC03 --> ORC10["ORC-10 prepare_pdf / prepare_image"]
+    ORC05 --> ORC10
+    ORC07 --> ORC10
     ORC03 --> ORC11["ORC-11 process_pages / process_page"]
     ORC06 --> ORC11
     ORC10 --> ORC11
+    ORC14 --> ORC11
     ORC11 --> ORC12["ORC-12 select_source + select_extraction_strategy"]
     ORC12 --> ORC13["ORC-13 build_llm_input"]
-    ORC07 --> ORC14["ORC-14 Processor invocation helpers"]
+    ORC03 --> ORC14["ORC-14 Processor invocation helpers"]
+    ORC07 --> ORC14
     ORC08 --> ORC14
     ORC03 --> ORC15["ORC-15 stop / resume / RUNNING recovery"]
     ORC09 --> ORC15
@@ -397,23 +401,23 @@ flowchart LR
     ORC18 --> ORC19
 ```
 
-> Note: ORC-10 is not listed as a successor of ORC-11, nor ORC-14 as a successor of ORC-11; the subplan's `Depends on` column is reproduced exactly. The execution path nevertheless requires ORC-10 and ORC-14 before the happy path can close, which ORC-19 consumes transitively through ORC-11 → ORC-17.
+> Note: every arrow above now matches the task's declared `Depends on` column — ORC-05 feeds ORC-10 (which cannot detect an input type on its own), ORC-10 and ORC-14 both gate ORC-11 (`process_pages` must have a document skeleton and a way to invoke processors), and ORC-03 feeds ORC-10, ORC-11 and ORC-14 because all three create or consume `PageContext` / `StageExecution` state.
 
 ## 5. Execution waves
 
 | Wave | Tasks | Entry condition | Exit condition |
 |---|---|---|---|
-| 1 — Foundation | ORC-01 → ORC-02 → ORC-03 → ORC-04 | Phase 1 exit met: the four processor contracts exist as typed dataclasses with no defaults and import cleanly; fake processors available | Contracts, identities, durable state and atomic stage claims in place |
-| 2 — Decision core | ORC-05 → ORC-06 → ORC-07 → ORC-08 → ORC-09 | Wave 1 green | Type detection, plan (incl. dry-run), resolve/reuse and downstream invalidation behave correctly |
-| 3 — Execution path | ORC-10 → ORC-11 → ORC-12 → ORC-13 → ORC-14 | Wave 2 green | Document/page processing, source selection, LLM input composition and processor invocation work through the contracts |
+| 1 — Foundation | ORC-01 → ORC-02 → ORC-03 → ORC-04; ORC-05 in parallel with ORC-02/03/04 | Phase 1 exit met: the four processor contracts exist as typed dataclasses with no defaults and import cleanly; fake processors available | Contracts, identities, durable state, atomic stage claims and input-type detection in place |
+| 2 — Decision core | ORC-06 → ORC-07 → ORC-08 → ORC-09 | Wave 1 green | Plan (incl. dry-run), resolve/reuse and downstream invalidation behave correctly |
+| 3 — Execution path | ORC-03 + ORC-05 + ORC-07 → ORC-10; ORC-03 + ORC-07 + ORC-08 → ORC-14; then ORC-10 + ORC-14 → ORC-11 → ORC-12 → ORC-13 | Wave 2 green | Document/page processing, processor invocation, source selection and LLM input composition work through the contracts |
 | 4 — Resilience | ORC-15 → ORC-16 | Wave 3 green | Stop/resume without re-execution and error containment with policy-driven outcomes |
 | 5 — Consolidation & QA | ORC-17 → ORC-18 → ORC-19 | Wave 4 green | Consolidated `DocumentResult` with tracing; happy path and three invariant tests mutation-falsified; four gates clean |
 
 ## 6. Critical path
 
-`ORC-01 → ORC-02 → ORC-06 → ORC-07 → ORC-10 → ORC-11 → ORC-12 → ORC-13 → ORC-17 → ORC-19`
+`ORC-01 → ORC-02 → ORC-06 → ORC-07 → ORC-10 → ORC-14 → ORC-11 → ORC-12 → ORC-13 → ORC-17 → ORC-19`
 
-It is critical because the contracts (ORC-01) and identities (ORC-02) precede any decision; the plan (ORC-06) is the input to stage resolution (ORC-07), which gates the document preparation (ORC-10) and therefore the per-page execution (ORC-11); source selection (ORC-12) and `build_llm_input` (ORC-13) are strictly sequential on the way to consolidation (ORC-17), and nothing closes until the QA gate (ORC-19) is green. ORC-03 → ORC-15 and ORC-11 → ORC-16 are parallel resilience branches; the longest chain in the subplan is therefore the one above, since ORC-15 and ORC-16 remain shorter than ORC-12 → ORC-13 → ORC-17.
+It is critical because the contracts (ORC-01) and identities (ORC-02) precede any decision; the plan (ORC-06) is the input to stage resolution (ORC-07), which gates the document preparation (ORC-10), which together with the processor-invocation helpers (ORC-14) gates the per-page execution (ORC-11); source selection (ORC-12) and `build_llm_input` (ORC-13) are strictly sequential on the way to consolidation (ORC-17), and nothing closes until the QA gate (ORC-19) is green. ORC-03 → ORC-15 and ORC-11 → ORC-16 are parallel resilience branches; the longest chain in the subplan is therefore the one above, since ORC-15 and ORC-16 remain shorter than ORC-12 → ORC-13 → ORC-17. ORC-14 sits on the critical path because ORC-11 cannot invoke a processor without it.
 
 ## 7. Traceability
 
