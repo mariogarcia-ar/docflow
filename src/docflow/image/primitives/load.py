@@ -24,10 +24,12 @@ from __future__ import annotations
 
 import contextlib
 import os
+import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from docflow.image.contracts import ImageDimensions
 from docflow.image.primitives.engine import (
     CHANNEL_COUNT_RGB,
     CHANNEL_RANK_GRAYSCALE,
@@ -57,8 +59,35 @@ COLOUR_ORDER = "RGB"
 MAX_HEADER_BYTES = 12
 """How many leading bytes are needed to identify every format in :data:`SUPPORTED_FORMATS`."""
 
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+"""The eight bytes every PNG starts with; also the offset the chunk chain begins at."""
+
+RESOLUTION_PREFIX_BYTES = 4096
+"""How much of a file is read when looking for a declared resolution.
+
+Bounded rather than reading the whole file because a scanned input can be tens of megabytes and
+the two containers that declare a resolution do so before their pixel data: PNG's ``pHYs`` must
+precede ``IDAT``, and a JPEG's JFIF segment follows the start-of-image marker directly.
+"""
+
+INCHES_PER_METRE = 39.3701
+"""PNG states its resolution per metre, so a declared value comes back through this divisor."""
+
+CENTIMETRES_PER_INCH = 2.54
+"""JFIF can state its resolution per centimetre instead of per inch."""
+
+_PNG_RESOLUTION_CHUNK = b"pHYs"
+_PNG_PIXEL_DATA_CHUNK = b"IDAT"
+_PNG_UNIT_METRE = 1
+"""PNG's resolution chunk, the chunk that ends the search, and its "unit is the metre" flag."""
+
+_JFIF_MARKER = b"JFIF\x00"
+_JFIF_UNITS_PER_INCH = 1
+_JFIF_UNITS_PER_CENTIMETRE = 2
+"""The JFIF application segment and its two units, the third being "aspect ratio only"."""
+
 _MAGIC_SIGNATURES: tuple[tuple[bytes, str], ...] = (
-    (b"\x89PNG\r\n\x1a\n", "PNG"),
+    (_PNG_SIGNATURE, "PNG"),
     (b"\xff\xd8\xff", "JPEG"),
     (b"II*\x00", "TIFF"),
     (b"MM\x00*", "TIFF"),
@@ -85,24 +114,14 @@ class ImageFileFacts:
         format: Format name from the file's header, in the canonical spelling of
             :data:`SUPPORTED_FORMATS`.
         size: The file's size in bytes.
+        resolution: Dots per inch the file declares, or ``None`` when it declares none this reader
+            can determine. Only PNG and JPEG are read; see :func:`_resolution_from_header`.
     """
 
     path: Path
     format: str
     size: int
-
-
-@dataclass(frozen=True)
-class ImageDimensions:
-    """An image's pixel dimensions.
-
-    Attributes:
-        width: Width in pixels.
-        height: Height in pixels.
-    """
-
-    width: int
-    height: int
+    resolution: int | None
 
 
 def load_image(
@@ -222,7 +241,12 @@ def get_image_metadata(path: Path, engine: EngineChoice) -> ImageFileFacts:
             f"format {format_name} is outside the supported set "
             f"{sorted(SUPPORTED_FORMATS)}",
         )
-    return ImageFileFacts(path=path, format=format_name, size=path.stat().st_size)
+    return ImageFileFacts(
+        path=path,
+        format=format_name,
+        size=path.stat().st_size,
+        resolution=_resolution_from_header(path, format_name),
+    )
 
 
 def get_image_dimensions(image: ImageArray, engine: EngineChoice) -> ImageDimensions:
@@ -271,6 +295,111 @@ def _format_from_header(path: Path) -> str | None:
     for signature, name in _MAGIC_SIGNATURES:
         if header.startswith(signature):
             return name
+    return None
+
+
+def _resolution_from_header(path: Path, format_name: str) -> int | None:
+    """Read the resolution a file declares, or ``None``.
+
+    Read from the raw bytes rather than asked of the engine, for the same reason the format is:
+    OpenCV exposes no way to read a resolution at all, so delegating would make this field's value
+    depend on which engine happened to run - and a swap that changes a recorded number is exactly
+    what the seam exists to prevent.
+
+    Only PNG and JPEG are read. Those are what this processor produces and between them they cover
+    the common inputs; the other supported containers report ``None``, which the contract defines as
+    "not determined" rather than as a measurement of zero.
+
+    A file declaring different horizontal and vertical resolutions also reports ``None``. The
+    contract carries one integer, and filling it with either axis would silently assert the image is
+    square-pixeled when the file says it is not.
+
+    Args:
+        path: The file to read.
+        format_name: Its already-determined format, so the bytes are not re-sniffed.
+
+    Returns:
+        Dots per inch, or ``None``.
+
+    # TODO: [MVP] TIFF and BMP declare a resolution too; a scanner that writes TIFF reports None.
+    """
+    if format_name not in {"PNG", "JPEG"}:
+        return None
+    with path.open("rb") as handle:
+        prefix = handle.read(RESOLUTION_PREFIX_BYTES)
+    if format_name == "PNG":
+        return _png_resolution(prefix)
+    return _jpeg_resolution(prefix)
+
+
+def _png_resolution(prefix: bytes) -> int | None:
+    """Read a PNG's ``pHYs`` chunk.
+
+    Args:
+        prefix: The first bytes of the file.
+
+    Returns:
+        Dots per inch, or ``None`` when the chunk is absent, states another unit, or is not square.
+    """
+    index = len(_PNG_SIGNATURE)
+    while index + 12 <= len(prefix):
+        length = struct.unpack(">I", prefix[index : index + 4])[0]
+        kind = prefix[index + 4 : index + 8]
+        if kind == _PNG_RESOLUTION_CHUNK:
+            per_x, per_y, unit = struct.unpack(">IIB", prefix[index + 8 : index + 17])
+            if unit != _PNG_UNIT_METRE:
+                return None
+            horizontal = round(per_x / INCHES_PER_METRE)
+            vertical = round(per_y / INCHES_PER_METRE)
+            return horizontal if horizontal == vertical else None
+        if kind == _PNG_PIXEL_DATA_CHUNK:
+            # The spec places pHYs before the pixel data, so reaching IDAT means there is none.
+            return None
+        index += 12 + length
+    return None
+
+
+def _jpeg_resolution(prefix: bytes) -> int | None:
+    """Read a JPEG's JFIF application segment.
+
+    Args:
+        prefix: The first bytes of the file.
+
+    Returns:
+        Dots per inch, or ``None`` when there is no JFIF segment or it states another unit.
+    """
+    index = 2
+    while index + 4 <= len(prefix):
+        if prefix[index] != 0xFF:
+            index += 1
+            continue
+        marker = prefix[index + 1]
+        if marker in {0xD8, 0x01} or 0xD0 <= marker <= 0xD7:
+            index += 2
+            continue
+        length = struct.unpack(">H", prefix[index + 2 : index + 4])[0]
+        if marker == 0xE0 and prefix[index + 4 : index + 9] == _JFIF_MARKER:
+            units = prefix[index + 11]
+            density_x = struct.unpack(">H", prefix[index + 12 : index + 14])[0]
+            return _jfif_density(density_x, units)
+        index += 2 + length
+    return None
+
+
+def _jfif_density(density: int, units: int) -> int | None:
+    """Convert a JFIF density reading to dots per inch.
+
+    Args:
+        density: The declared density along the horizontal axis.
+        units: The JFIF unit flag.
+
+    Returns:
+        Dots per inch, or ``None`` for the unit that means "aspect ratio only".
+    """
+    if units == _JFIF_UNITS_PER_INCH:
+        return density
+    if units == _JFIF_UNITS_PER_CENTIMETRE:
+        return round(density * CENTIMETRES_PER_INCH)
     return None
 
 

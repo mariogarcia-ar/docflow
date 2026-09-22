@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`…`IMG-05` **DONE** - contracts frozen, engine seam in place, images read, measured and transformed; `IMG-06` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`…`IMG-06` **DONE** - contracts frozen, engine seam in place, images read, measured, transformed and aggregated into `ImageMetrics`; `IMG-07` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -33,7 +33,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-03 | Load/store primitives | S | 1 — Contracts & seam | IMG-02 | `load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions` | this file §IMG-03 | NOT_STARTED |
 | IMG-04 | Analysis primitives | M | 2 — Analysis | IMG-03 | `calculate_*_score`, `detect_orientation`, `detect_skew_angle`, `detect_text_regions`, `calculate_text_coverage` | this file §IMG-04 | DONE |
 | IMG-05 | Transformation primitives | M | 2 — Analysis | IMG-03 | `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` | this file §IMG-05 | DONE |
-| IMG-06 | `analyze_image` → `ImageMetrics` | S | 2 — Analysis | IMG-04 | `analyze_image` (side-effect-free) | this file §IMG-06 | NOT_STARTED |
+| IMG-06 | `analyze_image` → `ImageMetrics` | S | 2 — Analysis | IMG-04 | `analyze_image` (side-effect-free) | this file §IMG-06 | DONE |
 | IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png` | this file §IMG-07 | NOT_STARTED |
 | IMG-08 | `prepare_image_for_ocr` / `prepare_image_for_vlm` | M | 3 — Outputs | IMG-05, IMG-06 | `image/ocr_ready.png`, `image/vlm_ready.png` (distinct pipelines) | this file §IMG-08 | NOT_STARTED |
 | IMG-09 | `classify_image` | S | 3 — Outputs | IMG-06 | `TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY` | this file §IMG-09 | NOT_STARTED |
@@ -315,6 +315,58 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the same image and library versions, when `analyze_image` runs twice, then the metrics are identical.
 - **Evidence / DoD:** Unit test asserting metric equality across two runs and absence of filesystem writes.
 - **Tags:** `# TODO: [MVP]` for concrete `LOW_QUALITY` threshold constants.
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/analyze.py` implements `analyze_image`,
+  aggregating the IMG-04 primitives into one `ImageMetrics`. Both WBS acceptance criteria hold:
+  every field carries a measurement, and two runs on the same image produce identical metrics -
+  checked in-process, across a re-decode, and **in a fresh interpreter**, since the property is
+  about a clean run rather than about one that happens to reach the same answer twice.
+
+  "Every field carries a measured value" is the easiest criterion in this project to satisfy
+  dishonestly: a snapshot of zeroes populates every field. The test therefore names the value or
+  range each field must hold, and a second test asserts the quality scores **differ between
+  images**, which a snapshot that hardcoded one image's numbers would fail.
+
+  The new module sits in `image/primitives/` rather than in the processor's entry points because
+  `IMG-06` is a primitive, and putting it beside `analysis.py` lets the processor import a real
+  function when `IMG-12` composes one. The plan names no module for it; this is the reading of
+  "in `image/primitives/`" that the WBS's sibling tasks use.
+
+- **`ImageFileFacts` gained `resolution`.** `ImageMetrics` requires a DPI and the facts record
+  carried only format and size. It is read from the **raw header**, not from the engine, because
+  OpenCV exposes no way to read a resolution at all - delegating would make a recorded number depend
+  on which engine ran, which is the drift the seam exists to prevent. PNG's `pHYs` and JPEG's JFIF
+  segment are parsed directly; the reader was checked against Pillow's answer for every case before
+  being adopted. TIFF and BMP declare a resolution too and are **not** yet read - tagged
+  `# TODO: [MVP]`, since a scanner that writes TIFF currently reports `None`.
+
+  A file declaring a **non-square** resolution also reports `None`. The contract carries one
+  integer, and returning either axis would silently assert square pixels when the file says
+  otherwise - the "no silent stand-in" rule applied to a measurement that has no honest single
+  value.
+
+- **A duplicated contract record was found and removed.** `ImageDimensions` was declared twice -
+  once in `contracts.py` and once in `load.py` - and the two classes were not equal, so
+  `analyze_image`'s `dimensions` compared unequal to the contract's own type despite printing
+  identically. `load.py` now imports the contract's record, which is the precedent
+  `pdf/primitives/text.py` set with `TextBlock` and the fix already applied to `TextRegion` in
+  IMG-04. The defect survived IMG-03 and IMG-04 because no test had yet compared a primitive's
+  return value against the contract type.
+
+- **Mutation evidence.** Nine mutations applied; **four survived the first run and each closed a
+  real gap in the guard**, which is the useful part of the result:
+  1. `noise=0.0` as a placeholder survived because the assertion was `>= 0.0` and the real estimate
+     is small but positive. Tightened to `> 0.0`.
+  2. The centimetre-to-inch conversion survived because no writer here emits centimetres. Closed by
+     building a JFIF segment by hand.
+  3. The `pHYs` unit check survived for the same reason. Closed by inserting a unit-less chunk by
+     hand.
+  4. The non-square rejection survived because only square resolutions were exercised. Closed.
+
+  After closing the gaps, all nine are detected: placeholder quality value (3 tests fail), dropped
+  resolution (3), dropped skew (4), coverage detached from its regions (4), tuple instead of the
+  contract's list (2), fabricated resolution (2), skipped unit conversion (1), skipped unit check
+  (1), non-square accepted (1).
 
 ### IMG-07 — `normalize_image` + `prepare_normalized_image`
 
