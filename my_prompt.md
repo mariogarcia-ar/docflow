@@ -32,8 +32,13 @@ gemma3:4b              a2af6cc3eb7f    3.3 GB    11 hours ago
 granite3.1-moe:1b      3269ce3e31ea    1.4 GB    35 hours ago      
 qwen2.5vl:3b           fb90415cde1e    3.2 GB    2 months ago        
 
+
+pdftotext -layout tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf
+pdftoppm -jpeg  'tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.pdf' 'tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg' 
+
 ```bash
 
+# PDF --------------------------------------------------------------------
 # deteccion: no es factura
 python scripts/poc-flow-v2/myllmlocal.py \
   'tests/fixtures-txt/negativos/neg_2026-06_correo_liquidacion.txt' \
@@ -65,6 +70,38 @@ python scripts/poc-flow-v2/myllmlocal.py \
   --proposal 'var/llmlocal/factura/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.5ccc4350984f3f7c.json' \
   --model 'gemma3:4b' --pretty
 
+
+# IMAGE --------------------------------------------------------------------
+# deteccion: no es factura
+python scripts/poc-flow-v2/myllmlocal.py \
+  'tests/fixtures-txt/negativos/neg_2026-06_correo_liquidacion.txt' \
+  --prompt 'registry/prompts/extraction/invoice_deteccion.txt' \
+  --schema 'registry/schemas/extraction/invoice_detection.json' \
+  --model 'gemma3:4b'
+
+# deteccion: es factura
+python scripts/poc-flow-v2/myllmlocal.py \
+  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
+  --prompt 'registry/prompts/extraction/invoice_deteccion.txt' \
+  --schema 'registry/schemas/extraction/invoice_detection.json' \
+  --model 'qwen2.5:7b-instruct' --pretty
+
+
+# extraer: los campos de una factura
+python scripts/poc-flow-v2/myllmlocal.py \
+  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
+  --prompt 'registry/prompts/extraction/invoice.txt' \
+  --schema 'registry/schemas/extraction/invoice.json' \
+  --out 'var/llmlocal/factura/' \
+  --model 'qwen2.5:7b-instruct' --pretty
+
+
+python scripts/poc-flow-v2/myllmlocal.py \
+  'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
+  --prompt 'registry/prompts/review/invoice.txt' \
+  --schema 'registry/schemas/review/invoice.json' \
+  --proposal 'var/llmlocal/factura/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.5ccc4350984f3f7c.json' \
+  --model 'gemma3:4b' --pretty
 
 
 
