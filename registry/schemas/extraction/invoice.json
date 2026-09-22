@@ -1,23 +1,7 @@
 {
-  "$comment": "The BASE READING step of the layered extraction: seven printed fields, plus four scratchpad fields that come FIRST in the object on purpose. Earlier design used a two-stage <analisis>/<json> tag split, but that is incompatible with grammar-constrained decoding (Ollama's `format` param compiles this schema to a GBNF grammar; the model's entire output must satisfy it, so nothing can appear outside the object). Moving the scratchpad INSIDE the schema keeps the same benefit — the model reasons about emitter vs. recipient before it commits to cuit_emisor/razon_social_emisor — while staying 100% valid structured output. Grammar-constrained generation emits properties in the order declared here, so the analysis fields are genuinely produced before the final ones, not after. The other four scopes are RESERVED artifacts (`detection`, `desglose`, `rubro`, `clasificacion`). The two fields that asked *is this a receipt* live in `invoice_detection.json`, not here. It carries no critical-severity field on purpose — `importe_total_facturado` moved to the step that holds the arithmetic combination that confirms it.",
+  "$comment": "The BASE READING step of the layered extraction: the seven printed fields, and ONLY those. This schema was trimmed to the answer itself, so the four `analisis_*` working-notes fields the earlier design kept FIRST in the object are gone. The cost is recorded here rather than left implicit: with no analysis field to settle who the emitter is before the model commits to cuit_emisor/razon_social_emisor, the emitter-versus-recipient disambiguation now rests on the prompt's rules alone — and getting that pair wrong was measured on a real receipt that prints both its own CUIT and the customer's. Grammar-constrained generation (Ollama compiles this schema to a GBNF grammar, and the model's entire output must satisfy it) now emits exactly these seven properties, in the order declared. The other four scopes are RESERVED artifacts (`detection`, `desglose`, `rubro`, `clasificacion`). The two fields that asked *is this a receipt* live in `invoice_detection.json`, not here. It carries no critical-severity field on purpose — `importe_total_facturado` moved to the step that holds the arithmetic combination that confirms it.",
   "type": "object",
   "properties": {
-    "analisis_pares_clave_valor": {
-      "type": "string",
-      "description": "terse list of raw label:value pairs found in the text, separated by ';' (e.g. 'CUIT: 20-...; Fecha: 07/08/2026; Comp.Nro.: 00037469'). Uncorrected, unfiltered — a sweep, not a judgement"
-    },
-    "analisis_emisor": {
-      "type": "string",
-      "description": "terse summary of the EMITTER block only (usually the header, above 'Cliente:'): name and CUIT as they appear there. This is the ONLY source for razon_social_emisor and cuit_emisor below"
-    },
-    "analisis_receptor": {
-      "type": "string",
-      "description": "terse summary of the RECIPIENT/'Cliente:' block: name and CUIT. Stated explicitly so it is never confused with analisis_emisor below"
-    },
-    "analisis_totales": {
-      "type": "string",
-      "description": "terse summary of the totals/balance block: subtotal, IVA, total, any 'Saldo Cta Cte' line. Note which line (if any) is a genuine printed observation versus a running-account balance that does not belong in notas"
-    },
     "tipo_comprobante": {
       "type": "string",
       "enum": ["A", "B", "C", "001", "006", "011", "090", "099", "null"],
@@ -25,11 +9,11 @@
     },
     "razon_social_emisor": {
       "type": "string",
-      "description": "the EMITTER's name as printed in the header, without labels like 'Razon Social:' or 'Cliente:'. Taken from analisis_emisor above, re-checked against the source text — never the recipient's"
+      "description": "the EMITTER's name as printed in the header, without labels like 'Razon Social:' or 'Cliente:'. Checked against the source text — never the recipient's"
     },
     "cuit_emisor": {
       "type": "string",
-      "description": "the EMITTER's CUIT, digits and its own hyphens only, format XX-XXXXXXXX-X. Taken from analisis_emisor above, re-checked against the source text — never the recipient's. Cut the value at the first character that is not a digit or a hyphen, even if it is left incomplete"
+      "description": "the EMITTER's CUIT, digits and its own hyphens only, format XX-XXXXXXXX-X. Checked against the source text — never the recipient's. Cut the value at the first character that is not a digit or a hyphen, even if it is left incomplete"
     },
     "fecha_emision": {
       "type": "string",
@@ -50,10 +34,6 @@
     }
   },
   "required": [
-    "analisis_pares_clave_valor",
-    "analisis_emisor",
-    "analisis_receptor",
-    "analisis_totales",
     "tipo_comprobante",
     "razon_social_emisor",
     "cuit_emisor",
