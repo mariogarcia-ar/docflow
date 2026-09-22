@@ -1,0 +1,38 @@
+# docflow ignore rules. This file is the authority: read it before adding a file that
+# looks like output.
+
+# ---- Never committed -------------------------------------------------------------
+/documentos/          # source corpus: copyrighted material, not distributed
+/out/                 # product run output tree
+/work/                # lab-bench output tree
+.env
+.env.*
+
+# ---- Python ----------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ---- Packaging and build ---------------------------------------------------------
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ---- QA tooling ------------------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.pylint.d/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ---- Environments ----------------------------------------------------------------
+.venv/
+venv/
+env/
+
+# ---- Editors and OS --------------------------------------------------------------
+.DS_Store
+.idea/

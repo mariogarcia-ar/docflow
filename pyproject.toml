@@ -1,0 +1,96 @@
+# Single tooling home for the whole project (`GEN-05`): pytest, ruff, pylint and coverage
+# all read their configuration from this file. Do not add a second setup.cfg, tox.ini or
+# pylintrc.
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "docflow"
+version = "0.0.0"
+description = "Modular document-processing pipeline: pdf, image, ocr and llm processors under one orchestrator."
+requires-python = ">=3.11"
+# Engine pins land in Phase 1, each inside its own processor's primitives/ (PDF-02,
+# IMG-02, OCR-02, LLM-02/LLM-09).
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6.0",
+    "pylint>=3.2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# ---------------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------------
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+# docs/ holds the frozen specification, whose fenced Python blocks are not source: a
+# formatter that rewrites a frozen artifact is worse than one that skips it.
+exclude = ["docs", ".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+# `ruff format` owns line length; a long but unsplittable line is not a defect.
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = false
+
+# ---------------------------------------------------------------------------------
+# Pylint
+# ---------------------------------------------------------------------------------
+[tool.pylint.main]
+py-version = "3.11"
+jobs = 0
+# docs/ contains the specification, not source.
+ignore-paths = ["^docs/"]
+
+[tool.pylint.messages_control]
+# `fixme` flags the `# TODO: [MVP]` / `# TODO: [RELEASE]` markers this project requires:
+# the markers are the deliverable, not the debt.
+disable = ["fixme"]
+
+[tool.pylint.design]
+# Contract and durable-state records are wide by design (docs/plan/subplan-*.md §3.1);
+# a `PDFPageResult` with twelve named fields is not a defect.
+max-attributes = 20
+max-args = 20
+max-positional-arguments = 20
+
+[tool.pylint.format]
+max-line-length = 100
+
+# ---------------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# Put src/ on the path so `pytest` runs from a clean checkout with no install step.
+pythonpath = ["src"]
+addopts = "-ra --strict-config --strict-markers"
+norecursedirs = [".git", ".venv", "docs", "out", "work"]
+
+# ---------------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------------
+[tool.coverage.run]
+branch = true
+source = ["src/docflow"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    # Phase 0 ships typed signatures that raise; a stub line is not a coverage target.
+    "raise NotImplementedError",
+]
