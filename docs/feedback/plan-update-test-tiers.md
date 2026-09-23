@@ -30,16 +30,23 @@
 
 | # | Decision | Recommendation |
 |---|---|---|
-| 1 | **ID allocation** — reuse the slots freed by the lab-tool removal (`GEN-21`, `PDF-14`, `IMG-15`, `OCR-14`) or append new numbers | **Reuse.** It keeps the ranges contiguous and removes one edit per document that cites a range |
+| 1 | **Per-processor task IDs** — each processor has exactly **one** free slot (`PDF-14`, `IMG-15`, `OCR-14`), so there is no general choice: use them, or renumber the whole range. At `GEN-*` there is no choice either — **one** slot was freed (`GEN-21`) and **two** cross-cutting tasks are needed, so by construction one is reused and the other appended | **Use the free slots.** Contiguous ranges, one fewer edit per citing document |
 | 2 | **Recorder location** — `tests/record_engine.py` or a re-introduced `scripts/` | **`tests/record_engine.py`**: dev tooling, not library code, and it keeps `src/` clean of anything test-shaped |
-| 3 | **CI** — create `.github/workflows/` as part of this initiative, or state the gate is manual | **Create it** (`GEN-22`). Verified: the repository has no pipeline today, so "the gate runs everything" is currently a habit, not a mechanism |
+| 3 | **CI** — create `.github/workflows/` as part of this initiative, or state the gate is manual | **Create it** — `GEN-21`, per the C1 table below. Verified: the repository has no pipeline today, so "the gate runs everything" is currently a habit, not a mechanism |
+
+> The `GEN-*` numbering is **not** decided here: §1.2's C1 table is its single source, and
+> `test-suite-cost.md` §5 has been corrected to match it. An earlier draft of this document
+> assigned the CI to `GEN-22` in §1.1 and to `GEN-21` in §1.2 — the same half-updated-range
+> defect this plan warns about, produced by the plan itself. Hence the numbering grep in §6.1,
+> run **before** Phase A.
 
 ### 1.2 Corrections to §5 of `test-suite-cost.md`, to apply while landing it
 
-**C1 — dependency inversion (material).** As written, `GEN-21` (recorder + loaders) depends
-on **all three** primitives seams and the three per-processor tasks *consume* `GEN-21`. That
-serialises three parallel tracks behind one cross-cutting task and makes every processor's
-test task wait for its two siblings. Decompose instead:
+**C1 — dependency inversion (material).** As first drafted, the recorder was a single
+cross-cutting task depending on **all three** primitives seams, while the three per-processor
+tasks *consumed* it. That serialises three parallel tracks behind one task and makes every
+processor's test task wait for its two siblings. (`test-suite-cost.md` §5 has since been
+corrected to match what follows.) Decompose instead:
 
 | Task | Scope | Depends on | Phase |
 |---|---|---|---|
@@ -50,6 +57,11 @@ test task wait for its two siblings. Decompose instead:
 This keeps the three tracks parallel, gives both cross-cutting rows the shape the plan already
 uses for `GEN-18`/`GEN-19`/`GEN-20` (verification of others' work), and keeps Phase 4's range
 contiguous as `GEN-11`…`GEN-22`.
+
+> **This table is the single source of the `GEN-*` numbering.** `test-suite-cost.md` §5 has
+> been corrected to match it — it previously gave the recorder to `GEN-21` and the CI to
+> `GEN-22`, which the decomposition above replaces. If the two documents ever disagree again,
+> this table wins and the other document is fixed.
 
 **C2 — the convention is a decision, not a task.** The naming/layout/format rules belong in
 `README.md` §9.7 (Phase A below), so a Phase 1 author can cite them. Only *compliance* is a
@@ -104,11 +116,12 @@ pass, or the subplan and its WBS disagree.
 
 | # | File | Edit |
 |---|---|---|
-| B.1 | `subplan-procesador-<x>.md` | §3 Design: the recording for this engine, its format, its injection point (from the §3.3 table of `test-suite-cost.md`) |
-| B.2 | `subplan-procesador-<x>.md` | §4 WBS: new row — `PDF-14` / `IMG-15` / `OCR-14`, Effort S, depends on the processor's primitives seam, blocks the tasks whose tests need engine data |
+| B.1 | `subplan-procesador-<x>.md` | §3 Design: the recording for this engine, its format, its injection point (from the §3.3 table of `test-suite-cost.md`), and **which layer is recorded** — the engine's **native** output, substituted at the engine call. Never our translated type, and never at `extract_docling_*`: recording the translated result would delete the translation layer's coverage, which is half the reason the replay exists |
+| B.2 | `subplan-procesador-<x>.md` | §4 WBS: new row — `PDF-14` / `IMG-15` / `OCR-14`, Effort S, depends on the processor's primitives seam, blocks the tasks whose tests need engine data. **Deliverables include that engine's path in `tests/record_engine.py`** (see the template below) |
 | B.3 | `subplan-procesador-<x>.md` | §6 Test plan: split into **fast** (invariants, classification, validation, atomic publication → replay) and **real** (the one happy path → real engine) |
-| B.4 | `subplan-procesador-<x>.md` | §7 DoD: the tier requirement, the version check, the skip-when-absent rule |
-| B.5 | `issues/wbs-procesador-<x>.md` | header ID range, §1 summary (`# tasks`, effort distribution), §2 index row, §3 detailed issue + Gherkin, §4 dependency graph, §5 waves |
+| B.4 | `subplan-procesador-<x>.md` | §6/§7 Error paths: classify **every existing failure fixture** of this processor into the three buckets below, and state explicitly whether the real engine runs on that path |
+| B.5 | `subplan-procesador-<x>.md` | §7 DoD: the tier requirement, the version check, the skip-when-absent rule, and this processor's acceptance scenarios — the template in §3.1 below, parameterised by `<engine>` |
+| B.6 | `issues/wbs-procesador-<x>.md` | header ID range, §1 summary (`# tasks`, effort distribution), §2 index row, §3 detailed issue + Gherkin, §4 dependency graph, §5 waves |
 
 **Per-processor specifics — do not generalise these away:**
 
@@ -116,12 +129,55 @@ pass, or the subplan and its WBS disagree.
 |---|---|
 | `pdf` | Poppler is reached through **CLI subprocesses**: the recording is artifacts plus a `sidecar.json` (exit code, stderr) and the replay intercepts `subprocess.run`, not a return value. A session-scoped fixture buys nothing here. `dpi` is not a lever on the fake — it is a per-test option. |
 | `image` | The one real test must assert **2–3 concrete metric values with a tolerance** (blur / sharpness / contrast), not `status == "success"`: the whole metric computation lives inside the primitives the replay replaces, so OpenCV drift would otherwise be invisible. `IMG-09`'s `LOW_QUALITY` threshold stays a unit test over crafted `ImageMetrics`. |
-| `ocr` | The replay returns blocks in **adversarial (unsorted) order** so invariant 1 discriminates. The engine-determinism check (two conversions, compare `document.json`) is **folded into the same real test** — one test, two conversions — not a separate suite run. If a cached corpus helper is reused, the cache key must include **which engine** produced the result. |
+| `ocr` | The recording captures Docling's **native** output and the substitution happens at `convert_image_with_docling` — never at `extract_docling_*`, which is the half of the module the replay must exercise rather than replace. The replay returns blocks in **adversarial (unsorted) order** so invariant 1 discriminates. The engine-determinism check (two conversions, compare `document.json`) is **folded into the same real test** — one test, two conversions — not a separate suite run. If a cached corpus helper is reused, the cache key must include **which engine** produced the result. |
 
-**New WBS row template:**
+### 3.1 Phase B.4 — the error paths, in three buckets
+
+Every failure fixture that already exists in the plan must be classified explicitly, because
+the answer decides whether the real engine runs on that path at all:
+
+| Bucket | Test mechanism | Where it applies |
+|---|---|---|
+| **Pre-engine** — **our** code decides before any engine call | an ordinary unit test: no engine, no recording | `pdf_corrupt.pdf`, *if* `validate_pdf`'s fail-fast returns `CORRUPTED_PDF` before Poppler is invoked |
+| **Recordable** — the engine call fails deterministically on a real bad input | the failing call is recorded once, and the replay raises what was recorded | `corrupt.png` → `DECODE_ERROR` from the decode call |
+| **Injected** — the engine breaks in a way no input reproduces | `monkeypatch` forces the exception; never a recording | `OCR-04`'s "engine raises during conversion" |
+
+The rule that keeps the "once per processor" promise intact: **the `record` step covers every
+input the tests use, good and bad**, so a recorded failure costs no live run at test time.
+Which bucket a case falls into is a *finding* of this edit, not an assumption — and the
+`pdf_corrupt.pdf` row is the one to check first, since a fail-fast validation may mean that
+case needs no recording at all.
+
+**Phase B.5 — acceptance template, per processor, parameterised by `<engine>`:**
+
+```gherkin
+Scenario: The replay refuses a stale recording
+  Given a <engine> recording made for version A
+  And a pin in pyproject.toml for version B
+  When the fast tier runs
+  Then the replay loader fails loudly, naming both versions
+  And it does not serve the stale recording
+
+Scenario: The real tier skips when the engine is absent
+  Given an environment without <engine> installed
+  When the real tier runs
+  Then the <engine> tests are skipped with an explicit reason
+  And the gate does not fail
+
+Scenario: The fast tier never reaches <engine>
+  Given the recorded fixtures and the replay loader
+  When "pytest -m 'not engine'" runs
+  Then every test of this processor passes with zero <engine> invocations
+  And no <engine> module or binary is touched
+```
+
+**New WBS row template** — note the deliverables: the recording, the replay loader, **and that
+engine's entry point in the shared recorder**. Without the third one the task can close with a
+fixture authored by hand instead of a real recording — exactly the risk this design exists to
+remove:
 
 ```
-| PDF-14 | Engine recording + replay loader for Poppler | S | 2 — Primitives | PDF-02 | tests/fixtures/engines/poppler/, tests/fakes/engines/replay_poppler.py | this file §PDF-14 | NOT_STARTED |
+| PDF-14 | Engine recording + replay loader for Poppler | S | 2 — Primitives | PDF-02 | `tests/record_engine.py` (Poppler path), `tests/fixtures/engines/poppler/`, `tests/fakes/engines/replay_poppler.py` | this file §PDF-14 | NOT_STARTED |
 ```
 
 **Verification per track:** `grep -n 'PDF-01\|PDF-13\|PDF-14' docs/plan/subplan-procesador-pdf.md docs/plan/issues/wbs-procesador-pdf.md docs/plan/issues/wbs-general.md` — every range citation updated, none half-updated. Then the four gates.
@@ -148,41 +204,58 @@ pass, or the subplan and its WBS disagree.
 | D8 | DoR/DoD: the tier requirement, the version check, the skip-when-absent rule | §7, §8 |
 | D9 | Resolved-decisions index: point at `README.md` §9.7 | §10 |
 
-**Gherkin to carry in D4** (already drafted in `test-suite-cost.md` §5):
+**Gherkin: which scenario belongs to which task.** The three per-loader scenarios (stale
+recording, absent engine, fast tier reaches no engine) exercise **one** loader, so per §1.2 C1
+they are the per-processor DoD template in Phase B.5 — already written there, parameterised by
+`<engine>`. Hanging them off `GEN-22` would re-specify each loader inside a cross-cutting task,
+which is the inverted dependency C1 exists to undo. `GEN-21` and `GEN-22` get their own,
+genuinely cross-cutting scenarios:
 
 ```gherkin
-Scenario: The replay refuses a stale recording
-  Given a recording made for engine version A
-  And a pin in pyproject.toml for engine version B
-  When the fast tier runs
-  Then the replay loader fails loudly, naming both versions
-  And it does not serve the stale recording
+# GEN-21 — the gate
+Scenario: The gate blocks a fast-only green pull request
+  Given a pull request whose fast tier is green and whose real tier fails
+  When the CI workflow runs
+  Then the check fails and the pull request is blocked
 
-Scenario: The real tier skips when the engine is absent
-  Given an environment without the engine installed
-  When the real tier runs
-  Then the engine tests are skipped with an explicit reason
-  And the gate does not fail
+Scenario: A skipped real tier in CI is a failure
+  Given a CI environment without the engine installed
+  When the workflow runs the real tier
+  Then the job fails instead of reporting a skip
+  And the missing engine is named in the failure
 
-Scenario: The fast tier never reaches the engine
-  Given the recorded fixtures and the replay loaders
-  When "pytest -m 'not engine'" runs
-  Then every test passes with zero engine invocations
-  And no engine binary or library is imported
+# GEN-22 — cross-compliance
+Scenario: The three loaders agree on the version rule
+  Given the three replay loaders of pdf, image and ocr
+  When each is handed a recording whose version differs from the pin
+  Then all three fail loudly, naming the two versions
+  And none serves the stale recording
+
+Scenario: Every recording declares its provenance
+  Given the recordings under tests/fixtures/engines/
+  When they are audited
+  Then each carries the engine version and the schema version it was made from
+  And no recording is a hand-authored fixture without provenance
 ```
 
 ## 6. Phase E — sweep, evidence, commit
 
 ### 6.1 Sweep (both have bitten before)
 
+Run the **first** block before Phase A; the rest after Phase E.
+
 ```bash
-# no half-updated ranges anywhere
+# 1. the two documents agree on the GEN-* numbering — this is how §1.1 and §1.2
+#    of this very work order contradicted each other, each text valid on its own
+grep -n 'GEN-2[12]' docs/feedback/plan-update-test-tiers.md docs/feedback/test-suite-cost.md
+
+# 2. no half-updated ranges anywhere
 grep -rn 'PDF-01.*PDF-1[34]\|IMG-01.*IMG-1[56]\|OCR-01.*OCR-1[45]' docs/plan/
-# the new IDs appear in every place that must cite them
+# 3. the new IDs appear in every place that must cite them
 grep -rn 'GEN-21\|GEN-22\|PDF-14\|IMG-15\|OCR-14' docs/plan/ | wc -l
-# no dangling reference to a removed task or a superseded section
+# 4. no dangling reference to a removed task or a superseded section
 grep -rn 'conformance\|nightly' docs/plan/
-# the decision is stated once and cited, not restated
+# 5. the decision is stated once and cited, not restated
 grep -c 'recorded engine response' docs/plan/README.md
 ```
 
@@ -213,12 +286,14 @@ totals row before/after (it changes numbers a reader may have memorised).
 ## 8. Definition of Done for this update
 
 - The decision, the `pytest` semantics and the recordings convention are in `README.md` §9/§7/§5.
-- Each of `pdf`, `image`, `ocr` has: a recording + replay task in its WBS row, a fast/real
-  split in §6, its per-engine recording format, and its own caveat (subprocess / metric
-  tolerance / adversarial order).
+- Each of `pdf`, `image`, `ocr` has: a recording + replay task in its WBS row **including its
+  path in `tests/record_engine.py`**, a fast/real split in §6, its per-engine recording format
+  with the recorded layer named (native output, not our translated type), its own caveat
+  (subprocess / metric tolerance / adversarial order), and **its failure fixtures classified**
+  into the three buckets of §3.1.
 - `llm-call` and `orquestador` carry their one-line clarifications.
-- `wbs-general.md`: both new issues exist in full format, all ranges are consistent, and the
-  totals row is **recomputed from the rows**.
+- `wbs-general.md`: both new issues exist in full format with their own scenarios, all ranges
+  are consistent, and the totals row is **recomputed from the rows**.
 - The sweep in §6.1 is clean and the four gates pass.
 - Every change traces to a numbered item in this plan; nothing extra was added.
 
@@ -230,7 +305,10 @@ totals row before/after (it changes numbers a reader may have memorised).
 | The totals row stays wrong | It was wrong before this change | D3 computes it from the rows, last |
 | The dependency inversion ships | §5 of the feedback doc, read literally, serialises the three tracks | Correction C1 in §1.2, applied before Phase B |
 | Two phrasings of the decision drift | Three documents could each restate it | §7: written once in `README.md` §9.7, cited elsewhere |
-| The skip rule masks a missing engine in CI | `skip` is silent by nature | The CI job (D4) asserts the engine **is** installed, so a skip in CI is a failure, not a pass |
+| **These two documents contradict each other on an ID** | It has already happened once *inside* this work order (§1.1 said `GEN-22` for the CI, §1.2 said `GEN-21`), and each text is valid on its own, so no range sweep catches it | The numbering grep in §6.1, run **before** Phase A; §1.2's C1 table is the single source |
+| A cross-cutting task re-specifies a loader | The per-loader scenarios were initially drafted under `GEN-22` | §3 and §6.3: loader scenarios live in Phase B.5; `GEN-21`/`GEN-22` have their own |
+| The task closes with a hand-authored fixture | The recorder was not a deliverable in the first template | The WBS row template in §3 carries `tests/record_engine.py`, and the `GEN-22` compliance scenario audits provenance |
+| The skip rule masks a missing engine in CI | `skip` is silent by nature | The `GEN-21` scenario "a skipped real tier in CI is a failure" |
 
 ## 10. Rollback
 

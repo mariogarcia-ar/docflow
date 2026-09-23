@@ -59,7 +59,7 @@ point differ per processor. A single generic mechanism would not work.
 
 | Engine | What it hands back | What we record | Where the replay is injected |
 |---|---|---|---|
-| **Docling** (OCR) | a Python object (`DoclingDocument`), not JSON | the fields our translation consumes — text, markdown, tables, blocks, layout, metadata — as JSON with `schema_version` and `engine_version` keys. **Not** the whole object dump | the engine call `convert_image_with_docling` |
+| **Docling** (OCR) | a Python object (`DoclingDocument`), not JSON | the **native** values Docling returns — text, markdown, tables, blocks, layout, metadata — as JSON with `schema_version` and `engine_version` keys. **Not** our translated `OCRDocument`, and never substituted at `extract_docling_*`: that would delete the translation layer's coverage | the engine call `convert_image_with_docling` |
 | **Poppler** (PDF) | **files** (`page.pdf`, `page.png`, `text.txt`, embedded images) plus exit code and stderr — no return value | the artifacts copied verbatim, plus a `sidecar.json` with exit code and stderr | the **`subprocess.run` call** |
 | **OpenCV** (Image) | NumPy pixel arrays, not JSON-serialisable | the output image as PNG plus a `metrics.json`; raw arrays (`.npy`) only where a test needs them | the `image/primitives/` functions (`load_image`, the transformations) |
 
@@ -166,33 +166,25 @@ IDs reuse the slots freed by the lab-tool removal, so every range stays contiguo
 
 | ID | Task | Effort | Depends on | Acceptance |
 |---|---|---|---|---|
-| `GEN-21` | Recorder, the three replay loaders, the version-coherence check, the `tests/fixtures/engines/` convention | M | `PDF-02`, `IMG-02`, `OCR-02` | the scenarios below |
-| `GEN-22` | CI gate workflow, `.github/workflows/gates.yml`: all four gates, `pytest` unfiltered, plus the weekly `pytest -m engine` run | S | `GEN-05` | the workflow runs on every PR and on schedule; a PR whose fast tier is green but whose real tier fails is blocked |
+| `GEN-21` | CI gate workflow, `.github/workflows/gates.yml`: all four gates, `pytest` unfiltered, plus the weekly `pytest -m engine` run | S | `GEN-05` | a PR whose fast tier is green and whose real tier fails is blocked; a skipped real tier in CI fails the job instead of passing |
+| `GEN-22` | Recording convention stated once (formats, paths, version check), compliance verified across the three processors, and the residual risk recorded in `GEN-17` | S | `PDF-14`, `IMG-15`, `OCR-14` | the three loaders obey one version rule, and every recording declares its provenance |
 
-**Per-processor:** `PDF-14`, `IMG-15`, `OCR-14` — the replay task local to each processor,
-consuming `GEN-21`'s loaders, depending on its `primitives/` seam, and gating the tasks whose
-tests need engine data.
+> The per-processor decomposition and this numbering were corrected in
+> [`plan-update-test-tiers.md`](plan-update-test-tiers.md) §1.2 (C1): the recorder is **local**
+> to each processor, not a cross-cutting prerequisite, so the three tracks stay parallel. That
+> section is the single source of the `GEN-*` numbering; if this table ever disagrees with it,
+> the work order wins.
 
-```gherkin
-Scenario: The replay refuses a stale recording
-  Given a recording made for engine version A
-  And a pin in pyproject.toml for engine version B
-  When the fast tier runs
-  Then the replay loader fails loudly, naming both versions
-  And it does not serve the stale recording
+**Per-processor:** `PDF-14`, `IMG-15`, `OCR-14` — the recording, the replay loader and the
+version check for that engine, **local to that processor** and depending only on its
+`primitives/` seam. Each also owns that engine's path in the shared `tests/record_engine.py`,
+so the task cannot close with a fixture authored by hand instead of a real recording. They gate
+the tasks whose tests need engine data, and they do **not** depend on each other.
 
-Scenario: The real tier skips when the engine is absent
-  Given an environment without the engine installed
-  When the real tier runs
-  Then the engine tests are skipped with an explicit reason
-  And the gate does not fail
-
-Scenario: The fast tier never reaches the engine
-  Given the recorded fixtures and the replay loaders
-  When "pytest -m 'not engine'" runs
-  Then every test passes with zero engine invocations
-  And no engine binary or library is imported
-```
+**Acceptance scenarios** are written once, in the work order, so the two documents cannot
+drift: [`plan-update-test-tiers.md`](plan-update-test-tiers.md) §3.1 carries the per-processor
+template parameterised by `<engine>`, and §6.3 the scenarios for `GEN-21` (the gate) and
+`GEN-22` (cross-compliance).
 
 ## 6. What we get
 
@@ -209,11 +201,14 @@ Scenario: The fast tier never reaches the engine
 
 **Taken by this revision**
 
-- CI is part of this initiative (`GEN-22`), not an orphan item.
+- CI is part of this initiative (`GEN-21`), not an orphan item.
 - `LLM-03` does not migrate to record/replay (§3.7).
 - An absent engine skips rather than fails (§3.5).
-- IDs reuse the freed slots: `GEN-21`, `GEN-22`, `PDF-14`, `IMG-15`, `OCR-14`. *Needs your
-  yes — the alternative is to append new numbers and record the gaps.*
+- IDs reuse the freed slots: `PDF-14`, `IMG-15`, `OCR-14` per processor, plus `GEN-21` (CI) and
+  `GEN-22` (compliance) cross-cutting. **The numbering's single source is
+  [`plan-update-test-tiers.md`](plan-update-test-tiers.md) §1.2**, which supersedes the
+  assignment this section first carried. *The per-processor slot reuse needs your yes; the
+  alternative is to append new numbers and record the gaps.*
 - Dropping the structural conformance test is a named trade-off, recorded in `GEN-17` (§3.6).
 
 **Still open**
