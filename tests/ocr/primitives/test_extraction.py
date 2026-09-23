@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import json
 import typing
-from functools import lru_cache
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -44,10 +43,9 @@ from docflow.ocr.contracts import (
     LayoutResult,
     OCRBlockType,
     OCRDocument,
-    OCROptions,
     TableResult,
 )
-from docflow.ocr.primitives import execution, export, extraction, pipeline
+from docflow.ocr.primitives import execution, export, extraction
 from docflow.ocr.primitives.engine import (
     OCREngineExecutionError,
     OCREngineNotAvailableError,
@@ -58,54 +56,15 @@ from docflow.ocr.primitives.extraction import (
     _label_value,
 )
 from tests.ocr.primitives import probes
+from tests.ocr.primitives.engine_corpus import (
+    FIXTURE,
+    REPO_ROOT,
+    configured_pipeline,
+    extracted_document,
+)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
-FIXTURE = FIXTURES / "ocr" / "ocr_prepared_text_and_table.png"
 SOURCE = FIXTURES / "expected-extraction" / "9e0fd65b-7db2-40a1-9959-ab13e7b030cd.jpg"
-
-
-def requested_options() -> OCROptions:
-    """Return a request asking for everything this processor can extract.
-
-    Returns:
-        The raw options.
-    """
-    return OCROptions(
-        ocr=True,
-        layout=True,
-        tables=True,
-        reading_order=True,
-        language="es",
-        engine_options={},
-    )
-
-
-def configured_pipeline() -> object:
-    """Return a configured Docling pipeline.
-
-    Returns:
-        The pipeline options, ready for :func:`execution.convert_image_with_docling`.
-    """
-    return pipeline.configure_image_pipeline(
-        pipeline.normalize_docling_options(requested_options())
-    )
-
-
-@lru_cache(maxsize=1)
-def extracted_document() -> OCRDocument:
-    """Convert the fixture once and return the engine-independent document.
-
-    Cached because a conversion loads the model stack and takes seconds; repeating it per test
-    would make the suite slow enough that the next person deletes it. A cached function rather
-    than a pytest fixture: a fixture's parameter name shadows it in every test signature, which
-    the linter flags, and the value here is a computed artifact rather than setup state.
-
-    Returns:
-        The extracted document.
-    """
-    result = execution.convert_image_with_docling(FIXTURE, configured_pipeline())
-    return extraction.build_ocr_document(result)
 
 
 # ======================================================================================

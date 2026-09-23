@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `OCR-01` … `OCR-14` |
-| Status | `OCR-01`…`OCR-04` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, and a real conversion is extracted into the engine-independent `OCRDocument`; `OCR-05` … `OCR-14` `NOT_STARTED` |
+| Status | `OCR-01`…`OCR-05` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, a real conversion is extracted into the engine-independent `OCRDocument`, and the blocks are normalized into one coordinate frame and ordered by a rule rather than by arrival; `OCR-06` … `OCR-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -32,7 +32,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | OCR-02 | Docling seam + pin | S | 1 — Foundations | OCR-01 | `ocr/primitives/`, `docling` pinned in `pyproject.toml` | this file §OCR-02 | DONE |
 | OCR-03 | Pipeline/config primitives | M | 2 — Engine + extraction | OCR-02 | `load_docling_pipeline`, `configure_image_pipeline`, `enable_*`, `normalize_docling_options` | this file §OCR-03 | DONE |
 | OCR-04 | Execution + extraction primitives | M | 2 — Engine + extraction | OCR-03 | `convert_image_with_docling`, `extract_docling_*`, `OCRDocument` | this file §OCR-04 | DONE |
-| OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering | this file §OCR-05 | NOT_STARTED |
+| OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering | this file §OCR-05 | DONE |
 | OCR-06 | Output builders | M | 3 — Outputs | OCR-05 | `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` | this file §OCR-06 | NOT_STARTED |
 | OCR-07 | Table processing | M | 3 — Outputs | OCR-06 | `process_tables`, `normalize_table`, `table_to_markdown`, `ocr/tables/table_NNN.md` | this file §OCR-07 | NOT_STARTED |
 | OCR-08 | Metrics | S | 3 — Outputs | OCR-05 | `analyze_ocr_result` → `OCRMetrics` | this file §OCR-08 | NOT_STARTED |
@@ -360,6 +360,108 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given a block set in arbitrary engine order, then the sorted output is stable for equal `bbox` tie-breaks.
 - **Evidence / DoD:** Fixture-based test comparing two runs; unit test on the tie-break rule.
 - **Tags:** —
+
+- **Status: DONE.** Evidence: `src/docflow/ocr/primitives/layout.py` holds the five names §3.4's
+  *Layout* group lists and nothing else; `tests/ocr/primitives/test_layout.py` (23 tests). Both
+  criteria hold against a **real conversion**, and both are backed by a mutation that kills them.
+  All four gates green: **1018 tests**, `ruff` clean, 10.00/10 on `pylint src tests`.
+
+- **The engine was already deterministic, so the criterion's two-run test is the weak half.**
+  Three identical conversions of the fixture produced byte-identical block order, bboxes and text.
+  That makes "normalization runs twice ⇒ identical" a test that would pass even if ordering were
+  nothing but the engine's iteration order — which is exactly what the second criterion forbids
+  depending on. So the ordering is a **rule**: normalized top, then left, then bottom, then right,
+  then the identifier. The test that carries weight shuffles the input (fixed seed) and asserts the
+  output order is unchanged; the two-run test stays as the coarser claim the plan actually makes.
+
+- **The identifier is the last key element, and that is what makes the order total.** Python's sort
+  is stable, so two items with *identical* geometry would keep whichever order they arrived in —
+  arrival being the engine's iteration order, the one thing that must not reach the artifact. With
+  the identifier appended the key is a total order and no input permutation can survive. The
+  identifiers are minted zero-padded (``block_007``), so they compare in numeric order as strings
+  and a single string element is sufficient.
+
+- **The battery caught a test of mine that did not measure what it claimed, and the fix removed a
+  second invention.** The mutation "drop the identifier from the sort key" **survived**: my
+  tie-break test used ``block_001`` and ``block_002``, whose numeric suffixes already broke the tie
+  by themselves, so the identifier's contribution could not be observed. Following it back showed
+  why — ``preserve_reading_order`` was also appending ``_number_from_identifier(identifier)`` as a
+  further key element, an extra tie-break on the numeric suffix that **no task asked for**. With
+  both in place the identifier's *name* was never the decider, and the mutation was equivalent for
+  every input my tests built. The helper is deleted, the key is now exactly
+  ``(0.0, top, left, bottom, right, identifier)``, and the test uses identifiers differing in the
+  *letter* part (``block_alpha`` / ``block_beta``) so the name is the only thing that can order
+  them. The mutation now dies.
+
+- **Line-major, not column-major.** The key leads with the *top* coordinate, so a block on a lower
+  line comes after both blocks on the line above whatever their horizontal positions. Ordering by
+  `left` first would interleave the two columns of a two-column page — the classic reading-order
+  defect, and a mutation in the battery.
+
+- **`BOTTOMLEFT` in, `TOPLEFT` out, and the flip is measurable.** A probe of the fixture's
+  extraction showed every `bbox` reported in **pixels** against a bottom-left origin, with the page
+  at `840.0 × 1036.0`. The normalized frame measures from the top, so both vertical coordinates are
+  subtracted from the page height; the resulting box satisfies `top <= bottom`, which an
+  implementation that passed the coordinates through could not. The flip is invisible on a square
+  page or a box spanning the full height, so the test that pins it uses a page taller than it is
+  wide and asserts the arithmetic, not just the ordering of the pair.
+
+- **The conversion is not parameterized, and a first draft that parameterized it was wrong.** I
+  wrote `origin: str = "BOTTOMLEFT"` on the three entry points. It is a choice that does not exist:
+  the plan fixes Docling as the only engine, so the convention is a *measured fact*, and a default
+  made it an implied one — the same class of silent assumption as a default engine or threshold.
+  The signature test that `OCR-01` wrote (no primitive carries a default argument) caught it. The
+  engine's origin is now `ENGINE_COORDINATE_ORIGIN`, a named constant, and the branch that accepted
+  `"TOPLEFT"` was deleted rather than kept as an untestable path. `COORDINATE_REFERENCE` publishes
+  the frame the *artifact* is in, which a consumer reading `document.json` has to be able to find.
+
+- **`origin` was not the only invention; two other surface mistakes were removed in the same
+  pass.** `normalize_block` and `normalize_table` do not exist in the plan, so none was written:
+  the scope's "tie-break by normalized `bbox`" is delivered by normalizing and ordering in **one
+  step**, because the order is *defined* on normalized geometry — ordering pixel boxes and
+  normalizing afterwards would sort by a frame the artifact does not use, and the two would
+  disagree the moment a page was not square.
+
+- **Scope boundaries kept.** `count_tables` and `normalize_table` are in §3.4 but under *Tables*,
+  so they stay in `rendering.py` for `OCR-07`; `count_blocks` is under *Layout* and lands here. No
+  file writing, no export, no timestamps — the module returns records and the identifiers in
+  reading order, nothing else.
+
+- **An unpositioned item is kept, sorts last, and keeps `None`.** Dropping it would be silent loss;
+  substituting a zero box would turn "no geometry was extracted" into "this block sits at the
+  top-left corner" — the silent stand-in this project forbids. The sort prefix is `1.0` *paired
+  with* `0.0` rather than `1.0` alone, because a box touching the page's bottom edge has a
+  normalized top of exactly `1.0` and would otherwise tie with an unlocatable item and be ordered
+  by arrival. A test builds both.
+
+- **Normalized values are not clamped.** A box that leaves the page passes through as computed:
+  clamping would silently move content to the edge, and a reader could not tell a tall block from a
+  clipped one. Same posture as `image`'s `crop_region`, which refuses a degenerate box rather than
+  adjusting it.
+
+- **The gates found one more defect of mine, and it was duplication rather than logic.** `pylint`
+  scored 9.99 with `R0801`: the new suite had copied `test_extraction`'s `requested_options`,
+  `configured_pipeline` and cached `extracted_document` helpers verbatim, and `test_extraction`
+  had itself copied the raw option literal from `tests/factories.build_ocr_options`. The cost was
+  not only the repeated lines — the two suites paid for **two** conversions of one image, and they
+  were free to drift into describing "everything" differently. The three helpers now live in
+  `tests/ocr/primitives/engine_corpus.py`, which both suites import, and the options come from the
+  shared factory via `dataclasses.replace(..., language="es")` — the language being the one option
+  whose *value* the engine reads rather than a flag it honours or ignores. The `convert` variant is
+  exposed uncached alongside the cached one, because the criterion about two *runs* agreeing cannot
+  be tested with the same cached document twice; that would be a statement about object identity.
+
+- **Mutation battery (11 mutations, all killed, every restore green):** no vertical flip; the sort
+  key made column-major; the identifier dropped from the key; the unpositioned prefix negated so
+  those items sort first; normalized values clamped; a zero-area page returning zeroes instead of
+  raising; `normalize_layout` reporting the pixel page (scale applied twice); the reading order
+  computed on the engine's pixel boxes; `count_blocks` answering `0`; the density on a
+  dimensionless page returning the character count; `COORDINATE_REFERENCE` set to the engine's own
+  origin. The harness purges `__pycache__` and sets `PYTHONDONTWRITEBYTECODE=1` after every
+  mutation — without that, restoring the source inside the same filesystem-timestamp granularity
+  leaves the mutated `.pyc` in place and the mutation keeps running, which is the trap `IMG-13`
+  recorded. The first run was **not** clean: the identifier mutation survived, and the paragraph
+  above records what it exposed.
 
 ### OCR-06 — Output builders
 
