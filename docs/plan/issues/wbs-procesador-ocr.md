@@ -39,9 +39,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | OCR-09 | Technical validation | S | 3 — Outputs | OCR-06, OCR-08 | `validate_ocr_result`, `validate_output_artifacts` | this file §OCR-09 | DONE |
 | OCR-10 | Atomic persistence + `metadata.json` | M | 4 — Publish + entry points | OCR-07, OCR-09 | `ocr/.tmp/` → rename; `ocr/metadata.json` | this file §OCR-10 | DONE |
 | OCR-11 | Entry points | M | 4 — Publish + entry points | OCR-10 | `process_ocr_image`; `process_ocr_from_page` **not shipped** (§9 decision 5 defers it to Phase 3) | this file §OCR-11 | DONE |
-| OCR-12 | Tests + committed image fixtures | M | 5 — Verification | OCR-11 | `tests/`, `fixtures/ocr_prepared_text_and_table.png`, `fixtures/ocr_blank.png` | this file §OCR-12 | NOT_STARTED |
-| OCR-13 | Four QA gates + mutation falsification | S | 5 — Verification | OCR-12 | QA gate output, documented mutation observations | this file §OCR-13 | NOT_STARTED |
-| OCR-14 | Lab tool `scripts/tools/ocr.py` | S | 6 — Lab tool | OCR-13 | `scripts/tools/ocr.py` | this file §OCR-14 | NOT_STARTED |
+| OCR-12 | Tests + committed image fixtures | M | 5 — Verification | OCR-11 | `tests/ocr/test_hardening.py`, `fixtures/ocr_prepared_text_and_table.png`, `fixtures/ocr_blank.png` | this file §OCR-12 | DONE |
+| OCR-13 | Four QA gates + mutation falsification | S | 5 — Verification | OCR-12 | QA gate output, documented mutation observations | this file §OCR-13 | DONE |
+| OCR-14 | Lab tool `scripts/tools/ocr.py` | S | 6 — Lab tool | OCR-13 | `scripts/tools/ocr.py` | this file §OCR-14 | DONE |
 
 ## 3. Detailed issues
 
@@ -1039,7 +1039,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Happy-path test plus the determinism scenario; `process_ocr_from_page` may land as a stub carrying `# TODO: [MVP]`.
 - **Tags:** `# TODO: [MVP]` for `process_ocr_from_page` (deferred to Phase 3).
 
-**Status: DONE.** `src/docflow/ocr/primitives/composition.py` (the flow, `RUN_STAGES` and `RECORDED_STAGES`), `src/docflow/ocr/entrypoints.py` (the published surface, now a delegation rather than a stub), tests in `tests/ocr/test_entrypoints.py` — 29 tests. Measured against real conversions on both committed fixtures: the content page reaches `success` / `VALID` with 761 characters, 98 words, 19 blocks, 1 table and 15 paragraphs published under all four required names plus `tables/table_001.md`; the blank page reaches `success` / `EMPTY` with its namespace still populated. `process_ocr_from_page` was **not** shipped: §9's resolved decision 5 defers it to Phase 3, so the `# TODO: [MVP]` stub the task allowed was not needed either.
+**Status: DONE.** `src/docflow/ocr/primitives/composition.py` (the flow, `RUN_STAGES` and `RECORDED_STAGES`), `src/docflow/ocr/entrypoints.py` (the published surface, now a delegation rather than a stub), tests in `tests/ocr/test_entrypoints.py` — 29 tests. Measured against real conversions on both committed fixtures: the content page reaches `success` / `VALID` with 777 characters, 98 words, 19 blocks, 1 table and 15 paragraphs published under all four required names plus `tables/table_001.md`; the blank page reaches `success` / `EMPTY` with its namespace still populated. `process_ocr_from_page` was **not** shipped: §9's resolved decision 5 defers it to Phase 3, so the `# TODO: [MVP]` stub the task allowed was not needed either.
 
 The flow is twelve stages, not the eleven §3.3's diagram draws, and the twelve is forced by a defect the diagram hides. **`validate_ocr_result` asks `validate_output_artifacts` whether each promised path `is_file()`, and that check names all four artifacts including `metadata.json`.** A verdict taken before the write therefore reports `INCOMPLETE` for a run that is about to publish everything: the first draft of the composition did exactly that, and every happy-path run came back `INCOMPLETE` with all four files sitting on disk. The acceptance criterion decides which of the two gives — `status == "success"`, `validation.status == "VALID"` and the four files present cannot all hold under the diagram's order. So `persist` writes all five artifacts with `metadata.json` carrying a provisional `ERROR` verdict, `validate_result` reads the real one from disk, and `publish_metadata` rewrites that one file. The rewrite is unconditional rather than "only when the verdict changed": one path that always leaves the file agreeing with the returned object beats two where the rarer one is the one nobody exercises. `tests/ocr/test_entrypoints.py::test_the_validation_this_module_trusts_reads_the_disk` pins the premise directly, so a future change to the validator's reach surfaces there rather than as a mysterious `INCOMPLETE` at the far end of the suite.
 
@@ -1049,7 +1049,7 @@ The flow is twelve stages, not the eleven §3.3's diagram draws, and the twelve 
 
 `text.txt` is **the engine's own text**, and an earlier draft of this task changed that for a bad reason. The draft rebuilt the text from the ordered items, on a measurement that compared the table's *line index* in the engine's text (18) against a reading-order rebuild (9), and concluded the engine emitted its text out of order. Line indices are skewed by the engine's blank-line spacing and they hid the figure that decides the question: how many items **precede** the table. Walked against the computed order, **every item's offset increases in the engine's text as well**, and nine items precede the table in both renderings. So the engine's text is already in reading order, `export_docling_text` — the declared producer of `text.txt` — reads `document.text`, and this module leaves that field alone. The rebuild would have bought nothing and discarded the engine's paragraph spacing. A mutation that substituted the engine's text back in **survived** the first test suite, and that survivor is what exposed the defect: the test now asserts the property the artifact must have (every ordered item's offset increases, with the preceding count pinned at nine) rather than a claim about which producer built it.
 
-The figures in `OCRMetrics` read 761 characters and `text_density = 761.0`, which is the *correct* value rather than a regression: `calculate_ocr_text_density` documents that "recorded against a normalized page the area is 1.0 and the density equals the character count", and the flow now normalizes the layout before measuring. `OCR-08`'s numbers were taken in the pixel frame, where the same measurement is `0.000893`; both are right for the frame they describe. **A density figure is meaningless without naming its frame.**
+The figures in `OCRMetrics` read 777 characters and `text_density = 777.0`, which is the *correct* value rather than a regression: `calculate_ocr_text_density` documents that "recorded against a normalized page the area is 1.0 and the density equals the character count", and the flow now normalizes the layout before measuring. `OCR-08`'s numbers were taken in the pixel frame, where the same measurement is `0.000893`; both are right for the frame they describe. **A density figure is meaningless without naming its frame.** The character count moved from 761 to 777 during `OCR-12`, and the cause is the *language* the corpus requests: the earlier figure came from a probe with `language="en"` while `tests/ocr/primitives/engine_corpus.py` asks for `"es"` on a Spanish invoice, which changes what the engine's recognizer emits. Both are real measurements of their own request; the recorded figure is now the corpus's.
 
 Five defects the task exposed, recorded because four of them are invisible from the artifact:
 
@@ -1098,6 +1098,28 @@ Four QA gates: `pytest` **1290 passed**, `ruff check .` clean, `ruff format --ch
 - **Evidence / DoD:** Test output for the happy path plus both observations per invariant.
 - **Tags:** `# TODO: [MVP]` where a fixture stands in for a real scanned document.
 
+**Status: DONE.** Tests in `tests/ocr/test_hardening.py` — 20 tests. The fixture set is committed at `tests/fixtures/ocr/` (`ocr_prepared_text_and_table.png`, 347,458 bytes, and `ocr_blank.png`, 3,058 bytes) and `scripts/tools/ocr_fixture.py` rebuilds both idempotently.
+
+The happy path is measured, not asserted from shape: `status == "success"`, `validation.status == "VALID"`, a non-empty `text`, `engine == "docling"` and `engine_version == 2.126.0` — asserted to match a version *shape* as well as to be non-empty, because the seam's documented answer for a version it could not read is `UNKNOWN` and a run recording that would be reporting a deployment that cannot reproduce its own output. The published tree is the complete set — `text.txt`, `document.md`, `document.json`, `metadata.json` and `tables/table_001.md` — with no `.tmp` residue, and the content figures (777 characters, 98 words, 19 blocks, 1 table, 15 paragraphs, `structure_detected`) are pinned separately from the status, because a run can reach `VALID` with a degraded extraction: the verdict says the artifacts are complete and parseable, not that the page was read well.
+
+**Three things about the fixtures are worth recording, and all three are measurements.** First, the plan's Scope line describes `ocr_prepared_text_and_table.png` as holding "one paragraph, one 2×2 table" while the committed file holds a heading, **nineteen blocks and a 5×4 table** — the fixture is a real prepared invoice from `tests/fixtures/expected-extraction/`, so the prose understates it and the assertions follow the measurement. Second, the preparation is **grayscale only**, because the image processor's OCR-optimized variant ends with a binarization that collapses the table to 1×1 in Docling's structure model while plain colour loses it entirely (0 detected); that integration fact is recorded in `ocr_fixture.py` and pinned by `tests/ocr/primitives/test_extraction.py`. Third, the character count was **761 in `OCR-11`'s evidence and is 777 here**, and the cause is the *language*: the `OCR-11` probe used `language="en"` while the shared corpus helper asks for `"es"` on a Spanish invoice, which changes what the recognizer emits. Both are real measurements of their own request; the recorded figure is now the corpus's, and the earlier number is corrected in the `OCR-11` block above.
+
+**Each of the three invariants carries the mutation that must break it, and the pairing is verified in isolation rather than by a whole-file run.** That distinction is a finding, not a preference. The first attempt ran the whole module with each mutation applied, and the reported failing set **did not reproduce** when the paired test ran alone: with the `abandon` mutation applied, a full run reported four failures including `test_invariant_1_the_order_is_the_computed_one`, which passed alone. Nineteen of these twenty tests each drive a real Docling conversion, so a mutating source plus a shared temporary root leaves room for cross-test interference that has nothing to do with the invariant. The criterion is phrased per-mutation ("each corresponding test fails; after restore, all are green"), so it is verified that way — the paired test alone must fail under the mutation and pass after restoration — and the whole-file result is reported as context only.
+
+| # | Invariant | Mutation | Paired test that fails |
+|---|---|---|---|
+| M1 | 1 | `composition._order_and_normalize` uses `document.reading_order` instead of the computed order | `test_invariant_1_the_order_is_the_computed_one` (`assert 19 == 10`) |
+| M2 | 1 | `layout._sort_key` drops the identifier, so the key stops being total | `test_invariant_1_the_ordering_key_is_total` |
+| M3 | 1 | `export.serialize_document_json` gains a `built_at` field read from `time.time()` | `test_invariant_2_no_run_time_instant_appears_in_the_functional_content` (and the two-run byte-identity test) |
+| M4 | 2 | `rendering.merge_ocr_blocks` appends an instant-stamped comment | `test_invariant_2_no_run_time_instant_appears_in_the_functional_content` |
+| M5 | 3 | `files.write_text_atomic` writes straight to the final name, skipping `.tmp/` | `test_invariant_3_no_final_name_is_visible_while_content_is_being_written` |
+| M6 | 3 | `files.abandon` is narrowed to `discard_staged`, so final names are never removed | `test_invariant_3_a_failed_run_replaces_the_artifacts_a_previous_run_left` |
+
+Two of the six exposed defects in the *tests* rather than in the code, and both are recorded because the evidence would otherwise have been wrong:
+
+1. **M4's first form was invalid Python.** An f-string inside the mutation's replacement text was mis-escaped, so the mutation produced a `SyntaxError` and pytest exited 2. The harness read "exit code is not zero" as "the test observed it" — so a mutation that never ran was counted as a kill. The harness now distinguishes exit 0, 1 and 2 and reports a non-parsing mutation as `INVALID` rather than as evidence.
+2. **M5 had no test that could observe it.** The invariant's other two tests check the *consequence* of writing through `.tmp/` — nothing partial survives a failure — and a writer that skipped the staging directory passes both, because a successful run's `abandon` finds nothing and the failure path fails before any write. Measured: with `write_text_atomic` writing straight to the final name, both of those tests stayed green and only the artifact-tree assertion caught it, for a reason unrelated to atomicity. The observing test patches `temp_path` with a spy and asserts every published artifact was written *through* it, which is the invariant's real statement: the staging path is the guarantee, not an implementation detail.
+
 ### OCR-13 — Four QA gates and mutation falsification
 
 - **Type:** QA gate
@@ -1113,6 +1135,21 @@ Four QA gates: `pytest` **1290 passed**, `ruff check .` clean, `ruff format --ch
   - Then each of the three invariant tests has a recorded observation of failure under mutation and a recorded green run after restore.
 - **Evidence / DoD:** Captured gate output plus the mutation evidence table for invariants 1–3.
 - **Tags:** —
+
+**Status: DONE.** The four commands run clean on the whole repository with the tool present:
+
+```
+pytest                     1332 passed
+ruff check .               All checks passed
+ruff format --check .      140 files already formatted
+pylint src tests           10.00/10
+```
+
+The mutation evidence for invariants 1–3 is in §OCR-12 above — six mutations, each verified against its **paired test in isolation** (fails under mutation, green after restore). That per-mutation form is what the criterion asks for and it is also what the evidence is worth: a whole-file run with a mutation applied reported extra failures that did **not** reproduce in isolation, so the isolated observation is the one recorded. No config-wide rule was suppressed to reach green: the only suppressions are three inline `# pylint: disable` lines, each carrying its stated reason (`duplicate-code` in `tests/tools/test_ocr_tool.py` for a suite that is deliberately parallel to the other two tools', `duplicate-code` and `too-many-instance-attributes` in `composition.py`), and the `# type: ignore` comments name their codes.
+
+**Everything deferred is tagged.** The processor's shortcuts carry `# TODO: [MVP]` (nullable dimensions, an unread TIFF/BMP resolution header) or `# TODO: [RELEASE]` (a durability barrier per artifact), and these are the markers the house style *requires* rather than debt: `fixme` is disabled on purpose so the markers stay visible.
+
+**A pruning pass was run, and its result was mostly negative — which is the finding.** The OCR suite looked heavy (563 cases for 4 682 lines of source, a 1.53 test-to-source ratio against `image`'s 1.12), so the suite was audited before close-out by two read-only scripts: one for tests whose bodies are shorter than their docstrings or hold a single assertion, one comparing normalised assertion text across every test to find redundancy. The audit found **one** genuine redundancy — `test_the_merge_keeps_every_required_key` re-ran the same merge as `test_engine_metadata_is_nested_rather_than_spread` purely to re-check the payload guard — and it was folded into that test as an extra assertion. **Three apparent "no assertion" tests were false positives of the audit** (`test_a_complete_payload_passes_the_guard`, `test_the_merge_keeps_every_required_key`, `test_every_primitive_the_plan_names_exists`): the first two *do* assert, because a guard that raised would fail them, and my detector could not see that a helper raising is an assertion. The real explanation for the case count is different from the one the audit suggested: of 563 cases, **310 are distinct test functions and 253 come from parametrization, of which 200 are the signature sweep** (`test_every_primitive_is_implemented_not_a_stub`, `test_every_primitive_is_fully_annotated`, `test_no_primitive_carries_a_default_argument` × 67 primitives). That sweep is retained rather than trimmed: it is the cheapest coverage in the suite (three assertions each, no conversion) and it has already found two production defects — three `enable_*` primitives that `OCR-02` never declared, and four `export_docling_*` names missing the same way.
 
 ### OCR-14 — Lab tool `scripts/tools/ocr.py`
 
@@ -1144,6 +1181,40 @@ Scenario: No engine knob is offered
   Then no engine-selection flag exists
   And every operation resolves to a docflow.ocr function or primitive
 ```
+
+**Status: DONE.** `scripts/tools/ocr.py` (eight subcommands, three global flags, no engine knob) and `tests/tools/test_ocr_tool.py` — 22 tests. The three scenarios were executed as an operator runs them, and their output is pasted below rather than summarised.
+
+**Scenario 1 — extraction from the command line.** `python scripts/tools/ocr.py run tests/fixtures/ocr/ocr_prepared_text_and_table.png`:
+
+```
+tests/fixtures/ocr/ocr_prepared_text_and_table.png -> success (VALID)
+  engine:    docling 2.126.0
+  content:   777 chars, 98 words, 19 blocks, 1 tables
+  layout:    1.0x1.0 (19 regions)
+  output:    var/tools/ocr/ocr_prepared_text_and_table-963083b5
+    + document.md
+    + metadata.json
+    + document.json
+    + tables
+    + text.txt
+```
+
+`var/tools/ocr/ocr_prepared_text_and_table-963083b5/` holds `text.txt`, `document.md`, `document.json`, `metadata.json` and `tables/table_001.md`, the exit code is 0, and `metadata.json` records `engine="docling"` with `engine_version="2.126.0"`. The default root is `<stem>-<hash>` where the hash is of the input's **content**, so a renamed copy of the same bytes lands in the same tree and a `text` after a `run` reads what the run wrote — asserted by a test that copies the fixture under a new name and compares the two `text.txt` files.
+
+**Scenario 2 — no engine knob.** `python scripts/tools/ocr.py --help` lists `--out`, `--json` and `--language` and nothing else, and the test reads the parser's **declared** `add_argument` strings through the AST rather than searching the source: the module docstring explains that no `--engine` flag exists, so a text search would match its own explanation. That is the same false positive the PDF tool's suite recorded for its `--engine` mention.
+
+**Scenario 3 — `diff` compares two runs of one input.** `python scripts/tools/ocr.py diff <fixture>`:
+
+```
+tests/fixtures/ocr/ocr_prepared_text_and_table.png: two runs are identical
+  first:  var/tools/ocr/ocr_prepared_text_and_table-963083b5
+  second: var/tools/ocr/ocr_prepared_text_and_table-963083b5-second
+  compared 4 artifacts, excluding metadata.json
+```
+
+Two output directories rather than two images, which is the boundary §10 draws: `--second-out` names where the second run goes, never a second source, and a test asserts the `diff` sub-parser declares exactly **one** positional input. `metadata.json` is excluded and the exclusion is *printed*, because it is the one artifact permitted to carry timing and a comparison that included it would report every correct run as different. A second test drives a real difference — one artifact of the second run is corrupted before comparing — and asserts the non-zero exit and the `DIFFERENT` verdict, since a comparison that only ever reports equality proves nothing about detecting inequality.
+
+The remaining boundary — the library must not import the tool — is asserted over the source text of every module under `src/docflow/`, so an import reached only on a rare path is caught. The tool itself imports only `docflow.ocr`, never a sibling processor and never `docling` directly: the engine is reached through the processor's seam so a lab run's provenance is attributable.
 
 ## 4. Dependency graph
 

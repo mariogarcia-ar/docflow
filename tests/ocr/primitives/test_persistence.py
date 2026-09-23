@@ -442,17 +442,9 @@ def test_engine_metadata_is_nested_rather_than_spread() -> None:
     }
     assert "schema_name" not in merged
     assert base.get("engine_metadata") is None, "the merge mutated its input"
-
-
-def test_the_merge_keeps_every_required_key() -> None:
-    """A merged payload is still a payload."""
-    merged = metadata.merge_ocr_metadata(
-        metadata.build_metadata_payload(
-            a_record(), processing_key=None, tables_published=0
-        ),
-        {"extra": 1},  # type: ignore[arg-type]
-    )
-
+    # A merged payload is still a payload. Asserted here rather than in a test of its own,
+    # because a second test calling the same merge twice to re-check the guard would be a
+    # near-copy whose only difference is which of the two failures it reports.
     metadata.require_metadata_keys(merged)
 
 
