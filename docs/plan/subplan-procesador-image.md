@@ -101,27 +101,23 @@ directly. The processor's public contract (`ImageRequest → procesador-image �
 ImageResult`) is engine-agnostic: replacing OpenCV with Pillow changes only `primitives/`,
 never the contract or the workflow. No engine is silently substituted.
 
-### Acceptance-engine recording (the test double)
+### Engine double (the test double)
 
-The only test double for OpenCV is **a recording of what OpenCV really returned**, replayed
-through the real code — not a fake we invent (`README.md` §9.7). OpenCV hands back **NumPy
-pixel arrays**, which are not JSON-serialisable, so the recording keeps the pixels as an
-image and the numbers as JSON:
+The only test double for OpenCV is an **in-memory fake injected at the `image/primitives/`
+functions** (`README.md` §9.7). We do not test OpenCV: no test invokes, imports or asserts
+it, and no test claims a value is the "right" blur, sharpness or contrast — those are the
+engine's readings, and the engine is not the deliverable.
 
 | | |
 |---|---|
-| **Recorded layer** | the engine's **native output** — the decoded image and each transformed image as a PNG, plus a `metrics.json` with the raw score values (`blur`, `sharpness`, `contrast`, …). Raw `.npy` arrays only where a test genuinely needs the array. Never our `ImageResult`, and never the output of `analyze_image` / `normalize_image`: recording the translated result would delete the primitives' coverage, which is half the reason the replay exists. |
-| **Format** | `tests/fixtures/engines/opencv/<library_version>/<fixture-stem>/{image.png, metrics.json}` |
+| **What the fake returns** | the engine's **native** output — decoded pixels (a small synthetic array) and raw score values (`blur`, `sharpness`, `contrast`, …). Never our `ImageResult`, and never the output of `analyze_image` / `normalize_image`: faking the translated result would delete the primitives' coverage, which is half the reason the double exists. |
+| **Location** | `tests/fakes/engines/fake_opencv.py` — in memory, no fixtures on disk. |
 | **Injection point** | the **`image/primitives/` functions** (`load_image`, the transformations) — the engine call itself, and nowhere higher. |
-| **Version check** | the replay loader reads the OpenCV/Pillow version pinned in `pyproject.toml` and **fails loudly**, naming both versions, when it differs from the recording directory it is about to use. |
-| **Recorder** | `tests/record_engine.py`, OpenCV path (owned by `IMG-15`). |
+| **Failure modes** | the fake can raise `DECODE_ERROR` for an unreadable input, so the failure path of §6 is reachable with no engine installed. |
 
-**This processor's caveat: the real test must assert numbers, not status.** The one real
-test asserts **2–3 concrete metric values with a tolerance** (blur / sharpness / contrast),
-never `status == "success"`: the whole metric computation lives inside the primitives the
-replay replaces, so an OpenCV drift would otherwise be invisible. `IMG-09`'s `LOW_QUALITY`
-threshold stays a **unit test over crafted `ImageMetrics`** — it is a rule of ours, not an
-engine reading, so it is not re-tested in the real tier.
+**Our rules are tested against crafted metrics, not against the engine.** `IMG-09`'s
+`LOW_QUALITY` threshold is a unit test over an `ImageMetrics` object we construct: it is a
+rule of ours, and the test asserts the rule, not a reading.
 
 ### Determinism class
 
@@ -151,12 +147,12 @@ Errors are classified technically into a typed `ImageError` with a `recoverable`
 | IMG-12 | Implement `process_image` entry point wiring the full flow | M | IMG-09, IMG-11 |
 | IMG-13 | Write happy-path + invariant tests; record mutation-falsification evidence | M | IMG-12 |
 | IMG-14 | Run the four QA gates clean | S | IMG-13 |
-| IMG-15 | OpenCV recording + replay loader (primitives injection) + version check | S | IMG-02 |
+| IMG-15 | In-memory OpenCV double (primitives injection) | S | IMG-02 |
 
 ### Order / waves
 
 - **Wave 1 — Contracts & seam:** IMG-01 → IMG-02 → IMG-03.
-- **Wave 2 — Analysis:** IMG-04 ∥ IMG-05 (parallel after IMG-03) → IMG-06 — plus IMG-15 (the OpenCV recording and its replay loader, which gate the fast tier of IMG-13).
+- **Wave 2 — Analysis:** IMG-04 ∥ IMG-05 (parallel after IMG-03) → IMG-06 — plus IMG-15 (the OpenCV double, which lets the whole processor be tested with no engine installed).
 - **Wave 3 — Outputs:** IMG-07, IMG-09, IMG-10 (after IMG-06) and IMG-08 (after IMG-05 and IMG-06); all four may proceed in parallel once their predecessors are green.
 - **Wave 4 — Publish:** IMG-11 → IMG-12.
 - **Wave 5 — Verify:** IMG-13 → IMG-14.
@@ -189,42 +185,23 @@ Scenario: Leave the source untouched
   When process_image runs
   Then the input file hash is unchanged and all outputs live under "image/"
 
-Scenario: The replay refuses a stale recording
-  Given an OpenCV recording made for version A
-  And a pin in pyproject.toml for version B
-  When the fast tier runs
-  Then the replay loader fails loudly, naming both versions
-  And it does not serve the stale recording
-
-Scenario: The real tier skips when the engine is absent
-  Given an environment without OpenCV installed
-  When the real tier runs
-  Then the OpenCV tests are skipped with an explicit reason
-  And the gate does not fail
-
-Scenario: The fast tier never reaches OpenCV
-  Given the recorded fixtures and the replay loader
-  When "pytest -m 'not engine'" runs
+Scenario: No test reaches OpenCV
+  Given the in-memory OpenCV double
+  When the whole suite runs
   Then every test of this processor passes with zero OpenCV invocations
-  And no OpenCV module is touched
+  And no test imports or asserts the engine
 ```
 
 ## 6. Test plan
 
-### Two tiers
+### One tier, no engine
 
-| Tier | Runs | What it proves |
-|---|---|---|
-| **fast** — `pytest -m "not engine"` | every commit, no OpenCV installed | invariants, classification, validation and atomic publication, on **recorded engine output replayed through the real code** |
-| **real** — `pytest -m engine` | the gate, once per processor | the metric and transformation primitives against live output, with concrete numbers and a tolerance |
+Every test of this module — the happy path, the three invariants, the classification vectors
+and the atomic-publication failure path — runs on the in-memory OpenCV double (placement and
+injection point in §3) and never reaches OpenCV. The suite must pass with no engine
+installed; there is no real tier, no marker and no skip rule (`README.md` §7, §9.7).
 
-`IMG-13` owns the one real happy path. Every other test of this module — the three
-invariants, the classification vectors and the atomic-publication failure path — runs on the
-replay (format and injection point in §3) and never reaches OpenCV. When OpenCV is absent
-the real tier **skips with an explicit reason**; the fast tier must pass with no engine
-installed.
-
-**Happy-path test.** One test proves `ImageRequest → ImageResult` end-to-end using **real bytes from a small committed fixture**: `normalized.png` exists, `metadata.json` is parseable and contains processor/library versions and the recorded transformations, `status == "success"`, and `classification` is one of the four defined values. Its **real-tier** form additionally asserts 2–3 concrete metric values with a tolerance (blur / sharpness / contrast) — never `status == "success"` alone (§3).
+**Happy-path test.** One test proves `ImageRequest → ImageResult` end-to-end using **real bytes from a small committed fixture**, with the engine call doubled: `normalized.png` exists, `metadata.json` is parseable and contains processor/library versions and the recorded transformations, `status == "success"`, and `classification` is one of the four defined values. It asserts **our** contract, never a claim about the engine's readings (`README.md` §9.7).
 
 **Invariant tests (each with the mutation that must break it):**
 
@@ -234,16 +211,11 @@ installed.
 
 **Fixtures needed** (committed under `fixtures/image/`, named for the failure they provoke): `color_layout.png` (VLM variant keeps color), `skewed_text.png` (deskew/OCR pipeline), `embedded_logo.png` (embedded-image input), `corrupt.png` (decode error path).
 
-### Failure fixtures, in three buckets
+### Failure fixture, one bucket
 
 | Fixture | Bucket | Test mechanism |
 |---|---|---|
-| `corrupt.png` | **Recordable** — `load_image` fails deterministically on this real input, returning `DECODE_ERROR` | the failing call is recorded once; the replay raises what was recorded, so the tier stays fast |
-
-The rule that keeps the "once per processor" promise intact: the `record` step covers
-**every input the tests use, good and bad**, so a recorded failure costs no live run at test
-time. Engine breakage that no input reproduces is **injected** with a `monkeypatch` instead,
-never recorded — `IMG-03`/`IMG-10` state which of their failure paths is which.
+| `corrupt.png` | **Injected** — no input reproduces the decode failure deterministically in a way we would assert | the double raises `DECODE_ERROR` for this input; never a live engine call and never an assertion about how the engine reports it |
 
 ## 7. Definition of Ready / Definition of Done
 
@@ -252,13 +224,11 @@ never recorded — `IMG-03`/`IMG-10` state which of their failure paths is which
 - The image-ops primitives skeleton and the OpenCV-vs-Pillow choice are recorded (decision below).
 - The artifact namespace `image/` and atomic-publication rule are agreed.
 - Fixtures for the happy path and the three invariants exist.
-- The OpenCV recording format of §3 (`tests/fixtures/engines/opencv/<library_version>/<fixture-stem>/{image.png, metrics.json}`) and the `image/primitives/` injection point are agreed; `IMG-15` is a row in §4.
+- The OpenCV double of §3 (`tests/fakes/engines/fake_opencv.py`, native pixels plus raw score values, injected at the `image/primitives/` functions) is agreed; `IMG-15` is a row in §4.
 
 **Definition of Done**
 - `process_image` maps `ImageRequest → ImageResult` with no import of any other processor module and no workflow decision inside the processor.
-- The **tier requirement** holds: the fast tier (`pytest -m "not engine"`) passes with OpenCV absent, and exactly one real test per processor reaches the engine.
-- The **version check** holds: the replay loader fails loudly, naming both versions, when the recording's version differs from the pin in `pyproject.toml`.
-- The **skip-when-absent rule** holds: with no OpenCV installed the real tier skips with an explicit reason instead of failing, and no test substitutes a fake for the replay.
+- The **no-engine rule** holds: the whole suite passes with OpenCV absent, no test invokes, imports or asserts the engine, and the double is never reachable as a fallback (nothing under `src/docflow/` imports `tests/`).
 - Input image is immutable; outputs are published atomically under `image/` only.
 - OCR and VLM variants are produced independently (never assumed equal).
 - All shortcuts carry explicit `# TODO: [MVP]` or `# TODO: [RELEASE]` tags.

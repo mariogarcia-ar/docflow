@@ -159,8 +159,7 @@ src/docflow/
          select_source, select_extraction_strategy, build_llm_input,
          invalidate_downstream, resume_document, execute_document_workflow)
 tests/                   # mirrors src/docflow, one test module per source module
-    record_engine.py     # the recorder: refreshes the acceptance-engine recordings on a pin bump
-    fixtures/engines/    # the recordings, one directory per engine + version (§9.7)
+    fakes/engines/       # in-memory engine doubles, one per processor (§9.7)
 ```
 
 The `workflow/` block lists **symbols the orchestrator exposes**, not a file tree: they are
@@ -238,12 +237,12 @@ within a phase, independent processors may proceed in parallel.
   three identities: `document_id`, `workflow_run_id`, `processing_key`.
 - Tooling: `pyproject.toml` as the single config home for `pytest`, `ruff`, `pylint`,
   `coverage`.
-- The **acceptance-engine recordings convention** (§9.7): the path
-  `tests/fixtures/engines/<engine>/<engine_version>/…`, the provenance keys every recording
-  carries (`engine_version`, `schema_version`), and the rule that a replay loader fails
-  loudly when a recording's version differs from the pin in `pyproject.toml`. The convention
-  and the directory layout are stated here; the recordings themselves are Phase 1
-  deliverables (`PDF-14`, `IMG-15`, `OCR-14`).
+- The **engine-double convention** (§9.7): the path `tests/fakes/engines/`, the rule that
+  each processor's in-memory engine fake is injected at the engine call inside its own
+  `primitives/` and nowhere higher, and the rule that the fake hands back **native-shaped**
+  values (what the engine would return), never our translated type. The convention and the
+  directory layout are stated here; the fakes themselves are Phase 1 deliverables
+  (`PDF-14`, `IMG-15`, `OCR-14`).
 
 **Exit:** skeleton imports cleanly; one happy-path test per contract round-trips an
 in-memory fake end to end; the four QA gates (§7) pass on the skeleton.
@@ -270,9 +269,13 @@ its primitives (no workflow decisions inside any of them):
   build, `request_key`, provider call, parse, schema validation; the internal graph is a
   follow-up inside this same phase.
 
+Each of `pdf`, `image` and `ocr` also ships an **in-memory engine double** (`PDF-14`,
+`IMG-15`, `OCR-14`) injected at the engine call inside its own `primitives/`. No test — in
+any tier — invokes, imports or asserts the engine itself (§9.7).
+
 **Exit:** each processor has a green happy-path test proving `Request → Result` with real
-bytes from a small committed fixture; no processor imports another processor's module;
-four QA gates pass.
+bytes from a small committed fixture, **with no engine installed**; no processor imports
+another processor's module; four QA gates pass.
 
 ---
 
@@ -332,8 +335,8 @@ image → OCR → LLM) produces a `DocumentResult`; four QA gates pass.
 - Full four-gate hygiene and a mutation-falsified invariant test for each non-obvious
   guarantee (see §7).
 - The **frontier assertion** that no module under `src/docflow/` imports anything under
-  `tests/` (`GEN-19`), and the **recordings compliance check**: one version rule across the
-  three replay loaders, and a declared provenance on every recording (`GEN-22`).
+  `tests/` (`GEN-19`), and the **engine-double compliance check**: one injection rule across
+  the three processors, and a native-shaped fake on every engine seam (`GEN-22`).
 
 **Exit:** all phases' acceptance evidence re-run green; every shortcut carries an explicit
 `# TODO: [MVP]` / `# TODO: [RELEASE]` tag.
@@ -374,11 +377,11 @@ ruff format --check .   # formatter
 pylint src tests        # fixme disabled; the rest clean
 ```
 
-`pytest` with no flags still means "everything", including the single real-engine test per
-processor. `pytest -m "not engine"` is a documented inner-loop shortcut and never a gate;
-`pytest -m engine` runs the real tier. When the engine is not installed, the real tier
-**skips with an explicit reason** instead of failing. The `engine` marker is registered in
-`pyproject.toml` (`GEN-05`), so `--strict-markers` stays on.
+`pytest` with no flags means everything, and everything runs with **no third-party engine
+installed**: no test invokes, imports or asserts Poppler, OpenCV, Docling, Ollama or a
+provider SDK. The engines are reached only from a processor's own `primitives/`, and only in
+production; tests exercise our code through the in-memory engine doubles of §9.7. There is
+no marker and no second tier — `pytest` is the gate.
 
 ### Rules carried into implementation
 
@@ -407,6 +410,7 @@ processor. `pytest -m "not engine"` is a documented inner-loop shortcut and neve
 | Risk | Impact | Mitigation |
 |---|---|---|
 | Engine/library drift (Poppler, Docling, Pillow, Ollama versions) | Silent output differences | Pin versions; record engine + version in every artifact's metadata; deterministic output ordering. |
+| An in-memory engine fake drifts from the engine's real shape | Our translation breaks in production while the suite stays green | Named as an accepted PoC trade-off, not as covered (§9.7, `GEN-17`); the seam is one small module per processor, so a shape change is local and reviewed on the pin bump. |
 | Repeating expensive LLM/OCR work | Cost, latency | `processing_key` + reuse rule owned by the orchestrator; resume without re-running. |
 | Silent failures (truncated prompt, plausible wrong value) | Wrong result reported as correct | Validation is structural and mandatory; a processor reports, never guesses; no aggregate confidence in place of per-field evidence. |
 | Golden set unavailable (circular labelling) | Cannot prove extraction quality | Defer the labelled set; substitute invariant/mutation tests and independent-reader checks (e.g. arithmetic on line items). |
@@ -442,23 +446,33 @@ Each was open; each is now **resolved from `docs/idea/`** (the source of truth) 
 6. **Stage-state vocabulary — RESOLVED.** The nine states listed in §5 Phase 0
    (`NOT_STARTED`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`, `SKIPPED`, `REUSED`,
    `INVALIDATED`, `PAUSED`) are the closed set; no open ellipsis, no silent alias.
-7. **Test tiers and engine recordings — RESOLVED.** The real engine runs exactly once per
-   processor, as phase-exit evidence (the happy path of `PDF-13` / `IMG-13` / `OCR-12`). Every
-   other test in `pdf`, `image` and `ocr` runs on a **recorded engine response** replayed
-   through the real code, injected at the engine call and nowhere higher — the same pattern the
-   plan already applied to `llm` (`LLM-03`) and to the orchestrator (contract fakes,
-   `subplan-orquestador.md` §6). A replay is never a fallback: there is no
-   `if engine is None: use_fake`, and nothing under `src/docflow/` imports `tests/`. The replay
-   loader fails loudly when the recorded version does not match the pin in `pyproject.toml`,
-   and the real tier skips with an explicit reason when the engine is absent. `llm` keeps its
-   scripted fake (`LLM-03`) deliberately: LLM responses are not deterministic for a fixed
-   input, and `LLM-08` needs a scripted sequence.
+7. **No test crosses into a third party — RESOLVED.** We do not test Poppler, OpenCV,
+   Docling or a provider. No test invokes, imports or asserts a third-party engine: its output
+   values, its determinism and its version behaviour are its business, not evidence about
+   ours. The suite proves **our** code — contracts, translation, builders, validation,
+   classification, atomic publication and workflow decisions — and runs whole with no engine
+   installed, so `pytest` is the gate and there is no second tier, no marker and no engine
+   skip rule.
 
-   **The convention, stated once and cited everywhere.** A recording lives under
-   `tests/fixtures/engines/<engine>/<engine_version>/<fixture-stem>/`: for `docling` (OCR) and
-   `opencv` (image) a JSON payload carrying `engine_version` and `schema_version`; for
-   `poppler` (PDF) the artifacts copied verbatim plus a `sidecar.json` with the exit code and
-   stderr, because Poppler is reached through CLI subprocesses and returns no value. The
-   recorder is `tests/record_engine.py` (dev tooling, not library code); each processor owns
-   its own engine's path in it (`PDF-14`, `IMG-15`, `OCR-14`). Only *compliance* with this
-   convention is a cross-cutting task (`GEN-22`).
+   **The double, stated once and cited everywhere.** Each of `pdf`, `image` and `ocr` ships an
+   **in-memory engine fake**, injected at the engine call inside its own `primitives/` and
+   nowhere higher: for `pdf` at the `subprocess.run` call (the fake hands back native
+   artifacts plus an exit code and stderr, because Poppler returns no value), for `image` at
+   the `image/primitives/` functions (native pixels plus raw score values), for `ocr` at
+   `convert_image_with_docling` (Docling's native values) — never at `extract_docling_*`,
+   `extract_text_from_page`, `analyze_image` or any other translation seam, because that is
+   the half of the module the fake must **exercise** rather than replace. The fake is
+   **native-shaped**: it returns what the engine would return, never our translated type. It
+   lives under `tests/fakes/engines/`, there is no `if engine is None: use_fake` fallback, and
+   nothing under `src/docflow/` imports `tests/`, so a double can never become a production
+   fallback. Each processor owns its own engine's fake (`PDF-14`, `IMG-15`, `OCR-14`); only
+   *compliance* with this convention is a cross-cutting task (`GEN-22`).
+
+   **What this gives up.** A hand-written fake can drift from the real engine's shape with
+   nothing turning red: a shape change on a branch the fake does not model would break
+   translation in production while the suite stays green. That is a named, accepted PoC
+   trade-off, recorded as a resolved decision in `GEN-17` — not presented as covered.
+
+   `llm` keeps its **scripted** fake (`LLM-03`) deliberately: LLM responses are not
+   deterministic for a fixed input, and `LLM-08` needs a scripted sequence (invalid JSON on
+   attempt 1, valid on attempt 2).

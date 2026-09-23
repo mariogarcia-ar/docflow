@@ -89,7 +89,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Blocks:** LLM-06
 - **Objective:** Provide a deterministic, scriptable provider so the whole processor can be tested without a real model, and commit the prompt/schema fixtures the tests use verbatim.
 - **Scope / Deliverables:** In-memory fake provider implementing the `llm/primitives/` interface, returning deterministic valid JSON, scriptable to return invalid JSON or raise timeouts, with a **call counter**; `fixtures/llm/template/simple_extract.md` with `<doc>`, `<extra>` and `<schema>` placeholders; `fixtures/llm/schema/simple.schema.json` exercising required fields and types.
-- **Out of bounds:** No real network access; the fake must not be reachable from production code paths as a fallback. `LLM-03` stays a **scripted fake** deliberately and does **not** migrate to record/replay: LLM responses are not deterministic for a fixed input, and `LLM-08` needs a scripted sequence (`README.md` §9.7).
+- **Out of bounds:** No real network access; the fake must not be reachable from production code paths as a fallback. `LLM-03` keeps a **scripted** in-memory fake deliberately, in the shape the engine doubles of `pdf`, `image` and `ocr` use (`README.md` §9.7): LLM responses are not deterministic for a fixed input, and `LLM-08` needs a scripted sequence. No test reaches a provider — not Ollama, not vLLM, not a hosted API.
 - **Acceptance criteria:**
   - Given the fake provider scripted with a valid response, when it is called, then it returns the same JSON for the same input and the call counter increments.
   - Given the fake scripted to fail on attempt 1 and succeed on attempt 2, then both behaviours are reproducible in a test.
@@ -189,7 +189,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Acceptance criteria:**
   - Given an unavailable model, when `check_model_available` runs, then a typed `MODEL_UNAVAILABLE` error is returned instead of a silent fallback.
   - Given a provider swap, then the contract and the workflow are unchanged.
-- **Evidence / DoD:** Interface-conformance test (fake provider and real provider share the surface); `# TODO: [MVP]` markers on the real transport.
+- **Evidence / DoD:** Interface-conformance test asserting the fake and the transport classes expose the same surface **structurally**, with no provider reached (`README.md` §9.7); `# TODO: [MVP]` markers on the real transport.
 - **Tags:** `# TODO: [MVP]` real transport; `# TODO: [RELEASE]` GPU-competition and queue policy.
 
 ### LLM-10 — Node execution
@@ -338,7 +338,7 @@ It is critical because the contracts (LLM-01) and the provider seam (LLM-02) pre
 | Invariant 1 — no re-execution of a valid call (mutation: `is_node_reusable` always false / drop the `SUCCESS` check) | LLM-05, LLM-13 | Must fail under mutation, then restore green |
 | Invariant 2 — `request_key` determinism (mutation: add `run_id` / nonce to the hash) | LLM-05 | Must fail under mutation, then restore green |
 | Invariant 3 — downstream invalidation on force (mutation: remove `invalidate_downstream_nodes` from the force path) | LLM-13 | Must fail under mutation, then restore green |
-| Provider conformance (Ollama / OpenAI-compatible swap) | LLM-02, LLM-09 | Interface-conformance test; typed `MODEL_UNAVAILABLE` on a missing model |
+| Provider conformance (Ollama / OpenAI-compatible swap) | LLM-02, LLM-09 | Interface-conformance test over the interface only — never a live provider (`README.md` §9.7); typed `MODEL_UNAVAILABLE` on a missing model |
 
 ## 8. Definition of Ready (per task)
 

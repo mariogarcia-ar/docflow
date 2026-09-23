@@ -344,11 +344,13 @@ reports `status == "SUCCESS"`, `schema_valid == true`, non-empty `usage` and `ti
 
 ### Why this processor keeps a scripted fake — deliberately
 
-`LLM-03` stays a **scripted fake** and does **not** migrate to record/replay: LLM responses
-are not deterministic for a fixed input, and `LLM-08` needs a scripted *sequence* (invalid
-JSON on attempt 1, valid on attempt 2), which a recording of one real call cannot express.
-Record/replay applies to `pdf`, `image` and `ocr` only (`README.md` §9.7). Unifying the two
-patterns later would be a mistake; this line exists so nobody tries.
+`LLM-03` keeps a **scripted in-memory fake**, the same shape as the engine doubles of `pdf`,
+`image` and `ocr` (`README.md` §9.7), with one difference that is deliberate: it is
+**scripted**, because LLM responses are not deterministic for a fixed input and `LLM-08`
+needs a scripted *sequence* (invalid JSON on attempt 1, valid on attempt 2), which a single
+canned response cannot express. No test reaches a provider: not Ollama, not vLLM, not a
+hosted API. Unifying the scripted fake with the single-response doubles later would be a
+mistake; this line exists so nobody tries.
 
 ## 7. Definition of Ready / Definition of Done
 

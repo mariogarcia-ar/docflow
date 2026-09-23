@@ -188,30 +188,27 @@ recorded in metadata, not exposed as a user-selectable engine option. The proces
 public contract (`OCRRequest → procesador-ocr → OCRResult`) is engine-agnostic, and the
 rest of the module works on the engine-independent `OCRDocument`.
 
-### 3.5.1 Acceptance-engine recording (the test double)
+### 3.5.1 Engine double (the test double)
 
-The only test double for Docling is **a recording of what Docling really returned**, replayed
-through the real code — not a fake we invent (`README.md` §9.7). Docling hands back a Python
-object (`DoclingDocument`), not JSON, so the recording serialises its native values:
+The only test double for Docling is an **in-memory fake injected at
+`convert_image_with_docling`** (`README.md` §9.7). We do not test Docling: no test invokes,
+imports or asserts it, and no test claims the engine is deterministic, correct or complete —
+our own ordering and format guarantees are what the suite proves.
 
 | | |
 |---|---|
-| **Recorded layer** | Docling's **native** values — text, markdown, tables, blocks, layout, metadata — as JSON with `schema_version` and `engine_version` keys. **Not** our translated `OCRDocument`/`OCRResult`. |
-| **Format** | `tests/fixtures/engines/docling/<engine_version>/<fixture-stem>.json` |
-| **Injection point** | the engine call **`convert_image_with_docling`** — never at `extract_docling_*`, which is the half of the module the replay must exercise rather than replace. |
-| **Version check** | the replay loader reads the Docling version pinned in `pyproject.toml` and **fails loudly**, naming both versions, when it differs from the recording directory it is about to use. |
-| **Recorder** | `tests/record_engine.py`, Docling path (owned by `OCR-14`). |
+| **What the fake returns** | Docling's **native** values — text, markdown, tables, blocks, layout, metadata — as Python objects or plain dicts. **Not** our translated `OCRDocument`/`OCRResult`. |
+| **Location** | `tests/fakes/engines/fake_docling.py` — in memory, no fixtures on disk. |
+| **Injection point** | the engine call **`convert_image_with_docling`** — never at `extract_docling_*`, which is the half of the module the fake must exercise rather than replace. |
+| **Failure modes** | the fake can raise during conversion, so the `ENGINE_ERROR` path is reachable with no engine installed. |
 
-Three consequences specific to this engine:
+Two consequences specific to this engine:
 
-- The replay returns blocks in **adversarial (unsorted) order**, so invariant 1
-  (deterministic ordering) actually discriminates: a replay that handed back already-sorted
+- The fake returns blocks in **adversarial (unsorted) order**, so invariant 1
+  (deterministic ordering) actually discriminates: a fake that handed back already-sorted
   blocks would let a broken sort pass.
-- The **engine-determinism check** (run the conversion twice and compare `document.json`) is
-  **folded into the same real test** — one test, two conversions — not a separate suite run,
-  because a second real-tier test would break the "once per processor" promise.
 - If a cached corpus helper is reused, its **cache key must include which engine** produced
-  the result; otherwise a recording made from one engine is served for another.
+  the result; otherwise a fake written for one engine is served for another.
 
 ### 3.6 Determinism posture
 
@@ -260,14 +257,14 @@ result is the contract:
 | OCR-11 | Entry points: `process_ocr_image` orchestration + optional `process_ocr_from_page` wrapper. | M | OCR-10 |
 | OCR-12 | Tests: happy path + invariant tests + committed image fixtures. | M | OCR-11 |
 | OCR-13 | Four QA gates green; mutation-falsify each invariant test and document observations. | S | OCR-12 |
-| OCR-14 | Docling recording + replay loader (native output, adversarial order) + version check | S | OCR-02 |
+| OCR-14 | In-memory Docling double (native shape, adversarial order) | S | OCR-02 |
 
 `process_ocr_from_page` is declared in OCR-11 but deferred to Phase 3 integration by §9 resolved decision 5; Phase 1 ships only `process_ocr_image` and the wrapper carries an inline `# TODO: [MVP]`.
 
 ### 4.2 Order / waves
 
 - **Wave 1 — Foundations:** OCR-01, OCR-02 (contracts and the Docling seam first).
-- **Wave 2 — Engine + extraction:** OCR-03, OCR-04, OCR-05 (all Docling access isolated here) — plus OCR-14 (the Docling recording and its replay loader, which gate the fast tier of OCR-12).
+- **Wave 2 — Engine + extraction:** OCR-03, OCR-04, OCR-05 (all Docling access isolated here) — plus OCR-14 (the Docling double, which lets the whole processor be tested with no engine installed).
 - **Wave 3 — Outputs:** OCR-06 ∥ OCR-08 (both after OCR-05), then OCR-07 and OCR-09 (representations; metrics computed in parallel with the output builders; tables and validation close the wave).
 - **Wave 4 — Publish + entry points:** OCR-10, OCR-11 (atomic write, `process_ocr_image`).
 - **Wave 5 — Verification:** OCR-12, OCR-13 (tests, fixtures, QA gates).
@@ -318,57 +315,30 @@ Then OCRResult.status is "failed"
   And no .tmp files remain in the ocr/ directory
 ```
 
-**Scenario: the replay refuses a stale recording**
+**Scenario: no test reaches Docling**
 
 ```gherkin
-Given a Docling recording made for version A
-  And a pin in pyproject.toml for version B
-When the fast tier runs
-Then the replay loader fails loudly, naming both versions
-  And it does not serve the stale recording
-```
-
-**Scenario: the real tier skips when the engine is absent**
-
-```gherkin
-Given an environment without Docling installed
-When the real tier runs
-Then the Docling tests are skipped with an explicit reason
-  And the gate does not fail
-```
-
-**Scenario: the fast tier never reaches Docling**
-
-```gherkin
-Given the recorded fixtures and the replay loader
-When "pytest -m 'not engine'" runs
+Given the in-memory Docling double
+When the whole suite runs
 Then every test of this processor passes with zero Docling conversions
-  And no Docling module is touched
+  And no test imports or asserts the engine
 ```
 
 ## 6. Test plan
 
-### Two tiers
+### One tier, no engine
 
-| Tier | Runs | What it proves |
-|---|---|---|
-| **fast** — `pytest -m "not engine"` | every commit, no Docling installed | invariants, builders, tables, metrics, validation and atomic publication, on **recorded Docling output replayed through the real code** |
-| **real** — `pytest -m engine` | the gate, once per processor | the `convert_image_with_docling` adaptation and the translation layer, plus that the recording matches the pinned Docling version and that the engine is deterministic |
-
-`OCR-12` owns the one real test. Every other test of this module — the three invariants,
-metrics, validation and the atomic-publication failure path — runs on the replay (format and
-injection point in §3.5.1) and never reaches Docling. When Docling is absent the real tier
-**skips with an explicit reason**; the fast tier must pass with no engine installed.
+Every test of this module — the happy path, the three invariants, metrics, validation and the
+atomic-publication failure path — runs on the in-memory Docling double (placement and
+injection point in §3.5.1) and never reaches Docling. The suite must pass with no engine
+installed; there is no real tier, no marker and no skip rule (`README.md` §7, §9.7).
 
 **Happy-path test** — `test_process_ocr_image_happy_path`: feed a small committed prepared
-image through `process_ocr_image`, assert `status == "success"`, validation `VALID`,
-non-empty `text`, and that `text.txt`, `document.md`, `document.json`, `metadata.json` exist
-with `engine == "docling"` and a concrete `engine_version`.
-
-**Real-tier test** — the same happy path run against the **live engine**, with the
-determinism check folded in: one test, **two** conversions, comparing the functional content
-of `document.json` across both. That keeps the "once per processor" promise while still
-proving Docling is deterministic on this input.
+image through `process_ocr_image` with the engine call doubled, assert `status == "success"`,
+validation `VALID`, non-empty `text`, and that `text.txt`, `document.md`, `document.json`,
+`metadata.json` exist with `engine == "docling"`. Our determinism guarantee is proved by
+invariant 1 below, on the double — never by asserting that the engine behaves the same way
+twice.
 
 **Invariant tests** (each must fail when the invariant is broken — mutation listed):
 
@@ -392,19 +362,14 @@ proving Docling is deterministic on this input.
   paragraph, and a 2×2 table (provokes real structure extraction, ordering, and table export).
 - `fixtures/ocr_blank.png` — an image with no text (provokes the `EMPTY` validation path).
 
-### Failure fixtures, in three buckets
+### Failure paths, two buckets
 
-Every existing failure fixture is classified explicitly, because the bucket decides whether
-the real engine runs on that path at all:
+Every failure path is classified explicitly, because the bucket decides the test mechanism:
 
 | Fixture / path | Bucket | Test mechanism |
 |---|---|---|
-| `ocr_blank.png` → `EMPTY` | **Recordable** — the conversion succeeds on this real input; the emptiness is *data*, not an engine break | the converter's empty output is recorded once; the replay returns it, so the `EMPTY` path is exercised with no live run |
-| `OCR-04`'s "engine raises during conversion" | **Injected** — the engine breaks in a way no input reproduces | `monkeypatch` forces the exception; never a recording |
-
-The rule that keeps the "once per processor" promise intact: the `record` step covers
-**every input the tests use, good and bad**, so a recorded failure costs no live run at test
-time.
+| `ocr_blank.png` → `EMPTY` | **Data, not failure** — the conversion succeeds on this input; the emptiness is *data* | the double returns empty native values, so the `EMPTY` path is exercised with no live run |
+| `OCR-04`'s "engine raises during conversion" | **Injected** — the engine breaks in a way no input reproduces | the double raises; never a live call and never a claim about how the engine reports it |
 
 ## 7. Definition of Ready / Definition of Done
 
@@ -414,21 +379,18 @@ time.
 - `ocr/primitives/` skeleton + Docling pin agreed; Docling pinned in `pyproject.toml`.
 - Output schemas (`text.txt`, `document.md`, `document.json`) frozen for this phase.
 - Committed image fixtures in `fixtures/`.
-- The Docling recording format of §3.5.1 (`tests/fixtures/engines/docling/<engine_version>/<fixture-stem>.json`, native values with `schema_version` and `engine_version`) and the `convert_image_with_docling` injection point are agreed; `OCR-14` is a row in §4.1.
+- The Docling double of §3.5.1 (`tests/fakes/engines/fake_docling.py`, native values, injected at `convert_image_with_docling`) is agreed; `OCR-14` is a row in §4.1.
 - No unresolved dependency on any other processor (fully independent, per Phase 1).
 
 ### Definition of Done
 
 - `process_ocr_image` (and optional `process_ocr_from_page`) implemented with Docling
   reached only through `ocr/primitives/`.
-- The **tier requirement** holds: the fast tier (`pytest -m "not engine"`) passes with
-  Docling absent, and exactly one real test per processor reaches the engine (with the
-  two-conversion determinism check folded into it).
-- The **version check** holds: the replay loader fails loudly, naming both versions, when
-  the recording's version differs from the pin in `pyproject.toml`.
-- The **skip-when-absent rule** holds: with no Docling installed the real tier skips with an
-  explicit reason instead of failing, and no test substitutes a fake for the replay.
-- Happy-path test green using real bytes from a committed fixture.
+- The **no-engine rule** holds: the whole suite passes with Docling absent, no test invokes,
+  imports or asserts the engine, and the double is never reachable as a fallback (nothing
+  under `src/docflow/` imports `tests/`).
+- Happy-path test green using real bytes from a committed fixture, with the engine call
+  doubled.
 - Every invariant test passes **and** has been mutation-falsified (mutation applied → test
   fails → mutation reverted → test green), with both observations reported.
 - All artifacts written atomically and only inside the `ocr/` namespace.
@@ -447,8 +409,8 @@ pylint src tests                          # fixme disabled; the rest clean
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Docling version drift changes output | Silent output differences across runs | Pin Docling; record `engine_version`; deterministic-ordering tests catch regressions. |
-| Docling residual non-determinism on identical input | Flaky determinism test | Compare normalized logical structure, not raw bytes; record the determinism class; assert functional-content equality only. |
+| Docling version drift changes output | Silent output differences across runs | Pin Docling and surface `engine_version` in metadata; deterministic-ordering tests catch our side of the regression. The engine is not tested (`README.md` §9.7). |
+| Docling residual non-determinism on identical input | A determinism claim we cannot keep | We never assert that the engine is deterministic: the invariants test **our** normalized structure on the double, and the determinism class is recorded instead of assumed. |
 | Docling schema changes between versions | Extraction primitives break | Isolate all Docling access in `ocr/primitives/`; everything downstream uses `OCRDocument`. |
 | Silent empty/partial extraction | Empty result reported as correct | Mandatory structural validation with `EMPTY`/`LOW_CONTENT` statuses; blank-image fixture test. |
 | Interrupted publish leaves corrupt artifacts | Downstream reads invalid files | Atomic `.tmp/` → validate → rename; invariant test on failure paths. |

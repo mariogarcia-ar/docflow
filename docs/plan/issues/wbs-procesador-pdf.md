@@ -41,7 +41,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | NOT_STARTED |
 | PDF-12 | Atomic persistence | S | 4 — Hardening | PDF-09, PDF-10 | `.tmp` → validate → rename across all artifacts | this file §PDF-12 | NOT_STARTED |
 | PDF-13 | Fixtures + tests | M | 4 — Hardening | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12, PDF-14 | `fixtures/pdf_sample_*.pdf`, `tests/` | this file §PDF-13 | NOT_STARTED |
-| PDF-14 | Poppler recording + replay loader | S | 2 — Primitives | PDF-02 | `tests/record_engine.py` (Poppler path), `tests/fixtures/engines/poppler/`, `tests/fakes/engines/replay_poppler.py` | this file §PDF-14 | NOT_STARTED |
+| PDF-14 | In-memory Poppler double (subprocess injection) | S | 2 — Primitives | PDF-02 | `tests/fakes/engines/fake_poppler.py` | this file §PDF-14 | NOT_STARTED |
 
 ## 3. Detailed issues
 
@@ -120,9 +120,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `render_page_to_image(pdf_path, page_number, output_path, dpi=200)` in `pdf/primitives/`; output `page_001/render/page.png`; PNG is the only render format in Phase 1.
 - **Out of bounds:** No image normalization, deskew, binarization or enhancement (that is `procesador-image`); no multi-page buffering; no OCR.
 - **Acceptance criteria:**
-  - Given a valid page, when `render_page_to_image` runs with `dpi=200`, then `render/page.png` exists and is a decodable PNG whose pixel dimensions match the page at that DPI.
+  - Given a valid page, when `render_page_to_image` runs with `dpi=200`, then `render/page.png` is published as a decodable PNG through the atomic writer, and the requested `dpi` is recorded in the page metadata.
   - Given `render: false` in `PDFOptions`, then no render artifact is produced and no error is raised.
-- **Evidence / DoD:** Fixture-based test asserting file existence and dimensions.
+- **Evidence / DoD:** Fixture-based test asserting the artifact exists under `render/`, is published atomically and carries the requested `dpi` — never a claim about the renderer's fidelity (`README.md` §9.7).
 - **Tags:** —
 
 ### PDF-06 — Native text primitives
@@ -245,51 +245,38 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Wave:** 4 — Hardening (fixture *bytes* land in Wave 1; the tests cannot start before PDF-10 and PDF-12 are green)
 - **Depends on:** PDF-01, PDF-02, PDF-10, PDF-11, PDF-12, PDF-14
 - **Blocks:** —
-- **Objective:** Land the committed fixtures and the happy-path plus invariant tests, and prove each invariant test fails under its documented mutation.
-- **Scope / Deliverables:** `fixtures/pdf_sample_text.pdf` (multi-page, text-dominant), `fixtures/pdf_sample_image.pdf` (single page, image-dominant), `fixtures/pdf_sample_mixed.pdf` (text + image), `fixtures/pdf_corrupt.pdf` (truncated header); happy-path test over `process_pdf`; invariant tests 1–3 of the subplan §6; `tests/` mirroring `src/docflow/pdf/`.
-- **Out of bounds:** No edge-case matrix beyond the four fixtures; no golden-set quality scoring; no modification of `src/` to make a test pass.
+- **Objective:** Land the committed fixtures and the happy-path plus invariant tests, and prove each invariant test fails under its documented mutation. No test reaches Poppler (`README.md` §9.7).
+- **Scope / Deliverables:** `fixtures/pdf_sample_text.pdf` (multi-page, text-dominant), `fixtures/pdf_sample_image.pdf` (single page, image-dominant), `fixtures/pdf_sample_mixed.pdf` (text + image), `fixtures/pdf_corrupt.pdf` (truncated header); happy-path test over `process_pdf` with the engine call doubled; invariant tests 1–3 of the subplan §6; `tests/` mirroring `src/docflow/pdf/`.
+- **Out of bounds:** No edge-case matrix beyond the four fixtures; no golden-set quality scoring; no test that invokes, imports or asserts Poppler; no modification of `src/` to make a test pass.
 - **Acceptance criteria:**
   - Given the fixture set, when the happy-path test runs, then `status == SUCCESS` with one `page_NNN/` per page and the artifact tree matching the ownership namespace exactly.
   - Given each invariant test, when its documented mutation is applied to the source, then the test fails; after restoring the source, it is green again.
 - **Evidence / DoD:** Test run output for the happy path; both observations (failure under mutation, green after restore) reported per invariant.
 - **Tags:** `# TODO: [MVP]` where a fixture stands in for a real-world document.
 
-### PDF-14 — Poppler recording and replay loader
+### PDF-14 — In-memory Poppler double
 
 - **Type:** Test infrastructure
 - **Effort:** S
 - **Wave:** 2 — Primitives
 - **Depends on:** PDF-02
 - **Blocks:** PDF-13
-- **Objective:** Give this processor a test double that **is a recording of what Poppler really returned**, so that every test except the single real happy path runs with no Poppler installed.
-- **Scope / Deliverables:** the Poppler path in `tests/record_engine.py` (record the native artifacts plus a `sidecar.json` with exit code and stderr); the recordings under `tests/fixtures/engines/poppler/<engine_version>/<fixture-stem>/`; the replay loader `tests/fakes/engines/replay_poppler.py`, intercepting the **`subprocess.run`** call inside `pdf/primitives/`; the version check against the `pyproject.toml` pin, failing loudly and naming both versions.
-- **Out of bounds:** No replay of our translated types (`PDFPageResult`, the output of `extract_text_from_page` / `extract_images_from_page`) — the recorded layer is Poppler's **native** output, or the translation layer loses its coverage, which is half the reason the replay exists; no `if engine is None: use_fake` fallback anywhere; nothing under `src/docflow/` imports `tests/`; no session-scoped fixture (`dpi` is a per-test option, not a lever on the replay).
+- **Objective:** Give this processor a test double so that the whole suite runs with no Poppler installed, without any test invoking, importing or asserting the engine (`README.md` §9.7).
+- **Scope / Deliverables:** `tests/fakes/engines/fake_poppler.py` — an in-memory fake injected at the **`subprocess.run`** call inside `pdf/primitives/`, returning the subprocess's **native** result (the artifacts the CLI would have written, plus an exit code and stderr) and able to return a failing exit code or raise so the failure paths of the subplan §6 are reachable.
+- **Out of bounds:** No faking of our translated types (`PDFPageResult`, the output of `extract_text_from_page` / `extract_images_from_page`) — the fake replaces the engine call, or the translation layer loses its coverage, which is half the reason the double exists; no `if engine is None: use_fake` fallback anywhere; nothing under `src/docflow/` imports `tests/`; no test asserts an engine value, an engine version or an engine's determinism; no session-scoped fixture (`dpi` is a per-test option, not a lever on the fake).
 - **Acceptance criteria:**
-  - Given a recording made for version A and a pin for version B, when the fast tier runs, then the loader fails loudly naming both versions and does not serve the recording.
-  - Given an environment without Poppler, when `pytest -m "not engine"` runs, then every test of this processor passes with zero Poppler invocations; and when `pytest -m engine` runs, the Poppler tests skip with an explicit reason.
-  - Given the record step, then it covers **every input the tests use, good and bad**, so a recorded failure costs no live run at test time.
-- **Evidence / DoD:** Both observations of each scenario above; the recorded fixture tree committed; `pdf_corrupt.pdf` classified into its bucket (§6 of the subplan — *pre-engine* if `validate_pdf`'s fail-fast precedes the subprocess, otherwise *recordable*).
-- **Tags:** `# TODO: [RELEASE]` for a scheduled re-record policy on pin bumps.
+  - Given the fake in place, when the whole suite runs, then every test of this processor passes with zero Poppler invocations, and the run needs no engine installed.
+  - Given the fake's failing exit code, when the corrupt/unreadable path is exercised, then a typed `PDFError` is produced with no live call.
+  - Given `pdf_corrupt.pdf` falls into the *pre-engine* bucket (`validate_pdf` fail-fast precedes the subprocess), then the case needs the fake only for the branches that do reach it.
+- **Evidence / DoD:** The suite green with Poppler absent; `pdf_corrupt.pdf` classified into its bucket (subplan §6); no engine symbol imported by any test module of this processor.
+- **Tags:** `# TODO: [RELEASE]` for a re-check of the double against the real engine's shape on a pin bump.
 
 ```gherkin
-Scenario: The replay refuses a stale recording
-  Given a Poppler recording made for version A
-  And a pin in pyproject.toml for version B
-  When the fast tier runs
-  Then the replay loader fails loudly, naming both versions
-  And it does not serve the stale recording
-
-Scenario: The real tier skips when the engine is absent
-  Given an environment without Poppler installed
-  When the real tier runs
-  Then the Poppler tests are skipped with an explicit reason
-  And the gate does not fail
-
-Scenario: The fast tier never reaches Poppler
-  Given the recorded fixtures and the replay loader
-  When "pytest -m 'not engine'" runs
+Scenario: No test reaches Poppler
+  Given the in-memory Poppler double
+  When the whole suite runs
   Then every test of this processor passes with zero Poppler invocations
-  And no Poppler binary is touched
+  And no test imports or asserts the engine
 ```
 
 ## 4. Dependency graph
@@ -319,7 +306,7 @@ flowchart LR
     PDF10 --> PDF13
     PDF11 --> PDF13
     PDF12 --> PDF13
-    PDF02 --> PDF14["PDF-14 Poppler recording + replay"]
+    PDF02 --> PDF14["PDF-14 Poppler double"]
     PDF14 --> PDF13
 ```
 
@@ -328,9 +315,9 @@ flowchart LR
 | Wave | Tasks | Entry condition | Exit condition |
 |---|---|---|---|
 | 1 — Foundations | PDF-01, PDF-02; the fixture *bytes* for PDF-13 | Phase 0 exit met; subplan §7 DoR satisfied | Contracts and primitives seam import cleanly; no silent engine default; fixtures committed |
-| 2 — Primitives (parallel) | PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08, PDF-14 | PDF-02 landed | Each primitive returns real data from a committed fixture; the Poppler recording and its replay loader exist, so the fast tier can run with no engine |
+| 2 — Primitives (parallel) | PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08, PDF-14 | PDF-02 landed | Each primitive returns real data from a committed fixture; the Poppler double exists, so the whole suite runs with no engine installed |
 | 3 — Composition | PDF-09 → PDF-10 | Wave 2 primitives green | `Request → Result` round-trip works with real bytes; page order and namespace ownership hold |
-| 4 — Hardening | PDF-11, PDF-12 → PDF-13 (its predecessors must be green) → four QA gates | Wave 3 green | Typed error model and atomic publication in place; invariant tests mutation-falsified; the fast tier passes with Poppler absent and exactly one real test reaches it; all four gates pass |
+| 4 — Hardening | PDF-11, PDF-12 → PDF-13 (its predecessors must be green) → four QA gates | Wave 3 green | Typed error model and atomic publication in place; invariant tests mutation-falsified; the whole suite passes with Poppler absent and no test reaches the engine; all four gates pass |
 
 ## 6. Critical path
 
@@ -349,24 +336,21 @@ It is critical because nothing can be extracted before the contracts exist (PDF-
 | Invariant 1 — page completeness (mutation: drop the last page) | PDF-03, PDF-09, PDF-10 | PDF-13 (must fail under mutation, then restore green) |
 | Invariant 2 — immutable input (mutation: `extract_page` writes to `pdf_path`) | PDF-04, PDF-10 | PDF-13 (must fail under mutation, then restore green) |
 | Invariant 3 — classification vocabulary & purity (mutation: return `"OCR"` / read a `force_ocr` flag) | PDF-08 | PDF-13 (must fail under mutation, then restore green) |
-| The replay refuses a stale recording (version A recording, version B pin) | PDF-14 | PDF-14 acceptance scenario (loader fails loudly, naming both versions) |
-| The real tier skips when the engine is absent | PDF-14, PDF-13 (real tier) | PDF-14 acceptance scenario (skip with explicit reason; gate does not fail) |
-| The fast tier never reaches Poppler | PDF-14 | PDF-14 acceptance scenario (`pytest -m 'not engine'` green with zero Poppler invocations) |
+| No test reaches Poppler | PDF-14 | PDF-14 acceptance scenario (`pytest` green with zero Poppler invocations and no engine installed) |
 
 ## 8. Definition of Ready (per task)
 
 - The task appears as a row in `subplan-procesador-pdf.md` §4 with the same ID, title, effort and dependencies.
 - Its predecessors are `SUCCESS` (or the task is Wave 1 and Phase 0 has exited).
 - For PDF-11/PDF-12: the artifact ownership rule and the atomic-publication rule are agreed; for PDF-08: the threshold constants are named before coding starts.
-- For PDF-13: the four fixtures of subplan §6 exist and are named for the failure they provoke; PDF-10, PDF-11 and PDF-12 are green, since the happy-path and atomic-publication tests cannot be written against a non-existent `process_pdf`.
-- For PDF-14: the recording format (`tests/fixtures/engines/poppler/<engine_version>/<fixture-stem>/`, artifacts plus `sidecar.json`) and the `subprocess.run` injection point are agreed, and the Poppler pin exists in `pyproject.toml`.
+- For PDF-13: the four fixtures of subplan §6 exist and are named for the failure they provoke; PDF-10, PDF-11 and PDF-12 are green, since the happy-path and atomic-publication tests cannot be written against a non-existent `process_pdf`; PDF-14 is in place, since no test may reach the engine.
+- For PDF-14: the fake's injection point (the `subprocess.run` call inside `pdf/primitives/`) and its native shape (artifacts plus exit code and stderr) are agreed, and no test of this processor imports the engine.
 - No open question blocks the happy path; no domain noun is introduced into the processor API.
 
 ## 9. Definition of Done (per task)
 
-- [ ] `pytest` green with the task's happy-path and/or invariant test using real bytes from a committed fixture.
-- [ ] The tier requirement holds: the fast tier (`pytest -m "not engine"`) passes with Poppler absent, and exactly one real test reaches the engine.
-- [ ] The version check holds: a recording whose version differs from the pin is refused loudly, naming both versions; the skip-when-absent rule holds (real tier skips with an explicit reason).
+- [ ] `pytest` green with the task's happy-path and/or invariant test using real bytes from a committed fixture and the Poppler double in place of the engine.
+- [ ] No test invokes, imports or asserts Poppler; the suite passes with no engine installed (`README.md` §9.7), and the double is never reachable as a fallback (nothing under `src/docflow/` imports `tests/`).
 - [ ] `ruff check .` clean (import order included) · `ruff format --check .` clean · `pylint src tests` clean (`fixme` disabled).
 - [ ] Every invariant test touched by the task has been mutation-falsified: mutate → observe failure → restore → re-run green, both observations reported.
 - [ ] No silent stand-in (no empty string, `0`, `[]`, `None`-without-reason, no default engine/threshold) and no domain noun in the processor API.
@@ -384,7 +368,7 @@ It is critical because nothing can be extracted before the contracts exist (PDF-
 | Large PDFs exhausting memory | PDF-09, PDF-10 | PDF-09 (page-by-page processing, one render at a time, no full-document buffer) |
 | Arbitrary classification thresholds | PDF-08 | PDF-08 (explicit named constants; classification is descriptive and never drives routing) |
 | Partially written artifacts observed downstream | PDF-09, PDF-12 | PDF-12 (`.tmp` → validate → rename) + PDF-09 (`status = PARTIAL` keeps only valid artifacts) |
-| A bumped Poppler pin with a stale recording leaves the fast tier green | PDF-14 | PDF-14 (the loader fails loudly when the recording version differs from the pin, so the staleness is loud, not silent) |
+| A bumped Poppler pin changes the engine's output shape | Our translation breaks in production while the suite stays green | PDF-14 (the double is the single place a shape change has to be re-checked on the bump; `# TODO: [RELEASE]` for the scheduled re-check) — accepted PoC trade-off, recorded in `GEN-17` |
 
 ## 11. Out of scope
 

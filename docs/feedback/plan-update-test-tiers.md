@@ -1,6 +1,13 @@
 # Plan — apply the test-tier decision to `docs/plan/`
 
-> Status: **proposed work order**. Derived from `test-suite-cost.md` §5.
+> Status: **superseded.** Derived from `test-suite-cost.md` §5.
+>
+> ⚠️ **This work order was applied and then partially reverted:** the plan no longer records
+> engine responses, runs no real-engine tier and registers no `engine` marker. See
+> [`no-tests-on-third-parties.md`](no-tests-on-third-parties.md), which wins over this
+> document. What survives is the *shape* of the revision — one double per processor, no
+> fallback, nothing under `src/docflow/` importing `tests/`, mutation-falsified invariants —
+> now delivered as in-memory engine doubles instead of recordings.
 > **Documents only.** This plan changes plan text. The code deliverables it records
 > (`GEN-21`, `GEN-22`, `PDF-14`, `IMG-15`, `OCR-14`) become WBS rows — nothing is
 > implemented, no test is written, no recorder is built here.

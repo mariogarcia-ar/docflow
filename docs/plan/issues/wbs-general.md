@@ -21,7 +21,7 @@
 | Phase | Name | Own IDs | Child IDs | Tasks | S / M / L | Exit criterion (verbatim, `README.md` §5) |
 |---|---|---|---|---|---|---|
 | 0 | Foundations: contracts and skeleton | `GEN-01`…`GEN-06` | — | 6 | 3 / 3 / 0 | skeleton imports cleanly; one happy-path test per contract round-trips an in-memory fake end to end; the four QA gates (§7) pass on the skeleton |
-| 1 | Processors, independently (parallel) | — | `PDF-01`…`PDF-14`, `IMG-01`…`IMG-15`, `OCR-01`…`OCR-14`, `LLM-01`…`LLM-15` | 58 | 22 / 32 / 4 | each processor has a green happy-path test proving `Request → Result` with real bytes from a small committed fixture; no processor imports another processor's module; four QA gates pass |
+| 1 | Processors, independently (parallel) | — | `PDF-01`…`PDF-14`, `IMG-01`…`IMG-15`, `OCR-01`…`OCR-14`, `LLM-01`…`LLM-15` | 58 | 22 / 32 / 4 | each processor has a green happy-path test proving `Request → Result` with real bytes from a small committed fixture, with no engine installed; no processor imports another processor's module; four QA gates pass |
 | 2 | Orchestrator: state, reuse, resume | — | `ORC-01`…`ORC-19` | 19 | 3 / 13 / 3 | a run interrupted mid-pipeline resumes without re-running completed stages (proved by a test that observes stage states after a resume); forcing a stage invalidates its downstream dependents; four QA gates pass |
 | 3 | Integration: source selection and end-to-end result | `GEN-07`…`GEN-10` | `ORC-12`, `ORC-13`, `ORC-17` (implementation owners, already counted in Phase 2) | 4 | 0 / 3 / 1 | one end-to-end happy-path test per input type (PDF with native text; scanned image → OCR → LLM) produces a `DocumentResult`; four QA gates pass |
 | 4 | Hardening + programme close-out | `GEN-11`…`GEN-22` | `PDF-11`, `PDF-12`, `PDF-14`, `IMG-13`, `IMG-14`, `IMG-15`, `OCR-12`, `OCR-13`, `OCR-14`, `LLM-13`, `ORC-19` | 12 | 6 / 4 / 2 | all phases' acceptance evidence re-run green; every shortcut carries an explicit `# TODO: [MVP]` / `# TODO: [RELEASE]` tag |
@@ -132,7 +132,7 @@ Scenario: Identity never defaults to empty
 - **Phase:** 0 · **Wave:** 0.3
 - **Depends on:** `GEN-01` · **Blocks:** `GEN-06`, `GEN-15`, `PDF-02`, `IMG-02`, `OCR-02`, `LLM-02`
 - **Objective:** Make `pyproject.toml` the only place the four QA tools read configuration from, so no second `setup.cfg` / `tox.ini` / `pylintrc` ever appears.
-- **Scope / Deliverables:** `pyproject.toml` with `[tool.ruff.*]` (import order `I` enabled, `E501` ignored), `[tool.ruff.format]`, `[tool.pylint.*]` (`fixme` disabled, `docs/` excluded), `[tool.pytest.ini_options]` putting `src` on the path without an install, `[tool.coverage.*]`; the `engine` marker registered under `[tool.pytest.ini_options].markers` (`--strict-markers` is already on, so an unregistered `-m engine` would fail the run — mandatory for the tier semantics of `README.md` §9.7); the engine pins `Poppler`, `OpenCV`/`Pillow`, `docling`, `Ollama`/`vLLM`/API as they land in Phase 1.
+- **Scope / Deliverables:** `pyproject.toml` with `[tool.ruff.*]` (import order `I` enabled, `E501` ignored), `[tool.ruff.format]`, `[tool.pylint.*]` (`fixme` disabled, `docs/` excluded), `[tool.pytest.ini_options]` putting `src` on the path without an install, `[tool.coverage.*]`; the engine pins `Poppler`, `OpenCV`/`Pillow`, `docling`, `Ollama`/`vLLM`/API as they land in Phase 1. No `engine` marker: every test of this programme runs on in-memory doubles, so there is no tier to select (`README.md` §7, §9.7).
 - **Out of bounds:** Adding a second config file; disabling a rule config-wide without an inline reason; adding a dependency that is not implied by `README.md` §9.3.
 - **Evidence / DoD:** `pytest`, `ruff check .`, `ruff format --check .` and `pylint src tests` all run from an unmodified checkout with no extra config file present.
 - **Tags:** `# TODO: [RELEASE]` on any pin that is provisional.
@@ -361,7 +361,7 @@ Scenario: The four gates pass on the integrated tree
 - **Depends on:** `GEN-11`, `GEN-12`, `GEN-13`, `GEN-14`, `GEN-15` · **Blocks:** `GEN-17`
 - **Objective:** Satisfy `README.md` §7: an invariant test that only passes when the code is correct proves nothing, so each non-obvious guarantee is falsified by mutation.
 - **Scope / Deliverables:** one mutation-falsified invariant test for each non-obvious programme guarantee — reuse is not existence-only, force invalidates downstream, interrupted `RUNNING` is recovered, source selection is orchestrator-owned, no exception crosses a contract, atomic publish leaves no partial artifact — each with recorded evidence: mutate → observe failure → restore → re-run green.
-- **Out of bounds:** Covering engine-internal invariants owned by the Phase 1 subplans (`PDF-13`, `IMG-13`, `OCR-13`, `LLM-13`, `ORC-19`).
+- **Out of bounds:** Covering an engine's own behaviour: no test of this programme invokes, imports or asserts a third-party engine, and no test asserts an engine version or the engine's determinism (`README.md` §9.7). The processor-local invariant tests are `PDF-13`, `IMG-13`, `OCR-12`, `LLM-13`, `ORC-19`.
 - **Evidence / DoD:** both observations (failure and restored green) reported for every mentioned test; a test whose mutation does not turn it red is treated as a defect of the test, not of the source.
 - **Tags:** —
 
@@ -380,7 +380,7 @@ Scenario: An invariant test fails when its invariant is broken
 - **Phase:** 4 · **Wave:** 4.4
 - **Depends on:** `GEN-15`, `GEN-16` · **Blocks:** —
 - **Objective:** Close the loop opened by `README.md`: "Where this plan and the idea disagree, this plan must be reconciled back to the idea."
-- **Scope / Deliverables:** a written reconciliation of `docs/plan/README.md` against `docs/idea/readme.md` and the five `docs/idea/procesador-*.md` files, listing every divergence and its resolution; the confirmation that the deliverable names in the code still match the idea's §"Naming"; confirmation that the consolidation naming drift is closed the way `README.md` §9.5 records it — canonical `consolidate_page_result` / `consolidate_document_result`, with `consolidate_page` / `consolidate_document` accepted as aliases of the same seam, not as a second implementation; and the **residual-risk record of `README.md` §9.7** as a resolved decision rather than a non-issue: dropping the structural fake-vs-real conformance test means a Docling shape change could in principle break our parsing on a branch the single real test does not exercise — the recording plus the version check catch most drift, and the remainder is named, not presented as covered.
+- **Scope / Deliverables:** a written reconciliation of `docs/plan/README.md` against `docs/idea/readme.md` and the five `docs/idea/procesador-*.md` files, listing every divergence and its resolution; the confirmation that the deliverable names in the code still match the idea's §"Naming"; confirmation that the consolidation naming drift is closed the way `README.md` §9.5 records it — canonical `consolidate_page_result` / `consolidate_document_result`, with `consolidate_page` / `consolidate_document` accepted as aliases of the same seam, not as a second implementation; and the **residual-risk record of `README.md` §9.7** as a resolved decision rather than a non-issue: with no test touching an engine, a hand-written engine double can drift from the real engine's shape, so a shape change on a branch the double does not model could break translation in production while the suite stays green — the trade-off is named, not presented as covered.
 - **Out of bounds:** Editing any artifact (this issue *reports* drift, it does not rewrite the plan).
 - **Evidence / DoD:** the divergence list is empty or every entry cites a resolution; the naming drift is either resolved in code or recorded as an accepted alias.
 - **Tags:** —
@@ -420,7 +420,7 @@ Scenario: A processor module imports no sibling processor
 - **Phase:** 4 · **Wave:** 4.4
 - **Depends on:** `GEN-15`, `GEN-18`, `ORC-14` · **Blocks:** —
 - **Objective:** Enforce forbidden frontier (b): a concrete engine/library is reached only from its own processor's `primitives/`, never from the orchestrator and never across processors.
-- **Scope / Deliverables:** an assertion that `src/docflow/workflow/` imports no `*/primitives/` module and no third-party engine library (`Poppler`, `OpenCV`, `Pillow`, `docling`, `ollama`, a provider SDK); the companion frontier assertion that **no module under `src/docflow/` imports anything under `tests/`**, so a replay loader can never become a production fallback (`README.md` §9.7); a documented map of which `primitives/` module owns each engine.
+- **Scope / Deliverables:** an assertion that `src/docflow/workflow/` imports no `*/primitives/` module and no third-party engine library (`Poppler`, `OpenCV`, `Pillow`, `docling`, `ollama`, a provider SDK); the companion frontier assertion that **no module under `src/docflow/` imports anything under `tests/`**, so an engine double can never become a production fallback (`README.md` §9.7); a documented map of which `primitives/` module owns each engine.
 - **Out of bounds:** Engine abstraction refactors — the seam stays a directory convention, not a new layer.
 - **Evidence / DoD:** the assertion is green and turns red when an engine import is added to a workflow module, and when a `src/docflow/` module imports a `tests/` module.
 - **Tags:** —
@@ -460,48 +460,47 @@ Scenario: A shortcut without a tag is a defect
 - **Phase:** 4 · **Wave:** 4.4
 - **Depends on:** `GEN-05` · **Blocks:** —
 - **Objective:** Turn "the gate runs everything" from a habit into a mechanism: a workflow that runs all four gates on every pull request, with `pytest` unfiltered.
-- **Scope / Deliverables:** `.github/workflows/gates.yml` running `ruff check .`, `ruff format --check .`, `pylint src tests` and `pytest` **unfiltered** (fast tier *and* real tier), plus a weekly `pytest -m engine` run, in an environment that installs the engines so the real tier executes rather than skips.
-- **Out of bounds:** No new test and no new gate rule; no change to `pyproject.toml` (the `engine` marker is `GEN-05`); no engine installed lazily at test time.
-- **Evidence / DoD:** the repository has no pipeline today, so the first green run is the evidence; a pull request whose fast tier is green and whose real tier fails is blocked; a skipped real tier in CI fails the job and names the missing engine.
-- **Tags:** `# TODO: [RELEASE]` on the weekly schedule and on any caching of engine installs.
+- **Scope / Deliverables:** `.github/workflows/gates.yml` running `ruff check .`, `ruff format --check .`, `pylint src tests` and `pytest` **unfiltered** on every pull request, in an environment that installs **no** third-party engine — the suite must pass whole without one (`README.md` §9.7).
+- **Out of bounds:** No new test and no new gate rule; no change to `pyproject.toml`; no engine installed at test time and no engine-dependent job.
+- **Evidence / DoD:** the repository has no pipeline today, so the first green run is the evidence; a pull request whose `pytest` was run filtered locally is blocked by the unfiltered CI suite; the job passes in an environment where `pdftotext`, `docling` and `cv2` are absent.
+- **Tags:** `# TODO: [RELEASE]` on any caching of the environment.
 
 ```gherkin
-Scenario: The gate blocks a fast-only green pull request
-  Given a pull request whose fast tier is green and whose real tier fails
-  When the CI workflow runs
+Scenario: The gate blocks a filtered-only green
+  Given a pull request whose changes were checked with a filtered pytest run
+  When the CI workflow runs the unfiltered suite
   Then the check fails and the pull request is blocked
 
-Scenario: A skipped real tier in CI is a failure
-  Given a CI environment without the engine installed
-  When the workflow runs the real tier
-  Then the job fails instead of reporting a skip
-  And the missing engine is named in the failure
+Scenario: The suite needs no engine
+  Given a CI environment with no third-party engine installed
+  When the workflow runs the four gates
+  Then the whole suite passes and no job requires an engine
 ```
 
-#### GEN-22 — Recording convention stated once, compliance verified
+#### GEN-22 — Engine-double convention stated once, compliance verified
 
 - **Type:** governance
 - **Effort:** S
 - **Phase:** 4 · **Wave:** 4.4
 - **Depends on:** `PDF-14`, `IMG-15`, `OCR-14` · **Blocks:** —
-- **Objective:** Verify that the three per-processor recordings obey one convention and carry provenance, so the fast tier cannot be green on a recording nobody can trace.
-- **Scope / Deliverables:** the version rule of `README.md` §9.7 applied identically by the three replay loaders; an audit that every recording under `tests/fixtures/engines/` declares the `engine_version` and `schema_version` it was made from and is not a hand-authored fixture without provenance; the residual-risk entry of `GEN-17` recorded as a resolved decision; and — **recorded here and executed with the code work, not in this documentation revision** — the fixture-tree change (the unreferenced ~70 MiB corpus under `tests/fixtures/` removed; the per-processor minimal fixtures named by `PDF-14` / `IMG-15` / `OCR-14` added).
-- **Out of bounds:** Editing the plan artifacts; re-specifying a loader's own scenarios (those live in each processor's WBS as the per-processor DoD template); deleting fixtures as part of this documentation revision.
-- **Evidence / DoD:** the three loaders fail identically on a version mismatch; the audit lists every recording with its provenance and flags any without; the `tests/fixtures/` tree drops to the three minimal fixture sets.
-- **Tags:** `# TODO: [RELEASE]` for an automated provenance check inside `GEN-21`'s workflow.
+- **Objective:** Verify that the three processors obey one test-double convention, so the suite cannot prove our code on a double that sits too high (or that a test secretly reaches the engine).
+- **Scope / Deliverables:** the injection rule of `README.md` §9.7 applied identically by `pdf`, `image` and `ocr` (one in-memory fake per engine seam, injected at the engine call and never higher); an audit that no test under `tests/` imports, invokes or asserts a third-party engine and that no assertion states an engine version, an engine metric value or the engine's determinism; the residual-risk entry of `GEN-17` recorded as a resolved decision; and — **recorded here and executed with the code work, not in this documentation revision** — the fixture-tree change (the unreferenced ~70 MiB corpus under `tests/fixtures/` removed; the per-processor minimal fixtures named by `PDF-13` / `IMG-13` / `OCR-12` added).
+- **Out of bounds:** Editing the plan artifacts; re-specifying a processor's own scenarios (those live in each processor's WBS); deleting fixtures as part of this documentation revision; declaring an engine test acceptable under a marker or a skip rule.
+- **Evidence / DoD:** the audit lists each engine seam with its single in-memory double and flags every test that reaches an engine as a defect; no test module imports `docling`, `cv2`, `PIL` or a provider SDK; the `tests/fixtures/` tree drops to the three minimal fixture sets.
+- **Tags:** `# TODO: [RELEASE]` for an automated third-party-import check inside `GEN-21`'s workflow.
 
 ```gherkin
-Scenario: The three loaders agree on the version rule
-  Given the three replay loaders of pdf, image and ocr
-  When each is handed a recording whose version differs from the pin
-  Then all three fail loudly, naming the two versions
-  And none serves the stale recording
+Scenario: The three processors obey one injection rule
+  Given the engine seams of pdf, image and ocr
+  When each is inspected
+  Then each has exactly one in-memory double
+  And each double is injected at the engine call, never at a translation seam
 
-Scenario: Every recording declares its provenance
-  Given the recordings under tests/fixtures/engines/
-  When they are audited
-  Then each carries the engine version and the schema version it was made from
-  And no recording is a hand-authored fixture without provenance
+Scenario: No test reaches an engine
+  Given the test tree
+  When it is audited
+  Then no test imports, invokes or asserts a third-party engine
+  And no test asserts an engine version, a metric value or the engine's determinism
 ```
 
 ---
@@ -559,9 +558,9 @@ orchestrator reaches none of them. Guarded by `GEN-19`; the seam is what makes a
 swappable without touching a contract or the workflow (`README.md` §4, §9.3).
 
 Its companion assertion: **nothing under `src/docflow/` imports anything under `tests/`.**
-The replay loaders of `pdf`, `image` and `ocr` are test doubles, and a production module that
-reaches one has turned a test double into a fallback (`README.md` §9.7). Also guarded by
-`GEN-19`, evidenced by `GEN-22`'s provenance audit.
+The engine doubles of `pdf`, `image` and `ocr` live under `tests/`, and a production module
+that reaches one has turned a test double into a fallback (`README.md` §9.7). Also guarded by
+`GEN-19`, evidenced by `GEN-22`'s compliance audit.
 
 ### 3.4 Identifier reconciliation per frontier
 
@@ -591,7 +590,7 @@ flowchart LR
 
 - **Entry condition:** none.
 - **Issues:** `GEN-01`, `GEN-02`, `GEN-03`, `GEN-04`, `GEN-05`, `GEN-06`.
-- **Deliverables:** package skeleton under `src/docflow/` with the five sub-packages and their `primitives/` / `utils/` / `helpers/`; the five Request/Result contract pairs; the stage-state vocabulary; the three identities; `pyproject.toml` as the single tooling home, carrying the `engine` marker registration and the engine pins; the acceptance-engine recordings convention and the `tests/fixtures/engines/` layout (`README.md` §9.7).
+- **Deliverables:** package skeleton under `src/docflow/` with the five sub-packages and their `primitives/` / `utils/` / `helpers/`; the five Request/Result contract pairs; the stage-state vocabulary; the three identities; `pyproject.toml` as the single tooling home, carrying the engine pins; the engine-double convention and the `tests/fakes/engines/` layout (`README.md` §9.7).
 - **Exit criterion:** "skeleton imports cleanly; one happy-path test per contract round-trips an in-memory fake end to end; the four QA gates (§7) pass on the skeleton."
 - **Gate:** all four gates (`pytest`, `ruff check .`, `ruff format --check .`, `pylint src tests`).
 
@@ -599,8 +598,8 @@ flowchart LR
 
 - **Entry condition:** Phase 0 exit met.
 - **Issues:** `PDF-01`…`PDF-14`; `IMG-01`…`IMG-15`; `OCR-01`…`OCR-14`; `LLM-01`…`LLM-15` (see [`wbs-procesador-pdf.md`](wbs-procesador-pdf.md), [`wbs-procesador-image.md`](wbs-procesador-image.md), [`wbs-procesador-ocr.md`](wbs-procesador-ocr.md), [`wbs-procesador-llm-call.md`](wbs-procesador-llm-call.md)). The four processors run in parallel; no `GEN` issue is needed here beyond `GEN-01`…`GEN-06` being already met.
-- **Deliverables:** each processor implemented in isolation behind its own contract with engines encapsulated in its own `primitives/`; each of `pdf`, `image` and `ocr` additionally owning its acceptance-engine recording and replay loader (`PDF-14`, `IMG-15`, `OCR-14`).
-- **Exit criterion:** "each processor has a green happy-path test proving `Request → Result` with real bytes from a small committed fixture; no processor imports another processor's module; four QA gates pass."
+- **Deliverables:** each processor implemented in isolation behind its own contract with engines encapsulated in its own `primitives/`; each of `pdf`, `image` and `ocr` additionally owning its in-memory engine double (`PDF-14`, `IMG-15`, `OCR-14`), so the whole suite of that processor runs with no engine installed.
+- **Exit criterion:** "each processor has a green happy-path test proving `Request → Result` with real bytes from a small committed fixture, with no engine installed; no processor imports another processor's module; four QA gates pass."
 - **Gate:** all four gates, run per processor sub-package.
 
 ### 4.3 Phase 2 — Orchestrator: state, reuse, resume
@@ -623,7 +622,7 @@ flowchart LR
 
 - **Entry condition:** Phase 3 exit met.
 - **Issues:** `GEN-11`…`GEN-16` (hardening); `GEN-17`…`GEN-22` (close-out). Child tasks whose guarantees Phase 4 re-verifies on the integrated tree — not re-owned here: `PDF-11`, `PDF-12`, `PDF-14`, `IMG-10`, `IMG-11`, `IMG-13`, `IMG-14`, `IMG-15`, `OCR-09`, `OCR-10`, `OCR-12`, `OCR-13`, `OCR-14`, `LLM-13`, `ORC-15`, `ORC-16`, `ORC-19`.
-- **Deliverables:** idempotency at both levels; determinism classes per processor; error containment; atomic persistence everywhere an artifact is published; full four-gate hygiene; a mutation-falsified invariant test per non-obvious guarantee; the CI gate workflow (`GEN-21`); the recording-convention compliance check with its provenance audit (`GEN-22`); the frontier assertion that no module under `src/docflow/` imports `tests/` (`GEN-19`).
+- **Deliverables:** idempotency at both levels; determinism classes per processor; error containment; atomic persistence everywhere an artifact is published; full four-gate hygiene; a mutation-falsified invariant test per non-obvious guarantee; the CI gate workflow (`GEN-21`); the engine-double compliance check (`GEN-22`); the frontier assertion that no module under `src/docflow/` imports `tests/` (`GEN-19`).
 - **Exit criterion:** "all phases' acceptance evidence re-run green; every shortcut carries an explicit `# TODO: [MVP]` / `# TODO: [RELEASE]` tag."
 - **Gate:** all four gates on the whole tree, plus the two frontier assertions (`GEN-18`, `GEN-19`) and the CI workflow that enforces them (`GEN-21`).
 
@@ -663,7 +662,7 @@ Chain from the skeleton to the Phase 4 exit. Effort is the task's own S/M/L; tas
 independent of each other; `GEN-18` and `GEN-19` may run as soon as the integration tree is
 frozen. `GEN-21` (the CI workflow) depends only on `GEN-05` and may land as soon as the
 skeleton does, so the gate becomes a mechanism early; `GEN-22` closes behind the three
-recording tasks (`PDF-14`, `IMG-15`, `OCR-14`). The single serial spine the programme cannot
+engine doubles (`PDF-14`, `IMG-15`, `OCR-14`). The single serial spine the programme cannot
 parallelise is `GEN-01 → GEN-02 →
 {GEN-06} → ORC-02 → ORC-07 → ORC-08 → ORC-11 → ORC-12 → ORC-13 → GEN-10 → GEN-16 → GEN-17`.
 
@@ -685,9 +684,7 @@ Derived from [`../README.md`](../README.md) §8 and §7, with the mitigating tas
 | Orchestrator absorbs processor logic | Single-responsibility violated; monolith | `ORC-14` (only invocation point), `GEN-18` (no cross-processor import), `GEN-19` (no `primitives/` from workflow) |
 | Scope creep into a full ETL platform | Over-engineering in the PoC | `GEN-20` (every shortcut tagged), `GEN-17` (plan ↔ idea reconciliation), `GEN-15` (gates, not new layers) |
 | Cross-processor contract drift after Phase 1 freezes it | Integration breaks late and expensively | `GEN-02` (frozen contracts), `GEN-06` (round-trip tests), `GEN-07`/`GEN-08`/`GEN-09` (seam validation before `GEN-10`) |
-| A bumped engine pin with a stale recording leaves the fast tier green | The fast tier proves a reality that no longer exists, silently | `PDF-14` / `IMG-15` / `OCR-14` (the loader fails loudly when the recording version differs from the pin), `GEN-22` (provenance audit), `GEN-21` (the real tier runs in CI, so a stale recording is caught at the gate) |
-| A recording is a hand-authored fixture instead of a real recording | The fast tier is green against a fake, and the mechanism's whole premise is gone | The recording task is a deliverable of `PDF-14` / `IMG-15` / `OCR-14` (including the engine's path in `tests/record_engine.py`), and `GEN-22` audits provenance |
-| The skip rule masks a missing engine in CI | `skip` is silent by nature, so a green CI could mean "never ran" | `GEN-21` scenario "a skipped real tier in CI is a failure" |
+| A hand-written engine double drifts from the engine's real shape | Our translation breaks in production while the suite stays green | `PDF-14` / `IMG-15` / `OCR-14` (the double is the single place a shape change is re-checked on a pin bump), `GEN-22` (compliance audit), `GEN-17` (the trade-off is recorded as accepted, not as covered) |
 
 ---
 
@@ -705,10 +702,11 @@ Derived from [`../README.md`](../README.md) §8 and §7, with the mitigating tas
     task or which subplan);
   - its **Tags** expectation is known (`# TODO: [MVP]` / `# TODO: [RELEASE]`).
 - The four gates are executable from a clean checkout: `pytest` needs no install,
-  `pyproject.toml` is the only config file, and no engine is required to run Phase 0.
-- The recordings convention (`README.md` §9.7) is stated, the `engine` marker is registered
-  in `pyproject.toml`, and the three recording tasks (`PDF-14`, `IMG-15`, `OCR-14`) are rows
-  in their processor WBS files before any Phase 1 test that needs engine data starts.
+  `pyproject.toml` is the only config file, and no engine is required at any phase — no test
+  reaches one.
+- The engine-double convention (`README.md` §9.7) is stated, and the three double tasks
+  (`PDF-14`, `IMG-15`, `OCR-14`) are rows in their processor WBS files before any test of
+  those processors starts.
 - The contract vocabulary (`GEN-02`), the stage states (`GEN-03`) and the three identities
   (`GEN-04`) are agreed and documented before any Phase 1 task starts.
 
@@ -740,12 +738,13 @@ Derived from [`../README.md`](../README.md) §8 and §7, with the mitigating tas
 - **No domain noun** (invoice, field, verdict, pipeline code) in a kernel or processor API.
 - **Debt visible.** Every shortcut carries `# TODO: [MVP]` (real DB/API/validation) or
   `# TODO: [RELEASE]` (telemetry/caching/HA/security) (`GEN-20`).
-- **Test tiers.** The fast tier (`pytest -m "not engine"`) passes with no engine installed;
-  exactly one real test per processor reaches the engine; the real tier skips with an
-  explicit reason when the engine is absent; and a replay loader fails loudly when a
-  recording's version differs from the pin (`README.md` §9.7).
+- **No test reaches a third party.** No test invokes, imports or asserts Poppler, OpenCV,
+  Docling, Ollama or a provider SDK; no test asserts an engine version, an engine metric
+  value or the engine's determinism. Every test of `pdf`, `image` and `ocr` runs on that
+  processor's in-memory engine double injected at the engine call, and the suite passes with
+  no engine installed (`README.md` §7, §9.7).
 - **Gate mechanism.** Every pull request runs the four gates unfiltered through `GEN-21`'s
-  workflow, and a skipped real tier in CI fails the job instead of passing silently.
+  workflow, in an environment with no engine installed.
 - **The four QA gates pass** on the whole tree:
 
 ```bash
@@ -797,4 +796,4 @@ From [`../README.md`](../README.md) §9.
 | **Language / naming** — English directory, module and entry-point names (`docflow.pdf`, `docflow.workflow`, `process_document`, `process_pdf`, …); the Spanish `procesador-*` names survive only as `docs/idea/` titles | Resolved | Sets the literal names in `GEN-01` and every acceptance criterion; `GEN-17` verifies the code still matches the idea's §"Naming". |
 | **Consolidation naming** — canonical `consolidate_page_result` / `consolidate_document_result`; the `consolidate_page` / `consolidate_document` forms in §5 are accepted aliases of the same seam (`README.md` §9.5) | Resolved | `GEN-09` and `ORC-17` use the canonical names; `GEN-17` verifies no second implementation appears and no alias becomes a separate seam. |
 | **Stage-state vocabulary** — the nine states of §5 Phase 0 are a closed set: `NOT_STARTED`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`, `SKIPPED`, `REUSED`, `INVALIDATED`, `PAUSED` (`README.md` §9.6) | Resolved | `GEN-03` freezes exactly those members; `ORC-01` may extend the enum only for orchestrator-internal states, never as a silent alias of a shared one. |
-| **Test tiers and engine recordings** — the real engine runs exactly once per processor; every other test replays a recorded real response injected at the engine call; `llm` keeps its scripted fake; an absent engine skips with an explicit reason; the pin must match or the loader fails loudly (`README.md` §9.7) | Resolved | `GEN-05` registers the `engine` marker; `PDF-14` / `IMG-15` / `OCR-14` own the recording, the replay loader and the version check for their own engine; `GEN-21` makes the gate a mechanism; `GEN-22` verifies one version rule and recording provenance; `GEN-19` asserts nothing under `src/docflow/` imports `tests/`; `GEN-17` records the residual risk. |
+| **No test crosses into a third party** — no test invokes, imports or asserts an engine; each of `pdf`, `image` and `ocr` has one in-memory engine double injected at the engine call, and the suite runs whole with no engine installed (`README.md` §9.7) | Resolved | `PDF-14` / `IMG-15` / `OCR-14` own the double for their own processor; `GEN-22` verifies one injection rule and audits that no test reaches an engine; `GEN-19` asserts nothing under `src/docflow/` imports `tests/`; `GEN-21` runs the suite in an environment with no engine; `GEN-17` records the drift trade-off. |

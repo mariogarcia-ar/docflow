@@ -1,9 +1,15 @@
 # Test cost — how we fix it
 
-> Status: **proposed**. Solution-first: what the problem is, how we solve it, what it costs,
-> and what still needs a decision. Measurements are in the git history of this file; the
-> long analysis that preceded this revision was superseded — its conformance-test framing is
-> replaced by the recording mechanism in §3.
+> Status: **superseded on the test tiers.** Solution-first: what the problem is, how we solve
+> it, what it costs, and what still needs a decision. Measurements are in the git history of
+> this file; the long analysis that preceded this revision was superseded — its
+> conformance-test framing is replaced by the recording mechanism in §3.
+>
+> ⚠️ **The record/replay mechanism and the real tier described here were later removed:** we
+> do not test third parties at all. See
+> [`no-tests-on-third-parties.md`](no-tests-on-third-parties.md), which wins over this
+> document. Everything here about *our* code — what we test, why a double is needed, why
+> `LLM-03` stays scripted — still holds.
 
 ## 1. The problem, briefly
 
