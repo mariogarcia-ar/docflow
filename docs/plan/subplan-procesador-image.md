@@ -167,12 +167,12 @@ Scenario: Normalize a valid color input
     status is "success", and transformations list every applied operation
 
 Scenario: Prepare independent OCR and VLM variants
-  Given a skewed color document image and an ImageRequest with
+  Given a document image and an ImageRequest with
     prepare_for_ocr=true and prepare_for_vlm=true
   When process_image runs
-  Then "image/ocr_ready.png" and "image/vlm_ready.png" are two distinct files,
-    the OCR variant may be grayscale/deskewed/binarized, and
-    the VLM variant preserves color channels and layout
+  Then "image/ocr_ready.png" and "image/vlm_ready.png" are two distinct files
+    And each was written by its own pipeline (the VLM path never aliases the OCR path)
+    And the transformations each pipeline applied are recorded in metadata.json
 
 Scenario: Reject an invalid input with a typed error
   Given a corrupt or unsupported file at "image_path"
@@ -206,7 +206,7 @@ installed; there is no real tier, no marker and no skip rule (`README.md` §7, �
 **Invariant tests (each with the mutation that must break it):**
 
 1. **Input immutability** — the source file hash is identical before and after processing. *Mutation that breaks it:* make `save_image` write to `image_path` itself (overwrite in place); the test then observes a changed input hash/mtime.
-2. **OCR variant ≠ VLM variant** — `ocr_ready` and `vlm_ready` are independent files, and the VLM variant preserves color channels while the OCR variant may be grayscale/deskewed. *Mutation that breaks it:* make `prepare_image_for_vlm` alias/return the `ocr_ready` path; the test then observes identical paths or lost color.
+2. **OCR variant ≠ VLM variant** — `ocr_ready` and `vlm_ready` are independent files, each written by its own pipeline, and the transformations each one applied are recorded. *Mutation that breaks it:* make `prepare_image_for_vlm` alias/return the `ocr_ready` path; the test then observes identical paths or a transformation list that belongs to the other pipeline. The assertion is about **our** wiring, never about what the engine does to the pixels (`README.md` §9.7).
 3. **Namespace ownership** — every produced artifact (including `metadata.json`) resolves under the `image/` namespace and nothing is written to `source/`, `render/`, `native_text/`, `ocr/` or `llm/`. *Mutation that breaks it:* redirect `metadata.json` to the parent page directory; the test then finds a file outside `image/`.
 
 **Fixtures needed** (committed under `fixtures/image/`, named for the failure they provoke): `color_layout.png` (VLM variant keeps color), `skewed_text.png` (deskew/OCR pipeline), `embedded_logo.png` (embedded-image input), `corrupt.png` (decode error path).

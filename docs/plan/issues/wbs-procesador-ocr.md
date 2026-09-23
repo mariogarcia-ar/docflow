@@ -24,6 +24,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 **Scope.** Turn an already-prepared image into a textual and structured representation through `OCRRequest → OCRResult`: plain text, Markdown, a stable versioned `document.json`, blocks, tables, layout, reading order, metrics, technical metadata and an extraction status, published atomically inside the `ocr/` namespace. Docling is the only OCR engine and is reached only from `ocr/primitives/`; the rest of the module works on the engine-independent `OCRDocument`. No PDF work, no image normalization, no LLM, no workflow decision.
 
+**Test framing.** Every primitive below is exercised with the in-memory Docling double in place of `convert_image_with_docling` (`OCR-14`): the assertions are about **our** translation, ordering, builders, tables, metrics and error mapping, never about what Docling returns, how it iterates, or whether it is deterministic (`README.md` §9.7). Where a criterion needs engine output as *input*, the double supplies it.
+
 ## 2. Task issue index
 
 | ID | Task (short) | Effort | Wave | Depends on | Deliverable artifact(s) | Issue file | Status |

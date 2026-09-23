@@ -24,6 +24,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 **Scope.** Turn a `PDFRequest` into a `PDFResult` (+ one `PDFPageResult` per page) describing only what the PDF natively contains: page split, render, native text, text blocks, embedded images, per-page composition metrics and a descriptive `TEXT`/`IMAGE`/`MIXED` classification, published atomically under the `source/`, `render/`, `native_text/`, `embedded_images/` and `metadata.json` namespaces. Poppler is reached only from `pdf/primitives/`. No workflow decision, no OCR, no LLM, no other processor import.
 
+**Test framing.** Every primitive below is exercised with the in-memory Poppler double in place of the `subprocess.run` call (`PDF-14`): the assertions are about **our** translation, naming, ordering, classification thresholds and error mapping, never about what Poppler returns or renders (`README.md` §9.7). Where a criterion needs engine output as *input*, the double supplies it.
+
 ## 2. Task issue index
 
 | ID | Task (short) | Effort | Wave | Depends on | Deliverable artifact(s) | Issue file | Status |
@@ -72,9 +74,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `pdf/primitives/` package with the low-level function signatures of PDF-03 … PDF-08 declared and mocked; one concrete engine selected (Poppler); engine name and version surfaced for metadata.
 - **Out of bounds:** No OpenCV, OCR, Docling, LLM or workflow knowledge; no engine access from `pdf/utils/`, `pdf/helpers/` or outside this processor; no default engine substituted when configuration is missing.
 - **Acceptance criteria:**
-  - Given the primitives package, when a Poppler-backed call is made, then the engine is an explicit named dependency (no silent fallback).
-  - Given a missing engine binary, then a typed failure path exists rather than an implicit substitute.
-- **Evidence / DoD:** Import of `pdf/primitives/` succeeds; engine/version retrieval is exposed; four QA gates green on the skeleton.
+  - Given the primitives package, when the seam is exercised, then the engine is an explicit named dependency (no silent fallback).
+  - Given a failing subprocess — the double's non-zero exit code or raised error — then a typed failure path exists rather than an implicit substitute.
+- **Evidence / DoD:** Import of `pdf/primitives/` succeeds; engine/version retrieval is exposed; the failure path is exercised through the double, never by probing whether the engine is installed; four QA gates green on the skeleton.
 - **Tags:** `# TODO: [MVP]` for real engine-availability probing; `# TODO: [RELEASE]` for engine licensing posture.
 
 ### PDF-03 — Document primitives
@@ -88,9 +90,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `get_pdf_metadata(pdf_path)`, `get_page_count(pdf_path)`, `get_page_dimensions(pdf_path, page_number)`, `inspect_pdf(pdf_path)` in `pdf/primitives/`.
 - **Out of bounds:** No page extraction, rendering or text extraction; no classification; no decision about what to do with the document.
 - **Acceptance criteria:**
-  - Given a valid multi-page PDF, when `get_page_count` runs, then it equals the number of pages reported by `inspect_pdf`.
-  - Given `pdf_corrupt.pdf`, when `inspect_pdf` runs, then a typed `PDFError` is produced (`CORRUPTED_PDF`) and no exception escapes the contract.
-- **Evidence / DoD:** Unit test on the committed fixture; typed error on the corrupt fixture.
+  - Given the seam reports three pages, when `get_page_count` runs, then it equals the number of pages `inspect_pdf` reports — both read the same seam, and neither reaches the engine.
+  - Given the seam fails on `pdf_corrupt.pdf`, when `inspect_pdf` runs, then a typed `PDFError` is produced (`CORRUPTED_PDF`) and no exception escapes the contract.
+- **Evidence / DoD:** Unit test on the committed fixture with the subprocess doubled; typed error on the corrupt fixture.
 - **Tags:** `# TODO: [MVP]` for real encryption handling.
 
 ### PDF-04 — Split/extract primitives
@@ -104,7 +106,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `extract_page(pdf_path, page_number, output_path)`, `split_pdf(pdf_path, output_dir)`, `merge_pdfs(pdf_paths, output_path)` (generic utility) in `pdf/primitives/`; output `page_001/source/page.pdf`.
 - **Out of bounds:** `merge_pdfs` is not on the happy path (deferred); no rendering, no text extraction; must never write to `pdf_path`.
 - **Acceptance criteria:**
-  - Given a 3-page fixture, when `split_pdf` runs into an output dir, then exactly three one-page PDFs exist in page order.
+  - Given a three-page fixture and the doubled seam, when `split_pdf` runs into an output dir, then our loop publishes exactly three one-page PDFs in page order.
   - Given `extract_page` writing to `page_001/source/page.pdf`, when the run completes, then the SHA-256 of the input PDF is unchanged.
 - **Evidence / DoD:** Fixture-based test plus the input-immutability invariant (PDF-13, invariant 2).
 - **Tags:** `# TODO: [MVP]` for `merge_pdfs` (deferred off the happy path).
@@ -136,9 +138,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `extract_text_from_page(pdf_path, page_number, layout=True)`, `get_text_blocks(pdf_path, page_number)` in `pdf/primitives/`; outputs `native_text/text.txt` and `native_text/blocks.json`.
 - **Out of bounds:** No OCR fallback when the text layer is empty (an empty result is data, not an error to fix); no source comparison; no interpretation of content.
 - **Acceptance criteria:**
-  - Given `pdf_sample_text.pdf`, when text extraction runs on a text-dominant page, then `text.txt` is non-empty and `blocks.json` deserialises to `TextBlock` records.
-  - Given an image-only page, then `text.txt` is empty and the processor reports it as data.
-- **Evidence / DoD:** Fixture-based test on text-dominant and image-dominant fixtures.
+  - Given the doubled seam returns native text for a text-dominant page, when our extraction runs, then `text.txt` is non-empty and `blocks.json` deserialises to `TextBlock` records.
+  - Given a page whose native text is empty, then `text.txt` is empty and the processor reports it as data.
+- **Evidence / DoD:** Fixture-based test on text-dominant and image-dominant fixtures, subprocess doubled.
 - **Tags:** `# TODO: [MVP]` for layout-aware block reconstruction.
 
 ### PDF-07 — Embedded image primitives
@@ -152,9 +154,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `extract_images_from_page(pdf_path, page_number, output_dir)`, `get_image_blocks(pdf_path, page_number)` in `pdf/primitives/`; outputs `embedded_images/image_001.png` and `EmbeddedImage` records (`image_id`, `path`, `bbox`, `width`, `height`, `format`, `metadata`).
 - **Out of bounds:** No image analysis or enhancement; no crop of rendered regions; a page with no embedded images is valid data, not a failure.
 - **Acceptance criteria:**
-  - Given a page with embedded images, when extraction runs, then files are named `image_001.png`, `image_002.png`, … in stable order with matching `EmbeddedImage` entries.
-  - Given a page without embedded images, then the list is empty and the page is not marked failed.
-- **Evidence / DoD:** Fixture-based test on `pdf_sample_mixed.pdf` / `pdf_sample_image.pdf`.
+  - Given the doubled seam returns embedded images, when extraction runs, then our code names them `image_001.png`, `image_002.png`, … in stable order with matching `EmbeddedImage` entries.
+  - Given a page with no embedded images, then the list is empty and the page is not marked failed.
+- **Evidence / DoD:** Fixture-based test on `pdf_sample_mixed.pdf` / `pdf_sample_image.pdf`, subprocess doubled — the assertion is our naming and ordering, not the engine's image extraction.
 - **Tags:** `# TODO: [MVP]` for unusual colour-space or mask handling.
 
 ### PDF-08 — Composition and classification

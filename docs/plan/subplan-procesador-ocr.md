@@ -289,11 +289,15 @@ Then OCRResult.status is "success"
 **Scenario: deterministic functional content**
 
 ```gherkin
-Given the same prepared image, the same engine version, and the same normalized options
+Given the same prepared image and the same normalized options
+  And the in-memory Docling double feeding the same native values
 When process_ocr_image runs twice into two different output directories
 Then the functional content of document.json is identical across both runs
   And metadata.json differs only in timing fields
 ```
+
+The scenario asserts **our** stable ordering and format on a fixed input — never that
+the engine would return the same thing twice (`README.md` §9.7).
 
 **Scenario: empty input is reported, not thrown**
 

@@ -24,6 +24,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 **Scope.** Turn one `ImageRequest` into one `ImageResult`: validate the input, compute technical metrics without mutating the source, produce `normalized.png` plus independent `ocr_ready.png` / `vlm_ready.png` variants, classify technically, validate the outputs and publish everything atomically inside the `image/` namespace with a `metadata.json`. OpenCV (Pillow as fallback) is reached only from `image/primitives/`. No OCR, no LLM, no source selection, no workflow decision.
 
+**Test framing.** Every primitive below is exercised with the in-memory OpenCV double in place of the engine call (`IMG-15`): the assertions are about **our** translation, naming, ordering, thresholds and error mapping, never about what OpenCV computes or returns (`README.md` §9.7). A criterion that would assert an engine reading is not a criterion of this programme.
+
 ## 2. Task issue index
 
 | ID | Task (short) | Effort | Wave | Depends on | Deliverable artifact(s) | Issue file | Status |
@@ -89,9 +91,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions` in `image/primitives/`.
 - **Out of bounds:** No analysis scores, no transformation; `save_image` must never target `image_path`; no format guessing that silently coerces an unsupported file.
 - **Acceptance criteria:**
-  - Given a valid PNG, when `load_image` and `get_image_dimensions` run, then dimensions and format match the file.
-  - Given `corrupt.png`, when `load_image` runs, then a typed `ImageError` (`DECODE_ERROR` or `UNSUPPORTED_FORMAT`) is produced instead of an exception escaping the contract.
-- **Evidence / DoD:** Fixture-based unit test on `color_layout.png` and `corrupt.png`.
+  - Given the seam returns native metadata for a valid input, when `load_image` and `get_image_dimensions` run, then our typed refs carry those values unchanged and no engine is reached.
+  - Given the seam fails on `corrupt.png`, when `load_image` runs, then a typed `ImageError` (`DECODE_ERROR` or `UNSUPPORTED_FORMAT`) is produced instead of an exception escaping the contract.
+- **Evidence / DoD:** Fixture-based unit test on `color_layout.png` and `corrupt.png`, with the engine call doubled; the assertions cover our refs and our error mapping — never that the engine reads the file correctly.
 - **Tags:** —
 
 ### IMG-04 — Analysis primitives
@@ -105,9 +107,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `calculate_blur_score`, `calculate_sharpness_score`, `calculate_contrast_score`, `calculate_brightness_score`, `calculate_noise_score`, `detect_orientation`, `detect_skew_angle`, `detect_text_regions`, `calculate_text_coverage` in `image/primitives/`.
 - **Out of bounds:** No mutation of the input array; no decision of OCR/VLM readiness; no threshold-driven routing.
 - **Acceptance criteria:**
-  - Given `skewed_text.png`, when `detect_skew_angle` runs, then a non-zero angle is reported and the input bytes are unchanged.
-  - Given `color_layout.png`, when `calculate_text_coverage` runs, then the value is a fraction between 0 and 1 inclusive.
-- **Evidence / DoD:** Fixture-based unit tests; repeated runs produce the same values for the same input and library version.
+  - Given the seam returns a skew reading, when `detect_skew_angle` runs, then our primitive surfaces it and the input bytes are unchanged.
+  - Given a text-coverage reading from the seam, when `calculate_text_coverage` runs, then our normalization keeps it a fraction between 0 and 1 inclusive.
+- **Evidence / DoD:** Fixture-based unit tests with the engine call doubled; repeated runs surface the same values for the same doubled input. **What is not covered, deliberately:** the numeric correctness of `calculate_*_score` — that is OpenCV's arithmetic, and testing it would be testing the engine (`README.md` §9.7).
 - **Tags:** `# TODO: [MVP]` on provisional metric thresholds.
 
 ### IMG-05 — Transformation primitives
@@ -121,9 +123,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` in `image/primitives/`.
 - **Out of bounds:** No pipeline composition or variant naming here (that is IMG-07 / IMG-08); no in-place overwrite of the input file; no transformation applied without being requested by the caller.
 - **Acceptance criteria:**
-  - Given a colour input, when `convert_to_grayscale` runs, then the output image has a single channel and the source file is unchanged.
-  - Given a skewed image, when `deskew_image` runs with the detected angle, then the output is written to a distinct path.
-- **Evidence / DoD:** Fixture-based unit tests per transformation group; input hash unchanged assertion.
+  - Given the seam returns an image, when `convert_to_grayscale` runs, then our written artifact goes to a distinct path and the source file is unchanged.
+  - Given a skew reading from the seam, when `deskew_image` runs with it, then the output is written to a distinct path and the source is untouched.
+- **Evidence / DoD:** Fixture-based unit tests per transformation group, engine call doubled; the input hash unchanged assertion. **Not asserted:** that the engine's transformation preserves or drops channels — that is the engine's business (`README.md` §9.7).
 - **Tags:** —
 
 ### IMG-06 — `analyze_image` → `ImageMetrics`
@@ -137,8 +139,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Scope / Deliverables:** `analyze_image` producing `ImageMetrics` (dimensions, resolution, format, size, quality scores, orientation, skew, text regions, text coverage).
 - **Out of bounds:** No file writes, no normalization, no classification, no OCR/VLM decision; never return a placeholder where a real measurement is expected.
 - **Acceptance criteria:**
-  - Given a valid image, when `analyze_image` runs, then every `ImageMetrics` field carries a measured value.
-  - Given the same image and library versions, when `analyze_image` runs twice, then the metrics are identical.
+  - Given the seam returns score values, when `analyze_image` runs, then every `ImageMetrics` field carries the doubled measurement — never a placeholder.
+  - Given the same doubled input, when `analyze_image` runs twice, then the aggregated metrics are identical and no file is written.
 - **Evidence / DoD:** Unit test asserting metric equality across two runs and absence of filesystem writes.
 - **Tags:** `# TODO: [MVP]` for concrete `LOW_QUALITY` threshold constants.
 
@@ -171,7 +173,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Acceptance criteria:**
   - Given `color_layout.png` with `prepare_for_ocr=true` and `prepare_for_vlm=true`, when both run, then two distinct files exist and the VLM variant preserves colour channels while the OCR variant may be grayscale.
   - Given only `prepare_for_vlm=true`, then no `ocr_ready.png` is produced.
-- **Evidence / DoD:** Scenario test for independent variants plus the OCR≠VLM invariant (IMG-13, invariant 2).
+- **Evidence / DoD:** Scenario test for independent variants plus the OCR≠VLM invariant (IMG-13, invariant 2) — both assert **our** pipeline wiring and namespace, never the engine's pixel output (`README.md` §9.7).
 - **Tags:** `# TODO: [MVP]` on binarization thresholds.
 
 ### IMG-09 — `classify_image`
