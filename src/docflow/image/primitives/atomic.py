@@ -314,6 +314,13 @@ def build_metadata_payload(
             "height": source.height,
             "format": source.format,
             "size": source.size,
+            # Whether the dimensions beside it are measurements. A failed run reports zeroes it
+            # never measured (see `composition.UNKNOWN_DIMENSIONS`), and a consumer that took
+            # them for a real size would compute with an image that does not exist. The
+            # inference is sound here and only here: the primitives refuse a non-positive shape,
+            # so an image this processor decoded always has positive dimensions - zero therefore
+            # means "never measured" and cannot mean "empty".
+            "dimensions_measured": source.width > 0 and source.height > 0,
         },
         "input_metrics": _metrics_payload(metadata.input_metrics),
         "output_metrics": _metrics_payload(metadata.output_metrics),

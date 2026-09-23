@@ -27,7 +27,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.factories import build_document_request, build_pdf_request
+from docflow.image.primitives.engine import EngineChoice
+from tests.factories import (
+    build_document_request,
+    build_image_request,
+    build_pdf_request,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -219,26 +224,30 @@ def test_no_contract_field_carries_an_undocumented_default() -> None:
 
 
 def test_the_remaining_entry_points_raise_rather_than_placeholding() -> None:
-    """The two entry points still awaiting their task raise, rather than returning a stand-in.
+    """The entry points still awaiting their task raise, rather than returning a stand-in.
 
-    Phase 0 asserted this for both PDF entry points plus ``process_document``. ``PDF-09``
-    implemented ``process_pdf_page`` and ``PDF-10`` implemented ``process_pdf``, so the two
-    that remain are ``process_document`` (``ORC-14``) and the whole of ``docflow.workflow``.
+    Phase 0 asserted this for every processor entry point. They have been given up one task at a
+    time - ``PDF-09`` and ``PDF-10`` for the PDF processor, ``IMG-12`` for the image one - and
+    what remains is the whole of ``docflow.workflow``, whose ``ORC-14`` owns it.
 
-    Pointing the check at what is genuinely unimplemented is the point: asserting it against
-    a working entry point would fail for a reason that is not a defect. The PDF processor's
-    own behaviour is now covered by ``tests/pdf/test_entrypoints.py`` and
-    ``tests/pdf/test_document_entrypoint.py``.
+    Pointing the check at what is genuinely unimplemented is the point: asserting it against a
+    working entry point would fail for a reason that is not a defect. The implemented processors'
+    own behaviour is covered by ``tests/pdf/test_entrypoints.py``,
+    ``tests/pdf/test_document_entrypoint.py`` and ``tests/image/test_entrypoints.py``.
 
-    ``process_pdf`` is no longer a stub, so it is called with a path that does not exist: that
-    is the observable difference between "not implemented" and "implemented but unable to
-    read the document".
+    ``process_pdf`` and ``process_image`` are no longer stubs, so each is called with a path that
+    does not exist: that is the observable difference between "not implemented" and *implemented
+    but unable to read the input*. For the image processor the distinction is sharper still - it
+    reports the unreadable input as a typed failure inside an ``ImageResult`` rather than raising,
+    because that is what its contract promises.
     """
     workflow_module = importlib.import_module("docflow.workflow")
     pdf_module = importlib.import_module("docflow.pdf")
+    image_module = importlib.import_module("docflow.image")
 
     document_request = build_document_request(Path("."))
     pdf_request = build_pdf_request(Path("."))
+    image_request = build_image_request(Path("."))
 
     with pytest.raises(NotImplementedError):
         workflow_module.process_document(document_request)
@@ -250,6 +259,11 @@ def test_the_remaining_entry_points_raise_rather_than_placeholding() -> None:
     with pytest.raises(Exception) as failure:
         pdf_module.process_pdf(pdf_request)
     assert not isinstance(failure.value, NotImplementedError)
+
+    # Implemented, and it does not raise at all: the failure is the *result*, not an exception.
+    image_result = image_module.process_image(image_request, engine=EngineChoice.OPENCV)
+    assert image_result.status == "failed"
+    assert image_result.error is not None
 
 
 def test_a_processor_reports_a_state_without_importing_the_orchestrator() -> None:

@@ -1,0 +1,90 @@
+{
+  "processor": "image",
+  "processor_version": "0.0.0",
+  "engine": "opencv",
+  "engine_version": "5.0.0",
+  "document_id": "doc-1",
+  "workflow_run_id": "run-1",
+  "processing_key": null,
+  "page_number": 1,
+  "classification": "LOW_QUALITY",
+  "status": "ERROR",
+  "transformations": [],
+  "libraries": {
+    "opencv": "5.0.0",
+    "numpy": "2.3.5"
+  },
+  "timing": {
+    "resolve_engine": 2.0833045709878206e-05,
+    "validate_input": 2.112501533702016e-05,
+    "total": 6.129202665761113e-05
+  },
+  "options": {
+    "normalize": true,
+    "prepare_for_ocr": true,
+    "prepare_for_vlm": true,
+    "correct_orientation": true,
+    "deskew": true
+  },
+  "input": {
+    "path": "page.png",
+    "width": 0,
+    "height": 0,
+    "format": "UNKNOWN",
+    "size": 0,
+    "dimensions_measured": false
+  },
+  "input_metrics": {
+    "dimensions": {
+      "width": 0,
+      "height": 0
+    },
+    "resolution": null,
+    "format": "UNKNOWN",
+    "size": 0,
+    "quality": {
+      "blur": 0.0,
+      "sharpness": 0.0,
+      "contrast": 0.0,
+      "brightness": 0.0,
+      "noise": 0.0
+    },
+    "orientation": null,
+    "skew": null,
+    "text_coverage": 0.0,
+    "text_regions": []
+  },
+  "output_metrics": {
+    "dimensions": {
+      "width": 0,
+      "height": 0
+    },
+    "resolution": null,
+    "format": "UNKNOWN",
+    "size": 0,
+    "quality": {
+      "blur": 0.0,
+      "sharpness": 0.0,
+      "contrast": 0.0,
+      "brightness": 0.0,
+      "noise": 0.0
+    },
+    "orientation": null,
+    "skew": null,
+    "text_coverage": 0.0,
+    "text_regions": []
+  },
+  "artifacts": [],
+  "errors": [
+    {
+      "type": "INVALID_INPUT",
+      "message": "the input image cannot be read: page.png",
+      "recoverable": false,
+      "metadata": {
+        "path": "page.png"
+      }
+    }
+  ],
+  "missing_artifacts": [],
+  "failed_before_publish": true
+}

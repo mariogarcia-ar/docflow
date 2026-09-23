@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`…`IMG-11` **DONE** - contracts frozen, engine seam in place, images read, measured, classified, normalized, published atomically and validated; `IMG-12` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`…`IMG-12` **DONE** - contracts frozen, engine seam in place, images read, measured, classified, normalized, published atomically, validated and wired into one entry point; `IMG-13` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -30,7 +30,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 |---|---|---|---|---|---|---|---|
 | IMG-01 | Contract dataclasses | S | 1 - Contracts & seam | - | `ImageRequest`, `ImageResult`, `ImageMetrics`, `ImageOptions`, `ImageClassification`, `ImageValidation`, `ImageError` | this file §IMG-01 | DONE |
 | IMG-02 | Image-ops primitives skeleton | M | 1 - Contracts & seam | IMG-01 | `image/primitives/` (OpenCV, Pillow fallback) | this file §IMG-02 | DONE |
-| IMG-03 | Load/store primitives | S | 1 — Contracts & seam | IMG-02 | `load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions` | this file §IMG-03 | NOT_STARTED |
+| IMG-03 | Load/store primitives | S | 1 — Contracts & seam | IMG-02 | `load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions` | this file §IMG-03 | DONE |
 | IMG-04 | Analysis primitives | M | 2 — Analysis | IMG-03 | `calculate_*_score`, `detect_orientation`, `detect_skew_angle`, `detect_text_regions`, `calculate_text_coverage` | this file §IMG-04 | DONE |
 | IMG-05 | Transformation primitives | M | 2 — Analysis | IMG-03 | `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` | this file §IMG-05 | DONE |
 | IMG-06 | `analyze_image` → `ImageMetrics` | S | 2 — Analysis | IMG-04 | `analyze_image` (side-effect-free) | this file §IMG-06 | DONE |
@@ -39,7 +39,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-09 | `classify_image` | S | 3 — Outputs | IMG-06 | `TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY` | this file §IMG-09 | DONE |
 | IMG-10 | `validate_image_result` + typed error classification | S | 3 — Outputs | IMG-06 | `validate_image_result`, `ImageError` kinds | this file §IMG-10 | DONE |
 | IMG-11 | Atomic persistence + `metadata.json` | M | 4 — Publish | IMG-07, IMG-08, IMG-10 | `image/.tmp/` → rename; `image/metadata.json` | this file §IMG-11 | DONE |
-| IMG-12 | `process_image` entry point | M | 4 — Publish | IMG-09, IMG-11 | `process_image` | this file §IMG-12 | NOT_STARTED |
+| IMG-12 | `process_image` entry point | M | 4 — Publish | IMG-09, IMG-11 | `process_image` | this file §IMG-12 | DONE |
 | IMG-13 | Happy-path + invariant tests, mutation evidence | M | 5 — Verify | IMG-12 | `tests/`, mutation observations | this file §IMG-13 | NOT_STARTED |
 | IMG-14 | Four QA gates clean | S | 5 — Verify | IMG-13 | QA gate output | this file §IMG-14 | NOT_STARTED |
 | IMG-15 | Lab tool `scripts/tools/image.py` | S | 6 — Lab tool | IMG-14 | `scripts/tools/image.py` | this file §IMG-15 | NOT_STARTED |
@@ -737,6 +737,94 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given any valid input, when its bytes are hashed before and after processing, then the hash is unchanged.
 - **Evidence / DoD:** Happy-path test with real bytes from a committed fixture; scenario tests for namespace and source immutability.
 - **Tags:** `# TODO: [MVP]` for the not-yet-covered option combinations.
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/composition.py` holds the flow,
+  `src/docflow/image/primitives/provenance.py` holds the processor identity, and
+  `src/docflow/image/entrypoints.py` is the published surface. Both WBS acceptance criteria hold,
+  asserted in `tests/image/test_entrypoints.py` (30 tests): a valid input reaches
+  `status == "success"` with every output under `image/`, and the source bytes are unchanged.
+  Four QA gates green: 692 tests, `ruff` clean, 10.00/10 on `pylint src tests`.
+
+- **The engine is a required keyword argument, and that is a deliberate departure from the Phase 0
+  stub.** The stub took the request alone; there is no engine field on `ImageRequest`, so the
+  question "which engine?" had no answer at all. Out of bounds for this task reads "no default
+  engine", and `EngineChoice` has no `AUTO` member for the same reason - a default here would be
+  this processor answering on the caller's behalf, which is the substitution the seam exists to
+  prevent. The parameter is keyword-only so it cannot be omitted by accident, and a test asserts
+  both properties on the signature.
+
+- **A failed run publishes nothing, and the cleanup lives in exactly one place.** Both halves
+  matter. `publish_artifact` stages and renames, so a failure before the rename leaves the artifact
+  unpublished - but a *previous* run of the same bytes may already have written `normalized.png`
+  here, and a reader that finds that file is entitled to believe the run succeeded. So every
+  failure route calls `abandon`.
+
+  The first draft called it on two of the eight failure paths, and the test caught it: a corrupt
+  input left the previous run's `normalized.png` in the namespace. The fix was not to add six more
+  calls but to funnel every failure through one method - `_Run.finish` - so no future path can
+  forget. The refactor below came from the same observation.
+
+- **Eight of the nine stages can fail, so the flow is a record with a stage per method.** The
+  first draft did the bookkeeping inline, and it measured 26 locals, 61 statements and 10 return
+  statements in one function; `pylint` flagged all three, and the numbers were right - the flow was
+  no longer readable as the sequence the plan fixes. `_Run.attempt(stage, call)` records the stage's
+  duration and contains its failure; `process_image_result` is then a tuple of nine bound methods
+  with one early return. The suppressions that remain are the two the design genuinely needs (an
+  attribute per stage), each with its reason stated.
+
+- **`ImageEngineError` had to be caught too, or the contract leaked.** `ImagePrimitiveError` is the
+  contract's vocabulary, but the seam raises its own: a Pillow deployment reaching a primitive that
+  needs OpenCV got `ImageEngineCapabilityError` from thirty frames down, and it **escaped the entry
+  point as an exception**. The subplan forbids exactly that - the caller asked for an
+  `ImageResult`. Both vocabularies are now caught together and translated, keeping the engine's own
+  words as the message, and a test asserts no engine error reaches the caller under either engine.
+
+- **`output_metrics` describes the published image, and the first draft got that wrong.** It was
+  aliased to `metrics`, so the record claimed the output measured identically to the input - which
+  the contract contradicts ("metrics of the normalized image") and which cannot be true of an image
+  that was just deskewed and contrast-stretched. The output is now measured from the pixels that
+  were published. When `normalize` is false there is no output artifact and the output *is* the
+  input, so the source's record is the output's, and the test says so.
+
+- **The variants are built from the source pixels, not from the normalized image.** Each pipeline is
+  independent (`IMG-13` invariant 2), and feeding one from the other's output would apply a
+  normalization correction twice, inside a variant that never asked for it. A mutation that rewired
+  the input is caught.
+
+- **`metadata.json` is published last, so the file cannot disagree with the object returned.** The
+  verdict is settled before it is written - the lesson `PDF-10` records, where an earlier version
+  published provisional metadata while the in-memory result already said otherwise.
+
+- **A failed decode leaves dimensions that were never measured, and the payload says which.** The
+  run cannot decode the pixels, so it has no dimensions; `ImageSourceRef` declares them as `int`, so
+  `None` cannot express "unknown" there the way `ImageMetrics.resolution` does. The record carries
+  zeroes plus an explicit `input.dimensions_measured` flag, because "zero pixels" and "never
+  measured" are different facts and a consumer that read the first as the second would compute with
+  an image that does not exist. `tests/image/primitives/test_atomic.py` failed when the flag was
+  added to the shared payload builder, which is that test doing its job: a field added to a schema
+  other tools read must be a visible edit.
+
+  `# TODO: [MVP]` marks the real fix - nullable dimensions on `ImageSourceRef`. That is a contract
+  change and belongs to its own task, not to the entry point.
+
+- **`crop_region` does not exist, so `image/regions/` is not published.** The subplan's tree lists
+  it as optional and `IMG-04`'s primitive list does not include a crop. Publishing a directory
+  nothing can fill would be a promise with no implementation behind it, so the namespace is exactly
+  the three images plus `metadata.json`.
+
+- **Mutation evidence.** Twelve mutations applied; nine were killed on the first run, and the three
+  survivors were each worth having. Two were real gaps: the metadata assertion only checked that
+  *some* transformation was listed, so moving the normalization stage after the variant stage
+  dropped its steps silently - the test now compares against the three primitives called directly -
+  and nothing drove a validation refusal to a failure, because the condition cannot arise from the
+  publication path. That second one is now tested through the run's own validation step, which is
+  the only place it can arise. The third survivor was an equivalent mutant of my own making (an
+  aliased attribute that the next stage overwrote unconditionally), and it was replaced with one
+  that changes behaviour. The battery: the variants built from the wrong pixels, the output never
+  re-measured, the source dimensions reported as unknown, the run failing without cleaning the
+  namespace, a refused validation reported as success, an engine error left to escape, the pipeline
+  order changed, a failed run reporting artifacts it never published, the transformation list never
+  assembled, the metadata never published, and a default engine added to the entry point.
 
 ### IMG-13 — Happy-path and invariant tests with mutation evidence
 

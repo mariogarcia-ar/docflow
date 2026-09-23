@@ -317,7 +317,16 @@ def test_the_metadata_expands_nested_records_field_by_field(tmp_path: Path) -> N
         "correct_orientation",
         "deskew",
     }
-    assert set(payload["input"]) == {"path", "width", "height", "format", "size"}
+    assert set(payload["input"]) == {
+        "path",
+        "width",
+        "height",
+        "format",
+        "size",
+        # Added by `IMG-12`: a failed run reports zeroes it never measured, and this flag is what
+        # tells a consumer that they are absence rather than a size.
+        "dimensions_measured",
+    }
     assert set(payload["artifacts"][0]) == {
         "path",
         "kind",
