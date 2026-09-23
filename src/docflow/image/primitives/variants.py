@@ -219,8 +219,6 @@ def publish_variants(
         ValueError: Both variants were prepared and would resolve to the same path. That is the
             aliasing ``IMG-13`` invariant 2 names, and it is refused here rather than left to a
             test, so a caller who never runs the tests still cannot publish one file as two.
-
-    # TODO: [MVP] writes in place; ``IMG-11`` routes this through ``image/.tmp/`` and a rename.
     """
     if ocr_ready is not None and vlm_ready is not None:
         _require_distinct_paths(output_dir)

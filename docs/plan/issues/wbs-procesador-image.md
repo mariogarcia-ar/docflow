@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`…`IMG-09` **DONE** - contracts frozen, engine seam in place, images read, measured, classified and published as `normalized.png` plus two independent variants; `IMG-10` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`…`IMG-11` **DONE** - contracts frozen, engine seam in place, images read, measured, classified, normalized, published atomically and validated; `IMG-12` … `IMG-15` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -37,8 +37,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png` | this file §IMG-07 | DONE |
 | IMG-08 | `prepare_image_for_ocr` / `prepare_image_for_vlm` | M | 3 — Outputs | IMG-05, IMG-06 | `image/ocr_ready.png`, `image/vlm_ready.png` (distinct pipelines) | this file §IMG-08 | DONE |
 | IMG-09 | `classify_image` | S | 3 — Outputs | IMG-06 | `TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY` | this file §IMG-09 | DONE |
-| IMG-10 | `validate_image_result` + typed error classification | S | 3 — Outputs | IMG-06 | `validate_image_result`, `ImageError` kinds | this file §IMG-10 | NOT_STARTED |
-| IMG-11 | Atomic persistence + `metadata.json` | M | 4 — Publish | IMG-07, IMG-08, IMG-10 | `image/.tmp/` → rename; `image/metadata.json` | this file §IMG-11 | NOT_STARTED |
+| IMG-10 | `validate_image_result` + typed error classification | S | 3 — Outputs | IMG-06 | `validate_image_result`, `ImageError` kinds | this file §IMG-10 | DONE |
+| IMG-11 | Atomic persistence + `metadata.json` | M | 4 — Publish | IMG-07, IMG-08, IMG-10 | `image/.tmp/` → rename; `image/metadata.json` | this file §IMG-11 | DONE |
 | IMG-12 | `process_image` entry point | M | 4 — Publish | IMG-09, IMG-11 | `process_image` | this file §IMG-12 | NOT_STARTED |
 | IMG-13 | Happy-path + invariant tests, mutation evidence | M | 5 — Verify | IMG-12 | `tests/`, mutation observations | this file §IMG-13 | NOT_STARTED |
 | IMG-14 | Four QA gates clean | S | 5 — Verify | IMG-13 | QA gate output | this file §IMG-14 | NOT_STARTED |
@@ -588,6 +588,51 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Scenario test for the "reject an invalid input with a typed error" acceptance criterion.
 - **Tags:** `# TODO: [MVP]` for richer input validation.
 
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/validation.py` implements
+  `validate_image_result`, `as_image_error` and `missing_artifact_error`. Both WBS acceptance
+  criteria hold: a corrupt input arrives as an `ImageError` of type `DECODE_ERROR` or
+  `UNSUPPORTED_FORMAT` with `recoverable=False`, and a missing expected artifact gives the state
+  `INVALID_OUTPUT` with a typed error naming it. All five states are asserted **reachable**, since a
+  validator that only ever returned `VALID` would satisfy most of a case-by-case suite.
+
+- **The artifacts arrive as named parameters, not as a dictionary.** The first draft took a mapping
+  keyed by capability name. That is shorter to write and it reintroduces the exact failure this module
+  exists to catch: a typo in a key becomes indistinguishable from "not published". A test asserts each
+  artifact field is a required parameter with no default, so an artifact cannot be omitted from
+  validation by forgetting to pass it.
+
+- **The pairing lives in one table.** `ARTIFACT_CAPABILITIES` maps each capability to the request
+  option that asks for it and the result field its artifact lands in, following the lesson the PDF
+  processor's validator records: deriving the missing artifacts and the unsatisfied capabilities
+  separately and pairing them afterwards mispairs them as soon as the two lists differ in length,
+  which happens the moment a capability was not requested. A mutation that paired every capability
+  with the first field is caught by 2 tests.
+
+- **The error vocabulary is derived, not restated.** `CONTRACT_ERROR_TYPES` reads the literal through
+  `typing.get_args(ImageErrorType)`. The primitive layer spells the same seven names out for the
+  opposite reason - it must not depend on the contract's shape - and a test compares the two lists. A
+  *third* copy here would have been pure duplication with nothing to catch a divergence, so it was
+  removed rather than suppressed when `duplicate-code` reported it.
+
+- **A recoverable failure and a missing artifact are two findings, and both are reported.** The
+  missing list is computed before the state is decided and travels in every branch. Discarding it
+  because an unrecoverable failure outranks it would throw away the one piece of information a caller
+  needs in order to act, and a mutation that discarded it is caught.
+
+- **Two layers refuse an invented error kind, and the tests say which is which.** `ImagePrimitiveError`
+  validates its own `error_type` at construction, so the ordinary route cannot carry a kind the
+  contract does not define; the narrowing guard inside `as_image_error` is defence in depth, reachable
+  only by forging an object past construction. Both are tested, and the first draft of the test
+  asserted the wrong layer - which is what the failure showed.
+
+- **Mutation evidence.** Eleven mutations applied, all detected on the first run: every run reported
+  valid (9 tests fail), an unrequested artifact's absence treated as a gap (13), every capability
+  paired with the first field (2), a low-quality input called valid (2), an unreadable input called
+  `ERROR` instead of `UNSUPPORTED` (7), a missing artifact marked recoverable (1), a recoverable
+  failure reported as valid (3), the missing list dropped when a failure outranks it (1), the
+  primitive's own message replaced by a generic one (1), the path dropped from the metadata (1), the
+  wrong error kind named for a missing artifact (2).
+
 ### IMG-11 — Atomic persistence and `metadata.json`
 
 - **Type:** Validation
@@ -603,6 +648,79 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given a successful run, then `metadata.json` is parseable and contains processor, library versions, transformations and metrics.
 - **Evidence / DoD:** Failure-path test plus the namespace-ownership invariant (IMG-13, invariant 3); metadata schema assertion.
 - **Tags:** `# TODO: [RELEASE]` for crash-safety guarantees at filesystem level.
+
+- **Status: DONE.** Evidence: `src/docflow/image/primitives/atomic.py` implements the staging,
+  publication, cleanup and payload helpers; `publish_artifact` in
+  `src/docflow/image/primitives/publishing.py` now writes through the staging directory; tests live
+  in `tests/image/primitives/test_atomic.py` (24 tests). Both WBS acceptance criteria hold: a forced
+  failure leaves the namespace empty - asserted against a real encoding failure, not a simulated one
+  - and a successful run's `metadata.json` parses back and carries the processor, the library
+  versions, the transformations and the metrics.
+
+- **The staging form is `image/.tmp/<name>`, and for images that is the only one that works.** The
+  PDF processor stages a `page.png.tmp` sibling, and the first draft here did the same for symmetry.
+  It cannot work: `save_image` infers the encoder from the destination's **extension**, so a staged
+  `normalized.png.tmp` is rejected as an unsupported format before a byte is written. The directory
+  is what marks a file as not-an-artifact, and keeping the final name intact is what lets the writer
+  choose its codec. `temp_path` therefore changes the parent and never the name.
+
+- **A successful run must prune the staging directory, or success and failure look identical.** The
+  rename empties `.tmp` but leaves the directory behind, and the acceptance criterion is phrased as
+  "inspecting the namespace finds no `.tmp` files" - an empty `.tmp/` is indistinguishable from the
+  residue of a run that died. Six tests failed on this before it was fixed, which is the useful
+  direction: the tests were right and the implementation was incomplete. Both the success path and
+  the failure path now call `prune_staging_directory`.
+
+- **`TEMP_SUFFIX` is kept even though nothing writes it any more.** A file staged by an interrupted
+  earlier build, or by a caller staging its own write, carries that suffix; a cleanup that knew only
+  about the directory would walk past it and leave it for a reader to find. `discard_staged` sweeps
+  both forms, and a mutation that disables either sweep is caught.
+
+- **The required-key guard was extracted so it could be falsified at all.** It began inline in
+  `build_metadata_payload`, and the mutation battery found it *unreachable*: the literal the function
+  returns carries all seven keys by construction, so no caller could trigger it and no test could
+  kill a mutant that disabled it. Extracting `require_metadata_keys` makes the invariant both true
+  for any caller that assembles or amends a payload and provable by a test. This is the same class of
+  defect the PDF processor records - a branch no writer can produce is dead code until something
+  builds the input by hand.
+
+- **`abandon`'s reach is fixed by name, never by directory listing.** It removes the published
+  artifact names and the metadata file; it must not sweep the directory, or a caller pointing at a
+  shared path loses files this processor never wrote. A test leaves an unrelated file beside the
+  artifacts and asserts it survives, and a mutation that replaces the name loop with an `iterdir()`
+  sweep is caught by it.
+
+- **`PUBLISHED_FILE_NAMES` is restated rather than imported, because it is used to delete.**
+  Importing the pipelines' constants would make an edit in one of them silently widen a cleanup's
+  reach. A test asserts the tuple matches `normalize.NORMALIZED_FILE_NAME`, `variants.OCR_FILE_NAME`
+  and `variants.VLM_FILE_NAME`, so a drift is a red test rather than a quiet deletion.
+
+- **The failure path measures before it renames.** `get_image_dimensions` runs on the still-staged
+  array, so an artifact whose metadata could not be read is never published under its final name.
+  Reading the dimensions after the rename would leave a file that is briefly valid-looking and has
+  no dimensions to describe it.
+
+- **The metadata payload is expanded field by field, never through `dataclasses.asdict`.** The file
+  is a schema other tools read, so a record gaining a field should be a visible edit in this module
+  rather than a silent addition to the output. `processing_key` is `None` and `resolution` may be
+  `None`; both are the contract's "not computed" / "not determined" and not placeholders, and a test
+  scans every scalar in the payload for the placeholder values the contract forbids.
+
+- **The stale `# TODO: [MVP]` tags on the write path were removed, not deferred.** `normalize.py`,
+  `variants.py` and `publishing.py` each carried a note that IMG-11 would route writes through
+  `image/.tmp/` and a rename. IMG-11 is what does it, so the notes were resolved and deleted rather
+  than left to misdescribe the code. No tag replaced them: the behaviour is now implemented. What
+  remains outstanding is filesystem-level crash safety - surviving a power loss, not a process
+  failure - and that is `# TODO: [RELEASE]` scope. It is recorded here rather than inline, since the
+  WBS already carries the tag for this task.
+
+- **Mutation evidence.** Eleven mutations applied; ten were killed on the first run and the eleventh
+  is what exposed the unreachable guard above, after which all eleven were killed. The battery:
+  writing straight to the final name, no longer pruning the staging directory, `discard_staged`
+  skipping the `.tmp` directory, skipping the `.tmp` siblings, `abandon` skipping the metadata file,
+  `abandon` sweeping the whole directory, the payload losing a provenance key, `PUBLISHED_FILE_NAMES`
+  losing the VLM variant, the required-key guard disabled, the failure dropping the transformation
+  context, and the dimensions never measured.
 
 ### IMG-12 — `process_image` entry point
 

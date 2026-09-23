@@ -1,24 +1,18 @@
 """Publication of one processed image, and the description that travels with it.
 
-Every artifact this processor produces is written the same way: a directory that may not exist
-yet, a file that may be left from a previous run, an encode through the engine, and a reference
-file that may be left from a previous run, an encode through the engine, and a reference built from
-the bytes that actually landed on disk rather than from what the caller intended to write. That is
-one procedure, so it lives in one place.
+Every artifact this processor produces is written the same way: staged under ``image/.tmp/``, then
+renamed into place, so a reader that finds the final name finds a complete file. The reference that
+describes it is built from the bytes that actually landed on disk rather than from what the caller
+intended to write.
 
 Extracted once two pipelines needed it. Copying it would have meant two places to keep in step for
 the destination check, the reference construction and the failure context - and the failure context
-is the part that matters: ``metadata.json`` and a failure report both read it, so a second copy that
-drifted would produce records that disagree about what a run did.
+is the part that matters, because ``metadata.json`` and a failure report both read it, so a second
+copy that drifted would produce records that disagree about what a run did.
 
 The rule this module enforces is the one the plan states for the whole processor: **an artifact
-the destination check, the reference construction and the failure context - and the
-failure context is the part that matters: ``metadata.json`` and a failure report both read
-it, so a second copy that drifted would produce records that disagree about what a run
-did.
-the destination check, the reference construction and the failure context - and the failure
-context is the part that matters: ``metadata.json`` and a failure report both read it, so a
-second copy that drifted would produce records that disagree about what a run did.
+nobody asked for is never written**. ``image`` is ``None`` when a variant was not requested, and
+that is the only thing that returns ``None`` here rather than a reference.
 """
 
 from __future__ import annotations
@@ -26,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from docflow.image.contracts import ArtifactRef
+from docflow.image.primitives.atomic import prune_staging_directory, temp_path
 from docflow.image.primitives.engine import EngineChoice, ImageArray
 from docflow.image.primitives.failures import ImagePrimitiveError
 from docflow.image.primitives.load import get_image_dimensions, save_image
@@ -64,28 +59,31 @@ def publish_artifact(
     Raises:
         ImageEngineNotAvailableError: The engine is missing.
         ImagePrimitiveError: The write fails, carrying the applied transformations in its context.
-
-    # TODO: [MVP] writes in place; ``IMG-11`` routes this through ``image/.tmp/`` and a rename, so a
-    # failure part-way leaves no artifact under its final name.
     """
     if image is None:
         return None
 
     output_dir.mkdir(parents=True, exist_ok=True)
     destination = output_dir / file_name
-    if destination.exists():
-        # A previous run's artifact. Removed explicitly rather than relied upon to be overwritten,
-        # because `save_image` refuses an occupied destination and that refusal is a real safety
-        # property rather than an obstacle to route around.
-        destination.unlink()
+    # Staged inside the namespace and renamed into place (`IMG-11`), so a failure part-way leaves
+    # no artifact under its final name for a later stage to mistake for a result.
+    staged = temp_path(destination)
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.unlink(missing_ok=True)
 
     try:
-        save_image(image, destination, engine)
+        save_image(image, staged, engine)
     except ImagePrimitiveError as failure:
         failure.detail[TRANSFORMATION_CONTEXT_KEY] = list(transformations)
+        staged.unlink(missing_ok=True)
+        prune_staging_directory(staged.parent)
         raise
 
+    # The dimensions are measured before the rename, while the bytes are still staged: the rename
+    # itself can fail, and an artifact whose metadata was never read should not be published.
     dimensions = get_image_dimensions(image, engine)
+    staged.replace(destination)
+    prune_staging_directory(staged.parent)
     return ArtifactRef(
         path=destination,
         kind=kind,

@@ -164,9 +164,6 @@ def prepare_normalized_image(
         ImageEngineNotAvailableError: The engine is missing.
         ImagePrimitiveError: The write fails, with the transformations this run had applied carried
             into the failure's context so it points at the run that produced it.
-
-    # TODO: [MVP] writes in place; ``IMG-11`` routes this through ``image/.tmp/`` and a rename, so a
-    # failure part-way leaves no artifact under its final name.
     """
     if not options.normalize:
         return None
