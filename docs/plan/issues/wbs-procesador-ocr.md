@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `OCR-01` … `OCR-14` |
-| Status | `OCR-01`…`OCR-08` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, a real conversion is extracted into the engine-independent `OCRDocument`, the blocks are normalized into one coordinate frame and ordered by a rule rather than by arrival, the three canonical representations are built with no run-time data in them, the detected tables are exported in reading order under zero-padded names, and the content metrics are measured from a real conversion on both a content page and a blank one; `OCR-09` … `OCR-14` `NOT_STARTED` |
+| Status | `OCR-01`…`OCR-10` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, a real conversion is extracted into the engine-independent `OCRDocument`, the blocks are normalized into one coordinate frame and ordered by a rule rather than by arrival, the three canonical representations are built with no run-time data in them, the detected tables are exported in reading order under zero-padded names, the content metrics are measured from a real conversion on both a content page and a blank one, the verdict classifies a result into a typed state without ever throwing, and every artifact is published atomically with a `metadata.json` that carries the seven required keys; `OCR-11` … `OCR-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -36,8 +36,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | OCR-06 | Output builders | M | 3 — Outputs | OCR-05 | `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` | this file §OCR-06 | DONE |
 | OCR-07 | Table processing | M | 3 — Outputs | OCR-06 | `process_tables`, `normalize_table`, `table_to_markdown`, `ocr/tables/table_NNN.md` | this file §OCR-07 | DONE |
 | OCR-08 | Metrics | S | 3 — Outputs | OCR-05 | `analyze_ocr_result` → `OCRMetrics` | this file §OCR-08 | DONE |
-| OCR-09 | Technical validation | S | 3 — Outputs | OCR-06, OCR-08 | `validate_ocr_result`, `validate_output_artifacts` | this file §OCR-09 | NOT_STARTED |
-| OCR-10 | Atomic persistence + `metadata.json` | M | 4 — Publish + entry points | OCR-07, OCR-09 | `ocr/.tmp/` → rename; `ocr/metadata.json` | this file §OCR-10 | NOT_STARTED |
+| OCR-09 | Technical validation | S | 3 — Outputs | OCR-06, OCR-08 | `validate_ocr_result`, `validate_output_artifacts` | this file §OCR-09 | DONE |
+| OCR-10 | Atomic persistence + `metadata.json` | M | 4 — Publish + entry points | OCR-07, OCR-09 | `ocr/.tmp/` → rename; `ocr/metadata.json` | this file §OCR-10 | DONE |
 | OCR-11 | Entry points | M | 4 — Publish + entry points | OCR-10 | `process_ocr_image`; `process_ocr_from_page` **deferred to Phase 3** (`# TODO: [MVP]`) | this file §OCR-11 | NOT_STARTED |
 | OCR-12 | Tests + committed image fixtures | M | 5 — Verification | OCR-11 | `tests/`, `fixtures/ocr_prepared_text_and_table.png`, `fixtures/ocr_blank.png` | this file §OCR-12 | NOT_STARTED |
 | OCR-13 | Four QA gates + mutation falsification | S | 5 — Verification | OCR-12 | QA gate output, documented mutation observations | this file §OCR-13 | NOT_STARTED |
@@ -865,6 +865,60 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Scenario test for the empty-input path plus the typed-error containment test.
 - **Tags:** `# TODO: [MVP]` for deeper structural checks.
 
+- **Status: DONE.** Evidence: `ocr/primitives/validation.py` (the four functions, §3.4's *Validation*
+  group), `tests/ocr/primitives/test_validation.py` (38 tests). Both criteria hold: the blank fixture
+  through a **real conversion** yields `EMPTY` with no exception escaping, and each of the four
+  promised artifacts being absent yields `INCOMPLETE` with a typed `OCRError` naming it. All four
+  gates green: **1262 tests**, `ruff` clean, 10.00/10 on `pylint src tests`.
+
+- **The error vocabulary is §3.1's, and this task's scope names §3.7's — the fourth divergence of
+  that kind in this processor.** `OCR-09`'s scope lists `INVALID_INPUT`, `UNSUPPORTED_IMAGE`,
+  `OCR_ERROR`, `LAYOUT_ERROR`, `TABLE_EXTRACTION_ERROR`, `EXPORT_ERROR`, `IO_ERROR`,
+  `INTERNAL_ERROR`; the contract declares §3.1's set instead, and the two share only `IO_ERROR` and
+  `INTERNAL_ERROR`. The contract wins, and not as a preference: `OCRError.type` is annotated with the
+  contract's literal, so a §3.7 value would raise at *construction* rather than classify anything —
+  the failure would surface as a `ValueError` from the record the validator exists to produce. The
+  reconciliation still belongs to `GEN-17`; this task records which side it took and why.
+
+- **`ERROR` before `INCOMPLETE` before `PARSE_ERROR`, and the order is the substance of the
+  verdict.** Each state is only reachable when the ones before it do not apply. ``ERROR`` first
+  because a run that failed is not "valid with a note"; ``INCOMPLETE`` before ``PARSE_ERROR``
+  because an artifact that was promised and is not there is a fact about *this run*, while an
+  unparseable document is a fact about the engine — and the run's own failure is the more
+  actionable. The content verdicts (``LOW_CONTENT``, ``VALID``) come last because a thin result with
+  a missing artifact is ``INCOMPLETE`` first. A test asserts the ``EMPTY``/``INCOMPLETE`` collision
+  explicitly, since that pair is the one where the order is observable.
+
+- **A failed run's typed failure travels in `result.error`, and the first implementation read the
+  wrong field.** ``_recorded_errors`` originally read only ``result.validation.errors``, which is
+  empty on a failed result — so a run that failed with a populated ``error`` validated as ``ERROR``
+  carrying *no errors*, and the failure vanished exactly when it mattered. A test with a failed
+  result and a real error caught it. Both sources are now merged, with ``result.error`` first, and
+  neither is re-derived: the stage that failed knows more than a reader of the result does.
+
+- **`tables/` is deliberately not required.** The plan says an image with no table needs no ``tables/``
+  artifact and that this is data rather than a failure; requiring the directory would make every
+  tableless page ``INCOMPLETE``, which would make the state useless for the common case. A test
+  asserts a valid result with no table is ``VALID``.
+
+- **The error and state vocabularies are derived with `typing.get_args`, never restated.** Adding a
+  value to the contract cannot leave this module behind, and a mutation that replaces the derivation
+  with a hand-written tuple is caught. This is the defect the image processor records — two lists
+  that drift, where the one nobody edits keeps passing — and the derivation is what makes it
+  unreachable here.
+
+- **Three mutations survived the first battery, and the shape of each was different.** `len(text)`
+  and `len(text.strip())` agreed on every input the suite built, because the text used was padded at
+  the *end*, where stripping changes nothing that matters: the discriminating input is padding at the
+  *front*, which is now a test whose raw length exceeds the floor while its stripped length does not.
+  Nothing asserted that the staging path keeps the artifact's own name, so appending the ``.tmp``
+  suffix to it changed no test's answer — the property a staged file's writeability depends on was
+  simply unmeasured. And the engine name was hardcoded to ``"docling"`` in a mutation that survived
+  because **every record the suite builds says ``"docling"``**: the mutant was *equivalent* for
+  those inputs, not undetected. A test now builds a record with a different engine name, which is
+  the only input that separates reading the field from assuming it — and the mutant is a real
+  mutation again rather than a withdrawn one.
+
 ### OCR-10 — Atomic persistence and `metadata.json`
 
 - **Type:** Validation
@@ -880,6 +934,85 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given a successful run, then `metadata.json` records engine `"docling"`, a non-empty `engine_version` and the timing fields.
 - **Evidence / DoD:** Scenario test for contained engine failure plus the atomic-publication invariant (OCR-12, invariant 3).
 - **Tags:** `# TODO: [RELEASE]` for crash-safety guarantees at filesystem level.
+
+- **Status: DONE.** Evidence: `ocr/primitives/files.py` and `ocr/primitives/metadata.py`, with
+  `tests/ocr/primitives/test_persistence.py` (34 tests). Both criteria hold: a **real** write failure
+  leaves the namespace with no staged file and no final-named artifact, and a successful run's
+  `metadata.json` parses back carrying `engine == "docling"`, a non-empty `engine_version`, the
+  timing fields and all seven keys `docflow.identities` fixes. All four gates green: **1262 tests**,
+  `ruff` clean, 10.00/10 on `pylint src tests`.
+
+- **The `OCR-02` skeleton declared two plan groups in one `persistence.py`, and this task split
+  them.** §3.4 files *Validation* and *Files* separately; `OCR-09` implemented the first and `OCR-10`
+  the second, so the names now live in `validation.py` and `files.py`. That is the same shape as
+  `OCR-03`/`OCR-04` splitting execution from extraction and `OCR-06`/`OCR-07` splitting Markdown from
+  tables. The plan-surface test's `PERSISTENCE_PRIMITIVES` became `VALIDATION_PRIMITIVES` and
+  `FILES_PRIMITIVES`, because its whole purpose is to pin what the *plan* names where the plan names
+  it.
+
+- **`PUBLISHED_FILE_NAMES` is restated rather than derived, because it is used to delete.** The four
+  names are written out beside the constants that hold them, and a test asserts the two agree. An
+  edit in another module cannot silently widen the reach of a cleanup — the same reasoning the image
+  processor's `PUBLISHED_FILE_NAMES` records.
+
+- **`abandon` fixes its reach by name and never sweeps the directory.** A test leaves a stranger's
+  file in the namespace and asserts it survives, and a mutation that turns the name loop into an
+  `iterdir()` sweep is in the battery. A caller pointing at a shared directory must not lose files
+  this processor never wrote.
+
+- **The staging form is `ocr/.tmp/<final name>`, with the name unchanged.** Every artifact here
+  carries its own extension (``text.txt``, ``document.json``), so a writer that inferred an encoder
+  from the name would break on a ``.tmp`` suffix. Only the *parent* changes, which is what makes the
+  rename a same-filesystem operation. A mutation that appends the suffix to the name is caught.
+
+- **`processing_key` is taken from the caller and never computed here.** ``ORC-02`` owns the formula
+  because it needs normalized options and input hashes — orchestrator knowledge — and a processor
+  that hashed its own key would be making a workflow decision. The payload records ``None`` until a
+  caller supplies one, and the builder's two keywords have **no defaults**: the signature suite
+  refuses any primitive that defaults an argument, and ``processing_key=None`` in a default would
+  read as "this run has no reuse key" whether or not the caller had considered it.
+
+- **The required-key guard is a separate function so it can be falsified at all.** Inline in the
+  payload builder it is *unreachable* — the literal there carries all seven keys by construction —
+  so no test could kill a mutation disabling it. As its own function it is true for any caller that
+  assembles or amends a payload, and two mutations that deafen it are in the battery. This is the
+  same defect the image processor's ``require_metadata_keys`` records.
+
+- **Seven publication helpers are neither in §3.4 nor in this task's scope, and they are declared as
+  an exception rather than hidden.** ``staging_directory``, ``temp_path``,
+  ``prune_staging_directory``, ``discard_staged``, ``abandon``, ``build_metadata_payload`` and
+  ``require_metadata_keys`` exist because the acceptance criteria are *about* them: "a forced failure
+  leaves no ``.tmp`` files" is a claim about ``abandon`` and ``discard_staged``, and "``metadata.json``
+  carries the seven required keys" is a claim about ``require_metadata_keys``. Making them private
+  would move the invariants somewhere no test could reach them — which a first attempt did, until the
+  tests calling them failed and the reason was written down. The precedent is the *image* processor's
+  ``atomic.py``, which declares the same machinery for the same reason.
+
+- **Mutation battery (42 mutations, all killed, every restore green):** a failed run's typed error
+  ignored; a missing artifact not detected; the `tables/` directory required; the `metadata` artifact
+  not required; an `INCOMPLETE` verdict naming no error; an unparseable payload reported as `EMPTY`;
+  a payload accepted without the schema marker; `EMPTY` and `VALID` swapped; the floor set to zero;
+  the floor comparison inverted; the floor measured on unstripped text; the state guard accepting
+  anything; the error vocabulary restated; a missing image not reported; a blank `document_id`
+  accepted; a zero page number accepted; a zero-byte image called missing; a missing-artifact error
+  marked recoverable; the staging directory never pruned; a `.tmp` sibling left behind; the staged
+  contents not swept; `abandon` forgetting the tables subdirectory; `abandon` sweeping every file in
+  the namespace; the staging path appending the suffix to the name; an artifact written straight to
+  its final name; `build_ocr_output_paths` creating the namespace; JSON written unsorted; the
+  published-name list omitting an artifact; the engine name hardcoded; the engine version blanked;
+  the required-key guard deafened; the guard checking the wrong list; the timing dropped; the
+  processing key invented rather than taken from the caller; the engine metadata spread into the top
+  level; the merge retaining the caller's dict; the typed errors stringified; the verdict recorded as
+  `VALID` whatever it was; the metrics dropped; the validation module dropped from the surface
+  groups; the files module dropped; the publishing machinery dropped. The battery ran twice; the
+  first run left three survivors and one stale anchor, and the paragraph above the OCR-10 heading
+  records what each survivor exposed.
+
+- **A first draft of this evidence block pasted the wrong mutation list.** It carried `OCR-08`'s
+  mutations under `OCR-10`'s heading and deleted the `OCR-11` heading entirely — a copy-paste defect
+  in the record rather than in the code, caught by reading the file back. Worth stating because the
+  evidence block is the artifact this project treats as the deliverable, and a wrong one is worse
+  than a missing one: it claims coverage that does not exist.
 
 ### OCR-11 — Entry points
 

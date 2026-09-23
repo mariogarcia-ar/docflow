@@ -26,12 +26,13 @@ from docflow.ocr.primitives import (
     execution,
     export,
     extraction,
+    files,
     layout,
     metadata,
-    persistence,
     pipeline,
     rendering,
     text,
+    validation,
 )
 
 # The surface `subplan-procesador-ocr.md` §3.4 fixes, grouped as that section groups it. Written
@@ -139,18 +140,61 @@ have to appear here to pass — and it belongs to the same module for the same r
 TABLE_PIPELINE_PRIMITIVES = ("process_tables",)
 """The one table name ``OCR-07``'s scope has and §3.4's palette does not."""
 
-PERSISTENCE_PRIMITIVES = (
+VALIDATION_PRIMITIVES = (
     "validate_ocr_request",
     "validate_ocr_input",
     "validate_ocr_result",
     "validate_output_artifacts",
-    "build_ocr_output_paths",
+)
+
+FILES_PRIMITIVES = (
     "create_ocr_directory",
+    "build_ocr_output_paths",
     "ensure_directory",
     "write_text_atomic",
     "write_json_atomic",
     "read_json",
 )
+"""§3.4's *Validation* and *Files* groups, in two tuples and modules.
+
+``OCR-09`` and ``OCR-10`` split what the ``OCR-02`` skeleton declared as one ``persistence.py``,
+because §3.4 files them separately and a reader looking up a name should find it where the plan puts
+it.
+"""
+
+FILES_MACHINERY = (
+    "abandon",
+    "discard_staged",
+    "prune_staging_directory",
+    "staging_directory",
+    "temp_path",
+)
+METADATA_MACHINERY = (
+    "build_metadata_payload",
+    "require_metadata_keys",
+)
+"""The publication helpers neither §3.4 nor a task scope names, declared as an exception.
+
+They exist because the two acceptance criteria are *about* them: "a forced failure leaves no
+``.tmp``
+files and no final-named artifacts" is a claim about :func:`~docflow.ocr.primitives.files.abandon`
+and :func:`~docflow.ocr.primitives.files.discard_staged`, and "``metadata.json`` carries the seven
+required keys" is a claim about
+:func:`~docflow.ocr.primitives.metadata.require_metadata_keys`. Hiding them would move the
+invariants
+somewhere no test could reach them — the defect the image processor's own battery recorded, where
+the
+required-key guard was *unreachable* until it was extracted.
+
+They are declared rather than private for the reason the image processor's ``atomic.py`` records:
+these are the mechanisms the atomicity guarantee is made of, and a reader asking "how is a write
+made
+atomic here?" should find a documented answer rather than an underscore. The two tuples are split by
+owning module because :func:`_locate` searches the groups in order, and a name listed under the
+wrong
+module fails as "declares no ..." rather than as anything informative.
+"""
+
 
 METADATA_PRIMITIVES = (
     "build_ocr_metadata",
@@ -200,8 +244,9 @@ ALL_GROUPS = (
     (text, TEXT_PRIMITIVES),
     (rendering, RENDERING_PRIMITIVES + TABLE_PIPELINE_PRIMITIVES),
     (analyze, ANALYZE_PRIMITIVES),
-    (persistence, PERSISTENCE_PRIMITIVES),
-    (metadata, METADATA_PRIMITIVES),
+    (validation, VALIDATION_PRIMITIVES),
+    (files, FILES_PRIMITIVES + FILES_MACHINERY),
+    (metadata, METADATA_PRIMITIVES + METADATA_MACHINERY),
 )
 
 
@@ -221,8 +266,12 @@ def _locate(name: str) -> object:
 
 
 IMPLEMENTED = (
+    "abandon",
     "analyze_ocr_result",
+    "build_metadata_payload",
     "build_ocr_document",
+    "build_ocr_metadata",
+    "build_ocr_output_paths",
     "calculate_ocr_text_density",
     "clean_ocr_text",
     "configure_image_pipeline",
@@ -232,11 +281,14 @@ IMPLEMENTED = (
     "count_ocr_characters",
     "count_ocr_words",
     "count_tables",
+    "create_ocr_directory",
+    "discard_staged",
     "docling_module",
     "enable_layout_analysis",
     "enable_ocr",
     "enable_table_detection",
     "engine_provenance",
+    "ensure_directory",
     "export_docling_json",
     "export_docling_markdown",
     "export_docling_tables",
@@ -254,6 +306,7 @@ IMPLEMENTED = (
     "load_docling_pipeline",
     "loaded_engines",
     "merge_ocr_blocks",
+    "merge_ocr_metadata",
     "normalize_bbox",
     "normalize_docling_options",
     "normalize_layout",
@@ -262,13 +315,24 @@ IMPLEMENTED = (
     "normalize_table",
     "preserve_reading_order",
     "process_tables",
+    "prune_staging_directory",
+    "read_json",
+    "require_metadata_keys",
     "serialize_document_json",
     "should_enable_layout",
     "should_enable_ocr",
     "should_enable_reading_order",
     "should_enable_tables",
+    "staging_directory",
     "table_to_json",
     "table_to_markdown",
+    "temp_path",
+    "validate_ocr_input",
+    "validate_ocr_request",
+    "validate_ocr_result",
+    "validate_output_artifacts",
+    "write_json_atomic",
+    "write_text_atomic",
 )
 """Primitives whose tasks have landed, so they no longer raise ``NotImplementedError``.
 

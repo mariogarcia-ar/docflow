@@ -15,7 +15,8 @@ the surface can be checked against the plan without translating between two taxo
 * :mod:`~docflow.ocr.primitives.text` - ``OCR-05`` / ``OCR-08``. Measuring and canonicalizing.
 * :mod:`~docflow.ocr.primitives.rendering` - ``OCR-06`` / ``OCR-07``. Markdown and tables.
 * :mod:`~docflow.ocr.primitives.analyze` - ``OCR-08``. The metrics, composed from the groups above.
-* :mod:`~docflow.ocr.primitives.persistence` - ``OCR-09`` / ``OCR-10``. Validation and writes.
+* :mod:`~docflow.ocr.primitives.validation` - ``OCR-09``. The structural verdict.
+* :mod:`~docflow.ocr.primitives.files` - ``OCR-10``. Atomic publication in the namespace.
 * :mod:`~docflow.ocr.primitives.metadata` - ``OCR-10``. The provenance record.
 
 Nothing here is functional yet; every declared body raises :class:`NotImplementedError`, which is
@@ -32,12 +33,13 @@ from docflow.ocr.primitives import (
     execution,
     export,
     extraction,
+    files,
     layout,
     metadata,
-    persistence,
     pipeline,
     rendering,
     text,
+    validation,
 )
 
 __all__ = [
@@ -46,10 +48,11 @@ __all__ = [
     "execution",
     "export",
     "extraction",
+    "files",
     "layout",
     "metadata",
-    "persistence",
     "pipeline",
     "rendering",
     "text",
+    "validation",
 ]
