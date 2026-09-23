@@ -239,6 +239,57 @@ def rotate_image(image: ImageArray, degrees: float, engine: EngineChoice) -> Ima
     )
 
 
+def crop_region(
+    image: ImageArray, box: tuple[int, int, int, int], engine: EngineChoice
+) -> ImageArray:
+    """Extract an explicitly requested region as its own image.
+
+    **Explicit only.** Nothing here selects a region: the box comes from the caller, and the
+    subplan is emphatic that automatic region selection is out of bounds - "only *explicitly
+    requested* crops are produced". The region detector in
+    :mod:`docflow.image.primitives.analysis` reports where text is; deciding that one of those
+    places should become its own artifact is a workflow judgement this module does not make.
+
+    The box is validated rather than clipped. Slicing would accept ``(0, 0, 99999, 99999)``
+    and silently return the whole page, which is the "plausible wrong value" the plan's risk
+    table names: a caller who asked for a region and received a different one would have no
+    way to tell. A box that does not fit is a ``TRANSFORMATION_ERROR`` instead.
+
+    Args:
+        image: The decoded pixels, RGB or grayscale. Not modified.
+        box: The region as ``(x, y, width, height)`` in pixels, from the image's top-left
+            corner.
+        engine: The engine to transform with.
+
+    Returns:
+        A new image holding exactly that region.
+
+    Raises:
+        ImagePrimitiveError: The box is degenerate, leaves the image, or cannot be applied.
+    """
+    x, y, width, height = box
+    image_height, image_width = int(image.shape[0]), int(image.shape[1])
+
+    if width <= 0 or height <= 0:
+        raise classify_transformation_failure(
+            "crop_region",
+            f"the region has no area: {width}x{height}",
+        )
+    if x < 0 or y < 0 or x + width > image_width or y + height > image_height:
+        raise classify_transformation_failure(
+            "crop_region",
+            f"the region ({x}, {y}, {width}, {height}) leaves the {image_width}x"
+            f"{image_height} image; it is refused rather than clipped, because a clipped "
+            "crop is a different region than the one that was asked for",
+        )
+
+    # A slice rather than an engine call: the region is a view of the same pixels, so no
+    # interpolation is involved and the two engines cannot disagree about the result. This is
+    # the one transform in this module where reaching for the engine would be the bug.
+    _ = engine
+    return np.ascontiguousarray(image[y : y + height, x : x + width])
+
+
 def deskew_image(image: ImageArray, angle: float, engine: EngineChoice) -> ImageArray:
     """Straighten an image by the tilt :func:`detect_skew_angle` reported.
 
@@ -696,6 +747,7 @@ __all__ = [
     "compress_image",
     "convert_image_format",
     "convert_to_grayscale",
+    "crop_region",
     "denoise_image",
     "deskew_image",
     "normalize_brightness",

@@ -113,6 +113,25 @@ def build_image_request(tmp_path: Path) -> ImageRequest:
     )
 
 
+def build_image_request_for(source: Path, output_dir: Path) -> ImageRequest:
+    """Return a request for a real image, asking for everything the processor can produce.
+
+    Shared by the hardening module and the lab tool's tests, for the reason
+    :func:`build_pdf_request_for` gives: one builder means two suites cannot drift into
+    exercising different option sets. Both variants are requested because the second invariant
+    is about the two of them being independent, and an option set that asked for one would
+    test nothing.
+    """
+    return ImageRequest(
+        image_path=source,
+        output_dir=output_dir,
+        options=build_image_options(),
+        context=ImageContext(
+            document_id="doc-1", page_number=1, workflow_run_id="run-1"
+        ),
+    )
+
+
 def build_ocr_options() -> OCROptions:
     """Return a fully specified set of OCR options."""
     return OCROptions(
@@ -180,3 +199,30 @@ Shared by the page-level and hardening tests. Both assert the *complete* set rat
 as part of the page — the two suites would otherwise spell the same list twice and could
 drift into checking different trees.
 """
+
+IMAGE_ARTIFACT_TREE: tuple[str, ...] = (
+    "metadata.json",
+    "normalized.png",
+    "ocr_ready.png",
+    "vlm_ready.png",
+)
+"""The files a complete image run publishes, relative to ``image/``.
+
+The complete set, for the reason ``PAGE_ARTIFACT_TREE`` gives. It is deliberately *not*
+parameterised by the requested options: a run asked for fewer artifacts publishes a subset,
+and both suites assert the subset by naming it, so an artifact appearing that nobody asked
+for cannot hide behind a varying expected list.
+
+``regions/`` is absent because the subplan lists it as optional and no primitive can fill it
+— ``IMG-04`` has no crop — so a run that published it would be publishing a promise with
+nothing behind it.
+"""
+
+IMAGE_NAMESPACES_OWNED_BY_OTHERS: tuple[str, ...] = (
+    "source",
+    "render",
+    "native_text",
+    "ocr",
+    "llm",
+)
+"""Directories that belong to other processors and that this one must never write into."""

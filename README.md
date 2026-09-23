@@ -39,7 +39,7 @@ would be a silent stand-in, which this project forbids at every stage.
 | Phase | What | Owner |
 |---|---|---|
 | **0 — contracts & skeleton** | ✅ **done** | `GEN-01`…`GEN-06` |
-| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). 🔄 `image` started (`IMG-01`…`IMG-12` done). ⏳ `ocr`, `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
+| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). ✅ `image` **complete** (`IMG-01`…`IMG-15`, Waves 0–6). ⏳ `ocr`, `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
@@ -129,6 +129,8 @@ convention is in [`docs/plan/README.md` §4.1](docs/plan/README.md); the short v
 ```bash
 python scripts/tools/pdf.py split mi.pdf          # → var/tools/pdf/mi-<hash>/page_001/…
 python scripts/tools/pdf.py inspect mi.pdf
+python scripts/tools/image.py run page.png --ocr-ready --vlm-ready
+python scripts/tools/image.py metrics page.png
 python scripts/tools/workflow.py plan mi.pdf --dry-run
 ```
 
@@ -153,16 +155,21 @@ is: it reaches the four processors only through their public contracts.
 | Tool | Task | Exposes |
 |---|---|---|
 | `pdf.py` | `PDF-14` | ✅ `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` |
-| `image.py` | `IMG-15` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run`, `crop` |
+| `image.py` | `IMG-15` | ✅ `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run`, `crop` |
 | `ocr.py` | `OCR-14` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics`, `diff` |
 | `llm.py` | `LLM-16` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `workflow.py` | `ORC-20` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 
-**Only `pdf.py` exists so far** — see [`scripts/tools/README.md`](scripts/tools/README.md)
-for its command surface, output layout, exit codes and worked examples, and for the
-boundaries every tool must respect. The other four are built once their processor's own
+**`pdf.py` and `image.py` exist so far** — see [`scripts/tools/README.md`](scripts/tools/README.md)
+for their command surfaces, output layout, exit codes and worked examples, and for the
+boundaries every tool must respect. The other three are built once their processor's own
 acceptance evidence is green, so a missing tool means a missing processor rather than
 unfinished packaging.
+
+`image.py` exposes **separate `ocr-ready` and `vlm-ready` subcommands** on purpose. The two
+variants are not interchangeable — OCR wants one channel, deskewed and binarized, while a VLM
+needs the colour and layout intact — and a single `prepare` command would teach the opposite
+to the next person reading the tool.
 
 Two design notes worth knowing before they are written — `ocr.py` has **no** `--engine`
 flag, because Docling is fixed and never user-selectable; and `llm.py` requires `--provider`

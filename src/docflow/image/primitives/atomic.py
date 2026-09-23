@@ -114,6 +114,13 @@ def prune_staging_directory(staged_directory: Path) -> bool:
     Returns:
         Whether it was removed. ``False`` when it is absent or still holds another staged artifact,
         which is the ordinary case for a run publishing several files: the last rename prunes it.
+
+    # TODO: [RELEASE] the writes here are atomic against a *process* failure, not a *system*
+    # one. ``Path.replace`` is atomic on a POSIX filesystem, so a reader never sees a
+    # half-written artifact; but nothing here calls ``fsync`` on the file or on its directory, so
+    # a power loss can still lose a rename the caller has already been told succeeded. Closing
+    # that needs a durability barrier per artifact, which costs a sync on every publish and
+    # belongs with the rest of the operational hardening rather than in the PoC.
     """
     if not staged_directory.is_dir():
         return False

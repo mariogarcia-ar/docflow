@@ -11,8 +11,8 @@ that true is `docs/plan/README.md` §4.1 and the cross-cutting task `GEN-21`; th
 | Tool | Task | Status |
 |---|---|---|
 | [`pdf.py`](pdf.py) | `PDF-14` | ✅ available |
+| [`image.py`](image.py) | `IMG-15` | ✅ available |
 | `image_fixtures.py` | `IMG-03` | ✅ available — rebuilds the committed image fixtures |
-| `image.py` | `IMG-15` | not started — `process_image` does not exist yet |
 | `ocr.py` | `OCR-14` | not started |
 | `llm.py` | `LLM-16` | not started |
 | `workflow.py` | `ORC-20` | not started |
@@ -172,6 +172,72 @@ a whole document run, which the orchestrator is forbidden to do (`GEN-19`). A to
 outside both frontiers. **`workflow.py` will be the exception**, bound by the same
 prohibition the orchestrator is, because it composes the four processors rather than driving
 one.
+
+---
+
+## `image.py`
+
+### Requirements
+
+None beyond the library's own dependencies: OpenCV, numpy and Pillow, all declared in
+`pyproject.toml` and installed by `pip install -e .`.
+
+### Usage
+
+```text
+python scripts/tools/image.py info      page.png                    # format, size, resolution
+python scripts/tools/image.py metrics   page.png                    # full ImageMetrics
+python scripts/tools/image.py normalize page.png                    # → normalized.png
+python scripts/tools/image.py ocr-ready page.png                    # → ocr_ready.png
+python scripts/tools/image.py vlm-ready page.png                    # → vlm_ready.png
+python scripts/tools/image.py classify  page.png                    # one of the four values
+python scripts/tools/image.py run       page.png --ocr-ready --vlm-ready
+python scripts/tools/image.py crop      page.png --box 10,20,300,400
+```
+
+Global flags: `--out <dir>` (default `var/tools/image/`), `--json`.
+
+### Output layout
+
+```text
+var/tools/image/page-81f28fc2/
+├── normalized.png
+├── ocr_ready.png           # only when requested
+├── vlm_ready.png           # only when requested
+├── regions/region_001.png  # only for an explicit crop
+├── metadata.json           # the processor's own record
+└── tool-run.json           # which command produced this directory
+```
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | success |
+| `1` | the image could not be processed — the typed cause is printed, e.g. `ImagePrimitiveError: TRANSFORMATION_ERROR: the region (0, 0, 99999, 99999) leaves the 400x300 image` |
+| `2` | the arguments were wrong: no such file, unknown subcommand |
+
+A failure prints a cause, never a traceback.
+
+### Notes worth knowing
+
+- **`ocr-ready` and `vlm-ready` are separate subcommands.** They are not interchangeable: OCR
+  wants one channel, deskewed, denoised and binarized, while a VLM needs the colour and layout
+  intact. A single `prepare` command with a flag would teach the opposite — which is why the
+  split is a property of the tool's *surface*, not of its documentation.
+- **`metrics` and `classify` write no image.** They read and print; measuring leaves no residue.
+  The output directory is still created, because that is where the next command in the same
+  experiment writes.
+- **`crop` refuses a box it cannot honour.** A region that is degenerate or leaves the image is
+  a typed `TRANSFORMATION_ERROR`, never a silently clipped one: a clipped crop is a *different
+  region* than the one asked for, with nothing to tell you so. Write a negative coordinate as
+  `--box=-5,0,10,10`; argparse reads a bare `-5,...` as another option.
+- **There is no `--engine` flag.** The engine seam is not an operator preference: a flag would
+  let you produce a directory whose provenance the command line does not record. OpenCV is
+  compiled in, and that is what the lab exercises.
+- **`tool-run.json` is the tool's record, `metadata.json` is the processor's.** The tool writes
+  its own file rather than adding fields to the processor's, because that file is the
+  orchestrator's contract and a tool must not extend it from outside the library.
 
 ---
 

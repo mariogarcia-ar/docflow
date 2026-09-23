@@ -223,7 +223,9 @@ def test_no_contract_field_carries_an_undocumented_default() -> None:
     )
 
 
-def test_the_remaining_entry_points_raise_rather_than_placeholding() -> None:
+def test_the_remaining_entry_points_raise_rather_than_placeholding(
+    tmp_path: Path,
+) -> None:
     """The entry points still awaiting their task raise, rather than returning a stand-in.
 
     Phase 0 asserted this for every processor entry point. They have been given up one task at a
@@ -247,7 +249,6 @@ def test_the_remaining_entry_points_raise_rather_than_placeholding() -> None:
 
     document_request = build_document_request(Path("."))
     pdf_request = build_pdf_request(Path("."))
-    image_request = build_image_request(Path("."))
 
     with pytest.raises(NotImplementedError):
         workflow_module.process_document(document_request)
@@ -261,6 +262,11 @@ def test_the_remaining_entry_points_raise_rather_than_placeholding() -> None:
     assert not isinstance(failure.value, NotImplementedError)
 
     # Implemented, and it does not raise at all: the failure is the *result*, not an exception.
+    # The request is rooted in `tmp_path` rather than the working directory, because the image
+    # entry point publishes a failure record - so pointing it at `.` writes `image/metadata.json`
+    # into the repository root, which is not ignored and would show up in `git status`. The PDF
+    # entry point fails before it writes anything, which is why it can be handed `.` safely.
+    image_request = build_image_request(tmp_path)
     image_result = image_module.process_image(image_request, engine=EngineChoice.OPENCV)
     assert image_result.status == "failed"
     assert image_result.error is not None

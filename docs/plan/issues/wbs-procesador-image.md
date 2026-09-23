@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `IMG-01` … `IMG-15` |
-| Status | `IMG-01`…`IMG-12` **DONE** - contracts frozen, engine seam in place, images read, measured, classified, normalized, published atomically, validated and wired into one entry point; `IMG-13` … `IMG-15` `NOT_STARTED` |
+| Status | `IMG-01`…`IMG-15` **DONE** - the image processor is complete: contracts frozen, engine seam in place, images read, measured, classified, normalized, published atomically, validated, wired into one entry point, proven against its three invariants, gated and given a lab tool. |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -40,9 +40,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-10 | `validate_image_result` + typed error classification | S | 3 — Outputs | IMG-06 | `validate_image_result`, `ImageError` kinds | this file §IMG-10 | DONE |
 | IMG-11 | Atomic persistence + `metadata.json` | M | 4 — Publish | IMG-07, IMG-08, IMG-10 | `image/.tmp/` → rename; `image/metadata.json` | this file §IMG-11 | DONE |
 | IMG-12 | `process_image` entry point | M | 4 — Publish | IMG-09, IMG-11 | `process_image` | this file §IMG-12 | DONE |
-| IMG-13 | Happy-path + invariant tests, mutation evidence | M | 5 — Verify | IMG-12 | `tests/`, mutation observations | this file §IMG-13 | NOT_STARTED |
-| IMG-14 | Four QA gates clean | S | 5 — Verify | IMG-13 | QA gate output | this file §IMG-14 | NOT_STARTED |
-| IMG-15 | Lab tool `scripts/tools/image.py` | S | 6 — Lab tool | IMG-14 | `scripts/tools/image.py` | this file §IMG-15 | NOT_STARTED |
+| IMG-13 | Happy-path + invariant tests, mutation evidence | M | 5 — Verify | IMG-12 | `tests/`, mutation observations | this file §IMG-13 | DONE |
+| IMG-14 | Four QA gates clean | S | 5 — Verify | IMG-13 | QA gate output | this file §IMG-14 | DONE |
+| IMG-15 | Lab tool `scripts/tools/image.py` | S | 6 — Lab tool | IMG-14 | `scripts/tools/image.py` | this file §IMG-15 | DONE |
 
 ## 3. Detailed issues
 
@@ -842,6 +842,57 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Test output for the happy path plus both observations per invariant (fails under mutation, green after restore).
 - **Tags:** `# TODO: [MVP]` where a fixture stands in for a real-world scan.
 
+- **Status: DONE.** Evidence: `tests/image/test_hardening.py` (22 tests) carries the three
+  invariants with their mutations recorded beside them, plus the failure-path and purity checks;
+  `tests/factories.py` gained `build_image_request_for`, `IMAGE_ARTIFACT_TREE` and
+  `IMAGE_NAMESPACES_OWNED_BY_OTHERS`. All four mutations break their invariant and every restore
+  is green.
+
+- **The three invariants, and the observation for each.** Every one is a claim about *absence* —
+  no modified input, no aliased variant, no file outside the namespace — and absence is what a
+  passing test cannot demonstrate on its own, which is why the observation matters more than the
+  assertion.
+
+  1. **Input immutability.** Mutation: `prepare_normalized_image` publishes into
+     `self.request.image_path.parent` instead of `self.request.output_dir`. Observed: the
+     digest-and-listing test FAILS (the listing gained `normalized.png`); restored, 5 passed.
+     The *pair* is what makes this work — the source's bytes are untouched by that mutation, so a
+     digest-only test stays green. The harness also had to be taught to clean up: the mutation
+     writes into `tests/fixtures/image/` by design.
+  2. **OCR variant ≠ VLM variant.** Two mutations. (a) `publish_variants` writes the VLM
+     artifact under `OCR_FILE_NAME`: two tests fail, the paths collide. (b) `prepare_image_for_vlm`
+     returns `prepare_image_for_ocr(...)`: the same two tests fail, but now the *paths differ and
+     the VLM artifact comes back single-channel* — which is why the channel assertion exists.
+     Only (b) is caught by the channel counts alone, and only (a) by the paths alone; either
+     check on its own leaves one of the two mutations alive.
+  3. **Namespace ownership.** Mutation: the happy path publishes `metadata.json` to
+     `self.request.output_dir.parent`. Observed: two tests fail; the failure-path test stays
+     green, correctly, because that path has its *own* publication call — which is exactly why it
+     is a separate test.
+
+- **Defect found while building the harness: a mutation harness can execute its own mutation
+  after restoring the source.** Rewriting a file and restoring it inside the same
+  filesystem-timestamp granularity leaves the *mutated* `.pyc` in `__pycache__`, and Python then
+  keeps running the mutation. It presents as "the test does not recover after restore", which
+  reads like a defect in the test rather than in the harness. Every run now purges `__pycache__`
+  and sets `PYTHONDONTWRITEBYTECODE`. This matters beyond this task: it invalidates any mutation
+  battery that does not do it, including the ones run for `IMG-11` and `IMG-12`.
+
+- **`crop_region` did not exist, and the gap was between two artifacts.** The subplan §3.2 lists
+  it among the visual-analysis primitives and §10's `crop` subcommand drives it, but `IMG-04`'s
+  deliverable list does not include a crop and neither does `IMG-05`'s. It fell between them.
+  Left alone, `IMG-15` would have shipped a `crop` command with nothing behind it — the
+  reimplementation the tool's own out-of-bounds forbids. Added to `transform.py` with its tests,
+  and it validates its box rather than clipping it: a clipped crop is a *different region* than
+  the one asked for, which is the same "plausible wrong value" class as the contrast floor that
+  once misjudged the real corpus.
+
+- **The happy-path fixtures are synthetic, and the tag says so.** `color_layout.png`,
+  `skewed_text.png` and `embedded_logo.png` are drawn by `scripts/tools/image_fixtures.py`. They
+  exercise the code paths and the colour/grayscale distinction, which is what the invariants
+  need, but they are not scans. `# TODO: [MVP]` on the fixture tuple records that a real corpus
+  would be needed to say anything about quality.
+
 ### IMG-14 — Four QA gates clean
 
 - **Type:** QA gate
@@ -857,6 +908,37 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Then no bare `# type: ignore` exists in the new modules.
 - **Evidence / DoD:** Captured output of the four gates; review of the DoD checklist in the subplan §7.
 - **Tags:** —
+
+- **Status: DONE.** All four gates clean with the whole processor present: `pytest` **751
+  passed**, `ruff check .` "All checks passed!", `ruff format --check .` "110 files already
+  formatted", `pylint src tests` **10.00/10**.
+
+- **The DoD checklist, item by item.**
+  - *`process_image` maps `ImageRequest → ImageResult` with no import of another processor and no
+    workflow decision.* Checked in the source, not asserted: `test_no_other_processor_appears_in_the_image_processors_imports`
+    walks every module's AST and fails on any `docflow.pdf` / `docflow.ocr` / `docflow.llm` /
+    `docflow.workflow` import. The second half is a real test rather than a claim — the result
+    carries no `next_stage`, `requires_ocr`, `skip`, `force` or `resume` field, and there is no
+    such vocabulary anywhere in the module.
+  - *Input immutable; outputs published atomically under `image/` only.* Invariants 1 and 3,
+    each with its mutation observation.
+  - *OCR and VLM variants produced independently.* Invariant 2, with two mutations.
+  - *All shortcuts carry explicit tags.* Inventoried: 22 `# TODO: [MVP]` and 2
+    `# TODO: [RELEASE]` in `src/docflow/image/`. The `[RELEASE]` pair was **added by this task** —
+    one for the package-derived version, one recording that the atomic writes survive a *process*
+    failure but not a *system* one (`fsync` is a per-artifact durability barrier this PoC does not
+    pay for). The WBS tagged that deferral at task level; the DoD asks for it inline, and the
+    inline tag is the one an implementer reading the module actually sees.
+  - *Each invariant proven to fail under its documented mutation.* Four mutations, four failures,
+    four green restores.
+  - *No bare `# type: ignore`.* Verified: the two in `validation.py` both name `arg-type` and
+    `return-value`.
+
+- **No config-wide suppression was added.** `pyproject.toml` is untouched by this task. The
+  suppressions that exist are inline and each states why: `duplicate-code` in
+  `image/primitives/provenance.py` (a processor may not import a sibling, so the module is
+  unavoidably parallel to the PDF one) and in `tests/tools/test_image_tool.py` (two lab tools must
+  pass the same boundary checks, and a shared helper would hide the one that stopped applying).
 
 ### IMG-15 — Lab tool `scripts/tools/image.py`
 
@@ -874,6 +956,45 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the tool source, when its imports are inspected, then every operation resolves to `docflow.image` and no module under `src/docflow/` imports it.
 - **Evidence / DoD:** Both scenarios executed with output pasted; four QA gates green with the tool present; import-direction check.
 - **Tags:** —
+
+- **Status: DONE.** Evidence: `scripts/tools/image.py` and `tests/tools/test_image_tool.py` (23
+  tests). Both acceptance scenarios hold, executed as a subprocess the way an operator runs it.
+
+- **Scenario 1, executed.** On a copy of `skewed_text.png`:
+  `run page.png --ocr-ready --vlm-ready` → `success (VALID)`, classification `TEXT_IMAGE`,
+  artifacts `normalized.png`, `ocr_ready.png`, `vlm_ready.png`. Read back from disk: the OCR
+  variant is `(300, 400)` single-channel, the VLM variant `(300, 400, 3)` colour — two distinct
+  files that are genuinely different representations, not two names for one image. The source's
+  SHA-256 is identical before and after.
+
+- **Scenario 2, executed.** `test_every_operation_resolves_to_a_docflow_image_call` asserts the
+  tool imports only `docflow.image.*` and no sibling processor;
+  `test_the_library_imports_cleanly_with_scripts_deleted` runs a fresh interpreter with only
+  `src/` on the path and asserts nothing named `scripts` is loaded;
+  `test_nothing_in_the_library_imports_the_tool` scans every library module for a reference. The
+  tool spawns no process at all, so no operation can be hiding behind a shell.
+
+- **`--engine` does not exist, and the check for it inspects the parser.** A flag would let an
+  operator produce a directory whose provenance the command line does not record. The first draft
+  of the test searched the source text and failed immediately — because the module docstring
+  names `--engine` while explaining that it is deliberately absent. That is the same false
+  positive `tests/tools/test_pdf_tool.py` records for `subprocess` and for its workflow
+  vocabulary: only *declared arguments* and *executable code* are inspected, never prose.
+
+- **`crop` drives `crop_region`, which had to be written first.** See the `IMG-13` block: the
+  primitive was listed in the subplan and delivered by no task. The tool's own out-of-bounds
+  forbids reimplementing it, so it could not be faked with a slice here — which is what surfaced
+  the gap.
+
+- **`--json` emits only JSON, and the human mode emits no JSON.** Asserted both ways: the JSON
+  mode is parsed and the plain mode is asserted *not* to parse. An earlier design printed JSON
+  and then a summary on top, which made the flag change nothing but the noise.
+
+- **The tool writes its own record, never into the processor's.** `run` leaves
+  `tool-run.json` beside the artifacts, naming the command and the engine.
+  `test_the_tool_adds_no_field_to_the_processors_metadata` asserts the processor's
+  `metadata.json` gained no `tool` or `command` key: that file is the orchestrator's contract and a
+  tool must not extend it from outside the library.
 
 ```gherkin
 Scenario: Both variants, independently requested

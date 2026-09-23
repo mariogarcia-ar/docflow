@@ -70,6 +70,7 @@ TRANSFORMS = (
     "deskew_image",
     "resize_image",
     "convert_to_grayscale",
+    "crop_region",
     "binarize_image",
     "denoise_image",
     "sharpen_image",
@@ -97,6 +98,10 @@ def call_transform(name: str, image: np.ndarray, *extra: object) -> np.ndarray:
         return function(image, *(extra or ("png",)), ENGINE)
     if name == "compress_image":
         return function(image, *(extra or (60,)), ENGINE)
+    if name == "crop_region":
+        # A box that fits any of these fixtures, so the parametrised guards exercise the
+        # primitive rather than its bounds check — which has its own tests below.
+        return function(image, *(extra or ((0, 0, 40, 30),)), ENGINE)
     return function(image, *extra, ENGINE)
 
 
@@ -462,3 +467,84 @@ def test_the_private_helpers_stay_private() -> None:
         assert name in exported
     assert "BINARIZATION_THRESHOLD" in exported
     assert not [name for name in exported if name.startswith("_")]
+
+
+# ======================================================================================
+# crop_region — added by IMG-15, which needed it and found it missing
+# ======================================================================================
+# The subplan lists `crop_region` among the visual-analysis primitives (§ 3.2) and the lab
+# tool's `crop` subcommand drives it, but no task in the WBS delivered it: `IMG-04`'s
+# deliverable list does not name it and `IMG-05`'s does not either. It lived in the gap
+# between the two artifacts, so `IMG-15` supplies it rather than shipping a `crop` command
+# with nothing behind it.
+
+
+@pytest.mark.parametrize("engine", [EngineChoice.OPENCV, EngineChoice.PILLOW])
+def test_crop_region_returns_exactly_the_requested_box(engine: EngineChoice) -> None:
+    """The region's pixels are the image's, at the offsets asked for.
+
+    Parametrised over both engines because this is the one transform that must behave
+    identically under each: it is a slice, not a resample, so no interpolation is involved and
+    there is no legitimate reason for the two to differ.
+    """
+    image = load_image(COLOR_LAYOUT, engine)
+
+    region = transform.crop_region(image, (10, 20, 60, 40), engine)
+
+    assert region.shape == (40, 60, image.shape[2])
+    assert (region == image[20:60, 10:70]).all()
+
+
+def test_crop_region_leaves_its_input_untouched() -> None:
+    """The module's contract: every transform returns a new array."""
+    image = load_image(COLOR_LAYOUT, ENGINE)
+    before = image.copy()
+
+    transform.crop_region(image, (5, 5, 20, 20), ENGINE)
+
+    assert (image == before).all()
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        (0, 0, 0, 10),
+        (0, 0, 10, 0),
+        (0, 0, -5, 10),
+        (-5, 0, 10, 10),
+        (0, -5, 10, 10),
+        (200, 0, 100, 10),
+        (0, 0, 99999, 99999),
+    ],
+)
+def test_crop_region_refuses_a_box_it_cannot_honour(
+    box: tuple[int, int, int, int],
+) -> None:
+    """A degenerate or out-of-range box is a typed failure, never a clipped region.
+
+    Clipping is the tempting shortcut and it is the forbidden one: the caller would receive an
+    image that is not the region they asked for, with nothing to distinguish it. This is the
+    same class of defect as the contrast floor that misjudged real corpus JPEGs — a plausible
+    wrong value is worse than a refusal.
+    """
+    image = load_image(COLOR_LAYOUT, ENGINE)
+
+    with pytest.raises(ImagePrimitiveError) as raised:
+        transform.crop_region(image, box, ENGINE)
+
+    assert raised.value.error_type == "TRANSFORMATION_ERROR"
+
+
+def test_crop_region_accepts_a_box_that_exactly_fills_the_image() -> None:
+    """The boundary is inclusive: a region equal to the whole image is legitimate.
+
+    An off-by-one in the bounds check would reject it, and the region a caller is most likely
+    to ask for by hand is the whole page.
+    """
+    image = load_image(COLOR_LAYOUT, ENGINE)
+    height, width = int(image.shape[0]), int(image.shape[1])
+
+    region = transform.crop_region(image, (0, 0, width, height), ENGINE)
+
+    assert region.shape == image.shape
+    assert (region == image).all()
