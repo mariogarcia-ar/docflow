@@ -39,7 +39,7 @@ would be a silent stand-in, which this project forbids at every stage.
 | Phase | What | Owner |
 |---|---|---|
 | **0 — contracts & skeleton** | ✅ **done** | `GEN-01`…`GEN-06` |
-| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). ✅ `image` **complete** (`IMG-01`…`IMG-15`, Waves 0–6). ⏳ `ocr`, `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
+| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). ✅ `image` **complete** (`IMG-01`…`IMG-15`, Waves 0–6). 🔄 `ocr` started (`OCR-01`…`OCR-02` done). ⏳ `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
@@ -74,7 +74,15 @@ Per-task status is authoritative in [`docs/plan/issues/wbs-procesador-pdf.md`](d
   - `tests/test_packaging.py` asserts that every module the engine seam loads is provided by a
     declared dependency, so a new engine cannot be added without its pin.
 
-`ocr` and `llm` need no engine yet — Docling and the model backends land with their own phases.
+`ocr` needs Docling, which is declared in `pyproject.toml` and installed by `pip install -e .`. It
+is a large dependency: it pulls the model stack, and a first run downloads models. `llm` needs no
+engine yet — its backends land with their own phase.
+
+**Docling is pinned with a compatible-release specifier** (`docling~=2.126.0`), not a bare `>=`.
+The OCR subplan's determinism posture is "same image + same engine version + same normalized
+options ⇒ same logical output structure", and its risk table names Docling schema changes between
+versions: a major bump could move that schema while the recorded `engine_version` remained the
+only clue that a re-run's structure changed for a reason other than its input.
 
 
 ## Setup
@@ -416,6 +424,23 @@ Recorded here so the first `GEN-17` reconciliation does not have to rediscover t
    installed. The pins are now in place and `tests/test_packaging.py` guards them, so the drift
    cannot recur silently. The ordering lesson belongs to `GEN-17`: an engine seam that resolves its
    libraries through `importlib` is invisible to every static check this repo runs.
+
+6. **`subplan-procesador-ocr.md` gives two different failure vocabularies.** §3.1 (*Contract
+   types*, the authoritative table) names `MISSING_FILE`, `UNSUPPORTED_FORMAT`, `DECODE_ERROR`,
+   `ENGINE_ERROR`, `PARSE_ERROR`, `WRITE_ERROR`, `IO_ERROR`, `INTERNAL_ERROR`. §3.7 (*Error-handling
+   posture*) names `INVALID_INPUT`, `UNSUPPORTED_IMAGE`, `OCR_ERROR`, `LAYOUT_ERROR`,
+   `TABLE_EXTRACTION_ERROR`, `EXPORT_ERROR`, `IO_ERROR`, `INTERNAL_ERROR`. The two share two
+   values. `OCR-01` ships §3.1's set, because that is the section that presents a contract and
+   `OCR-01`'s acceptance criterion says "exactly the values named in the subplan" — the divergence
+   is recorded in `ocr/contracts.py` beside the literal. `GEN-17` owns the reconciliation.
+
+7. **`crop_region` was named by the image subplan and delivered by no task.** §3.2 lists it among
+   the visual-analysis primitives and §10's `crop` subcommand drives it, but neither `IMG-04`'s
+   nor `IMG-05`'s deliverable list includes a crop, so it fell between them. `IMG-15` supplies it
+   in `image/primitives/transform.py` rather than shipping a `crop` command with nothing behind it.
+   The same class of gap is worth watching as the remaining processors land: a primitive named in
+   design prose and absent from every task's deliverables is invisible until something tries to
+   call it.
 
 Three smaller ones were resolved while writing the contracts, each noted in the module
 docstring where it lives: `DocumentResult.processing_key` (required by `GEN-04` but absent from

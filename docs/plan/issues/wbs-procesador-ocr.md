@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `OCR-01` … `OCR-14` |
-| Status | All issues `NOT_STARTED` |
+| Status | `OCR-01`…`OCR-02` **DONE** - the contract is frozen and the Docling seam is in place with every downstream signature declared; `OCR-03` … `OCR-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -28,8 +28,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 | ID | Task (short) | Effort | Wave | Depends on | Deliverable artifact(s) | Issue file | Status |
 |---|---|---|---|---|---|---|---|
-| OCR-01 | Sub-package skeleton + contract dataclasses | S | 1 — Foundations | — | `src/docflow/ocr/`, `OCRRequest`, `OCRResult`, `NormalizedOCROptions`, `OCRMetrics`, `OCRMetadata`, `OCRValidation`, `OCRError`, `ArtifactPaths` | this file §OCR-01 | NOT_STARTED |
-| OCR-02 | Docling seam + pin | S | 1 — Foundations | OCR-01 | `ocr/primitives/`, `docling` pinned in `pyproject.toml` | this file §OCR-02 | NOT_STARTED |
+| OCR-01 | Sub-package skeleton + contract dataclasses | S | 1 — Foundations | — | `src/docflow/ocr/`, `OCRRequest`, `OCRResult`, `NormalizedOCROptions`, `OCRMetrics`, `OCRMetadata`, `OCRValidation`, `OCRError`, `ArtifactPaths` | this file §OCR-01 | DONE |
+| OCR-02 | Docling seam + pin | S | 1 — Foundations | OCR-01 | `ocr/primitives/`, `docling` pinned in `pyproject.toml` | this file §OCR-02 | DONE |
 | OCR-03 | Pipeline/config primitives | M | 2 — Engine + extraction | OCR-02 | `load_docling_pipeline`, `configure_image_pipeline`, `enable_*`, `normalize_docling_options` | this file §OCR-03 | NOT_STARTED |
 | OCR-04 | Execution + extraction primitives | M | 2 — Engine + extraction | OCR-03 | `convert_image_with_docling`, `extract_docling_*`, `OCRDocument` | this file §OCR-04 | NOT_STARTED |
 | OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering | this file §OCR-05 | NOT_STARTED |
@@ -61,6 +61,37 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Type hints complete; Google-style docstrings; `ruff check .` and `pylint src tests` clean.
 - **Tags:** —
 
+- **Status: DONE.** Evidence: `src/docflow/ocr/contracts.py` holds every type the scope names, plus
+  `OCRContext`, `OCRStatus`, `OCRBlockType` and `OCRDocument`; `tests/ocr/test_contracts.py`
+  (``GEN-06``) round-trips the contract against an in-memory fake. All four gates green.
+
+- **The contract already existed — `OCR-01` was never executed.** Phase 0 (`GEN-02`) created the
+  dataclasses so the five contracts could be round-tripped before any engine existed, and the file
+  has been complete since. But the task was never *closed*: no status line, no evidence block, and
+  the WBS still read `NOT_STARTED`. Executing it was therefore about proving the acceptance
+  criteria rather than writing types, and one of them did not hold as written.
+
+- **Defect: the subplan gives two different failure vocabularies, and the contract had picked one
+  without saying so.** `subplan-procesador-ocr.md` §3.1 (the *Contract types* table) names
+  `MISSING_FILE`, `UNSUPPORTED_FORMAT`, `DECODE_ERROR`, `ENGINE_ERROR`, `PARSE_ERROR`,
+  `WRITE_ERROR`, `IO_ERROR`, `INTERNAL_ERROR`. §3.7 (the *error-handling posture*) names
+  `INVALID_INPUT`, `UNSUPPORTED_IMAGE`, `OCR_ERROR`, `LAYOUT_ERROR`, `TABLE_EXTRACTION_ERROR`,
+  `EXPORT_ERROR`, `IO_ERROR`, `INTERNAL_ERROR`. **The two share exactly two values.**
+
+  `OCR-01`'s acceptance criterion is that the values be "exactly the values named in the subplan",
+  which cannot be satisfied by both. §3.1 wins, and the reasoning is in the module rather than in
+  this document: §3.1 is the section that presents a contract, §3.7 is a posture statement that
+  lapses into the idea's prose, and §3.1 is the only place the subplan actually *names* contract
+  values. The literal now carries that argument, so a reader who finds §3.7 first is not left
+  guessing - and `GEN-17` owns the reconciliation.
+
+- **Acceptance criterion verified, not assumed.** "Given the contract module, when a required field
+  is omitted, then construction fails" is asserted by `tests/test_skeleton.py`'s
+  no-undocumented-default check, which enumerates every dataclass field in every contract module
+  and refuses any default that is not argued for in `ALLOWED_DEFAULTS`. `OCROptions.language` is
+  `str | None` with no default, which is the correct shape: the subplan's table says "or ``None``
+  to leave it to the engine", and `None` here is a *requested* value rather than a missing one.
+
 ### OCR-02 — Docling seam and dependency pin
 
 - **Type:** Skeleton
@@ -76,6 +107,63 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given `pyproject.toml`, then the Docling version is pinned.
 - **Evidence / DoD:** Import check plus a test asserting non-empty `engine_version`; four QA gates green on the skeleton.
 - **Tags:** `# TODO: [RELEASE]` for engine upgrade policy.
+
+- **Status: DONE.** Evidence: `src/docflow/ocr/primitives/engine.py` is the seam and the only module
+  that names Docling; `src/docflow/ocr/primitives/` declares **43 signatures** across seven
+  modules, grouped exactly as `subplan-procesador-ocr.md` §3.4 groups them;
+  `tests/ocr/primitives/test_engine.py` (13 tests) and `test_signatures.py` (143 tests) cover both.
+  All four gates green: **903 tests**, `ruff` clean, 10.00/10 on `pylint src tests`.
+
+- **The engine pin is a compatible-release specifier, not a bare `>=`.** `docling~=2.126.0`. The
+  subplan's determinism posture is "same image + same engine version + same normalized options ⇒
+  same logical output structure" (§3.6), and §8 names "Docling schema changes between versions" as
+  a risk. `>=2.0` would admit 3.0, where that schema may have moved, and the recorded
+  `engine_version` would then be the only clue that a re-run's structure changed for a reason other
+  than its input.
+
+- **Two facts about the Docling distribution, both measured rather than assumed.** They are worth
+  recording because each one breaks a natural assumption:
+
+  1. **The module `docling` is provided by the distribution `docling-slim`.** `docling` 2.126.0 is a
+     thin meta-package whose only base requirement is `docling-slim[standard]`, and it is
+     *docling-slim* that owns the files. Declaring `docling` is still correct — it is the name that
+     pulls the `[standard]` extras the OCR models live in — but a naive check that the manifest's
+     literal names provide the modules it loads reports the engine as uncovered.
+  2. **`DocumentConverter` is not an attribute of the package.** Docling imports its submodules
+     lazily, so `import docling` leaves `docling.document_converter` unreachable and
+     `hasattr(docling, "document_converter")` is `False` until something imports the submodule —
+     and importing it sets the attribute as a side effect of Python's import machinery. The seam
+     therefore names the *submodule*, and the test that pins this runs in a fresh interpreter,
+     because an in-process version of it asserts a fact about test order rather than about Docling.
+
+- **`tests/test_packaging.py` had a hole, found by closing this task.** The guard written for
+  `IMG-11` derived its module roots from the image seam alone, so `docling` was declared in the
+  manifest while the test that exists to verify such declarations could not see it. It now:
+
+  * resolves the manifest's **transitive closure**, because that is what `pip install` puts on disk
+    — and the `docling` / `docling-slim` split is exactly the case where the literal name is not
+    the providing distribution. Extra-gated requirements are excluded: a module that only appears
+    when an optional extra is requested is not something a base install can rely on.
+  * **discovers the seams from the filesystem** and asserts each is registered, so adding a
+    processor seam without registering it fails rather than passing quietly.
+  * **distinguishes pip-importable seams from system-binary ones.** That discovery immediately
+    found the PDF seam, whose engine is Poppler — installable by no package manager `pip` drives. A
+    second test asserts no binary engine has been smuggled into `dependencies`, where it would be a
+    requirement a resolver cannot honour.
+
+- **No engine choice exists, and a test says so.** Unlike the image processor, there is no
+  `EngineChoice`, no `AUTO` member and no engine parameter: the plan fixes Docling as the only
+  engine and puts a selectable engine out of bounds. Worth a test rather than a comment because the
+  obvious refactor — copying the image seam's shape — would introduce one.
+
+- **Every stub raises `NotImplementedError`, and the signature suite asserts that it still does.**
+  `test_every_primitive_is_implemented_not_a_stub` is the *inverse* of the guard the image suite
+  ended up with: there the stubs had all been filled and the test flipped to assert no stub
+  remained. Here nothing is implemented yet, so the assertion is that the surface refuses rather
+  than returning a plausible value — a skeleton returning `0` would put a measured-looking zero
+  into every `OCRMetrics`. Each of `OCR-03` … `OCR-10` must move its primitives out of that list as
+  it lands, which is the point: a task that implements a primitive without updating the guard is
+  caught by the guard.
 
 ### OCR-03 — Pipeline and configuration primitives
 

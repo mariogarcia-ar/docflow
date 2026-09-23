@@ -40,6 +40,26 @@ OCRErrorType = Literal[
     "IO_ERROR",
     "INTERNAL_ERROR",
 ]
+"""The failure vocabulary, from the subplan's authoritative contract table (§3.1).
+
+**A second list in the same document disagrees with this one, and this is the one that wins.**
+``subplan-procesador-ocr.md`` §3.7 names a different set - ``INVALID_INPUT``,
+``UNSUPPORTED_IMAGE``, ``OCR_ERROR``, ``LAYOUT_ERROR``, ``TABLE_EXTRACTION_ERROR``,
+``EXPORT_ERROR``, ``IO_ERROR``, ``INTERNAL_ERROR`` - and the two share only ``IO_ERROR`` and
+``INTERNAL_ERROR``. That is nine distinct kinds where this contract has eight, with almost no
+overlap.
+
+The resolution is not a coin toss. §3.1 is the section titled *Contract types*; §3.7 is a
+posture statement about how failures are handled, and it is the section that lapses into the
+idea's prose rather than the frozen vocabulary. ``OCR-01``'s own acceptance criterion says the
+values must be "exactly the values named in the subplan", and the only place the subplan
+*names* contract values is §3.1 - §3.7 does not present its list as a contract at all. So this
+literal is the table's, and §3.7's list is recorded as the divergence rather than adopted.
+
+Recording it rather than quietly picking one matters because a reader who finds §3.7 first will
+classify a failure as ``OCR_ERROR`` and get an ``ImagePrimitiveError``-style ``ValueError`` from
+the validator that exists to catch exactly that. The reconciliation belongs to ``GEN-17``.
+"""
 
 # Structural role of a block. Deliberately generic: no domain vocabulary.
 OCRBlockType = Literal[

@@ -27,6 +27,22 @@ dependencies = [
     "opencv-python-headless>=4.10",
     # The second image engine; `PILLOW_ENGINE_NAME` in the seam.
     "Pillow>=10.0",
+    # The one and only OCR engine (`subplan-procesador-ocr.md` §3.5: "Docling is the only OCR
+    # engine"), reached through `ocr/primitives/engine.py`.
+    #
+    # A **compatible-release** specifier, not a bare `>=`. `subplan-procesador-ocr.md` §3.6 makes
+    # "same engine version ⇒ same logical output structure" the determinism posture, and §8 names
+    # "Docling schema changes between versions" as a risk. `>=2.0` would admit 3.0, where that
+    # schema may have moved, and the recorded `engine_version` would then be the only clue that a
+    # re-run's structure changed for a reason other than its input. `~=2.126.0` pins the minor
+    # while still taking patch releases.
+    #
+    # Docling is a large dependency (it pulls the model stack, and a first run downloads models).
+    # That is the price of the processor's whole function, not an optional extra.
+    #
+    # `# TODO: [RELEASE]` the engine upgrade policy: a deliberate, tested bump with the
+    # determinism fixtures re-run, rather than a version that moves when a resolver feels like it.
+    "docling~=2.126.0",
 ]
 # Not declared, and deliberately so:
 #
@@ -34,8 +50,9 @@ dependencies = [
 #   binary reached through `subprocess`, not a Python distribution. `pip` cannot install it; the
 #   container image is where it belongs, and `PDF-02` records the miss as a typed
 #   `PopplerNotAvailableError` rather than a silent substitute.
-# * **docling** and the `ocr` / `llm` engines: not yet implemented, so not yet dependencies.
-#   `tests/test_skeleton.py::ENGINE_MODULES` lists the names the lazy-import rule covers.
+# * The `llm` engines (Ollama / vLLM / a hosted API): not yet implemented, so not yet
+#   dependencies. `tests/test_skeleton.py::ENGINE_MODULES` lists the names the lazy-import rule
+#   covers.
 
 [project.optional-dependencies]
 dev = [
