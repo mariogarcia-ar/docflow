@@ -6,7 +6,7 @@
 | Phase | **1 — Processors, independently** (`docs/plan/README.md` §5) |
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
-| ID range | `PDF-01` … `PDF-14` |
+| ID range | `PDF-01` … `PDF-13` |
 | Status | All issues `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
@@ -16,9 +16,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Field | Value |
 |---|---|
 | Phase | 1 — processors, independently (parallel with `image`, `ocr`, `llm`) |
-| ID range | PDF-01 … PDF-14 |
-| # tasks | 14 |
-| Effort distribution | S ×6 (PDF-01, 05, 08, 11, 12, 14) · M ×8 (PDF-02, 03, 04, 06, 07, 09, 10, 13) · L ×0 |
+| ID range | PDF-01 … PDF-13 |
+| # tasks | 13 |
+| Effort distribution | S ×5 (PDF-01, 05, 08, 11, 12) · M ×8 (PDF-02, 03, 04, 06, 07, 09, 10, 13) · L ×0 |
 | Critical path | `PDF-01 → PDF-02 → PDF-04 → PDF-09 → PDF-10 → PDF-11` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
@@ -41,7 +41,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | NOT_STARTED |
 | PDF-12 | Atomic persistence | S | 4 — Hardening | PDF-09, PDF-10 | `.tmp` → validate → rename across all artifacts | this file §PDF-12 | NOT_STARTED |
 | PDF-13 | Fixtures + tests | M | 4 — Hardening | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 | `fixtures/pdf_sample_*.pdf`, `tests/` | this file §PDF-13 | NOT_STARTED |
-| PDF-14 | Lab tool `scripts/tools/pdf.py` | S | 5 — Lab tool | PDF-13 | `scripts/tools/pdf.py` | this file §PDF-14 | NOT_STARTED |
 
 ## 3. Detailed issues
 
@@ -253,36 +252,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given each invariant test, when its documented mutation is applied to the source, then the test fails; after restoring the source, it is green again.
 - **Evidence / DoD:** Test run output for the happy path; both observations (failure under mutation, green after restore) reported per invariant.
 - **Tags:** `# TODO: [MVP]` where a fixture stands in for a real-world document.
-
-### PDF-14 — Lab tool `scripts/tools/pdf.py`
-
-- **Type:** Tooling
-- **Effort:** S
-- **Wave:** 5 — Lab tool
-- **Depends on:** PDF-13
-- **Blocks:** —
-- **Objective:** Give an operator a command-line way to exercise this processor by hand, without writing throwaway Python and without going through the orchestrator.
-- **Scope / Deliverables:** `scripts/tools/pdf.py` with the subcommands `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` and the global flags `--out` / `--json`; default output root `var/tools/pdf/<stem>-<hash>/`; the command surface, layout and boundaries documented in `subplan-procesador-pdf.md` §10.
-- **Out of bounds:** No reimplementation of any extraction, decoding or classification — every subcommand resolves to a `docflow.pdf` function or primitive; no import of the tool from `src/docflow/`; no workflow decision (`REUSE` / `SKIP` / `FORCE` / `RESUME`) in the tool; no new contract, options type or library behaviour.
-- **Acceptance criteria:**
-  - Given a valid multi-page PDF, when `python scripts/tools/pdf.py split mi.pdf` runs, then `var/tools/pdf/mi-<hash>/page_NNN/source/page.pdf` exists for every page and the input PDF is byte-identical to before.
-  - Given the tool source, when its imports and calls are inspected, then every operation resolves to a `docflow.pdf` function or primitive and no module under `src/docflow/` imports it.
-- **Evidence / DoD:** The two scenarios above executed and their output pasted; the four QA gates still green with the tool present; an import-direction check proving `src/docflow/` does not import `scripts/`.
-- **Tags:** `# TODO: [MVP]` on `--json` if its serialization is kept permissive for the PoC.
-
-```gherkin
-Scenario: Split from the command line leaves the input untouched
-  Given a valid multi-page PDF at the given path
-  When the split subcommand runs
-  Then one page_NNN/source/page.pdf exists per page under var/tools/pdf/
-  And the SHA-256 of the input PDF is unchanged
-
-Scenario: The tool is a caller, not a component
-  Given the tool source under scripts/tools/
-  When its imports are inspected
-  Then it imports docflow.pdf but nothing under src/docflow/ imports it
-  And it re-implements no logic the library already provides
-```
 
 ## 4. Dependency graph
 

@@ -230,7 +230,6 @@ A failed stage is **reported, not propagated**: the orchestrator records the sta
 | ORC-17 | `consolidate_page_result` / `consolidate_document_result` (order pages, preserve results, build `execution_summary`) | M | ORC-11, ORC-13 |
 | ORC-18 | Decision + error tracing records (`register_decision`, `register_error`, `append_workflow_trace`) | S | ORC-04 |
 | ORC-19 | Four QA gates + happy-path test + mutation-falsified invariant tests (see §6) | L | all above |
-| ORC-20 | Lab tool `scripts/tools/workflow.py` (see §10) | M | ORC-19 |
 
 **Order / waves:**
 
@@ -239,7 +238,6 @@ A failed stage is **reported, not propagated**: the orchestrator records the sta
 3. **Wave 3 — Execution path:** ORC-03 + ORC-07 → ORC-10 → ORC-11 (document preparation, then per-page execution); ORC-14 completes before ORC-11 consumes it; then ORC-12 → ORC-13.
 4. **Wave 4 — Resilience:** ORC-15 → ORC-16 (stop/resume, error containment).
 5. **Wave 5 — Consolidation & QA:** ORC-17 → ORC-18 → ORC-19 (consolidate, trace, gates).
-6. **Wave 6 — Lab tool:** ORC-20, built once ORC-19 is green. The orchestrator's tool is the only one that can show a *whole* document run, and it is also the only one that may take a workflow decision on the operator's behalf — because deciding is what this component does.
 
 ## 5. Acceptance criteria
 
@@ -363,86 +361,3 @@ pylint src tests
    `docs/plan/README.md` §5 names them `consolidate_page` / `consolidate_document`; those
    are accepted **aliases of the same seam**, not a second implementation, and `README.md`
    §5 has been reconciled to the canonical names.
-
----
-
-## 10. Lab tool — `scripts/tools/workflow.py`
-
-A thin command-line caller over the orchestrator, built once ORC-19 is green. The convention
-— the `var/tools/<tool>/` output root and the three boundaries — is in
-`docs/plan/README.md` §4.1. This tool is `M`, not `S`: it is the only one that has to surface
-a *plan* and a *decision record*, not just an artifact tree.
-
-### Command surface
-
-```text
-python scripts/tools/workflow.py run     <input>                    # full process_document
-python scripts/tools/workflow.py plan    <input> --dry-run          # build_execution_plan only,
-                                                                    #   no processor runs
-python scripts/tools/workflow.py status  <document-id>              # stage states of a context
-python scripts/tools/workflow.py resume  <document-id>              # resume_document
-python scripts/tools/workflow.py force   <input> --stage ocr        # force a stage, show
-                                                                    #   invalidated dependents
-python scripts/tools/workflow.py skip    <input> --stage llm
-python scripts/tools/workflow.py stop    <document-id>              # request_stop
-python scripts/tools/workflow.py context <document-id>              # the serialized DocumentContext
-```
-
-Global flags: `--out <dir>` (default `var/tools/workflow/`), `--json`, `--workflow <id>`.
-
-**`plan --dry-run` is the reason this tool exists.** `build_execution_plan` computes every
-stage's resolution — `EXECUTE` / `REUSE` / `SKIP` / `FORCE` / `BLOCKED` — and every
-`processing_key` and invalidation *before* any costly work runs (subplan §3.6). No other
-surface can show that, and it is the fastest way for an operator to see whether the reuse
-rule is behaving.
-
-### Output layout
-
-```text
-var/tools/workflow/invoice-001/
-├── context.json                 # DocumentContext: stages, decisions, errors, status
-├── plan.json                    # when `plan` is used
-└── <processor namespaces>       # source/ render/ native_text/ image/ ocr/ llm/
-```
-
-Unlike the per-processor tools, the run directory is keyed by **`document_id`**, not by an
-input hash: the orchestrator's whole job is to keep state across runs over one document, and
-keying by `document_id` is what makes `status` and `resume` find the previous context.
-
-### Boundaries
-
-- **Calls, never reimplements.** `plan` calls `build_execution_plan`; it does not evaluate the
-  reuse rule itself. `status` reads `DocumentContext`; it does not re-inspect artifacts to
-  guess a stage state — that inference is `is_stage_reusable`'s job.
-- **Does not reach any `primitives/`.** Every other tool may; this one may not. It reaches
-  the four processors only through their public contracts, exactly as `docflow.workflow`
-  itself does. A tool that reached into `ocr/primitives/` would be teaching the orchestrator
-  to violate `GEN-19`.
-- **Takes workflow decisions — and that is correct here.** `--force ocr`, `--skip llm` and
-  `--dry-run` set `ExecutionPolicy` fields and hand them to the orchestrator. The *operator*
-  decides; the *tool* merely records that decision into a real policy object rather than
-  inventing a second path through the library.
-- **No library dependency.** Nothing in `src/docflow/` imports it.
-
-### Acceptance criteria
-
-```gherkin
-Scenario: A dry run plans without executing
-  Given a valid document whose stages have not run
-  When "python scripts/tools/workflow.py plan mi.pdf --dry-run" runs
-  Then plan.json lists every stage with EXECUTE, REUSE, SKIP, FORCE or BLOCKED
-  And no processor namespace under var/tools/workflow/<id>/ holds a new artifact
-  And no engine or provider call is made
-
-Scenario: Forcing a stage shows its invalidated dependents
-  Given a completed run in REUSE state for pdf and image
-  When "python scripts/tools/workflow.py force mi.pdf --stage ocr" runs
-  Then the plan reports OCR as EXECUTE and LLM as INVALIDATED
-  And the invalidation is recorded in context.json decisions
-
-Scenario: The tool never reaches a primitive
-  Given the workflow tool source
-  When its imports are inspected
-  Then it imports no */primitives/ module and no engine library
-  And every operation resolves to a docflow.workflow function
-```

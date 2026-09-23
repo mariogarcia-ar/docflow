@@ -6,7 +6,7 @@
 | Phase | **1 — Processors, independently** (`docs/plan/README.md` §5) |
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
-| ID range | `OCR-01` … `OCR-14` |
+| ID range | `OCR-01` … `OCR-13` |
 | Status | All issues `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
@@ -16,9 +16,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Field | Value |
 |---|---|
 | Phase | 1 — processors, independently (parallel with `pdf`, `image`, `llm`) |
-| ID range | OCR-01 … OCR-14 |
-| # tasks | 14 |
-| Effort distribution | S ×6 (OCR-01, 02, 08, 09, 13, 14) · M ×8 (OCR-03, 04, 05, 06, 07, 10, 11, 12) · L ×0 |
+| ID range | OCR-01 … OCR-13 |
+| # tasks | 13 |
+| Effort distribution | S ×5 (OCR-01, 02, 08, 09, 13) · M ×8 (OCR-03, 04, 05, 06, 07, 10, 11, 12) · L ×0 |
 | Critical path | `OCR-01 → OCR-02 → OCR-03 → OCR-04 → OCR-05 → OCR-06 → OCR-09 → OCR-10 → OCR-11 → OCR-12 → OCR-13` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
@@ -41,7 +41,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | OCR-11 | Entry points | M | 4 — Publish + entry points | OCR-10 | `process_ocr_image`; `process_ocr_from_page` **deferred to Phase 3** (`# TODO: [MVP]`) | this file §OCR-11 | NOT_STARTED |
 | OCR-12 | Tests + committed image fixtures | M | 5 — Verification | OCR-11 | `tests/`, `fixtures/ocr_prepared_text_and_table.png`, `fixtures/ocr_blank.png` | this file §OCR-12 | NOT_STARTED |
 | OCR-13 | Four QA gates + mutation falsification | S | 5 — Verification | OCR-12 | QA gate output, documented mutation observations | this file §OCR-13 | NOT_STARTED |
-| OCR-14 | Lab tool `scripts/tools/ocr.py` | S | 6 — Lab tool | OCR-13 | `scripts/tools/ocr.py` | this file §OCR-14 | NOT_STARTED |
 
 ## 3. Detailed issues
 
@@ -252,37 +251,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Then each of the three invariant tests has a recorded observation of failure under mutation and a recorded green run after restore.
 - **Evidence / DoD:** Captured gate output plus the mutation evidence table for invariants 1–3.
 - **Tags:** —
-
-### OCR-14 — Lab tool `scripts/tools/ocr.py`
-
-- **Type:** Tooling
-- **Effort:** S
-- **Wave:** 6 — Lab tool
-- **Depends on:** OCR-13
-- **Blocks:** —
-- **Objective:** Give an operator a command-line way to run Docling through this processor and inspect the extraction, without writing throwaway Python and without a full document run.
-- **Scope / Deliverables:** `scripts/tools/ocr.py` with `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics`, `diff` and the global flags `--out` / `--json` / `--language`; default output root `var/tools/ocr/<stem>-<hash>/`; the surface, layout and boundaries documented in `subplan-procesador-ocr.md` §10.
-- **Out of bounds:** No reimplementation — `md` prints `OCRResult.markdown`, it does not re-render it; no import of the tool from `src/docflow/`; no `--engine` flag (Docling is fixed, never user-selectable); no comparison of OCR against native text or a VLM (that is a documental decision).
-- **Acceptance criteria:**
-  - Given a prepared image fixture, when `run ocr_ready.png` is invoked, then `var/tools/ocr/ocr_ready-<hash>/` holds `text.txt`, `document.md`, `document.json` and `metadata.json`, and `metadata.json` records `engine="docling"` with a concrete `engine_version`.
-  - Given the tool's option surface, when it is inspected, then no engine-selection flag exists.
-  - Then `diff` compares two OCR runs of the **same** input and reports functional-content equality, never two different sources.
-- **Evidence / DoD:** Both scenarios executed with output pasted; four QA gates green with the tool present; import-direction check.
-- **Tags:** —
-
-```gherkin
-Scenario: Extraction from the command line
-  Given a prepared image fixture with known content
-  When the run subcommand is invoked
-  Then the ocr namespace holds text.txt, document.md, document.json and metadata.json
-  And metadata records engine="docling" and a concrete engine_version
-
-Scenario: No engine knob is offered
-  Given the tool's command surface
-  When its options are inspected
-  Then no engine-selection flag exists
-  And every operation resolves to a docflow.ocr function or primitive
-```
 
 ## 4. Dependency graph
 

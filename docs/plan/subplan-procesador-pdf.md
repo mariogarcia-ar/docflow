@@ -179,14 +179,12 @@ Typed results, not thrown exceptions, where a result is the contract. Failures a
 | PDF-11 | Validation + error model: `validate_pdf_result`, `validate_pdf_page_result` | S | PDF-09, PDF-10 |
 | PDF-12 | Atomic persistence (`.tmp` → validate → rename) across all artifacts | S | PDF-09, PDF-10 |
 | PDF-13 | Committed fixtures + happy-path and invariant tests | M | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 |
-| PDF-14 | Lab tool `scripts/tools/pdf.py` (see §10) | S | PDF-13 |
 
 ### Order / waves
 - **Wave 1 (foundations):** PDF-01, PDF-02, and the fixture *bytes* for PDF-13 (contracts and primitives land first; everything imports from them). The fixtures are committed here; the tests that consume them belong to Wave 4.
 - **Wave 2 (primitives, parallel):** PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 — independent once the primitives skeleton exists.
 - **Wave 3 (composition):** PDF-09 (page entry point), then PDF-10 (document entry point).
 - **Wave 4 (hardening):** PDF-11, PDF-12, then PDF-13 (the tests need `process_pdf` and the atomic-publication guarantee to exist), and run the four QA gates.
-- **Wave 5 (lab tool):** PDF-14, built once PDF-13 is green. The tool exercises the processor by hand; it is not on the processor's critical path and adds no library code.
 
 ## 5. Acceptance criteria
 
@@ -300,84 +298,3 @@ pylint src tests
 6. **Naming mapping — RESOLVED:** code and modules use the English names the idea itself
    uses (`docflow.pdf`, `process_pdf`, `process_pdf_page`); the Spanish
    `procesador-pdf` remains only as the title of the idea document.
-
----
-
-## 10. Lab tool — `scripts/tools/pdf.py`
-
-A thin command-line caller that exposes the operations of this processor for manual work,
-built after PDF-13 is green. The full convention — the `var/tools/<tool>/` output root and
-the three boundaries a tool must respect — is in `docs/plan/README.md` §4.1.
-
-### Command surface
-
-Each subcommand maps to one public operation of `docflow.pdf`. The operator says *what*,
-the tool decides only *how to print it*.
-
-```text
-python scripts/tools/pdf.py inspect  <pdf>              # get_pdf_metadata + get_page_count +
-                                                        #   get_page_dimensions → printed table
-python scripts/tools/pdf.py split    <pdf>              # one page_NNN/source/page.pdf per page
-python scripts/tools/pdf.py render   <pdf> --page N --dpi 200
-python scripts/tools/pdf.py text     <pdf> --page N     # native text to stdout
-python scripts/tools/pdf.py blocks   <pdf> --page N     # text blocks with their bboxes
-python scripts/tools/pdf.py images   <pdf> --page N     # extract embedded images
-python scripts/tools/pdf.py classify <pdf>              # per-page metrics + TEXT/IMAGE/MIXED
-python scripts/tools/pdf.py run      <pdf>              # full process_pdf, then a result summary
-```
-
-Global flags: `--out <dir>` (default `var/tools/pdf/`), `--json` (machine-readable output
-instead of the human summary).
-
-### Output layout
-
-```text
-var/tools/pdf/mi-a1b2c3/
-├── source/document.pdf          # when `run` is used: the immutable reference copy
-├── metadata.json
-├── page_001/
-│   ├── source/page.pdf
-│   ├── render/page.png
-│   ├── native_text/text.txt  blocks.json
-│   ├── embedded_images/image_001.png
-│   └── metadata.json
-└── page_002/ …
-```
-
-The directory name is the input stem plus a short hash of its bytes, so repeated runs over
-one file land in the same place and `inspect` after `run` reads the same tree the run wrote.
-
-### Boundaries
-
-- **Calls, never reimplements.** `split` calls `split_pdf`; it does not shell out to
-  `pdfseparate` itself. `classify` calls `classify_pdf_page`; it does not re-derive the
-  thresholds.
-- **May reach `pdf/primitives/` directly.** That is the point of a lab tool: `render --dpi
-  400` drives `render_page_to_image` without a full document run, and `split` drives
-  `split_pdf` without rendering or text extraction. `GEN-19` forbids that from
-  `docflow.workflow/`; a tool is outside both frontiers (README §4.1).
-- **No library dependency.** Nothing in `src/docflow/` imports the tool. Deleting
-  `scripts/` leaves the library and its tests untouched.
-- **No workflow decision.** `split`, `render` and `text` execute unconditionally. The tool
-  never decides reuse, never skips a stage and never consults an artifact's validity —
-  `REUSE` / `SKIP` / `FORCE` belong to the orchestrator.
-
-### Acceptance criteria
-
-```gherkin
-Scenario: Split a PDF from the command line
-  Given a valid multi-page PDF at the given path
-  When "python scripts/tools/pdf.py split mi.pdf" runs
-  Then var/tools/pdf/mi-<hash>/page_001/source/page.pdf exists for every page
-  And the input PDF is byte-identical to before the run
-  And the exit code is 0
-
-Scenario: The tool adds no behaviour of its own
-  Given the tool source under scripts/tools/
-  When its imports and calls are inspected
-  Then every operation it exposes resolves to a docflow.pdf function or primitive
-  And it re-implements no extraction, decoding or classification logic
-  And no module under src/docflow/ imports it
-```
-
-**Tags:** `# TODO: [MVP]` on `--json` if the serialization is kept permissive for the PoC.

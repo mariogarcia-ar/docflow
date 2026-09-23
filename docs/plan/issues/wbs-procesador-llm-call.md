@@ -6,7 +6,7 @@
 | Phase | **1 — Processors, independently** (`docs/plan/README.md` §5) |
 | Derived from | `docs/plan/subplan-procesador-llm-call.md` §4 (WBS table, waves) |
 | Source of truth | `docs/plan/subplan-procesador-llm-call.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
-| ID range | `LLM-01` … `LLM-16` |
+| ID range | `LLM-01` … `LLM-15` |
 | Status | All issues `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-llm-call.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
@@ -16,9 +16,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Field | Value |
 |---|---|
 | Phase | 1 — processors, independently (parallel with `pdf`, `image`, `ocr`); the internal inference subgraph is a follow-up inside the same phase |
-| ID range | LLM-01 … LLM-16 |
-| # tasks | 16 |
-| Effort distribution | S ×4 (LLM-01, 02, 03, 16) · M ×8 (LLM-04, 05, 06, 07, 08, 10, 14, 15) · L ×4 (LLM-09, 11, 12, 13) |
+| ID range | LLM-01 … LLM-15 |
+| # tasks | 15 |
+| Effort distribution | S ×3 (LLM-01, 02, 03) · M ×8 (LLM-04, 05, 06, 07, 08, 10, 14, 15) · L ×4 (LLM-09, 11, 12, 13) |
 | Critical path | `LLM-01 → LLM-02 → LLM-03 → LLM-06 → LLM-07 → LLM-08` (single-call chain) and `LLM-01 → LLM-06 → LLM-10 → LLM-11 → LLM-12 → LLM-13` (graph chain); the binding path ends at LLM-13 |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
@@ -43,7 +43,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | LLM-13 | Resume / stop / skip / force | L | 3 — Internal graph | LLM-12 | `resume_llm_graph`, `request_graph_stop`, `invalidate_downstream_nodes` | this file §LLM-13 | NOT_STARTED |
 | LLM-14 | Comparison / consensus / consolidate | M | 3 — Internal graph | LLM-12 | `compare_outputs`, `calculate_consensus` | this file §LLM-14 | NOT_STARTED |
 | LLM-15 | Usage, timing and context-window control | M | 2 — Single call | LLM-06 | `count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded` | this file §LLM-15 | NOT_STARTED |
-| LLM-16 | Lab tool `scripts/tools/llm.py` | S | 4 — Lab tool | LLM-14, LLM-15 | `scripts/tools/llm.py` | this file §LLM-16 | NOT_STARTED |
 
 > The subplan records LLM-01, LLM-02 and LLM-03 as `S`; LLM-04 … LLM-08, LLM-10, LLM-14, LLM-15 as `M`; and LLM-09, LLM-11, LLM-12, LLM-13 as `L`.
 
@@ -288,38 +287,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given a successful call, then `Usage` and `Timing` are non-empty on the attempt record.
 - **Evidence / DoD:** Unit tests for the overflow predicate and the truncation record.
 - **Tags:** `# TODO: [RELEASE]` for telemetry and cost accounting.
-
-### LLM-16 — Lab tool `scripts/tools/llm.py`
-
-- **Type:** Tooling
-- **Effort:** S
-- **Wave:** 4 — Lab tool
-- **Depends on:** LLM-14, LLM-15
-- **Blocks:** —
-- **Objective:** Give an operator a command-line way to drive one call or one graph — including the resume and reuse paths — without a model, a GPU or a spent token.
-- **Scope / Deliverables:** `scripts/tools/llm.py` with `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` and the global flags `--out` / `--json` / `--provider` / `--model`; default output root `var/tools/llm/`; the surface, layout and boundaries documented in `subplan-procesador-llm-call.md` §10.
-- **Out of bounds:** No reimplementation (`tokens` calls `count_tokens`, it does not approximate with characters); no import of the tool from `src/docflow/`; **no default provider or model** — every inference subcommand requires both explicitly; no documental state (`resume` resumes an inference run from its own `state.json` and never touches the orchestrator's `DocumentContext`).
-- **Acceptance criteria:**
-  - Given a graph config, when `graph --config graph.json --provider fake` runs, then `var/tools/llm/<run>/state.json` records the final node states from the shared stage-state vocabulary and no network call is made.
-  - Given an inference subcommand invoked without `--provider`, then the tool fails clearly and substitutes no default provider or model.
-  - Then `status` reports node states and never stage states.
-- **Evidence / DoD:** Both scenarios executed with output pasted (the fake-provider path proving no network access); four QA gates green with the tool present; import-direction check.
-- **Tags:** `# TODO: [MVP]` on the `fake` subcommand's fixture loading if it stays minimal for the PoC.
-
-```gherkin
-Scenario: A graph runs against the fake provider
-  Given a graph config and the in-memory fake provider
-  When the graph subcommand runs with --provider fake
-  Then state.json records the final node states
-  And those states come from the shared stage-state vocabulary
-  And no network call is made
-
-Scenario: No provider is silently defaulted
-  Given an inference subcommand invoked without --provider
-  When the tool runs
-  Then it fails with a clear message
-  And it substitutes no default provider or model
-```
 
 ## 4. Dependency graph
 

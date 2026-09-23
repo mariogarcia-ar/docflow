@@ -263,7 +263,6 @@ graph; a retry always preserves prior attempts (`LLMAttempt` history). Documenta
 | LLM-13 | Resume / stop / skip / force: `resume_llm_graph`, `request_graph_stop`, `invalidate_downstream_nodes` | L | LLM-12 |
 | LLM-14 | Comparison / consensus / consolidate: `compare_outputs`, `calculate_consensus` | M | LLM-12 |
 | LLM-15 | Usage, timing and context-window control (`count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded`) | M | LLM-06 |
-| LLM-16 | Lab tool `scripts/tools/llm.py` (see §10) | S | LLM-14, LLM-15 |
 
 ### Waves
 
@@ -272,8 +271,6 @@ graph; a retry always preserves prior attempts (`LLMAttempt` history). Documenta
 - **Wave 3 (internal graph):** LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12. LLM-15 is completed in Wave 2 by its declared dependency.
 
 Each wave ends with the four QA gates green and its happy-path/invariant tests passing.
-
-- **Wave 4 — Lab tool:** LLM-16, built once the single-call spine (LLM-06 → LLM-08) and the graph spine (LLM-12 → LLM-13) are green. Manual exercise only.
 
 ## 5. Acceptance criteria
 
@@ -411,72 +408,3 @@ pylint src tests
    (`# TODO: [MVP]`); no schema/DB introduced in Phase 1.
 5. **`model_version` source — RESOLVED:** from the provider's `get_model_info` when
    available, else `LLMInput.metadata`; it is part of `request_key` either way.
-
----
-
-## 10. Lab tool — `scripts/tools/llm.py`
-
-A thin command-line caller over this processor, built once the single-call and graph spines
-are green. The convention — the `var/tools/<tool>/` output root and the three boundaries —
-is in `docs/plan/README.md` §4.1.
-
-### Command surface
-
-```text
-python scripts/tools/llm.py call    --task T --document FILE --schema S
-python scripts/tools/llm.py node    --node N --graph FILE          # one node of the graph
-python scripts/tools/llm.py graph   --config FILE                  # execute_llm_graph
-python scripts/tools/llm.py resume  --run-id ID                    # resume_llm_graph
-python scripts/tools/llm.py status  --run-id ID                    # node states of a saved run
-python scripts/tools/llm.py models  --provider P                   # list_models
-python scripts/tools/llm.py tokens  --document FILE --model M       # count_tokens vs context window
-python scripts/tools/llm.py fake    --task T                       # the in-memory fake provider
-```
-
-Global flags: `--out <dir>` (default `var/tools/llm/`), `--json`, `--provider`, `--model`.
-
-**`fake` is a first-class subcommand, not a hidden test flag.** The deterministic fake
-provider of LLM-03 is what makes this tool usable without a model, without a GPU and without
-spending tokens, and it is the honest way to demonstrate the graph, the resume path and the
-reuse rule. Making it explicit is the difference between a lab tool and a trick.
-
-### Output layout
-
-```text
-var/tools/llm/run_001/
-├── state.json
-├── graph.json
-├── classify/{result.json, metadata.json, attempts/}
-├── extract_a/{…}  extract_b/{…}  compare/{…}
-└── final_result.json
-```
-
-### Boundaries
-
-- **Calls, never reimplements.** `tokens` calls `count_tokens`; it does not approximate with
-  a character count. `graph` calls `execute_llm_graph`; it does not schedule nodes itself.
-- **May reach `llm/primitives/` directly** — a lab tool's purpose: `models` and `tokens` drive
-  `list_models` and `get_context_window` with no inference at all.
-- **No provider default.** Every inference subcommand requires `--provider` and `--model`
-  explicitly; the tool never picks one for you. A silent default model is exactly the stand-in
-  this project forbids.
-- **Never holds documental state.** `resume` resumes an *inference* run and reads its own
-  `state.json`; it does not touch the orchestrator's `DocumentContext`, and `status` reports
-  node states, never stage states.
-
-### Acceptance criteria
-
-```gherkin
-Scenario: Run a graph against the fake provider
-  Given a graph config and the in-memory fake provider
-  When "python scripts/tools/llm.py graph --config graph.json --provider fake" runs
-  Then var/tools/llm/<run>/state.json records the final node states
-  And node states come from the shared stage-state vocabulary
-  And no network call is made
-
-Scenario: No provider is silently defaulted
-  Given an inference subcommand invoked without --provider
-  When the tool runs
-  Then it fails with a clear message
-  And it does not substitute a default provider or model
-```

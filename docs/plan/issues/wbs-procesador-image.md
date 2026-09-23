@@ -6,7 +6,7 @@
 | Phase | **1 — Processors, independently** (`docs/plan/README.md` §5) |
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
-| ID range | `IMG-01` … `IMG-15` |
+| ID range | `IMG-01` … `IMG-14` |
 | Status | All issues `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
@@ -16,9 +16,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Field | Value |
 |---|---|
 | Phase | 1 — processors, independently (parallel with `pdf`, `ocr`, `llm`) |
-| ID range | IMG-01 … IMG-15 |
-| # tasks | 15 |
-| Effort distribution | S ×7 (IMG-01, 03, 06, 09, 10, 14, 15) · M ×8 (IMG-02, 04, 05, 07, 08, 11, 12, 13) · L ×0 |
+| ID range | IMG-01 … IMG-14 |
+| # tasks | 14 |
+| Effort distribution | S ×6 (IMG-01, 03, 06, 09, 10, 14) · M ×8 (IMG-02, 04, 05, 07, 08, 11, 12, 13) · L ×0 |
 | Critical path | `IMG-01 → IMG-02 → IMG-03 → IMG-04 → IMG-06 → IMG-07 → IMG-11 → IMG-12 → IMG-13` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
@@ -42,7 +42,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-12 | `process_image` entry point | M | 4 — Publish | IMG-09, IMG-11 | `process_image` | this file §IMG-12 | NOT_STARTED |
 | IMG-13 | Happy-path + invariant tests, mutation evidence | M | 5 — Verify | IMG-12 | `tests/`, mutation observations | this file §IMG-13 | NOT_STARTED |
 | IMG-14 | Four QA gates clean | S | 5 — Verify | IMG-13 | QA gate output | this file §IMG-14 | NOT_STARTED |
-| IMG-15 | Lab tool `scripts/tools/image.py` | S | 6 — Lab tool | IMG-14 | `scripts/tools/image.py` | this file §IMG-15 | NOT_STARTED |
 
 ## 3. Detailed issues
 
@@ -269,36 +268,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Then no bare `# type: ignore` exists in the new modules.
 - **Evidence / DoD:** Captured output of the four gates; review of the DoD checklist in the subplan §7.
 - **Tags:** —
-
-### IMG-15 — Lab tool `scripts/tools/image.py`
-
-- **Type:** Tooling
-- **Effort:** S
-- **Wave:** 6 — Lab tool
-- **Depends on:** IMG-14
-- **Blocks:** —
-- **Objective:** Give an operator a command-line way to measure one image and produce its variants by hand, without writing throwaway Python.
-- **Scope / Deliverables:** `scripts/tools/image.py` with `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run`, `crop` and the global flags `--out` / `--json`; default output root `var/tools/image/<stem>-<hash>/`; the surface, layout and boundaries documented in `subplan-procesador-image.md` §10.
-- **Out of bounds:** No reimplementation of any measurement or transformation — every subcommand resolves to a `docflow.image` function or primitive; no import of the tool from `src/docflow/`; no workflow decision; no `--engine` flag (the engine seam is not a user knob).
-- **Acceptance criteria:**
-  - Given a skewed colour image, when `run page.png --ocr-ready --vlm-ready` is invoked, then `ocr_ready.png` and `vlm_ready.png` are two distinct files, the VLM variant retains colour channels, and the source is unmodified.
-  - Then `ocr-ready` and `vlm-ready` are **separate subcommands**, so the tool never teaches that the OCR-optimal image equals the VLM-optimal image.
-  - Given the tool source, when its imports are inspected, then every operation resolves to `docflow.image` and no module under `src/docflow/` imports it.
-- **Evidence / DoD:** Both scenarios executed with output pasted; four QA gates green with the tool present; import-direction check.
-- **Tags:** —
-
-```gherkin
-Scenario: Both variants, independently requested
-  Given a skewed colour document image
-  When the run subcommand is asked for both variants
-  Then ocr_ready.png and vlm_ready.png are two distinct files
-  And the source image hash is unchanged
-
-Scenario: The two variants are never conflated
-  Given the tool's command surface
-  When its subcommands are inspected
-  Then preparing for OCR and preparing for a VLM are separate commands
-```
 
 ## 4. Dependency graph
 

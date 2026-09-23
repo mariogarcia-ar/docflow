@@ -6,7 +6,7 @@
 | Phase | **2 — Orchestrator: state, reuse, resume**, extending into **Phase 3 — Integration: source selection and end-to-end result** (`docs/plan/README.md` §5) |
 | Derived from | `docs/plan/subplan-orquestador.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-orquestador.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
-| ID range | `ORC-01` … `ORC-20` |
+| ID range | `ORC-01` … `ORC-19` |
 | Status | All issues `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-orquestador.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
@@ -20,9 +20,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Field | Value |
 |---|---|
 | Phase | 2 — state, reuse, resume; Phase 3 — source selection and end-to-end result (per the subplan WBS) |
-| ID range | ORC-01 … ORC-20 |
-| # tasks | 20 |
-| Effort distribution | S ×3 (ORC-02, 05, 18) · M ×14 (ORC-01, 03, 04, 06, 07, 08, 09, 10, 12, 13, 14, 16, 17, 20) · L ×3 (ORC-11, 15, 19) |
+| ID range | ORC-01 … ORC-19 |
+| # tasks | 19 |
+| Effort distribution | S ×3 (ORC-02, 05, 18) · M ×13 (ORC-01, 03, 04, 06, 07, 08, 09, 10, 12, 13, 14, 16, 17) · L ×3 (ORC-11, 15, 19) |
 | Critical path | `ORC-01 → ORC-02 → ORC-06 → ORC-07 → ORC-10 → ORC-14 → ORC-11 → ORC-12 → ORC-13 → ORC-17 → ORC-19` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
@@ -51,7 +51,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | ORC-17 | `consolidate_page_result` / `consolidate_document_result` | M | 5 — Consolidation & QA | ORC-11, ORC-13 | ordered pages, preserved results, `execution_summary` | this file §ORC-17 | NOT_STARTED |
 | ORC-18 | Decision + error tracing records | S | 5 — Consolidation & QA | ORC-04 | `register_decision`, `register_error`, `append_workflow_trace` | this file §ORC-18 | NOT_STARTED |
 | ORC-19 | Four QA gates + happy path + invariant tests | L | 5 — Consolidation & QA | all above | QA gate output, mutation-falsified invariant tests | this file §ORC-19 | NOT_STARTED |
-| ORC-20 | Lab tool `scripts/tools/workflow.py` | M | 6 — Lab tool | ORC-19 | `scripts/tools/workflow.py` | this file §ORC-20 | NOT_STARTED |
 
 > The subplan records ORC-01 and ORC-03 … ORC-04, ORC-06 … ORC-10, ORC-12 … ORC-14, ORC-16 … ORC-17 as `M`; ORC-02, ORC-05 and ORC-18 as `S`; and ORC-11, ORC-15, ORC-19 as `L`.
 
@@ -360,44 +359,6 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given invariant 1's mutation (`resume_document` maps `SUCCESS` → `EXECUTE`), invariant 2's mutation (force marks only the forced stage, leaving `LLM = SUCCESS`), and invariant 3's mutation (`is_stage_reusable` returns true on file existence alone), then each corresponding test fails; after restore, all are green.
 - **Evidence / DoD:** Happy-path output, both observations per invariant, and captured output of the four gates.
 - **Tags:** —
-
-### ORC-20 — Lab tool `scripts/tools/workflow.py`
-
-- **Type:** Tooling
-- **Effort:** M
-- **Wave:** 6 — Lab tool
-- **Depends on:** ORC-19
-- **Blocks:** —
-- **Objective:** Give an operator the only surface that can show a whole document run — including the execution *plan* and the *decision record*, which no artifact tree reveals.
-- **Scope / Deliverables:** `scripts/tools/workflow.py` with `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` and the global flags `--out` / `--json` / `--workflow`; default output root `var/tools/workflow/<document_id>/` (keyed by `document_id`, not by input hash, so `status` and `resume` find the previous context); the surface, layout and boundaries documented in `subplan-orquestador.md` §10.
-- **Out of bounds:** No reimplementation (`plan` calls `build_execution_plan`, it does not evaluate the reuse rule itself); no import of the tool from `src/docflow/`; **no `*/primitives/` import at all** — unlike every other tool, this one reaches the processors only through their public contracts, exactly as `docflow.workflow` does, or it would be teaching the orchestrator to violate `GEN-19`; no second path through the library for a decision the library already models.
-- **Acceptance criteria:**
-  - Given a valid document whose stages have not run, when `plan mi.pdf --dry-run` is invoked, then `plan.json` lists every stage with `EXECUTE` / `REUSE` / `SKIP` / `FORCE` / `BLOCKED`, no processor namespace gains a new artifact, and no engine or provider call is made.
-  - Given a completed run with `pdf` and `image` reusable, when `force mi.pdf --stage ocr` is invoked, then the plan reports OCR as `EXECUTE` and LLM as `INVALIDATED`, and the invalidation is recorded in `context.json` decisions.
-  - Given the tool source, when its imports are inspected, then it imports no `*/primitives/` module and no engine library.
-- **Evidence / DoD:** All three scenarios executed with output pasted (the dry run specifically proving zero processor execution); four QA gates green with the tool present; import-direction and no-primitives assertions.
-- **Tags:** —
-
-```gherkin
-Scenario: A dry run plans without executing
-  Given a valid document whose stages have not run
-  When the plan subcommand runs with --dry-run
-  Then plan.json lists every stage's resolution
-  And no processor namespace holds a new artifact
-  And no engine or provider call is made
-
-Scenario: Forcing a stage shows its invalidated dependents
-  Given a completed run in REUSE state for pdf and image
-  When the force subcommand targets the ocr stage
-  Then the plan reports OCR as EXECUTE and LLM as INVALIDATED
-  And the invalidation is recorded in the context decisions
-
-Scenario: The workflow tool never reaches a primitive
-  Given the workflow tool source
-  When its imports are inspected
-  Then it imports no primitives module and no engine library
-  And every operation resolves to a docflow.workflow function
-```
 
 ## 4. Dependency graph
 

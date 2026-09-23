@@ -25,8 +25,7 @@
 | 2 | Orchestrator: state, reuse, resume | — | `ORC-01`…`ORC-19` | 19 | 3 / 13 / 3 | a run interrupted mid-pipeline resumes without re-running completed stages (proved by a test that observes stage states after a resume); forcing a stage invalidates its downstream dependents; four QA gates pass |
 | 3 | Integration: source selection and end-to-end result | `GEN-07`…`GEN-10` | `ORC-12`, `ORC-13`, `ORC-17` (implementation owners, already counted in Phase 2) | 4 | 0 / 3 / 1 | one end-to-end happy-path test per input type (PDF with native text; scanned image → OCR → LLM) produces a `DocumentResult`; four QA gates pass |
 | 4 | Hardening + programme close-out | `GEN-11`…`GEN-20` | `PDF-11`, `PDF-12`, `IMG-13`, `IMG-14`, `OCR-12`, `OCR-13`, `LLM-13`, `ORC-19` | 10 | 4 / 4 / 2 | all phases' acceptance evidence re-run green; every shortcut carries an explicit `# TODO: [MVP]` / `# TODO: [RELEASE]` tag |
-| 5 | Lab tools (operator surfaces) | `GEN-21` | `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` | 1 | 0 / 1 / 0 | every processor has a working `scripts/tools/<processor>.py` whose operations all resolve to library calls, with `/var/` as the default output root and no library module importing a tool |
-| **Total** | | **21** | **79** | **100** | **33 / 57 / 10** | |
+| **Total** | | **20** | **74** | **99** | **33 / 56 / 10** | |
 
 **Scope.** This document owns the work that belongs to no single processor: the shared
 skeleton and contract types (Phase 0), the cross-processor integration layer that turns four
@@ -44,7 +43,7 @@ or §9; nothing is invented.
 
 ## 2. Program-level task index
 
-Cross-cutting issues only. IDs are `GEN-xx`; own range is `GEN-01`…`GEN-21`.
+Cross-cutting issues only. IDs are `GEN-xx`; own range is `GEN-01`…`GEN-20`.
 
 ### Phase 0 — Foundations (Wave 0.1–0.3)
 
@@ -454,40 +453,6 @@ Scenario: A shortcut without a tag is a defect
   And an untagged shortcut is reported as a finding
 ```
 
-### Phase 5 — Lab tools
-
-#### GEN-21 — The lab-tool convention
-
-- **Type:** tooling
-- **Effort:** M
-- **Phase:** 5 · **Wave:** 5.1
-- **Depends on:** `GEN-15`, `GEN-20`, `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` · **Blocks:** —
-- **Objective:** Make the five per-processor operator tools one consistent surface, so an operator who learned `pdf.py` can use `workflow.py` without reading its source.
-- **Scope / Deliverables:** the convention of `docs/plan/README.md` §4.1 stated once — `scripts/tools/<processor>.py`, input as argument, output under `var/tools/<tool>/<stem>-<hash>/` (or `<document_id>` for the orchestrator's tool), `--out` override, `--json`; the three tool boundaries (calls and never reimplements, `src/docflow/` never imports `scripts/`, no new contract or library behaviour); the explicit carve-out that a tool *may* reach a `primitives/` module, which is the one thing the orchestrator may never do (`GEN-19`) **except** for `workflow.py`, which is bound by the same prohibition the orchestrator is; `/var/` added to `.gitignore`; the per-tool task rows `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20`.
-- **Out of bounds:** No tool becomes part of the library (no entry point in `pyproject.toml`, no `docflow` import of it); no tool re-implements a primitive to add a convenience the operator wants; no engine or provider *choice* offered as a flag (`--engine` on `ocr.py`, a default model on `llm.py`) — a tool must not invent a knob the library deliberately refuses to have.
-- **Evidence / DoD:** the five tools each pass their subplan's §10 acceptance scenario; a test or assertion proves no module under `src/docflow/` imports anything under `scripts/`; `/var/` is ignored by git; the five tools share one flag vocabulary (`--out`, `--json`) and one output-root pattern.
-- **Tags:** `# TODO: [MVP]` on any subcommand that is a thin pass-through kept minimal for the PoC.
-
-```gherkin
-Scenario: The tools are callers, not components
-  Given the five scripts under scripts/tools/
-  When their imports and the library's imports are inspected
-  Then every tool operation resolves to a docflow function or primitive
-  And no module under src/docflow/ imports scripts/
-
-Scenario: Output is disposable and ignorable
-  Given any tool invoked without --out
-  When it finishes
-  Then its artifacts are under var/tools/<tool>/
-  And git status reports no untracked file from that run
-
-Scenario: The workflow tool is bound like the orchestrator
-  Given scripts/tools/workflow.py
-  When its imports are inspected
-  Then it imports no primitives module
-  And every processor is reached through its public contract
-```
-
 ---
 
 ## 3. Cross-processor dependency map
@@ -577,7 +542,7 @@ flowchart LR
 ### 4.2 Phase 1 — Processors, independently (parallel)
 
 - **Entry condition:** Phase 0 exit met.
-- **Issues:** `PDF-01`…`PDF-14`; `IMG-01`…`IMG-15`; `OCR-01`…`OCR-14`; `LLM-01`…`LLM-16` (see [`wbs-procesador-pdf.md`](wbs-procesador-pdf.md), [`wbs-procesador-image.md`](wbs-procesador-image.md), [`wbs-procesador-ocr.md`](wbs-procesador-ocr.md), [`wbs-procesador-llm-call.md`](wbs-procesador-llm-call.md)). The four processors run in parallel; no `GEN` issue is needed here beyond `GEN-01`…`GEN-06` being already met. The trailing task of each range (`PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`) is that processor's lab tool and belongs to Phase 5, not here — it is listed in this range only because the ID is consecutive.
+- **Issues:** `PDF-01`…`PDF-13`; `IMG-01`…`IMG-14`; `OCR-01`…`OCR-13`; `LLM-01`…`LLM-15` (see [`wbs-procesador-pdf.md`](wbs-procesador-pdf.md), [`wbs-procesador-image.md`](wbs-procesador-image.md), [`wbs-procesador-ocr.md`](wbs-procesador-ocr.md), [`wbs-procesador-llm-call.md`](wbs-procesador-llm-call.md)). The four processors run in parallel; no `GEN` issue is needed here beyond `GEN-01`…`GEN-06` being already met.
 - **Deliverables:** each processor implemented in isolation behind its own contract with engines encapsulated in its own `primitives/`.
 - **Exit criterion:** "each processor has a green happy-path test proving `Request → Result` with real bytes from a small committed fixture; no processor imports another processor's module; four QA gates pass."
 - **Gate:** all four gates, run per processor sub-package.
@@ -585,7 +550,7 @@ flowchart LR
 ### 4.3 Phase 2 — Orchestrator: state, reuse, resume
 
 - **Entry condition:** Phase 1 exit met.
-- **Issues:** `ORC-01`…`ORC-20` (see [`wbs-orquestador.md`](wbs-orquestador.md)). `ORC-20` is the orchestrator's lab tool and belongs to Phase 5.
+- **Issues:** `ORC-01`…`ORC-19` (see [`wbs-orquestador.md`](wbs-orquestador.md)).
 - **Deliverables:** input-type detection and execution plan; per-stage resolution; `processing_key` and the reuse rule; durable `DocumentContext` / `PageContext` / `StageExecution`; `skip` / `force` / `stop` / `resume` / dry-run; ownership enforcement and atomic persistence.
 - **Exit criterion:** "a run interrupted mid-pipeline resumes without re-running completed stages (proved by a test that observes stage states after a resume); forcing a stage invalidates its downstream dependents; four QA gates pass."
 - **Gate:** all four gates.
@@ -605,16 +570,6 @@ flowchart LR
 - **Deliverables:** idempotency at both levels; determinism classes per processor; error containment; atomic persistence everywhere an artifact is published; full four-gate hygiene; a mutation-falsified invariant test per non-obvious guarantee.
 - **Exit criterion:** "all phases' acceptance evidence re-run green; every shortcut carries an explicit `# TODO: [MVP]` / `# TODO: [RELEASE]` tag."
 - **Gate:** all four gates on the whole tree, plus the two frontier assertions (`GEN-18`, `GEN-19`).
-
-### 4.6 Phase 5 — Lab tools (operator surfaces)
-
-- **Entry condition:** a processor's own phase-4 exit is met. Phase 5 is **not** gated on Phase 4 as a whole: each tool is built as soon as its processor is verified, which is why `PDF-14` may land long before `ORC-20`.
-- **Issues:** `GEN-21` (the convention, cross-cutting); `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` (one tool per processor, owned by its subplan).
-- **Deliverables:** `scripts/tools/{pdf,image,ocr,llm,workflow}.py`; `/var/` as the default, ignored output root (`var/tools/<tool>/`); one shared flag vocabulary (`--out`, `--json`); the three boundaries of `README.md` §4.1 — calls and never reimplements, the library never imports a tool, a tool adds no contract or behaviour.
-- **Exit criterion:** every processor has a working lab tool; each tool's operations all resolve to library calls or primitives; no module under `src/docflow/` imports anything under `scripts/`; `var/` is ignored by git.
-- **Gate:** all four gates on the whole tree, plus the three `GEN-21` scenarios.
-
-**Note on the frontiers.** Phase 5 introduces the one deliberate asymmetry in the whole plan: a lab tool **may** reach a processor's `primitives/` directly — that is what makes it a lab tool, since driving `split_pdf` without a document run is precisely the thing the orchestrator is forbidden from doing — **except** `scripts/tools/workflow.py`, which is bound by the same prohibition (`GEN-19`). A tool that reached into `ocr/primitives/` would be teaching the orchestrator to violate the frontier it exists to protect.
 
 ---
 
@@ -645,7 +600,6 @@ Chain from the skeleton to the Phase 4 exit. Effort is the task's own S/M/L; tas
 | 18 | `GEN-16` mutation-falsified invariants | **L** | Requires every prior guarantee in place | — |
 | 19 | `GEN-15` four-gate hygiene | S | Gates the close-out | `GEN-16` |
 | 20 | `GEN-17`…`GEN-20` close-out | M, S, S, S | Phase 4 exit; the programme is done only when the frontiers are verified | — |
-| 21 | `GEN-21` lab-tool convention | M | The operator's only surface for exercising a processor by hand; also the check that a tool stayed a caller | `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` (one per processor, as soon as that processor's Phase 4 exit is met) |
 
 **Parallel tracks.** Phase 1 is four independent tracks (`PDF-*`, `IMG-*`, `OCR-*`,
 `LLM-*`) sharing only `GEN-02`. Within Phase 2, `ORC-15` and `ORC-16` may proceed while
@@ -672,8 +626,6 @@ Derived from [`../README.md`](../README.md) §8 and §7, with the mitigating tas
 | Orchestrator absorbs processor logic | Single-responsibility violated; monolith | `ORC-14` (only invocation point), `GEN-18` (no cross-processor import), `GEN-19` (no `primitives/` from workflow) |
 | Scope creep into a full ETL platform | Over-engineering in the PoC | `GEN-20` (every shortcut tagged), `GEN-17` (plan ↔ idea reconciliation), `GEN-15` (gates, not new layers) |
 | Cross-processor contract drift after Phase 1 freezes it | Integration breaks late and expensively | `GEN-02` (frozen contracts), `GEN-06` (round-trip tests), `GEN-07`/`GEN-08`/`GEN-09` (seam validation before `GEN-10`) |
-| A lab tool re-implements library logic and silently becomes a second path through the pipeline | Two divergent behaviours for one operation; the library's tests no longer cover what operators actually run | `GEN-21` (calls and never reimplements; no new contract or behaviour), each subplan's §10 boundary list, and the import-direction assertion (`src/docflow/` never imports `scripts/`) |
-| A lab tool reaches a `primitives/` module and that habit leaks into the orchestrator | `GEN-19`'s frontier erodes and an engine becomes unswappable | `GEN-21` (the carve-out is stated explicitly and denied to `workflow.py`), `ORC-20` (the workflow tool is bound like the orchestrator), `GEN-19` (unchanged assertion on `src/docflow/workflow/`) |
 
 ---
 
