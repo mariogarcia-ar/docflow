@@ -2,8 +2,8 @@
 
 Lives beside ``tests/ocr/test_contracts.py`` rather than under ``primitives/`` because it does not
 test a primitive: it drives the processor's published entry point, which is what
-``src/docflow/ocr/entrypoints.py`` is. The name mirrors that module, as ``tests/image/test_entrypoints.py``
-and ``tests/pdf/test_entrypoints.py`` mirror theirs.
+``src/docflow/ocr/entrypoints.py`` is. The name mirrors that module, as
+``tests/image/test_entrypoints.py`` and ``tests/pdf/test_entrypoints.py`` mirror theirs.
 
 The location is also load-bearing. It used to be ``primitives/test_composition.py``, and
 ``test_composition`` sorts before ``test_engine`` inside ``primitives/`` — so this module's first
@@ -46,6 +46,7 @@ from __future__ import annotations
 # The overlap is confined to assertion scaffolding - the values asserted, the fixtures and the
 # primitives exercised are this processor's own.
 import inspect
+import itertools
 import json
 import typing
 from pathlib import Path
@@ -56,6 +57,7 @@ import pytest
 from docflow.ocr import entrypoints
 from docflow.ocr.contracts import (
     OCRContext,
+    OCRDocument,
     OCROptions,
     OCRRequest,
     OCRResult,
@@ -63,6 +65,7 @@ from docflow.ocr.contracts import (
 )
 from docflow.ocr.entrypoints import process_ocr_image
 from docflow.ocr.primitives import composition, files, validation
+from docflow.ocr.primitives import layout as layout_module
 from docflow.ocr.primitives.composition import (
     RECORDED_STAGES,
     process_ocr_result,
@@ -71,6 +74,7 @@ from tests.ocr.primitives.engine_corpus import (
     BLANK_FIXTURE,
     FIXTURE,
     REPO_ROOT,
+    extracted_document,
     requested_options,
 )
 
@@ -232,6 +236,57 @@ def test_the_layout_is_normalized_and_the_reading_order_is_the_computed_one(
     ]
 
 
+def test_the_reading_order_is_independent_of_the_sorting_frame() -> None:
+    """The order the sort produces is the same in the engine's pixels as in the unit frame.
+
+    This is asserted because the *opposite* was believed, in writing, for six tasks. ``layout.py``
+    said the two frames "would disagree the moment a page was not square", and that claim is false
+    and cannot be true: normalization divides each axis by that axis' own size, so it is monotone
+    per axis and preserves every ordering comparison. Measured on the committed fixture, the
+    engine's pixel frame, the normalized frame and a 10x-scaled frame give the identical order.
+
+    What the normalization changes is the coordinate *values* the artifact carries, and what
+    reorders a page is the **origin flip** (``BOTTOMLEFT`` to ``TOPLEFT``), not the scale. Asserting
+    the invariance here is also what makes the mutation battery honest: a mutation that swaps the
+    page dimensions is an **equivalent mutant** — no test can distinguish it, because the property
+    is a theorem — so recording it as "survived" without this test would let a reader mistake a
+    proof for a gap.
+    """
+    document = extracted_document()
+    width = document.layout.page_width
+    height = document.layout.page_height
+    assert width > 1.0, "the fixture is already normalized; this test's premise moved"
+
+    pixel_order = _order_in_frame(document, width, height)
+    unit_order = _order_in_frame(document, 1.0, 1.0)
+    scaled_order = _order_in_frame(document, width * 10.0, height * 10.0)
+
+    assert pixel_order == unit_order, "the sort is not frame-invariant"
+    assert scaled_order == unit_order, "a uniform rescale changed the reading order"
+    assert pixel_order != document.reading_order, (
+        "the fixture's items already arrive in sorted order, so this test proves nothing"
+    )
+
+
+def _order_in_frame(
+    document: OCRDocument, page_width: float, page_height: float
+) -> list[str]:
+    """Order a document's items using a given page frame.
+
+    Args:
+        document: The extracted document, in the engine's pixel frame.
+        page_width: The frame's width.
+        page_height: The frame's height.
+
+    Returns:
+        The identifiers in the order that frame produces.
+    """
+    _, _, order = layout_module.preserve_reading_order(
+        document.blocks, document.tables, page_width, page_height
+    )
+    return order
+
+
 def test_the_text_artifact_reads_in_the_order_the_payload_declares(
     tmp_path: Path,
 ) -> None:
@@ -269,7 +324,7 @@ def test_the_text_artifact_reads_in_the_order_the_payload_declares(
     assert len(offsets) >= len(payload["reading_order"]) - 3, (
         "too few items were locatable for the ordering claim to mean anything"
     )
-    for (earlier, first), (later, second) in zip(offsets, offsets[1:]):
+    for (earlier, first), (later, second) in itertools.pairwise(offsets):
         assert first <= second, f"{earlier} appears after {later} in the text"
 
     table_offset = next(offset for name, offset in offsets if name == "table_001")

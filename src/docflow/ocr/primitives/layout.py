@@ -169,9 +169,18 @@ def preserve_reading_order(
 ) -> tuple[list[BlockResult], list[TableResult], list[str]]:
     """Normalize every box and order the items into one deterministic reading order.
 
-    Normalizing and ordering are one step rather than two because the order is *defined* on
-    normalized geometry: ordering pixel boxes and normalizing afterwards would sort by a frame the
-    artifact does not use, and the two would disagree the moment a page was not square.
+    Normalizing and ordering are one step because they are one *question* — "where does this sit on
+    the page, and what comes next" — and a caller that had to remember both could forget one. The
+    reason is **not** that the two frames produce different orders, which an earlier version of this
+    docstring claimed ("the two would disagree the moment a page was not square").
+
+    **Measured, they do not disagree, and they cannot.** Normalization divides each axis by that
+    axis' own size, so it is monotone per axis and preserves every ordering comparison: on the
+    committed fixture the engine's pixel frame, the normalized frame and a 10x-scaled frame all give
+    the *identical* reading order. What reorders a page is the **origin flip** (``BOTTOMLEFT`` to
+    ``TOPLEFT``), which reverses one axis and therefore reverses that axis' comparisons — the frame
+    a mutation can change the order with is the origin, not the scale. Keeping the pair together
+    remains right for the reason above; it is not load-bearing for the order.
 
     Blocks and tables are merged into a single sequence because a reader does not experience them
     as two streams: a table between two paragraphs is between them on the page.

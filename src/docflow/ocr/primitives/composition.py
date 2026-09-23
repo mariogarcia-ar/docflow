@@ -454,7 +454,7 @@ class _Run:
                 tables_published=len(self.table_files),
             ),
         )
-        if False:
+        if self.table_files:
             files.ensure_directory(artifacts.tables_dir)
             for name, content in self.table_files:
                 files.write_text_atomic(artifacts.tables_dir / name, content)
