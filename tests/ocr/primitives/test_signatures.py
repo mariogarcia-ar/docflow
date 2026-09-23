@@ -19,7 +19,10 @@ from collections.abc import Callable
 
 import pytest
 
+from docflow.ocr import primitives
 from docflow.ocr.primitives import (
+    analyze,
+    engine,
     execution,
     export,
     extraction,
@@ -155,14 +158,48 @@ METADATA_PRIMITIVES = (
     "get_processor_version",
 )
 
+ANALYZE_PRIMITIVES = ("analyze_ocr_result",)
+"""``OCR-08``'s one name, which §3.4's palette does not list.
+
+§3.4 names the *measurements* - ``count_ocr_characters``, ``is_ocr_empty``, ``count_blocks``,
+``calculate_ocr_text_density``, ``count_tables`` - spread across the groups that own their
+subjects. ``analyze_ocr_result`` is the task's deliverable and appears in the plan as such (its
+scope, and §3.3's flow) rather than in the palette, exactly as ``process_tables`` does for
+``OCR-07``. It lives in its own module because it composes primitives from three of the groups
+below and belongs to none of them.
+"""
+
+ENGINE_PRIMITIVES = (
+    "converter_module",
+    "docling_module",
+    "engine_provenance",
+    "get_engine_version",
+    "is_engine_available",
+    "loaded_engines",
+)
+"""The seam's functions, which were **never** in this suite before ``OCR-08``.
+
+A hole found by :func:`test_every_module_the_package_exports_is_grouped` rather than by reading:
+``engine.py`` shipped in ``OCR-02``, exports six functions, and was absent from ``ALL_GROUPS``, so
+none of the checks below ever inspected one of its signatures. Everything passed because nothing
+looked - the same shape as the mutation that prompted the check.
+
+The module's three exception classes are deliberately **not** here. A primitive is a function: the
+annotation check asks for a return type, which a class has not, and the default-argument check reads
+``__init__``, whose defaults are the exception's own contract. Listing them would have meant
+weakening both checks for every real primitive to accommodate three names that are not primitives.
+"""
+
 ALL_GROUPS = (
     (pipeline, PIPELINE_PRIMITIVES),
+    (engine, ENGINE_PRIMITIVES),
     (execution, EXECUTION_PRIMITIVES),
     (extraction, EXTRACTION_PRIMITIVES),
     (export, EXPORT_PRIMITIVES),
     (layout, LAYOUT_PRIMITIVES),
     (text, TEXT_PRIMITIVES),
     (rendering, RENDERING_PRIMITIVES + TABLE_PIPELINE_PRIMITIVES),
+    (analyze, ANALYZE_PRIMITIVES),
     (persistence, PERSISTENCE_PRIMITIVES),
     (metadata, METADATA_PRIMITIVES),
 )
@@ -184,18 +221,22 @@ def _locate(name: str) -> object:
 
 
 IMPLEMENTED = (
+    "analyze_ocr_result",
     "build_ocr_document",
     "calculate_ocr_text_density",
     "clean_ocr_text",
     "configure_image_pipeline",
+    "converter_module",
     "convert_image_with_docling",
     "count_blocks",
     "count_ocr_characters",
     "count_ocr_words",
     "count_tables",
+    "docling_module",
     "enable_layout_analysis",
     "enable_ocr",
     "enable_table_detection",
+    "engine_provenance",
     "export_docling_json",
     "export_docling_markdown",
     "export_docling_tables",
@@ -206,9 +247,12 @@ IMPLEMENTED = (
     "extract_docling_metadata",
     "extract_docling_tables",
     "extract_docling_text",
+    "get_engine_version",
     "get_processor_version",
+    "is_engine_available",
     "is_ocr_empty",
     "load_docling_pipeline",
+    "loaded_engines",
     "merge_ocr_blocks",
     "normalize_bbox",
     "normalize_docling_options",
@@ -339,18 +383,41 @@ def test_the_processor_version_is_a_constant_not_a_lookup() -> None:
     assert version == metadata.PROCESSOR_VERSION
 
 
+def test_every_module_the_package_exports_is_grouped() -> None:
+    """Every module in the package is in ``ALL_GROUPS``, checked from outside the tuple.
+
+    A mutation that dropped the newly added ``analyze`` entry **survived** an earlier version of
+    :func:`test_the_groupings_cover_every_exported_primitive`, and the reason is worth stating:
+    that test derived *both* sides of its comparison from ``ALL_GROUPS`` — the modules it read
+    ``__all__`` from and the names it expected — so removing an entry removed the module from the
+    check as well as from the expectation. It could only ever compare the tuple with itself.
+
+    The source of truth here is :data:`docflow.ocr.primitives.__all__`, which the package declares
+    and this suite does not: a module missing from the groups means its primitives are unmeasured by
+    every test above, and that is exactly the state the mutation produced while everything passed.
+    """
+    assert set(primitives.__all__) == {
+        module.__name__.rsplit(".", 1)[-1] for module, _ in ALL_GROUPS
+    }
+
+
 def test_the_groupings_cover_every_exported_primitive() -> None:
     """No module exports a primitive this suite does not know about.
 
     The checks above are driven by the plan's names, so an *extra* export would slip past them -
     and an extra export is how a private helper becomes public API by accident.
+
+    "Primitive" here means a **function**, which is what the checks above can inspect: they ask
+    for a return annotation and for argument defaults, and a class answers neither. ``engine.py``
+    exports three exception classes beside its six functions, and counting those as primitives
+    would have meant weakening both checks for forty real ones to accommodate them.
     """
     declared = {name for _, names in ALL_GROUPS for name in names}
     exported = {
         name
         for module, _ in ALL_GROUPS
         for name in module.__all__
-        if callable(getattr(module, name, None))
+        if inspect.isfunction(getattr(module, name, None))
     }
 
     assert exported == declared, (

@@ -50,6 +50,13 @@ processor — "prepared" is what that pipeline produces, and the documented flow
 `PDF` -> `image` -> `ocr`. ``OCR-12`` owns the fixture set.
 """
 
+BLANK_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "ocr" / "ocr_blank.png"
+"""A page with nothing on it, which ``OCR-08``'s criterion names.
+
+A pure white page at :data:`FIXTURE`'s own size, so the two fixtures describe one page and their
+density figures are comparable. Built by the same script.
+"""
+
 
 def requested_options() -> OCROptions:
     """Return a request asking for everything this processor can extract.
@@ -104,10 +111,33 @@ def extracted_document() -> OCRDocument:
     return convert()
 
 
+@lru_cache(maxsize=1)
+def blank_document() -> OCRDocument:
+    """Convert the blank fixture once and return the engine-independent document.
+
+    Cached for the same reason :func:`extracted_document` is, and separate from it so a suite that
+    needs only the content fixture does not pay for the blank one.
+
+    Docling returns an **empty** document for a pure white page rather than raising: no text, no
+    blocks, no tables, no regions. That was measured before any metric was written against it, and
+    it is what makes ``OCR-08``'s ``empty`` flag a real measurement rather than a guess.
+
+    Returns:
+        The extracted document, which holds nothing.
+    """
+    options = pipeline.normalize_docling_options(requested_options())
+    result = execution.convert_image_with_docling(
+        BLANK_FIXTURE, pipeline.configure_image_pipeline(options)
+    )
+    return extraction.build_ocr_document(result)
+
+
 __all__ = [
+    "BLANK_FIXTURE",
     "DOCUMENT_JSON_SECTIONS",
     "FIXTURE",
     "REPO_ROOT",
+    "blank_document",
     "configured_pipeline",
     "convert",
     "extracted_document",

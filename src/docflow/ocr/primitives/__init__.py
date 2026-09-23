@@ -14,6 +14,7 @@ the surface can be checked against the plan without translating between two taxo
 * :mod:`~docflow.ocr.primitives.layout` - ``OCR-05``. Geometry and reading order.
 * :mod:`~docflow.ocr.primitives.text` - ``OCR-05`` / ``OCR-08``. Measuring and canonicalizing.
 * :mod:`~docflow.ocr.primitives.rendering` - ``OCR-06`` / ``OCR-07``. Markdown and tables.
+* :mod:`~docflow.ocr.primitives.analyze` - ``OCR-08``. The metrics, composed from the groups above.
 * :mod:`~docflow.ocr.primitives.persistence` - ``OCR-09`` / ``OCR-10``. Validation and writes.
 * :mod:`~docflow.ocr.primitives.metadata` - ``OCR-10``. The provenance record.
 
@@ -26,6 +27,7 @@ measured-looking ``0`` into :class:`~docflow.ocr.contracts.OCRMetrics` and let a
 from __future__ import annotations
 
 from docflow.ocr.primitives import (
+    analyze,
     engine,
     execution,
     export,
@@ -39,6 +41,7 @@ from docflow.ocr.primitives import (
 )
 
 __all__ = [
+    "analyze",
     "engine",
     "execution",
     "export",

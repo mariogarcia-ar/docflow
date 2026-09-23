@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `OCR-01` … `OCR-14` |
-| Status | `OCR-01`…`OCR-07` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, a real conversion is extracted into the engine-independent `OCRDocument`, the blocks are normalized into one coordinate frame and ordered by a rule rather than by arrival, the three canonical representations are built with no run-time data in them, and the detected tables are exported in reading order under zero-padded names; `OCR-08` … `OCR-14` `NOT_STARTED` |
+| Status | `OCR-01`…`OCR-08` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, a real conversion is extracted into the engine-independent `OCRDocument`, the blocks are normalized into one coordinate frame and ordered by a rule rather than by arrival, the three canonical representations are built with no run-time data in them, the detected tables are exported in reading order under zero-padded names, and the content metrics are measured from a real conversion on both a content page and a blank one; `OCR-09` … `OCR-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -35,7 +35,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering | this file §OCR-05 | DONE |
 | OCR-06 | Output builders | M | 3 — Outputs | OCR-05 | `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` | this file §OCR-06 | DONE |
 | OCR-07 | Table processing | M | 3 — Outputs | OCR-06 | `process_tables`, `normalize_table`, `table_to_markdown`, `ocr/tables/table_NNN.md` | this file §OCR-07 | DONE |
-| OCR-08 | Metrics | S | 3 — Outputs | OCR-05 | `analyze_ocr_result` → `OCRMetrics` | this file §OCR-08 | NOT_STARTED |
+| OCR-08 | Metrics | S | 3 — Outputs | OCR-05 | `analyze_ocr_result` → `OCRMetrics` | this file §OCR-08 | DONE |
 | OCR-09 | Technical validation | S | 3 — Outputs | OCR-06, OCR-08 | `validate_ocr_result`, `validate_output_artifacts` | this file §OCR-09 | NOT_STARTED |
 | OCR-10 | Atomic persistence + `metadata.json` | M | 4 — Publish + entry points | OCR-07, OCR-09 | `ocr/.tmp/` → rename; `ocr/metadata.json` | this file §OCR-10 | NOT_STARTED |
 | OCR-11 | Entry points | M | 4 — Publish + entry points | OCR-10 | `process_ocr_image`; `process_ocr_from_page` **deferred to Phase 3** (`# TODO: [MVP]`) | this file §OCR-11 | NOT_STARTED |
@@ -164,6 +164,16 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   into every `OCRMetrics`. Each of `OCR-03` … `OCR-10` must move its primitives out of that list as
   it lands, which is the point: a task that implements a primitive without updating the guard is
   caught by the guard.
+
+- **This module's signatures were never checked, and that was not known until `OCR-08`.** The guard
+  above reads its module list from `tests/ocr/primitives/test_signatures.py`'s `ALL_GROUPS`, and
+  `engine.py` was not in it — so the six functions it exports went five tasks without ever being
+  inspected for a return annotation or an argument default, which is what that suite exists to do.
+  Nothing failed, because nothing looked. `OCR-08` found it while chasing a mutation that survived
+  for the same structural reason, and the fix is recorded there; the registration and the
+  `IMPLEMENTED` entries are the correction that belongs to this task's record. **A guard whose
+  subject list is maintained separately from the code can silently stop covering a module, and the
+  only way to notice is to compare that list against something it does not derive from itself.**
 
 ### OCR-03 — Pipeline and configuration primitives
 
@@ -739,6 +749,105 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the prepared text-and-table fixture, then `structure_detected` is true and `blocks > 0`.
 - **Evidence / DoD:** Unit tests over both fixtures.
 - **Tags:** —
+
+- **Status: DONE.** Evidence: `ocr/primitives/analyze.py` (new module, one function),
+  `tests/ocr/primitives/test_metrics.py` (25 tests), and the `ocr_blank.png` fixture the criterion
+  names. Both criteria hold against **real conversions**: the blank page reports `empty` with every
+  count at zero, and the prepared fixture reports `structure_detected` with 19 blocks. All four
+  gates green: **1168 tests**, `ruff` clean, 10.00/10 on `pylint src tests`.
+
+- **`analyze_ocr_result` is not in §3.4, and it gets its own module rather than joining one.** §3.4
+  lists the *measurements* — `count_ocr_characters`, `is_ocr_empty`, `count_blocks`,
+  `calculate_ocr_text_density`, `count_tables` — spread across the groups that own their subjects;
+  `analyze_ocr_result` appears in the plan as this task's deliverable and in §3.3's flow, not in that
+  palette. That is the same shape as `process_tables` in `OCR-07`. It shipped in
+  `ocr/primitives/analyze.py` for the reason the *image* processor's own `analyze.py` records: an
+  aggregator composing five primitives from three modules belongs to none of them, and putting it in
+  any one would make that module depend on the other two for no reason.
+
+- **The function composes and measures nothing itself, and that is the design.** Every number comes
+  from a primitive that already had a test: the counts from :mod:`~docflow.ocr.primitives.text`, the
+  block count and density from :mod:`~docflow.ocr.primitives.layout`, the table count from
+  :mod:`~docflow.ocr.primitives.rendering`. Re-implementing a count here would be a second answer to
+  a question that already has one, so the mutation battery can attack *which field is read* and
+  *which argument is passed* — the two ways a composing function goes wrong while every primitive it
+  calls stays correct — without needing to re-test the primitives' arithmetic.
+
+- **What Docling returns for a blank page was measured before anything asserted it.** A pure white
+  page at the prepared fixture's own size comes back as an **empty document** — no text, no blocks,
+  no tables, no regions, no exception. That is what makes ``empty`` and ``characters == 0`` a real
+  measurement rather than a guard against a division: the engine ran, read the page, and found
+  nothing. The criterion's phrase "from a real measurement" is why the test converts the fixture
+  instead of hand-building an empty `OCRDocument`; the latter would only re-assert that
+  ``is_ocr_empty("")`` is true, which is `OCR-06`'s test.
+
+- **`ocr_blank.png` is built early, and for the same reason `OCR-04` built its fixture early.**
+  `OCR-12` owns the fixture set and is not due until after `OCR-11`, but this task's criterion names
+  `fixtures/ocr_blank.png` by path and the assertion cannot be made without it.
+  `scripts/tools/ocr_fixture.py` now builds both files and prints what each one is for; it is
+  re-runnable, because it removes its own previous output rather than asking `save_image` to relax
+  the refusal that protects the source from being overwritten. The blank page is drawn at the
+  prepared fixture's own size so the two density figures are comparable and a difference between
+  them cannot come from the page.
+
+- **`structure_detected` needed a definition, and the one chosen is written down with its
+  exclusions.** The contract says "whether any structural element was recognized", which does not by
+  itself say whether a paragraph is one. `STRUCTURAL_BLOCK_TYPES` holds `title`, `list`, `caption`,
+  `figure` and `table`: a page of plain prose has no organisation to recognise, so its blocks being
+  paragraphs says nothing about the *page*. `other` is excluded most deliberately of all — it is
+  what the label mapping produces for a label it does not know, so treating it as structure would
+  report a recognised element exactly where the processor understood *less* than usual. A detected
+  table alone is enough, because a table's identifier appears in `reading_order` rather than in
+  `blocks`: a function inspecting only block types would report `False` for a page with a grid on it.
+
+- **The density's frame is recorded rather than glossed over.** `calculate_ocr_text_density` divides
+  by whatever area it is given, and the layout arriving today is the engine's **pixels** —
+  `normalize_layout` exists but nothing calls it yet, which is the `OCR-11` gap `OCR-06` recorded.
+  So the figure is characters per square pixel, a true measurement comparable between runs of this
+  pipeline and *not* comparable to a normalized one. A test asserts the frame is still pixels, so
+  the number cannot be quietly read as frame-independent. `OCR-09` reads this figure and must read
+  the frame first.
+
+- **The surface test could not see a new module, and that was a real hole.** Every check in
+  `test_signatures.py` is driven by `ALL_GROUPS`, and `test_the_groupings_cover_every_exported_primitive`
+  iterates the modules *in that tuple* — so a module exporting a primitive and absent from the tuple
+  was invisible to all of them at once. Adding `analyze.py` proved it: the suite stayed green with
+  the new module unlisted. That is why `ANALYZE_PRIMITIVES` is declared and the group is registered
+  here, and why a mutation that removes the registration is in the battery.
+
+- **The surface test could not see a new module, and chasing that found a hole three tasks old.**
+  Every check in `test_signatures.py` is driven by `ALL_GROUPS`, and
+  `test_the_groupings_cover_every_exported_primitive` derived **both sides** of its comparison from
+  that same tuple — the modules it read `__all__` from and the names it expected. So it could only
+  ever compare the tuple with itself, and removing an entry removed the module from the check along
+  with the expectation. Adding `analyze.py` proved it: the suite stayed green with the new module
+  unlisted, and a mutation that unlisted it survived.
+
+  The fix is a source of truth the suite does not own: `test_every_module_the_package_exports_is_grouped`
+  compares `docflow.ocr.primitives.__all__` against the groups. It failed immediately, and not on
+  `analyze` — on **`engine`**. `engine.py` shipped in `OCR-02`, exports six functions, and was never
+  in `ALL_GROUPS`, so **not one of its signatures had ever been checked** by any of the tests that
+  exist to check signatures. Everything passed because nothing looked. Its functions are now
+  registered and listed in `IMPLEMENTED`, and the check compares `inspect.isfunction` rather than
+  `callable` — the module also exports three exception classes, and counting those as primitives
+  would have meant weakening the return-annotation and default-argument checks for forty real ones
+  to accommodate them.
+
+  **The generalizable lesson**: a coverage check that derives both what it inspects and what it
+  expects from the same collection is not a check, it is a tautology that reports success.
+
+- **Mutation battery (21 mutations, all killed, every restore green):** the character count taken
+  from the words; the word count from the characters; the block count from the paragraphs; the
+  paragraph count from the blocks; the table count from the blocks; `empty` derived from the
+  character count instead of the text; `empty` hardcoded true; `empty` hardcoded false; the density
+  dividing by the page width twice; the density computed from the word count; structure reported for
+  any block at all; structure only ever reported from block types, so a lone table is missed;
+  structure hardcoded true; a paragraph type added to the structural set; `other` added to it; a type
+  the contract does not declare added to it; the analyze module dropped from the surface groups;
+  the engine module dropped from the surface groups; the engine group declared but emptied so its
+  functions go unchecked; the exported-primitive check counting exception classes as primitives;
+  `analyze_ocr_result` left in the stub set. The battery ran twice; the first run left one survivor,
+  recorded above, and chasing it is what exposed the `engine` hole.
 
 ### OCR-09 — Technical validation
 

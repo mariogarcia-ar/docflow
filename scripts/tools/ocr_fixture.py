@@ -1,9 +1,11 @@
-"""Build the OCR fixture `subplan-procesador-ocr.md` §6 names.
+"""Build the OCR fixtures `subplan-procesador-ocr.md` §6 names.
 
-The plan asks for `fixtures/ocr_prepared_text_and_table.png`: an image that is *already prepared*
-and contains a heading, a paragraph and a table. Rather than hand-draw one, this takes a real
-invoice from the committed corpus and prepares it with the *image* processor — which is what
-"prepared" means in this project, and what the documented flow does (`PDF` → `image` → `ocr`).
+Two files, for two different questions.
+
+**`ocr_prepared_text_and_table.png`** - an image that is *already prepared* and contains a heading,
+a paragraph and a table. Rather than hand-draw one, this takes a real invoice from the committed
+corpus and prepares it with the *image* processor — which is what "prepared" means in this project,
+and what the documented flow does (`PDF` → `image` → `ocr`).
 
 **The preparation is grayscale only, and that was measured rather than assumed.** The image
 processor's OCR-optimized variant ends with a binarization, and feeding that variant to Docling
@@ -16,8 +18,15 @@ fact between two processors: `ocr_ready.png` is the right input for a character-
 and the wrong one for Docling's table model. `subplan-procesador-ocr.md` §2 calls Docling the only
 OCR engine; this file is where the two designs were found to disagree.
 
-`OCR-12` owns the fixture set; this file exists because `OCR-04`'s acceptance criterion names the
-fixture and the assertion cannot be made without it.
+**`ocr_blank.png`** - a page with nothing on it, which `OCR-08`'s acceptance criterion names as the
+input that must produce `empty` with `characters == 0` *from a real measurement*. Pure white at the
+text-and-table fixture's own page size, so the two fixtures describe the same page: a blank page of
+a different size would make the density figures incomparable for a reason that has nothing to do
+with the content. What Docling returns for it was measured, not assumed — an empty document rather
+than an error (see `tests/ocr/primitives/test_metrics.py`).
+
+`OCR-12` owns the fixture set; this file exists because `OCR-04`'s and `OCR-08`'s acceptance
+criteria name these fixtures and the assertions cannot be made without them.
 """
 
 from __future__ import annotations
@@ -27,6 +36,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
+
+import numpy as np  # noqa: E402
 
 from docflow.image.primitives.engine import EngineChoice  # noqa: E402
 from docflow.image.primitives.load import load_image, save_image  # noqa: E402
@@ -40,10 +51,14 @@ SOURCE = (
     / "9e0fd65b-7db2-40a1-9959-ab13e7b030cd.jpg"
 )
 TARGET = ROOT / "tests" / "fixtures" / "ocr" / "ocr_prepared_text_and_table.png"
+BLANK_TARGET = ROOT / "tests" / "fixtures" / "ocr" / "ocr_blank.png"
+
+#: The text-and-table fixture's own page size, so the two fixtures describe the same page.
+PAGE_WIDTH, PAGE_HEIGHT = 840, 1036
 
 
-def main() -> int:
-    """Prepare the source image and write the fixture.
+def build_prepared_fixture() -> int:
+    """Prepare the source invoice and write the text-and-table fixture.
 
     Returns:
         The process exit code.
@@ -71,6 +86,38 @@ def main() -> int:
     print("1x1 cells in Docling's table model. Measured, and pinned by a test in")
     print("tests/ocr/primitives/test_extraction.py.")
     return 0
+
+
+def build_blank_fixture() -> int:
+    """Write the blank fixture ``OCR-08``'s criterion names.
+
+    Returns:
+        The process exit code.
+    """
+    BLANK_TARGET.parent.mkdir(parents=True, exist_ok=True)
+    BLANK_TARGET.unlink(missing_ok=True)
+
+    blank = np.full((PAGE_HEIGHT, PAGE_WIDTH), 255, dtype=np.uint8)
+    save_image(blank, BLANK_TARGET, EngineChoice.OPENCV)
+
+    print(
+        f"wrote {BLANK_TARGET.relative_to(ROOT)} ({BLANK_TARGET.stat().st_size} bytes)"
+    )
+    print(f"a pure white page at the prepared fixture's own size: {blank.shape}")
+    print("Docling returns an empty document for it rather than raising; see")
+    print("tests/ocr/primitives/test_metrics.py for the assertion and the measurement.")
+    return 0
+
+
+def main() -> int:
+    """Build every OCR fixture.
+
+    Returns:
+        The process exit code.
+    """
+    build_prepared_fixture()
+    print()
+    return build_blank_fixture()
 
 
 if __name__ == "__main__":
