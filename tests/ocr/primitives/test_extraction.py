@@ -438,33 +438,6 @@ def test_the_table_export_names_one_file_per_table() -> None:
         assert markdown.strip()
 
 
-def test_a_table_with_no_rows_renders_nothing_rather_than_an_empty_table() -> None:
-    """The edge the fixture does not reach: a table object with no cells.
-
-    Hand-built rather than converted, because no committed fixture produces it and a renderer that
-    emitted a headerless pipe row would be writing a table that does not exist.
-    """
-    empty = TableResult(table_id="table_001", index=1, markdown="", bbox=None, cells=[])
-
-    assert export._render_table(empty) == ""
-
-
-def test_ragged_rows_are_padded_to_the_widest() -> None:
-    """A Markdown table needs a rectangular body; a short row would break the rendering."""
-    ragged = TableResult(
-        table_id="table_001",
-        index=1,
-        markdown="",
-        bbox=None,
-        cells=[["a", "b", "c"], ["d"], ["e", "f"]],
-    )
-
-    rendered = export._render_table(ragged)
-    widths = [row.count("|") for row in rendered.splitlines()]
-
-    assert len(set(widths)) == 1, f"ragged rendering: {rendered!r}"
-
-
 # ======================================================================================
 # The mapping, without paying for a conversion
 # ======================================================================================

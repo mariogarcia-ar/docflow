@@ -125,6 +125,16 @@ RENDERING_PRIMITIVES = (
     "table_to_markdown",
     "table_to_json",
 )
+"""§3.4's *Tables* group plus the two Markdown names, in one module.
+
+``process_tables`` is not in §3.4: it is named by ``OCR-07``'s own scope, and it is the function
+that turns the tables into ``(name, contents)`` pairs. It is declared separately below because the
+plan-surface check compares this tuple against the module's ``__all__``, so a name in both would
+have to appear here to pass — and it belongs to the same module for the same reason the rest do.
+"""
+
+TABLE_PIPELINE_PRIMITIVES = ("process_tables",)
+"""The one table name ``OCR-07``'s scope has and §3.4's palette does not."""
 
 PERSISTENCE_PRIMITIVES = (
     "validate_ocr_request",
@@ -152,7 +162,7 @@ ALL_GROUPS = (
     (export, EXPORT_PRIMITIVES),
     (layout, LAYOUT_PRIMITIVES),
     (text, TEXT_PRIMITIVES),
-    (rendering, RENDERING_PRIMITIVES),
+    (rendering, RENDERING_PRIMITIVES + TABLE_PIPELINE_PRIMITIVES),
     (persistence, PERSISTENCE_PRIMITIVES),
     (metadata, METADATA_PRIMITIVES),
 )
@@ -182,6 +192,7 @@ IMPLEMENTED = (
     "count_blocks",
     "count_ocr_characters",
     "count_ocr_words",
+    "count_tables",
     "enable_layout_analysis",
     "enable_ocr",
     "enable_table_detection",
@@ -204,12 +215,16 @@ IMPLEMENTED = (
     "normalize_layout",
     "normalize_markdown",
     "normalize_ocr_text",
+    "normalize_table",
     "preserve_reading_order",
+    "process_tables",
     "serialize_document_json",
     "should_enable_layout",
     "should_enable_ocr",
     "should_enable_reading_order",
     "should_enable_tables",
+    "table_to_json",
+    "table_to_markdown",
 )
 """Primitives whose tasks have landed, so they no longer raise ``NotImplementedError``.
 

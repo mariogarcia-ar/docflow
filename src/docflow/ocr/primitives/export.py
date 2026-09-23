@@ -21,7 +21,12 @@ import json
 from typing import Any
 
 from docflow.ocr.contracts import BlockResult, LayoutResult, OCRDocument, TableResult
-from docflow.ocr.primitives.rendering import merge_ocr_blocks, normalize_markdown
+from docflow.ocr.primitives.rendering import (
+    merge_ocr_blocks,
+    normalize_markdown,
+    process_tables,
+    table_to_markdown,
+)
 from docflow.ocr.primitives.text import normalize_ocr_text
 
 #: The schema version of ``ocr/document.json``.
@@ -201,7 +206,7 @@ def export_docling_markdown(document: OCRDocument) -> str:
         table = tables.get(identifier)
         if table is not None:
             flush()
-            rendered = _render_table(table)
+            rendered = table_to_markdown(table).rstrip("\n")
             if rendered:
                 fragments.append(rendered)
 
@@ -210,29 +215,14 @@ def export_docling_markdown(document: OCRDocument) -> str:
     return f"{markdown}\n" if markdown else ""
 
 
-def _render_table(table: TableResult) -> str:
-    """Render one table as a Markdown pipe table.
-
-    Args:
-        table: The table to render.
-
-    Returns:
-        The Markdown table, or ``""`` for a table with no rows.
-    """
-    if not table.cells:
-        return ""
-    width = max(len(row) for row in table.cells)
-    rows = [
-        "| " + " | ".join(list(row) + [""] * (width - len(row))) + " |"
-        for row in table.cells
-    ]
-    header, *body = rows
-    divider = "| " + " | ".join("---" for _ in range(width)) + " |"
-    return "\n".join([header, divider, *body])
-
-
 def export_docling_tables(document: OCRDocument) -> list[tuple[str, str]]:
     """Return each table's file name and Markdown, for ``ocr/tables/``.
+
+    Delegates to :func:`docflow.ocr.primitives.rendering.process_tables` rather than rendering the
+    grids itself. There was briefly a private renderer here as well, and two renderers for one grid
+    is two answers to the same question: the copy that is not edited keeps producing a file the
+    other one would not. The table module owns tables; this function owns only the document-to-table
+    handoff.
 
     Names rather than paths: the directory is ``OCR-10``'s to choose, and a table exporter that
     invented a path would be the second place that knows the namespace layout.
@@ -243,10 +233,7 @@ def export_docling_tables(document: OCRDocument) -> list[tuple[str, str]]:
     Returns:
         ``(file name, markdown)`` pairs, in the document's table order.
     """
-    return [
-        (f"{table.table_id}.md", _render_table(table) + "\n")
-        for table in document.tables
-    ]
+    return process_tables(document.tables)
 
 
 def serialize_document_json(payload: dict[str, Any]) -> str:

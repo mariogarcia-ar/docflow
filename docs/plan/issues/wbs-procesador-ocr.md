@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `OCR-01` … `OCR-14` |
-| Status | `OCR-01`…`OCR-06` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, a real conversion is extracted into the engine-independent `OCRDocument`, the blocks are normalized into one coordinate frame and ordered by a rule rather than by arrival, and the three canonical representations are built with no run-time data in them; `OCR-07` … `OCR-14` `NOT_STARTED` |
+| Status | `OCR-01`…`OCR-07` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, a real conversion is extracted into the engine-independent `OCRDocument`, the blocks are normalized into one coordinate frame and ordered by a rule rather than by arrival, the three canonical representations are built with no run-time data in them, and the detected tables are exported in reading order under zero-padded names; `OCR-08` … `OCR-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -34,7 +34,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | OCR-04 | Execution + extraction primitives | M | 2 — Engine + extraction | OCR-03 | `convert_image_with_docling`, `extract_docling_*`, `OCRDocument` | this file §OCR-04 | DONE |
 | OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering | this file §OCR-05 | DONE |
 | OCR-06 | Output builders | M | 3 — Outputs | OCR-05 | `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` | this file §OCR-06 | DONE |
-| OCR-07 | Table processing | M | 3 — Outputs | OCR-06 | `process_tables`, `normalize_table`, `table_to_markdown`, `ocr/tables/table_NNN.md` | this file §OCR-07 | NOT_STARTED |
+| OCR-07 | Table processing | M | 3 — Outputs | OCR-06 | `process_tables`, `normalize_table`, `table_to_markdown`, `ocr/tables/table_NNN.md` | this file §OCR-07 | DONE |
 | OCR-08 | Metrics | S | 3 — Outputs | OCR-05 | `analyze_ocr_result` → `OCRMetrics` | this file §OCR-08 | NOT_STARTED |
 | OCR-09 | Technical validation | S | 3 — Outputs | OCR-06, OCR-08 | `validate_ocr_result`, `validate_output_artifacts` | this file §OCR-09 | NOT_STARTED |
 | OCR-10 | Atomic persistence + `metadata.json` | M | 4 — Publish + entry points | OCR-07, OCR-09 | `ocr/.tmp/` → rename; `ocr/metadata.json` | this file §OCR-10 | NOT_STARTED |
@@ -435,10 +435,18 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   normalizing afterwards would sort by a frame the artifact does not use, and the two would
   disagree the moment a page was not square.
 
-- **Scope boundaries kept.** `count_tables` and `normalize_table` are in §3.4 but under *Tables*,
-  so they stay in `rendering.py` for `OCR-07`; `count_blocks` is under *Layout* and lands here. No
-  file writing, no export, no timestamps — the module returns records and the identifiers in
-  reading order, nothing else.
+- **Scope boundaries kept.** `count_blocks` is under *Layout* and lands here. `normalize_table`,
+  `table_to_markdown`, `table_to_json` and `count_tables` are in §3.4 but under *Tables*, so they
+  stay in `rendering.py` for `OCR-07`. No file writing, no export, no timestamps — the module
+  returns records and the identifiers in reading order, nothing else.
+
+- **A correction to this block's first draft: `count_tables` is `OCR-07`'s, not `OCR-08`'s.** The
+  draft said it belonged to `OCR-08` "because it feeds the metrics" — an inference from where the
+  value is *read*, not from what any task says. `OCR-07`'s scope names it explicitly alongside
+  `normalize_table` and `table_to_markdown`, and §3.4 files all four together under *Tables*.
+  `OCR-08` consumes the count; that is not the same as owning it. The stub skeleton's docstring
+  repeated the same mistake and is corrected with it. This is the third time in this processor that
+  a surface claim taken from the modules rather than from the plan text was wrong.
 
 - **An unpositioned item is kept, sorts last, and keeps `None`.** Dropping it would be silent loss;
   substituting a zero box would turn "no geometry was extracted" into "this block sits at the
@@ -565,7 +573,11 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   *Text*; `OCR-06`'s scope names it; and `OCR-08` *reads* it while computing `OCRMetrics.empty`
   rather than owning it. The stub docstrings across `text.py` and `rendering.py` also attributed
   the text helpers to `OCR-05`, which is what the task-by-task build had left behind from the
-  skeleton — corrected in both modules as they landed.
+  skeleton — corrected in both modules as they landed. **A third claim of the same kind was wrong
+  and was found by `OCR-07`:** `count_tables` is `OCR-07`'s, not `OCR-08`'s. Reading where a value
+  is *consumed* is not the same as reading what the plan says owns it; the plan's task scope is the
+  authority, and this is the third surface claim in this processor that came from an inference
+  rather than from the text.
 
 - **The union of OCR-05's and OCR-06's primitives is what §9 decision 4 needs, and nothing composes
   it yet.** `preserve_reading_order` and `normalize_layout` deliver "normalized 0-1 coordinates",
@@ -620,6 +632,97 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given an image with no table, then no `tables/` artifact is required and no error is raised.
 - **Evidence / DoD:** Fixture-based test on `ocr_prepared_text_and_table.png`.
 - **Tags:** `# TODO: [MVP]` for the deferred `tables/table_NNN.json` export.
+
+- **Status: DONE.** Evidence: `ocr/primitives/rendering.py` now implements §3.4's *Tables* group —
+  `count_tables`, `normalize_table`, `table_to_markdown`, `table_to_json` — plus `process_tables`,
+  which this task's own scope names and §3.4 does not; `ocr/primitives/export.py` delegates its
+  table export to it. `tests/ocr/primitives/test_tables.py` (29 tests). Both criteria hold on the
+  committed fixture: the table exports as `table_001.md` with its cells in reading order, and an
+  empty table list produces no pairs and no error. All four gates green: **1119 tests**, `ruff`
+  clean, 10.00/10 on `pylint src tests`.
+
+- **`count_tables` is this task's, not `OCR-08`'s, and correcting that corrected a claim of mine.**
+  `OCR-06`'s evidence block said `count_tables` belonged to `OCR-08` "because it feeds the metrics".
+  That is an inference from where the value is *read*, and the plan says otherwise: `OCR-07`'s scope
+  names it beside `normalize_table` and `table_to_markdown`, and §3.4 files all four under *Tables*.
+  `OCR-08` consumes the count; that is not ownership. The stub docstring repeated the mistake and is
+  corrected with it. **This is the third surface claim in this processor that came from an inference
+  rather than from the plan text** — after the missing `enable_*` and `export_docling_*` primitives —
+  so the rule is now written down in `rendering.py`: read the task's scope, not the modules.
+
+- **A line break inside a cell corrupts the grid, and that was measured rather than assumed.** A cell
+  holding `"1\\r\\n2"` rendered verbatim produced ``| 1`` on one line and ``2 | 3 |`` on the next: a
+  two-row table silently became three rows with a broken column count, and every Markdown renderer
+  would then disagree about what it is reading. Markdown has no way to break a line inside a cell, so
+  `normalize_table` collapses an internal break — and its surrounding whitespace — to a **single
+  space**. A space rather than nothing, because stripping it would join two words the page kept
+  apart. The rule is pinned twice: on the cell, and on the rendering, where the test asserts every
+  line has the same number of pipes.
+
+- **`document.json`'s `cells` never passed the document-wide canonicalization, and a probe proved it.**
+  `_canonical_text` repairs the payload's `text`, `paragraphs`, `titles` and block text, but `cells`
+  is a list of lists that no canonicalizer touches — measured, a `\\x00` the engine left in a cell
+  reached `document.json` raw. `normalize_table` is the only step that can repair it, which is why
+  the rule lives on the cell rather than on the artifact. Both artifacts are now checked: the JSON
+  `cells` and the Markdown row.
+
+- **The stored Markdown is re-rendered from the cells rather than trusted.** `TableResult.markdown`
+  holds the *engine's* own rendering, captured by `OCR-04` and read by no artifact — verified by
+  `grep` before deciding. Keeping it would leave one record holding two representations of one table,
+  free to disagree; and since the cells are the canonical content, the rendering derived from them is
+  the one that cannot. The re-rendering also fixes the fixture's real table, whose engine-rendered
+  header was padded for the engine's console width (`| Canti      | Descripcion   |`) rather than as
+  a portable pipe table.
+
+- **`export_docling_tables` briefly had a second renderer, and two renderers for one grid is two
+  answers to one question.** The private `_render_table` in `export.py` was replaced by a call to
+  `process_tables`; the copy that is not edited is the one that keeps producing a file the other
+  would not. The two tests that reached `export._render_table` moved to `test_tables.py`, where the
+  renderer now lives.
+
+- **`process_tables` returns `(name, contents)` pairs and writes nothing.** Persistence is `OCR-10`'s
+  atomic publication, and a function that wrote here would put a filesystem dependency in a module
+  whose whole job is rendering. It also does **not** re-order its input: reading order is
+  `preserve_reading_order`'s result and the caller already has it, so a sort here would be a second
+  definition of the order. The names come from each table's own zero-padded identifier, which is what
+  makes `table_010.md` sort after `table_002.md` on disk the way it reads in the document.
+
+- **The deferred `tables/table_NNN.json` is not emitted, and `table_to_json` has no caller in this
+  phase.** §9 decision 2 defers it, and `process_tables` carries the `# TODO: [MVP]` marker. It is
+  deliberately *not* implemented by calling `table_to_json` and discarding the result: that would be
+  writing a file nobody reads to avoid admitting the function is unexercised. `table_to_json` is
+  implemented and tested on its own terms, because `OCR-10` and the deferred export both need a
+  canonical JSON shape for a table, and the next task that touches this should not have to guess what
+  it was supposed to contain.
+
+- **Three mutations survived the first battery, and all three were gaps in my tests rather than
+  equivalent mutants.** Each one is worth recording because the gap had a different shape:
+
+  * **`count_tables` counting rows instead of tables survived**, because every grid in the test had
+    exactly one row — the two formulas agree on every input the suite built. The grids are now
+    multi-row, and the test also asserts the count differs from the row count.
+  * **The cell `.strip()` surviving** showed the test had no *padded* cell: it asserted the
+    line-break collapse but never the padding rule, so removing the strip changed nothing the suite
+    could see.
+  * **`table_to_markdown` rendering the raw grid survived** because every test reached it through
+    ``process_tables``, which normalizes first — so the function's own normalization was never
+    exercised. It now has a test that calls it directly with a raw record, and asserts the input was
+    not mutated on the way.
+
+  The third is the one worth generalizing: **a function whose preconditions are always satisfied by
+  its only caller has an unmeasured path.** Testing through the caller cannot reach it, and the
+  mutation is the only thing that says so.
+
+- **Mutation battery (20 mutations, all killed, every restore green):** `count_tables` answering zero;
+  `count_tables` counting rows instead of tables; cells not canonicalized; a cell's internal line
+  break kept; the break collapse also eating the cell's own padding; the stored Markdown trusted
+  instead of re-rendered; ragged rows not padded; the divider row dropped; an empty grid rendering a
+  headerless pipe row; `table_to_markdown` rendering the raw grid; the trailing newline lost;
+  `process_tables` re-ordering by identifier; a file emitted for an empty grid; a fixed file name for
+  every table; no newline terminator; `table_to_json` expanding the record instead of naming its
+  fields; `table_to_json` serializing the raw cells; a missing box reported as a zero box; the export
+  no longer delegating; the Markdown document splicing the raw grid instead of the canonical table.
+  The battery ran twice; the first run left three survivors, recorded above.
 
 ### OCR-08 — Metrics
 
