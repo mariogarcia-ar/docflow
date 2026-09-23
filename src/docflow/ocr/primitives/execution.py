@@ -1,147 +1,150 @@
-"""Running Docling over one image, and reading its output into this processor's vocabulary.
+"""Running Docling over one image (``OCR-04``).
 
-Two modules rather than one, because the two halves have different reasons to change. *Running*
-the engine is about Docling's execution API; *extracting* is about Docling's result structure,
-and that is the part §8's risk table names — "Docling schema changes between versions" — with
-this layer as the mitigation. Keeping them apart means a schema change touches the extraction
-functions and leaves the execution path alone.
+The only module that invokes the engine. Its result is Docling's own structure;
+:mod:`docflow.ocr.primitives.extraction` is what turns that into the engine-independent
+:class:`~docflow.ocr.contracts.OCRDocument`.
 
-Every body raises :class:`NotImplementedError`. ``OCR-04`` implements all of these.
+Two decisions live here, and both are about keeping the engine's failure modes inside this
+processor's vocabulary:
+
+* **The converter is built here, not in the pipeline module.** ``OCR-03`` produces the pipeline
+  *options* — what the pipeline does. Pairing them with an input format and constructing a
+  converter is a different question — what the pipeline runs over — and this is the task that
+  runs it.
+* **Every upstream failure is re-raised as a typed seam error.** Docling raises whatever its
+  internals raise: ``RuntimeError``, ``pydantic`` validation errors, a bare ``OSError`` from a
+  missing file. Letting one cross this boundary would put an unstructured exception into a
+  contract that promises a typed :class:`~docflow.ocr.contracts.OCRError`, and the caller would
+  have nothing to classify.
+
+Only the image input format is registered. This processor reads images and nothing else — the
+prepared image a PDF render or an earlier stage handed it — so a converter that could also open a
+PDF would be offering a capability this processor must never use.
 """
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
+from typing import Any
 
-from docflow.ocr.contracts import BlockResult, LayoutResult, TableResult
+from docflow.ocr.primitives.engine import (
+    DOCLING_CONVERTER_MODULE_NAME,
+    OCREngineExecutionError,
+    docling_module,
+)
+
+CONVERSION_OPERATION: str = "convert_image_with_docling"
+"""The operation name recorded in a seam failure, so the message says which call failed."""
+
+CONVERTER_BUILD_OPERATION: str = "build_image_converter"
+"""The operation name recorded when the converter itself cannot be constructed."""
 
 
-def convert_image_with_docling(image_path: Path, pipeline: object) -> object:
+def _converter_module() -> Any:
+    """Import and return the module holding Docling's conversion API.
+
+    Returns:
+        The ``docling.document_converter`` module.
+
+    Raises:
+        OCREngineNotAvailableError: The engine is not importable.
+    """
+    docling_module()
+    return importlib.import_module(DOCLING_CONVERTER_MODULE_NAME)
+
+
+def _input_format() -> Any:
+    """Return Docling's enum member for the image input format.
+
+    Returns:
+        ``InputFormat.IMAGE``.
+
+    Raises:
+        OCREngineNotAvailableError: The engine is not importable.
+    """
+    base_models = importlib.import_module("docling.datamodel.base_models")
+    return base_models.InputFormat.IMAGE
+
+
+def _build_image_converter(pipeline_options: Any) -> Any:
+    """Pair configured pipeline options with the image input format and build a converter.
+
+    A separate step from :func:`convert_image_with_docling` because it is the expensive one: a
+    converter loads models, and a caller running several images wants to build it once. Making
+    that separable is what lets a batch pay for the models once without this module holding
+    state.
+
+    Args:
+        pipeline_options: Options from
+            :func:`docflow.ocr.primitives.pipeline.configure_image_pipeline`.
+
+    Returns:
+        A Docling converter registered for images only.
+
+    Raises:
+        OCREngineNotAvailableError: The engine is not importable.
+        OCREngineExecutionError: The converter cannot be constructed.
+    """
+    converter_module = _converter_module()
+    input_format = _input_format()
+    try:
+        option = converter_module.ImageFormatOption(pipeline_options=pipeline_options)
+        return converter_module.DocumentConverter(
+            allowed_formats=[input_format],
+            format_options={input_format: option},
+        )
+    except Exception as failure:
+        raise OCREngineExecutionError(
+            CONVERTER_BUILD_OPERATION, f"{type(failure).__name__}: {failure}"
+        ) from failure
+
+
+def convert_image_with_docling(image_path: Path, pipeline: Any) -> Any:
     """Run the engine over one prepared image.
+
+    ``pipeline`` arrives as the *options* object ``OCR-03`` produces, and the converter is built
+    around it here. The parameter keeps its declared name and position from ``OCR-02``'s
+    signature, because that signature is what the rest of the processor is written against.
 
     Args:
         image_path: The prepared image, already normalized or ``ocr_ready``.
-        pipeline: The configured pipeline.
+        pipeline: The configured pipeline options.
 
     Returns:
-        The engine's conversion result, still in Docling's own structure.
+        Docling's conversion result. Its ``document`` is the structure
+        :mod:`docflow.ocr.primitives.extraction` reads; this function does not interpret it.
 
     Raises:
-        NotImplementedError: ``OCR-04`` implements this.
+        OCREngineNotAvailableError: The engine is not importable.
+        OCREngineExecutionError: The conversion failed, or returned no document. The upstream
+            exception type is kept in the message rather than swallowed, so a caller can still
+            tell a missing file from a model failure.
 
-    # TODO: [MVP] implement (OCR-04).
+    # TODO: [MVP] the converter is rebuilt per call, so a batch reloads the models each time.
+    # `build_image_converter` is separated out precisely so a caller can hoist it; wiring that
+    # into the entry point is `OCR-11`'s to decide.
     """
-    raise NotImplementedError("convert_image_with_docling is implemented by OCR-04")
+    converter = _build_image_converter(pipeline)
+    try:
+        result = converter.convert(image_path)
+    except Exception as failure:
+        raise OCREngineExecutionError(
+            CONVERSION_OPERATION, f"{type(failure).__name__}: {failure}"
+        ) from failure
 
-
-def extract_docling_text(result: object) -> str:
-    """Read the plain text the engine produced.
-
-    Args:
-        result: The engine's conversion result.
-
-    Returns:
-        The text in the engine's reading order.
-
-    Raises:
-        NotImplementedError: ``OCR-04`` implements this.
-
-    # TODO: [MVP] implement (OCR-04).
-    """
-    raise NotImplementedError("extract_docling_text is implemented by OCR-04")
-
-
-def extract_docling_markdown(result: object) -> str:
-    """Read the Markdown the engine produced.
-
-    Args:
-        result: The engine's conversion result.
-
-    Returns:
-        The Markdown as the engine rendered it.
-
-    Raises:
-        NotImplementedError: ``OCR-04`` implements this.
-
-    # TODO: [MVP] implement (OCR-04).
-    """
-    raise NotImplementedError("extract_docling_markdown is implemented by OCR-04")
-
-
-def extract_docling_blocks(result: object) -> list[BlockResult]:
-    """Read the content blocks.
-
-    Args:
-        result: The engine's conversion result.
-
-    Returns:
-        The blocks, in the engine's order.
-
-    Raises:
-        NotImplementedError: ``OCR-04`` implements this.
-
-    # TODO: [MVP] implement (OCR-04).
-    """
-    raise NotImplementedError("extract_docling_blocks is implemented by OCR-04")
-
-
-def extract_docling_tables(result: object) -> list[TableResult]:
-    """Read the detected tables.
-
-    Args:
-        result: The engine's conversion result.
-
-    Returns:
-        The tables, in the engine's order.
-
-    Raises:
-        NotImplementedError: ``OCR-04`` implements this.
-
-    # TODO: [MVP] implement (OCR-04).
-    """
-    raise NotImplementedError("extract_docling_tables is implemented by OCR-04")
-
-
-def extract_docling_layout(result: object) -> LayoutResult:
-    """Read the layout information.
-
-    Args:
-        result: The engine's conversion result.
-
-    Returns:
-        The layout in the engine's coordinate convention, not yet normalized.
-
-    Raises:
-        NotImplementedError: ``OCR-04`` implements this.
-
-    # TODO: [MVP] implement (OCR-04).
-    """
-    raise NotImplementedError("extract_docling_layout is implemented by OCR-04")
-
-
-def extract_docling_metadata(result: object) -> dict[str, object]:
-    """Read the engine's own metadata.
-
-    Args:
-        result: The engine's conversion result.
-
-    Returns:
-        Engine-reported metadata, kept as the engine wrote it.
-
-    Raises:
-        NotImplementedError: ``OCR-04`` implements this.
-
-    # TODO: [MVP] implement (OCR-04).
-    """
-    raise NotImplementedError("extract_docling_metadata is implemented by OCR-04")
+    if getattr(result, "document", None) is None:
+        # Docling can return a result whose document is absent when a backend refused the input.
+        # Returning it would push an ``AttributeError`` into the extraction layer, where it would
+        # look like a bug in this processor rather than a refusal by the engine.
+        raise OCREngineExecutionError(
+            CONVERSION_OPERATION, "the engine returned a result with no document"
+        )
+    return result
 
 
 __all__ = [
+    "CONVERSION_OPERATION",
+    "CONVERTER_BUILD_OPERATION",
     "convert_image_with_docling",
-    "extract_docling_blocks",
-    "extract_docling_layout",
-    "extract_docling_markdown",
-    "extract_docling_metadata",
-    "extract_docling_tables",
-    "extract_docling_text",
 ]

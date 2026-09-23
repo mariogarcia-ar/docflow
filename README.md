@@ -39,7 +39,7 @@ would be a silent stand-in, which this project forbids at every stage.
 | Phase | What | Owner |
 |---|---|---|
 | **0 — contracts & skeleton** | ✅ **done** | `GEN-01`…`GEN-06` |
-| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). ✅ `image` **complete** (`IMG-01`…`IMG-15`, Waves 0–6). 🔄 `ocr` started (`OCR-01`…`OCR-03` done). ⏳ `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
+| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). ✅ `image` **complete** (`IMG-01`…`IMG-15`, Waves 0–6). 🔄 `ocr` started (`OCR-01`…`OCR-04` done). ⏳ `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
@@ -441,6 +441,21 @@ Recorded here so the first `GEN-17` reconciliation does not have to rediscover t
    The same class of gap is worth watching as the remaining processors land: a primitive named in
    design prose and absent from every task's deliverables is invisible until something tries to
    call it.
+
+8. **`OCR-04` needs a fixture that `OCR-12` owns.** The criterion says "Given
+   `fixtures/ocr_prepared_text_and_table.png`", and `OCR-12` is the task that commits the OCR
+   fixture set — it is not due until after `OCR-11`. Built early by
+   `scripts/tools/ocr_fixture.py`, because the assertion cannot be made without it. Recorded
+   because the dependency runs *backwards* (a task consuming an artifact a later task owns), and
+   the same shape may recur for `OCR-13`'s fixtures.
+
+9. **The image processor's OCR-optimized variant is the wrong input for the OCR processor.**
+   `ocr_ready.png` ends with a binarization, and Docling's table-structure model needs the
+   luminance detail that threshold discards: on the OCR fixture the table collapses from 5x4 to
+   1x1. Grayscale keeps it; the normalized colour variant loses the table entirely. This is an
+   integration fact between two processors whose names both suggest the same artifact is the right
+   handoff, and it is pinned by a test in `tests/ocr/primitives/test_extraction.py`. Whichever
+   task wires `OCR-11`'s entry point to a prepared image should read it first.
 
 Three smaller ones were resolved while writing the contracts, each noted in the module
 docstring where it lives: `DocumentResult.processing_key` (required by `GEN-04` but absent from

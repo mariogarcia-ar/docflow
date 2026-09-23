@@ -28,6 +28,8 @@ from __future__ import annotations
 from docflow.ocr.primitives import (
     engine,
     execution,
+    export,
+    extraction,
     layout,
     metadata,
     persistence,
@@ -39,6 +41,8 @@ from docflow.ocr.primitives import (
 __all__ = [
     "engine",
     "execution",
+    "export",
+    "extraction",
     "layout",
     "metadata",
     "persistence",

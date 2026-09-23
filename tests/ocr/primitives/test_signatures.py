@@ -21,6 +21,8 @@ import pytest
 
 from docflow.ocr.primitives import (
     execution,
+    export,
+    extraction,
     layout,
     metadata,
     persistence,
@@ -54,8 +56,10 @@ created could not fail it. The list below is now the plan's, and that is the fix
 from what has been built can only ever confirm that what has been built is what was built.
 """
 
-EXECUTION_PRIMITIVES = (
-    "convert_image_with_docling",
+EXECUTION_PRIMITIVES = ("convert_image_with_docling",)
+
+EXTRACTION_PRIMITIVES = (
+    "build_ocr_document",
     "extract_docling_text",
     "extract_docling_markdown",
     "extract_docling_tables",
@@ -63,6 +67,39 @@ EXECUTION_PRIMITIVES = (
     "extract_docling_layout",
     "extract_docling_metadata",
 )
+"""``OCR-04`` split the plan's *Extraction* group into its own module.
+
+The subplan groups execution and extraction together in §3.4 and they have different reasons to
+change: running the engine is about Docling's execution API while reading its result is about
+Docling's *structure*, which is the thing §8's risk table says may move between versions. Keeping
+them in one module meant a schema change and an execution change touched the same file.
+
+The names are the plan's; only the module boundary moved, and it is recorded here so the
+divergence from §3.4's grouping is visible rather than accidental.
+"""
+
+EXPORT_PRIMITIVES = (
+    "export_docling_text",
+    "export_docling_markdown",
+    "export_docling_json",
+    "export_docling_tables",
+    "serialize_document_json",
+)
+"""``subplan-procesador-ocr.md`` §3.4's *Export* group, plus one declared extension.
+
+The four ``export_docling_*`` names are the plan's. ``serialize_document_json`` is not, and it is
+here deliberately: the determinism posture requires two runs over the same page to produce
+byte-identical artifacts, which depends on sorted keys and a fixed indent. A caller handed the
+payload alone would be free to serialize it another way, so the one canonical serialization is a
+primitive rather than a detail of ``OCR-10``'s writing code.
+
+**These were in ``OCR-04``'s deliverable list and ``OCR-02`` did not declare them** — the same
+defect as the three ``enable_*`` primitives, found the same way: by reading the task's scope
+against the surface instead of trusting the surface. They now live in their own module, because
+an *exporter* turns a whole document into a serializable artifact while an *extractor* turns an
+engine item into a contract record, and the exporters are the boundary Docling's own
+``export_to_dict`` must not cross.
+"""
 
 LAYOUT_PRIMITIVES = (
     "normalize_bbox",
@@ -111,6 +148,8 @@ METADATA_PRIMITIVES = (
 ALL_GROUPS = (
     (pipeline, PIPELINE_PRIMITIVES),
     (execution, EXECUTION_PRIMITIVES),
+    (extraction, EXTRACTION_PRIMITIVES),
+    (export, EXPORT_PRIMITIVES),
     (layout, LAYOUT_PRIMITIVES),
     (text, TEXT_PRIMITIVES),
     (rendering, RENDERING_PRIMITIVES),
@@ -135,6 +174,18 @@ def _locate(name: str) -> object:
 
 
 IMPLEMENTED = (
+    "build_ocr_document",
+    "convert_image_with_docling",
+    "export_docling_json",
+    "export_docling_markdown",
+    "export_docling_tables",
+    "export_docling_text",
+    "extract_docling_blocks",
+    "extract_docling_layout",
+    "extract_docling_markdown",
+    "extract_docling_metadata",
+    "extract_docling_tables",
+    "extract_docling_text",
     "load_docling_pipeline",
     "configure_image_pipeline",
     "enable_layout_analysis",
@@ -145,6 +196,7 @@ IMPLEMENTED = (
     "should_enable_layout",
     "should_enable_ocr",
     "should_enable_reading_order",
+    "serialize_document_json",
     "should_enable_tables",
 )
 """Primitives whose tasks have landed, so they no longer raise ``NotImplementedError``.

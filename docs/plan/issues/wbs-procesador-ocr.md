@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `OCR-01` … `OCR-14` |
-| Status | `OCR-01`…`OCR-03` **DONE** - the contract is frozen, the Docling seam is in place with every downstream signature declared, and the pipeline/configuration primitives are implemented; `OCR-04` … `OCR-14` `NOT_STARTED` |
+| Status | `OCR-01`…`OCR-04` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, and a real conversion is extracted into the engine-independent `OCRDocument`; `OCR-05` … `OCR-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -31,7 +31,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | OCR-01 | Sub-package skeleton + contract dataclasses | S | 1 — Foundations | — | `src/docflow/ocr/`, `OCRRequest`, `OCRResult`, `NormalizedOCROptions`, `OCRMetrics`, `OCRMetadata`, `OCRValidation`, `OCRError`, `ArtifactPaths` | this file §OCR-01 | DONE |
 | OCR-02 | Docling seam + pin | S | 1 — Foundations | OCR-01 | `ocr/primitives/`, `docling` pinned in `pyproject.toml` | this file §OCR-02 | DONE |
 | OCR-03 | Pipeline/config primitives | M | 2 — Engine + extraction | OCR-02 | `load_docling_pipeline`, `configure_image_pipeline`, `enable_*`, `normalize_docling_options` | this file §OCR-03 | DONE |
-| OCR-04 | Execution + extraction primitives | M | 2 — Engine + extraction | OCR-03 | `convert_image_with_docling`, `extract_docling_*`, `OCRDocument` | this file §OCR-04 | NOT_STARTED |
+| OCR-04 | Execution + extraction primitives | M | 2 — Engine + extraction | OCR-03 | `convert_image_with_docling`, `extract_docling_*`, `OCRDocument` | this file §OCR-04 | DONE |
 | OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering | this file §OCR-05 | NOT_STARTED |
 | OCR-06 | Output builders | M | 3 — Outputs | OCR-05 | `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` | this file §OCR-06 | NOT_STARTED |
 | OCR-07 | Table processing | M | 3 — Outputs | OCR-06 | `process_tables`, `normalize_table`, `table_to_markdown`, `ocr/tables/table_NNN.md` | this file §OCR-07 | NOT_STARTED |
@@ -260,6 +260,90 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given an engine that raises during conversion, then the failure surfaces as a typed `OCRError` of type `ENGINE_ERROR`, never as an escaping exception.
 - **Evidence / DoD:** Fixture-based test; engine-failure containment test.
 - **Tags:** `# TODO: [MVP]` for richer Docling structure mapping.
+
+- **Status: DONE.** Evidence: `ocr/primitives/execution.py` (running the engine),
+  `ocr/primitives/extraction.py` (Docling's result into contract records) and
+  `ocr/primitives/export.py` (the serializable artifacts);
+  `tests/ocr/primitives/test_extraction.py` (31 tests). Both acceptance criteria hold against a
+  **real conversion**: the fixture yields a heading, 16 paragraphs and a 5x4 table with its cell
+  text, and engine failures arrive as typed seam errors. All four gates green: **995 tests**,
+  `ruff` clean, 10.00/10 on `pylint src tests`.
+
+- **The same defect as ``OCR-02``, caught the same way, one task later.** The scope names
+  ``export_docling_text``, ``export_docling_markdown``, ``export_docling_json`` and
+  ``export_docling_tables``; ``OCR-02`` had declared none of them. They are now in
+  ``ocr/primitives/export.py`` — split from the extractors because an *exporter* turns a whole
+  document into a serializable artifact while an *extractor* turns an engine item into a contract
+  record, and the exporters are the boundary Docling's own ``export_to_dict`` must not cross.
+
+  Two primitives I had invented were removed in the same pass: ``image_format_option`` and
+  ``with_engine_options`` are in neither §3.4 nor this task's scope. ``build_image_converter`` was
+  demoted to a private helper — the split is useful (hoisting the model load is what a batch
+  wants) but it is not the plan's surface. ``serialize_document_json`` was kept **and declared**,
+  because the determinism posture requires a canonical serialization and a caller handed the bare
+  payload would be free to produce a different one.
+
+- **Docling converts images offline on this machine, and that was established before designing
+  against it.** Models are already in ``~/.cache/docling``; a conversion takes about five seconds.
+  If they were not, every OCR-04 test would need a network fetch, which would have changed the
+  whole test strategy. Measured, not assumed.
+
+- **The fixture the criterion names did not exist, and the obvious preparation broke it.** The
+  criterion says "Given ``fixtures/ocr_prepared_text_and_table.png``"; no such file was committed
+  — ``OCR-12`` owns the fixture set and is not due yet. It is built by
+  ``scripts/tools/ocr_fixture.py``, which takes a real invoice from the corpus and prepares it
+  with the *image* processor, because "prepared" is what that pipeline produces and the documented
+  flow is `PDF` → `image` → `ocr`.
+
+  **Feeding it the image processor's own OCR-optimized variant collapses the table from 5 rows by
+  4 columns to 1 by 1.** That variant ends with a binarization, and Docling's table-structure
+  model needs the luminance detail a threshold discards. The normalized colour variant loses the
+  table entirely. Grayscale keeps it. This is asserted by a test rather than only documented,
+  because the obvious future "improvement" is to wire the OCR entry point to the artifact named
+  ``ocr_ready.png`` — exactly the input that breaks it.
+
+  The fixture is therefore **grayscale**, which is also a genuine integration finding between two
+  processors: ``ocr_ready.png`` is the right input for a character-recognition engine and the
+  wrong one for Docling's table model.
+
+- **The synthetic image fixtures cannot be used here, and that was measured too.**
+  `tests/fixtures/image/skewed_text.png` is drawn text-like shapes; OCR reads glyphs and returns
+  **nothing** for it. The extraction is therefore proven against a real scan from the committed
+  corpus. Worth stating because the image processor's own suite is built entirely on those
+  synthetic files, and the difference is invisible until something tries to read them as text.
+
+- **Four things the engine reports and how each was mapped**, all read off the installed engine
+  rather than recalled:
+
+  * **Labels.** Docling 2.126.0 defines **thirty** item labels; the contract declares **eight**
+    block types. The mapping is a table, so an unmapped label lands in ``other`` rather than being
+    guessed at or dropped — and a test asserts every contract type except ``other`` is reachable,
+    since a category nothing can produce is a contract that lies.
+  * **Identifiers.** ``block_NNN`` and ``table_NNN`` are **minted**, not taken from Docling's
+    ``self_ref`` (``#/texts/0``). That reference is deterministic too, and it would be the
+    engine's spelling crossing the boundary the subplan forbids crossing. Ordering them into
+    *reading* order is ``OCR-05``'s work; this task records the order it was handed.
+  * **Geometry.** Bounding boxes pass through as the engine reports them, coordinate origin
+    included. ``normalize_bbox`` is ``OCR-05``'s, and doing it here would leave two modules
+    responsible for one guarantee. An item with no provenance yields ``None``, never a zero box:
+    ``None`` is "not extracted" and a zero box is a *real location*, so conflating them would make
+    a missing measurement look like a point in the corner.
+  * **The page size** comes from the document's own page object, and the layout keeps the
+    engine's scale until ``OCR-05`` normalizes it.
+
+- **Two of my own tests were defective and the mutation-style review found them.** The
+  identifier test compared a list of strings **to itself** — true for any input — and now asserts
+  the real block ids against their expected minted form. The table-shape test asserted only "more
+  than one row", which a well-formed 1x1 grid could not fail; it now checks rectangularity and
+  multi-row-ness together.
+
+- **`DoclingDocument.export_to_dict` is deliberately not used for `document.json`.** It would be
+  the shortest path and it would publish Docling's schema as this processor's artifact, so a
+  Docling upgrade could change the meaning of a file a consumer already reads. ``OCR-05``'s
+  determinism posture calls ``document.json`` "a stable, versioned schema", which means *this*
+  processor's: ``DOCUMENT_SCHEMA_VERSION`` is its own constant, and the Markdown is rendered from
+  the document's own blocks rather than taken from the engine's renderer for the same reason — a
+  consumer diffing two runs must not see a difference produced by the renderer.
 
 ### OCR-05 — Deterministic normalization
 
