@@ -146,6 +146,67 @@ Scenario: One config file drives all four tools
   And no second configuration file exists in the repository root
 ```
 
+- **Status: DONE, with the engine pins added late.** Evidence: `pyproject.toml` holds
+  `[tool.ruff.*]`, `[tool.ruff.format]`, `[tool.pylint.*]`, `[tool.pytest.ini_options]` and
+  `[tool.coverage.*]`, and all four gates run from an unmodified checkout with no second config file
+  (104 files formatted, `pylint src tests` 10.00/10, 662 tests). The engine pins landed during
+  `IMG-11`, not in Wave 0.3 - see the defect below.
+
+- **Defect: `dependencies` was `[]` while the image processor used numpy, OpenCV and Pillow.**
+  `IMG-02` built the engine seam, `IMG-03`…`IMG-11` built twelve modules on top of it, and the
+  manifest still declared nothing. `pip install docflow` on a clean machine produced a package that
+  could not process a single image, and **every test still passed**, because the development
+  environment happened to have the three libraries installed. This is the worst shape a defect can
+  take here: four green gates and a broken install.
+
+- **Why a source scan would not have found it.** The engine seam reaches its libraries through
+  `importlib`, so no `import cv2` statement exists anywhere for a linter or a reviewer to notice.
+  That laziness is deliberate - `tests/test_skeleton.py::ENGINE_MODULES` asserts the seam pulls in no
+  engine at import time - but it means the dependency relationship is invisible to every static
+  check this repo runs. The gap had to be closed by a test that *resolves the seam* and compares the
+  result to the manifest.
+
+- **`tests/test_packaging.py` is that test.** It derives the module roots from the seam itself
+  (`engine_module`, `operations_module`, `ARRAY_LIBRARY_NAME`), maps each to its providing
+  distribution through `importlib.metadata.packages_distributions`, and asserts every one is covered
+  by a declared requirement. Deriving from the seam rather than restating the names is the point: a
+  hand-written list would drift the same way the manifest did. It also asserts the manifest is not
+  empty, that every entry parses as a requirement, and that everything declared is installed, so
+  neither the environment nor the manifest can move without the other.
+
+- **`opencv-python-headless`, not `opencv-python`.** The two distributions provide the same `cv2`
+  module, and both were installed on the development machine, which is why neither the tests nor the
+  runtime ever distinguished them. The headless build is the correct one for a project that renders
+  to files: the standard build links the GUI libraries and cannot install on a server without a
+  display. Verified before choosing it - no `imshow`, `waitKey`, `namedWindow` or
+  `destroyAllWindows` call exists in `src/` or `tests/`.
+
+- **Poppler is deliberately absent from `dependencies`, and the omission is documented in the file.**
+  It is the PDF processor's engine, but it is a system binary reached through `subprocess`, so `pip`
+  cannot install it. It belongs to the container image, and the README's Requirements section is
+  where an operator finds it. Writing it into `dependencies` would have been a lie a resolver could
+  not honour.
+
+- **`packaging` was added to the `dev` extra for the same reason the test exists.** The new test
+  imports it to parse requirement strings; it arrives transitively with pytest, but a module a file
+  imports is a dependency that file must declare. The rule the project applies to `src/` is not
+  suspended in `tests/`.
+
+- **Mutation evidence.** Seven mutations applied, all killed: `dependencies` emptied again (the
+  original defect, caught before the peers), each engine pin removed in turn, an engine repointed at
+  an undeclared library, an operations module repointed at an undeclared library, the array library
+  repointed at an undeclared library, a declared package renamed to one that does not exist, and a
+  requirement replaced by an unparseable string. **One mutant survived the first battery** - adding a
+  stray key to the internal module table - and it was a badly built mutant, not a gap: it added a
+  string to a `dict[EngineChoice, str]` that nothing resolves, so no code path reached it. Replaced
+  with the three repointing mutations above, which exercise the seam as it is actually called.
+
+- **Install verified, not assumed.** `pip install -e . --dry-run` resolves to the three engines plus
+  `docflow` itself and nothing else on this machine - they were already present and satisfy the
+  constraints - and the generated metadata lists exactly `numpy>=2.0`,
+  `opencv-python-headless>=4.10` and `Pillow>=10.0`. The README's Setup note now says plainly that
+  the four gates pass with or without the install, which is how the gap stayed hidden.
+
 #### GEN-06 — Round-trip happy-path test per contract
 
 - **Type:** test

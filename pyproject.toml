@@ -11,9 +11,31 @@ name = "docflow"
 version = "0.0.0"
 description = "Modular document-processing pipeline: pdf, image, ocr and llm processors under one orchestrator."
 requires-python = ">=3.11"
-# Engine pins land in Phase 1, each inside its own processor's primitives/ (PDF-02,
-# IMG-02, OCR-02, LLM-02/LLM-09).
-dependencies = []
+# What `src/` actually imports, which is less than what the development environment installs.
+#
+# The engines are reached through `importlib` in each processor's `primitives/engine.py` seam, so
+# they never appear in a static import statement - they are still hard requirements, because a
+# processor whose engine is absent cannot do its job. Pillow is an engine in its own right (IMG-02
+# documents it as the drop-in alternative to OpenCV), not an optional extra: `ImageEngineNotAvailableError`
+# exists to name a *missing* library, not a library the project never claimed to need.
+dependencies = [
+    # The array vocabulary every image primitive speaks; `ARRAY_LIBRARY_NAME` in the image seam.
+    "numpy>=2.0",
+    # `opencv-python-headless`, not `opencv-python`: the standard build links the GUI libs and
+    # cannot install on a server without a display, and nothing in this project opens a window
+    # (verified: no `imshow`/`waitKey`/`namedWindow` call anywhere in `src/` or `tests/`).
+    "opencv-python-headless>=4.10",
+    # The second image engine; `PILLOW_ENGINE_NAME` in the seam.
+    "Pillow>=10.0",
+]
+# Not declared, and deliberately so:
+#
+# * **Poppler** (`pdftotext`, `pdftoppm`, ...) is the PDF processor's engine, but it is a system
+#   binary reached through `subprocess`, not a Python distribution. `pip` cannot install it; the
+#   container image is where it belongs, and `PDF-02` records the miss as a typed
+#   `PopplerNotAvailableError` rather than a silent substitute.
+# * **docling** and the `ocr` / `llm` engines: not yet implemented, so not yet dependencies.
+#   `tests/test_skeleton.py::ENGINE_MODULES` lists the names the lazy-import rule covers.
 
 [project.optional-dependencies]
 dev = [
@@ -21,6 +43,10 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6.0",
     "pylint>=3.2.0",
+    # Imported directly by `tests/test_packaging.py` to parse the manifest's requirement
+    # strings. It arrives transitively with pytest, but the rule this project applies to itself
+    # is that a module a file imports is a dependency that file declares.
+    "packaging>=23.0",
 ]
 
 [tool.setuptools.packages.find]

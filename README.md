@@ -60,8 +60,21 @@ Per-task status is authoritative in [`docs/plan/issues/wbs-procesador-pdf.md`](d
   apt-get install poppler-utils   # Debian/Ubuntu
   ```
   The engine is explicit: if a binary is missing the processor raises a typed
-  `PopplerNotAvailableError` rather than substituting another reader. No other processor
-  needs an engine yet.
+  `PopplerNotAvailableError` rather than substituting another reader.
+  Poppler is a **system binary**, not a Python distribution, so it is not in
+  `pyproject.toml` — `pip` cannot install it.
+- **`procesador-image` needs OpenCV, numpy and Pillow.** These *are* Python distributions, so
+  `pip install -e .` brings them in; they are declared in `pyproject.toml`.
+  - `opencv-python-headless` is the declared build, not `opencv-python`: the standard build links
+    the GUI libraries and cannot install on a server without a display, and nothing here opens a
+    window.
+  - Pillow is a first-class engine (the documented alternative to OpenCV), not an optional extra.
+    `ImageEngineNotAvailableError` names a *missing* library, never one the project never claimed
+    to need.
+  - `tests/test_packaging.py` asserts that every module the engine seam loads is provided by a
+    declared dependency, so a new engine cannot be added without its pin.
+
+`ocr` and `llm` need no engine yet — Docling and the model backends land with their own phases.
 
 
 ## Setup
@@ -70,12 +83,13 @@ Per-task status is authoritative in [`docs/plan/issues/wbs-procesador-pdf.md`](d
 git clone <repo> && cd ibm-docling-ref
 
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"        # pytest, pytest-cov, ruff, pylint
+pip install -e ".[dev]"        # the library's engines + pytest, pytest-cov, ruff, pylint
 ```
 
 `pip install` is optional for the gates: `pyproject.toml` puts `src/` on the path, so
 `pytest` runs from a clean checkout. Install it when you want to import `docflow` from
-anywhere.
+anywhere, or when you want the engine dependencies resolved rather than assumed — the four
+gates pass either way, which is exactly how the undeclared dependencies went unnoticed.
 
 Run the test suite:
 
@@ -360,7 +374,7 @@ processor you are touching.
 
 ---
 
-## Two known divergences from the plan
+## Known divergences from the plan
 
 Recorded here so the first `GEN-17` reconciliation does not have to rediscover them.
 
@@ -379,6 +393,22 @@ Recorded here so the first `GEN-17` reconciliation does not have to rediscover t
    the same idea under a different name. `var/` is now the documented default for
    `scripts/tools/`; `work/` is left in `.gitignore` as legacy rather than silently deleted,
    and the reconciliation of the three belongs to `GEN-17`.
+
+4. **`GEN-05`'s out-of-bounds cites a `README.md` §9.3 that no longer exists.** The constraint is
+   "adding a dependency that is not implied by `README.md` §9.3". This README has no §9 section —
+   the numbered sections stop earlier — so the authority for what a dependency must be implied by
+   is unverifiable as written. Handled by reading the *current* README as the intent: the
+   Requirements section names every engine, and a dependency is admissible when that section says
+   the processor needs it. Recorded because the next task that adds a dependency faces the same
+   dead reference, and should not have to guess whether the constraint is still live.
+
+5. **`GEN-05`'s engine pins landed with `IMG-11`, not in Wave 0.3.** The scope says the pins land
+   "as they land in Phase 1", which the wave plan read as Wave 0.3. In practice the manifest was
+   left at `dependencies = []` while `IMG-02`…`IMG-11` built twelve modules that need numpy,
+   OpenCV and Pillow — and every gate stayed green, because the development environment had them
+   installed. The pins are now in place and `tests/test_packaging.py` guards them, so the drift
+   cannot recur silently. The ordering lesson belongs to `GEN-17`: an engine seam that resolves its
+   libraries through `importlib` is invisible to every static check this repo runs.
 
 Three smaller ones were resolved while writing the contracts, each noted in the module
 docstring where it lives: `DocumentResult.processing_key` (required by `GEN-04` but absent from
