@@ -194,14 +194,22 @@ def test_json_blocks_carry_the_fields_a_reader_needs() -> None:
         assert block["bbox"] is None or len(block["bbox"]) == 4
 
 
-def test_json_layout_is_serialized_faithfully_in_the_frame_it_arrived_in() -> None:
-    """The exporter reports the layout it was handed; it does not reinterpret coordinates.
+def test_the_exporter_reports_the_layout_it_is_handed_without_reinterpreting_it() -> (
+    None
+):
+    """The exporter serializes coordinates faithfully; it does not decide the frame.
 
-    ``build_ocr_document`` (``OCR-04``) currently returns the engine's **pixel** frame, and this
-    asserts the exporter neither normalizes it nor pretends it did — a second module that knew how
-    to map coordinates would be the second definition of the frame, which is what ``OCR-05`` exists
-    to prevent. The frame recorded here is a fact about the pipeline's current composition, not a
-    claim about the artifact's final form; see the test below.
+    ``OCR-04``'s ``build_ocr_document`` returns the engine's **pixel** frame and never pretended
+    otherwise, and the exporter is asserted here to neither normalize that nor claim it did — a
+    second module that knew how to map coordinates would be a second definition of the frame, which
+    is what ``OCR-05`` exists to prevent.
+
+    This module's ``builders()`` starts from that raw extraction, so the frame asserted here is
+    ``OCR-04``'s. **The published artifact's frame is the normalized one**, because ``OCR-11``'s
+    composition normalizes before exporting; that is asserted end-to-end in
+    ``tests/ocr/test_entrypoints.py``, where the flow actually runs. The two are}
+    complementary rather than contradictory: this one pins that the exporter is a faithful reporter,
+    that one pins that the composition hands it the right thing to report.
     """
     document = extracted_document()
     payload = json.loads(builders()["document.json"])
@@ -212,44 +220,6 @@ def test_json_layout_is_serialized_faithfully_in_the_frame_it_arrived_in() -> No
         payload["layout"]["region_bboxes"], document.layout.region_bboxes, strict=True
     ):
         assert box == list(source)
-
-
-def test_the_artifacts_do_not_yet_apply_ocr05_normalization_and_ocr11_must_wire_it() -> (
-    None
-):
-    """A gap recorded rather than hidden, because nothing else in the suite can see it.
-
-    ``subplan-procesador-ocr.md`` §9 decision 4 is **frozen**: the ``bbox`` normalization reference
-    is "normalized 0-1 coordinates". ``OCR-05`` built ``normalize_layout`` and
-    ``preserve_reading_order`` to deliver exactly that, and ``OCR-04``'s docstring says in as many
-    words that it does not attempt the sort because that is ``OCR-05``'s work.
-
-    But **no production module calls either primitive.** They appear only in docstrings. So today
-    ``document.json`` carries pixel coordinates and the engine's iteration order, and §9's frozen
-    decision is unmet — not because the primitive is wrong (its own suite pins it against a real
-    conversion) but because nothing composes it.
-
-    This is the expected shape of a task-by-task build: ``OCR-05`` landed primitives, and ``OCR-11``
-    ("``process_ocr_image`` orchestration") is the task that runs the stages in order. The point of
-    asserting it *now* is that this is the only place the omission is observable — every other test
-    passes either way, and the failure mode is a plausible-looking artifact with coordinates no
-    consumer can interpret. When ``OCR-11`` wires it, this test must be inverted along with the one
-    above, and the contract's ``layout: Normalized layout`` docstring becomes true.
-    """
-    document = extracted_document()
-    payload = json.loads(builders()["document.json"])
-
-    assert document.layout.page_width > 1.0, (
-        "the layout is already normalized, so OCR-11 has wired OCR-05: invert this test and "
-        "test_json_layout_is_serialized_faithfully_in_the_frame_it_arrived_in"
-    )
-    assert payload["layout"]["page_width"] > 1.0
-
-    ordered = [block["block_id"] for block in payload["blocks"]]
-    assert ordered == [block.block_id for block in document.blocks], (
-        "the blocks are no longer in extraction order"
-    )
-    assert payload["reading_order"] == document.reading_order
 
 
 def test_the_three_artifacts_agree_about_the_text() -> None:
