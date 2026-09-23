@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `OCR-01` … `OCR-14` |
-| Status | `OCR-01`…`OCR-05` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, a real conversion is extracted into the engine-independent `OCRDocument`, and the blocks are normalized into one coordinate frame and ordered by a rule rather than by arrival; `OCR-06` … `OCR-14` `NOT_STARTED` |
+| Status | `OCR-01`…`OCR-06` **DONE** - the contract is frozen, the Docling seam is in place, the pipeline/configuration primitives are implemented, a real conversion is extracted into the engine-independent `OCRDocument`, the blocks are normalized into one coordinate frame and ordered by a rule rather than by arrival, and the three canonical representations are built with no run-time data in them; `OCR-07` … `OCR-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -33,7 +33,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | OCR-03 | Pipeline/config primitives | M | 2 — Engine + extraction | OCR-02 | `load_docling_pipeline`, `configure_image_pipeline`, `enable_*`, `normalize_docling_options` | this file §OCR-03 | DONE |
 | OCR-04 | Execution + extraction primitives | M | 2 — Engine + extraction | OCR-03 | `convert_image_with_docling`, `extract_docling_*`, `OCRDocument` | this file §OCR-04 | DONE |
 | OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering | this file §OCR-05 | DONE |
-| OCR-06 | Output builders | M | 3 — Outputs | OCR-05 | `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` | this file §OCR-06 | NOT_STARTED |
+| OCR-06 | Output builders | M | 3 — Outputs | OCR-05 | `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` | this file §OCR-06 | DONE |
 | OCR-07 | Table processing | M | 3 — Outputs | OCR-06 | `process_tables`, `normalize_table`, `table_to_markdown`, `ocr/tables/table_NNN.md` | this file §OCR-07 | NOT_STARTED |
 | OCR-08 | Metrics | S | 3 — Outputs | OCR-05 | `analyze_ocr_result` → `OCRMetrics` | this file §OCR-08 | NOT_STARTED |
 | OCR-09 | Technical validation | S | 3 — Outputs | OCR-06, OCR-08 | `validate_ocr_result`, `validate_output_artifacts` | this file §OCR-09 | NOT_STARTED |
@@ -361,10 +361,23 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Fixture-based test comparing two runs; unit test on the tie-break rule.
 - **Tags:** —
 
-- **Status: DONE.** Evidence: `src/docflow/ocr/primitives/layout.py` holds the five names §3.4's
-  *Layout* group lists and nothing else; `tests/ocr/primitives/test_layout.py` (23 tests). Both
-  criteria hold against a **real conversion**, and both are backed by a mutation that kills them.
-  All four gates green: **1018 tests**, `ruff` clean, 10.00/10 on `pylint src tests`.
+- **Status: DONE.** Evidence: `src/docflow/ocr/primitives/layout.py` holds §3.4's *Layout* group
+  (`count_blocks`, `calculate_ocr_text_density`, `normalize_bbox`, `normalize_layout`) plus
+  `preserve_reading_order`, which §3.4 files under *Markdown* but which this task's own scope
+  names; `tests/ocr/primitives/test_layout.py` (23 tests). Both criteria hold against a **real
+  conversion**, and both are backed by a mutation that kills them. All four gates green:
+  **1018 tests**, `ruff` clean, 10.00/10 on `pylint src tests`.
+
+- **Where `preserve_reading_order` lives is a divergence in the plan, and it is recorded rather
+  than papered over.** §3.4 groups it under *Markdown*, between `merge_ocr_blocks` and
+  `count_tables`; `OCR-05`'s scope names it explicitly, and `OCR-05` is the task that owns reading
+  order. It shipped in `layout.py` because the order is *defined on normalized geometry* — it
+  calls `normalize_bbox` for every item, so putting it in `rendering.py` would make the module that
+  owns the coordinate frame depend on the module that owns Markdown for no reason, and
+  `layout.py` already holds the ordering key. The plan-surface test lists it in the *Layout* group
+  for the same reason. A first draft of this evidence block said the group had "five names, name
+  for name"; it has **four**, and the fifth is a declared exception. The correction is recorded as
+  divergence 10 in `README.md`.
 
 - **The engine was already deterministic, so the criterion's two-run test is the weak half.**
   Three identical conversions of the fixture produced byte-identical block order, bboxes and text.
@@ -478,6 +491,119 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Then none of the three files contains a run-time timestamp.
 - **Evidence / DoD:** Fixture-based test; the no-timestamps invariant (OCR-12, invariant 2).
 - **Tags:** `# TODO: [MVP]` for schema fields deferred to a later version.
+
+- **Status: DONE.** Evidence: `ocr/primitives/text.py` (§3.4's *Text* group, five names),
+  `ocr/primitives/rendering.py` (*Markdown*: `normalize_markdown`, `merge_ocr_blocks`) and the
+  wiring in `ocr/primitives/export.py`, which now canonicalizes both artifacts through them.
+  `tests/ocr/primitives/test_text.py` (23 tests), `test_rendering.py` (27) and
+  `test_output_artifacts.py` (21, fixture-based). Both criteria hold on a real conversion. All four
+  gates green: **1089 tests**, `ruff` clean, 10.00/10 on `pylint src tests`.
+
+- **The no-timestamps criterion cannot be written as a search for a date, and the fixture is why.**
+  The committed fixture is a real invoice: its extracted text genuinely contains `01/11/2016`,
+  `27/02/26` and a `13:09`. An assertion of the form "no date-shaped string appears" would
+  therefore **fail on correct output**, and the obvious repair — searching for the *current* date —
+  passes on a file that had frozen one into it, which is the defect the invariant exists to catch.
+  The test pins the clock instead: `datetime.datetime` is replaced by a subclass whose `now`,
+  `utcnow` and `today` all answer with an instant no page can contain (2099-12-31T23:59:58Z),
+  `time.time` and `time.monotonic` are pinned with it, and both the artifacts and the pinned values
+  are then asserted absent. Two builds under the pinned clock are also compared, so a builder that
+  read the clock into something *derived* — a hash, a duration, an id — is caught even though the
+  raw value is unrecognizable. A further test pins the fixture's own dates, so the finding cannot
+  be forgotten by whoever next edits this criterion.
+
+- **Invariant 2 is checked structurally as well as behaviourally.** No artifact payload may hold a
+  field named `generated_at`, `created_at`, `timestamp`, `processed_at`, `run_at` or `date`, and
+  that is asserted over the whole schema and every block. A consumer reads field *names*, so a
+  schema that grew a timestamp would be visible; asserting the absence keeps it that way rather
+  than trusting it.
+
+- **Two defects of mine, one of them found only because a mutation survived.** The trivial pair
+  first: `count_ocr_words` on `"the quick brown fox jumps over"` is **6**, not the 5 I asserted, and
+  `"  padded \r\n text  "` holds **2** words rather than 3 — the `\r\n` pair is one whitespace run,
+  so it separates without adding a token.
+
+  The real one came out of the mutation battery. Three mutations survived, and following them back
+  showed that **`normalize_markdown` was a pure alias of `normalize_ocr_text`**: the
+  trailing-whitespace regex and the blank-line collapse I had written beside it were both
+  **unreachable**, because `clean_ocr_text` already strips each line's trailing padding and already
+  collapses blank runs. Two guards that could never fire, reading as protection while a mutation
+  that deleted them changed nothing. `normalize_markdown` now delegates, with the reason recorded
+  in its docstring: one owner for one canonical form, and the second name buys locality of meaning
+  rather than a second behaviour.
+
+- **The battery's other survivors were my tests' fault, and chasing them found a real artifact
+  inconsistency.** `text.txt is not canonicalized`, `document.md is not canonicalized` and
+  `the json serialization is not key-sorted` all survived because every test drove the builders with
+  the *engine's own output*, which is already clean, sorted and canonical — so a builder that did
+  nothing passed. The tests now replace the document's content with deliberately raw text and
+  blocks, which makes the builder's own step the only thing that can close the gap. Doing that
+  immediately exposed a genuine defect: **`document.json` was not canonicalizing its `text`,
+  `paragraphs`, `titles` or block text**, so the structured artifact disagreed with `text.txt`
+  about the same extraction. Every text-bearing field now goes through one `_canonical_text` helper.
+
+- **One survivor was an equivalent mutant, and saying so is part of the evidence.** The second run
+  left two, and they needed different responses. `_render_block` returning `" "` instead of `""` for
+  a block with no text survives because the document-wide canonicalization strips a whitespace-only
+  fragment: measured, `merge_ocr_blocks(["before", "   ", "after"])` gives `"before\n\nafter"` either
+  way, and `normalize_markdown(" ")` is `""`. The mutation was therefore **withdrawn** rather than
+  answered with a test that would assert a distinction the code does not make. The other survivor was
+  a real gap — nothing read a *block's* `text` field with raw content, only the payload's top-level
+  one — and it now has a test asserting both fields agree on the canonical form. The distinction
+  matters: an equivalent mutant is not coverage debt, and a test written to kill one would pin
+  behaviour the implementation does not owe.
+
+- **The document-wide Markdown canonicalization is a guard with a real reach, and a probe proved it
+  rather than a guess.** `_render_table` joins a cell's characters straight into a pipe row, so a
+  control character or a stray carriage return the engine left in a cell would land in the artifact
+  unless something canonicalizes what the table rendered. Measured before it was trusted:
+  `"a\x00b"` renders to `| a\x00b | c |` and only the document-wide pass removes it. Pinned by
+  `test_a_table_cell_cannot_smuggle_a_control_character_into_the_markdown`, which also asserts the
+  rendering is non-empty so the absence checks cannot pass vacuously.
+
+- **`is_ocr_empty` is here although the stub skeleton gave it to `OCR-08`.** §3.4 lists it under
+  *Text*; `OCR-06`'s scope names it; and `OCR-08` *reads* it while computing `OCRMetrics.empty`
+  rather than owning it. The stub docstrings across `text.py` and `rendering.py` also attributed
+  the text helpers to `OCR-05`, which is what the task-by-task build had left behind from the
+  skeleton — corrected in both modules as they landed.
+
+- **The union of OCR-05's and OCR-06's primitives is what §9 decision 4 needs, and nothing composes
+  it yet.** `preserve_reading_order` and `normalize_layout` deliver "normalized 0-1 coordinates",
+  and `export_docling_json` currently serializes the layout **in pixels** and the blocks in
+  **extraction order**, because no production module calls either primitive. `OCR-04`'s
+  docstring says so explicitly ("this function does not attempt the sort") and `OCR-11` is the task
+  that runs the stages. It is asserted rather than left implicit:
+  `test_the_artifacts_do_not_yet_apply_ocr05_normalization_and_ocr11_must_wire_it` fails the moment
+  the wiring lands, so the omission cannot survive as a plausible-looking artifact with coordinates
+  no consumer can interpret. **`OCR-11` must invert that test** together with
+  `test_json_layout_is_serialized_faithfully_in_the_frame_it_arrived_in`.
+
+- **The gates found one more piece of my own duplication.** The new acceptance suite copied the
+  `document.json` section list that `test_extraction` already asserted, and `pylint`'s
+  `duplicate-code` flagged it. The list now lives once, in the shared
+  `tests/ocr/primitives/engine_corpus.py` as `DOCUMENT_JSON_SECTIONS`, and both suites read it. Two
+  copies of a schema's section list are worse than they look: the copy nobody edits keeps passing
+  while the artifact quietly loses a section.
+
+- **Mutation battery (27 mutations, all killed, every restore green):** word counting by spaces;
+  character counting without whitespace; carriage returns not canonicalized; the control-character
+  sweep disabled; tab and newline swept away with the other controls; line-trailing whitespace
+  kept; leading indentation stripped; blank-line runs not collapsed; NFC normalization skipped;
+  normalization run before cleaning; whitespace-only reported as content; a heading's level
+  ignored; a heading's level not clamped; the blocks re-sorted; blocks joined by one newline; the
+  block merge skipping canonicalization; `text.txt` not canonicalized; `text.txt` gaining a second
+  terminator; an empty extraction writing a bare newline; `document.md` not canonicalized; the
+  table rendering not folded into the document-wide canonicalization; a `generated_at` field added
+  to the payload; the schema version dropped; the JSON serialization not key-sorted; the Markdown
+  exporter ignoring reading order; the JSON `text` field left as the engine wrote it; a block's
+  `text` field left as the engine wrote it. Five mutations from a first draft were **withdrawn as
+  equivalent** rather than kept to inflate the count, each proved redundant by a probe rather than
+  by argument: the two Markdown whitespace rules that became unreachable once `normalize_markdown`
+  delegated, a heading-level clamp whose two spellings both evaluate to 1, and `_render_block`
+  returning `" "` for an empty block, which the document-wide canonicalization strips either way.
+  The battery ran three times. The first run left **seven** survivors, the second **two** — the last
+  two being one equivalent mutant and one genuine gap, separated by measurement rather than by
+  assumption, and the paragraphs above record what each exposed.
 
 ### OCR-07 — Table processing
 

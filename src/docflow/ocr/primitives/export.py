@@ -21,6 +21,8 @@ import json
 from typing import Any
 
 from docflow.ocr.contracts import BlockResult, LayoutResult, OCRDocument, TableResult
+from docflow.ocr.primitives.rendering import merge_ocr_blocks, normalize_markdown
+from docflow.ocr.primitives.text import normalize_ocr_text
 
 #: The schema version of ``ocr/document.json``.
 #:
@@ -29,6 +31,24 @@ from docflow.ocr.contracts import BlockResult, LayoutResult, OCRDocument, TableR
 #: an earlier build; tying that number to the engine's would make a Docling upgrade look like a
 #: schema change to every downstream reader.
 DOCUMENT_SCHEMA_VERSION: str = "1.0.0"
+
+
+def _canonical_text(value: str) -> str:
+    """Return one text value in this processor's canonical form.
+
+    Every text-bearing field of every artifact goes through here, and that is deliberate: a builder
+    that canonicalized ``text.txt`` but left ``document.json``'s ``text`` as the engine wrote it
+    would make two artifacts of one extraction disagree, and a consumer comparing them would see a
+    difference the page does not have. A first draft did exactly that, and the test that compared
+    the two artifacts is what caught it.
+
+    Args:
+        value: The raw text.
+
+    Returns:
+        The canonical text.
+    """
+    return normalize_ocr_text(value)
 
 
 def _block_payload(block: BlockResult) -> dict[str, Any]:
@@ -47,7 +67,7 @@ def _block_payload(block: BlockResult) -> dict[str, Any]:
     return {
         "block_id": block.block_id,
         "type": block.type,
-        "text": block.text,
+        "text": _canonical_text(block.text),
         "bbox": list(block.bbox) if block.bbox is not None else None,
         "level": block.level,
     }
@@ -103,9 +123,9 @@ def export_docling_json(document: OCRDocument) -> dict[str, Any]:
     """
     return {
         "schema_version": DOCUMENT_SCHEMA_VERSION,
-        "text": document.text,
-        "paragraphs": list(document.paragraphs),
-        "titles": list(document.titles),
+        "text": _canonical_text(document.text),
+        "paragraphs": [_canonical_text(value) for value in document.paragraphs],
+        "titles": [_canonical_text(value) for value in document.titles],
         "blocks": [_block_payload(block) for block in document.blocks],
         "tables": [_table_payload(table) for table in document.tables],
         "layout": _layout_payload(document.layout),
@@ -121,14 +141,22 @@ def export_docling_text(document: OCRDocument) -> str:
     caller that read the field directly would be a second one, and the two could drift the moment
     either grew a normalization step.
 
+    The text is canonicalized with :func:`docflow.ocr.primitives.text.normalize_ocr_text`, so two
+    runs that differ only in the whitespace the engine emitted produce the same file. That is the
+    claim the determinism posture makes, and it is what makes the trailing newline below an
+    addition rather than a repair.
+
     Args:
         document: The document to export.
 
     Returns:
-        The text, with a single trailing newline so the file is a well-formed line-oriented text
-        file rather than a blob without a terminator.
+        The canonical text, with a single trailing newline so the file is a well-formed
+        line-oriented text file rather than a blob without a terminator, or ``""`` when the
+        extraction produced nothing. An empty file for an empty extraction, not a file holding a
+        bare newline: the second would be content, and ``OCR-09`` reads this artifact to decide
+        between ``EMPTY`` and ``VALID``.
     """
-    text = document.text.rstrip("\n")
+    text = _canonical_text(document.text)
     return f"{text}\n" if text else ""
 
 
@@ -140,50 +168,46 @@ def export_docling_markdown(document: OCRDocument) -> str:
     engine's renderer is free to change between versions, and a consumer comparing two runs would
     then see a difference produced by the renderer rather than by the page.
 
+    The walk over ``reading_order`` is what keeps a table between the two paragraphs it sits
+    between. Consecutive blocks are handed to
+    :func:`docflow.ocr.primitives.rendering.merge_ocr_blocks` as a run and the table's own Markdown
+    is spliced in as the run boundary is crossed — so the block rendering has one owner
+    (``OCR-06``'s module) and this function owns only the interleaving.
+
     Args:
         document: The document to export.
 
     Returns:
-        The Markdown rendering.
-
-    # TODO: [MVP] `OCR-06` owns Markdown canonicalization and block merging; this renders the
-    # structure faithfully and leaves the canonical form to it.
+        The canonicalized Markdown, newline-terminated because the file is one.
     """
     blocks = {block.block_id: block for block in document.blocks}
     tables = {table.table_id: table for table in document.tables}
-    lines: list[str] = []
+    fragments: list[str] = []
+    run: list[BlockResult] = []
+
+    def flush() -> None:
+        """Render the accumulated block run, if any."""
+        if run:
+            merged = merge_ocr_blocks(run)
+            if merged:
+                fragments.append(merged)
+            run.clear()
 
     for identifier in document.reading_order:
         block = blocks.get(identifier)
         if block is not None:
-            lines.append(_render_block(block))
+            run.append(block)
             continue
         table = tables.get(identifier)
         if table is not None:
-            lines.append(_render_table(table))
+            flush()
+            rendered = _render_table(table)
+            if rendered:
+                fragments.append(rendered)
 
-    return "\n\n".join(part for part in lines if part).rstrip("\n") + "\n"
-
-
-def _render_block(block: BlockResult) -> str:
-    """Render one block as Markdown.
-
-    Args:
-        block: The block to render.
-
-    Returns:
-        The Markdown fragment, or ``""`` for a block with no text. An empty string rather than a
-        placeholder: the join above drops it, so a block with nothing to say contributes nothing.
-    """
-    text = block.text.strip()
-    if not text:
-        return ""
-    if block.type == "title":
-        depth = min(max(block.level or 1, 1), 6)
-        return f"{'#' * depth} {text}"
-    if block.type == "list":
-        return f"- {text}"
-    return text
+    flush()
+    markdown = normalize_markdown("\n\n".join(fragments))
+    return f"{markdown}\n" if markdown else ""
 
 
 def _render_table(table: TableResult) -> str:

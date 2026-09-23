@@ -24,6 +24,24 @@ from tests.factories import build_ocr_options
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
+DOCUMENT_JSON_SECTIONS = (
+    "schema_version",
+    "text",
+    "paragraphs",
+    "titles",
+    "blocks",
+    "tables",
+    "layout",
+    "reading_order",
+    "metadata",
+)
+"""The sections ``document.json`` is documented to carry (``OCR-06``).
+
+One tuple rather than a literal in each suite: two copies of a schema's section list drift apart,
+and the copy that is not edited keeps passing while the artifact loses a section. pylint's
+``duplicate-code`` flagged the second copy, which is what surfaced it.
+"""
+
 FIXTURE = REPO_ROOT / "tests" / "fixtures" / "ocr" / "ocr_prepared_text_and_table.png"
 """The fixture the task criteria name.
 
@@ -87,6 +105,7 @@ def extracted_document() -> OCRDocument:
 
 
 __all__ = [
+    "DOCUMENT_JSON_SECTIONS",
     "FIXTURE",
     "REPO_ROOT",
     "configured_pipeline",

@@ -39,7 +39,7 @@ would be a silent stand-in, which this project forbids at every stage.
 | Phase | What | Owner |
 |---|---|---|
 | **0 — contracts & skeleton** | ✅ **done** | `GEN-01`…`GEN-06` |
-| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). ✅ `image` **complete** (`IMG-01`…`IMG-15`, Waves 0–6). 🔄 `ocr` started (`OCR-01`…`OCR-05` done). ⏳ `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
+| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). ✅ `image` **complete** (`IMG-01`…`IMG-15`, Waves 0–6). 🔄 `ocr` started (`OCR-01`…`OCR-06` done). ⏳ `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
@@ -456,6 +456,14 @@ Recorded here so the first `GEN-17` reconciliation does not have to rediscover t
    integration fact between two processors whose names both suggest the same artifact is the right
    handoff, and it is pinned by a test in `tests/ocr/primitives/test_extraction.py`. Whichever
    task wires `OCR-11`'s entry point to a prepared image should read it first.
+
+10. **`subplan-procesador-ocr.md` §3.4 files `preserve_reading_order` under *Markdown*, and
+    `OCR-05`'s scope claims it.** The primitive orders blocks by normalized geometry, so it calls
+    `normalize_bbox` for every item: it shipped in `ocr/primitives/layout.py`, beside the sort key
+    it uses. Placing it in `rendering.py` would make the module that owns the coordinate frame
+    depend on the module that owns Markdown, and the task that owns reading order is `OCR-05`, not
+    `OCR-06`. The *Layout* group therefore holds four of §3.4's names plus this one declared
+    exception, and the plan-surface test lists it there.
 
 Three smaller ones were resolved while writing the contracts, each noted in the module
 docstring where it lives: `DocumentResult.processing_key` (required by `GEN-04` but absent from

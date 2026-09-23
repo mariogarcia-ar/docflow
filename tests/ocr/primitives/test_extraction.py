@@ -57,6 +57,7 @@ from docflow.ocr.primitives.extraction import (
 )
 from tests.ocr.primitives import probes
 from tests.ocr.primitives.engine_corpus import (
+    DOCUMENT_JSON_SECTIONS,
     FIXTURE,
     REPO_ROOT,
     configured_pipeline,
@@ -396,17 +397,7 @@ def test_the_json_export_carries_a_schema_version_and_every_section() -> None:
     payload = export.export_docling_json(document)
 
     assert payload["schema_version"] == export.DOCUMENT_SCHEMA_VERSION
-    assert set(payload) >= {
-        "schema_version",
-        "text",
-        "paragraphs",
-        "titles",
-        "blocks",
-        "tables",
-        "layout",
-        "reading_order",
-        "metadata",
-    }
+    assert set(payload) >= set(DOCUMENT_JSON_SECTIONS)
     assert len(payload["blocks"]) == len(document.blocks)
     assert len(payload["tables"]) == len(document.tables)
 
