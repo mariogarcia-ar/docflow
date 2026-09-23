@@ -273,7 +273,7 @@ Scenario: Dry-run executes no processors
 
 ## 6. Test plan
 
-**Fixtures.** Fake processors implementing the four Phase 1 contracts (`FakePdf`, `FakeImage`, `FakeOcr`, `FakeLlm`) with deterministic outputs, per-processor call counters, and artifact paths under a temporary output dir; a small committed fixture PDF (and one image) with known content; a temp working directory per test. The orchestrator is exercised only through the contracts — the fakes stand in for the real processors.
+**Fixtures.** Fake processors implementing the four Phase 1 contracts (`FakePdf`, `FakeImage`, `FakeOcr`, `FakeLlm`) with deterministic outputs, per-processor call counters, and artifact paths under a temporary output dir; a small committed fixture PDF (and one image) with known content; a temp working directory per test. The orchestrator is exercised only through the contracts — the fakes stand in for the real processors. These are **contract-level** fakes: they replace whole processors. The replay loaders of `pdf`, `image` and `ocr` (`README.md` §9.7) are **primitives-level**: they replace only the engine inside a real processor. Neither can stand in for the other.
 
 **Happy-path test.** One end-to-end test: a `DocumentRequest` on a PDF with native text flows `PDF → IMAGE → (OCR skipped) → SOURCE SELECTION → LLM → consolidate` and produces a `DocumentResult` with `SUCCESS`, correct per-stage states, and a populated `execution_summary` (no edge cases).
 

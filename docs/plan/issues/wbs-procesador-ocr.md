@@ -6,7 +6,7 @@
 | Phase | **1 — Processors, independently** (`docs/plan/README.md` §5) |
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
-| ID range | `OCR-01` … `OCR-13` |
+| ID range | `OCR-01` … `OCR-14` |
 | Status | All issues `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
@@ -16,9 +16,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Field | Value |
 |---|---|
 | Phase | 1 — processors, independently (parallel with `pdf`, `image`, `llm`) |
-| ID range | OCR-01 … OCR-13 |
-| # tasks | 13 |
-| Effort distribution | S ×5 (OCR-01, 02, 08, 09, 13) · M ×8 (OCR-03, 04, 05, 06, 07, 10, 11, 12) · L ×0 |
+| ID range | OCR-01 … OCR-14 |
+| # tasks | 14 |
+| Effort distribution | S ×6 (OCR-01, 02, 08, 09, 13, 14) · M ×8 (OCR-03, 04, 05, 06, 07, 10, 11, 12) · L ×0 |
 | Critical path | `OCR-01 → OCR-02 → OCR-03 → OCR-04 → OCR-05 → OCR-06 → OCR-09 → OCR-10 → OCR-11 → OCR-12 → OCR-13` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
@@ -39,8 +39,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | OCR-09 | Technical validation | S | 3 — Outputs | OCR-06, OCR-08 | `validate_ocr_result`, `validate_output_artifacts` | this file §OCR-09 | NOT_STARTED |
 | OCR-10 | Atomic persistence + `metadata.json` | M | 4 — Publish + entry points | OCR-07, OCR-09 | `ocr/.tmp/` → rename; `ocr/metadata.json` | this file §OCR-10 | NOT_STARTED |
 | OCR-11 | Entry points | M | 4 — Publish + entry points | OCR-10 | `process_ocr_image`; `process_ocr_from_page` **deferred to Phase 3** (`# TODO: [MVP]`) | this file §OCR-11 | NOT_STARTED |
-| OCR-12 | Tests + committed image fixtures | M | 5 — Verification | OCR-11 | `tests/`, `fixtures/ocr_prepared_text_and_table.png`, `fixtures/ocr_blank.png` | this file §OCR-12 | NOT_STARTED |
+| OCR-12 | Tests + committed image fixtures | M | 5 — Verification | OCR-11, OCR-14 | `tests/`, `fixtures/ocr_prepared_text_and_table.png`, `fixtures/ocr_blank.png` | this file §OCR-12 | NOT_STARTED |
 | OCR-13 | Four QA gates + mutation falsification | S | 5 — Verification | OCR-12 | QA gate output, documented mutation observations | this file §OCR-13 | NOT_STARTED |
+| OCR-14 | Docling recording + replay loader | S | 2 — Engine + extraction | OCR-02 | `tests/record_engine.py` (Docling path), `tests/fixtures/engines/docling/`, `tests/fakes/engines/replay_docling.py` | this file §OCR-14 | NOT_STARTED |
 
 ## 3. Detailed issues
 
@@ -225,7 +226,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Type:** Test
 - **Effort:** M
 - **Wave:** 5 — Verification
-- **Depends on:** OCR-11
+- **Depends on:** OCR-11, OCR-14
 - **Blocks:** OCR-13
 - **Objective:** Prove the full loop with real bytes and prove each invariant test fails when its invariant is broken.
 - **Scope / Deliverables:** `test_process_ocr_image_happy_path`; fixtures `fixtures/ocr_prepared_text_and_table.png` (known heading, one paragraph, one 2×2 table) and `fixtures/ocr_blank.png`; invariant 1 (deterministic ordering + stable format), invariant 2 (no timestamps in functional content), invariant 3 (atomic publication — no partial artifacts on failure); `tests/` mirroring `src/docflow/ocr/`.
@@ -252,6 +253,45 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Captured gate output plus the mutation evidence table for invariants 1–3.
 - **Tags:** —
 
+### OCR-14 — Docling recording and replay loader
+
+- **Type:** Test infrastructure
+- **Effort:** S
+- **Wave:** 2 — Engine + extraction
+- **Depends on:** OCR-02
+- **Blocks:** OCR-12
+- **Objective:** Give this processor a test double that **is a recording of what Docling really returned**, so that every test except the single real happy path runs with no Docling installed.
+- **Scope / Deliverables:** the Docling path in `tests/record_engine.py` (record the native values — text, markdown, tables, blocks, layout, metadata — as JSON with `schema_version` and `engine_version`); the recordings under `tests/fixtures/engines/docling/<engine_version>/<fixture-stem>.json`; the replay loader `tests/fakes/engines/replay_docling.py`, substituting at **`convert_image_with_docling`**; the version check against the `pyproject.toml` pin, failing loudly and naming both versions.
+- **Out of bounds:** Never substitute at `extract_docling_*` — that is the half of the module the replay must **exercise** rather than replace; no replay of our translated `OCRDocument`/`OCRResult`; no `if engine is None: use_fake` fallback; nothing under `src/docflow/` imports `tests/`.
+- **Acceptance criteria:**
+  - Given a recording made for version A and a pin for version B, when the fast tier runs, then the loader fails loudly naming both versions and does not serve the recording.
+  - Given an environment without Docling, when `pytest -m "not engine"` runs, then every test of this processor passes with zero Docling conversions; and when `pytest -m engine` runs, the Docling tests skip with an explicit reason.
+  - Given the replay, when blocks are handed to the invariant-1 test, then they are returned in **adversarial (unsorted) order**, so a broken sort fails the test.
+  - Given the `ocr_blank.png` conversion, then its empty output is recorded once and replayed for the `EMPTY` path with no live conversion.
+- **Evidence / DoD:** Both observations of each scenario above; the recorded fixture tree committed; any cached corpus helper's cache key includes **which engine** produced the result.
+- **Tags:** `# TODO: [RELEASE]` for a scheduled re-record policy on pin bumps.
+
+```gherkin
+Scenario: The replay refuses a stale recording
+  Given a Docling recording made for version A
+  And a pin in pyproject.toml for version B
+  When the fast tier runs
+  Then the replay loader fails loudly, naming both versions
+  And it does not serve the stale recording
+
+Scenario: The real tier skips when the engine is absent
+  Given an environment without Docling installed
+  When the real tier runs
+  Then the Docling tests are skipped with an explicit reason
+  And the gate does not fail
+
+Scenario: The fast tier never reaches Docling
+  Given the recorded fixtures and the replay loader
+  When "pytest -m 'not engine'" runs
+  Then every test of this processor passes with zero Docling conversions
+  And no Docling module is touched
+```
+
 ## 4. Dependency graph
 
 ```mermaid
@@ -270,6 +310,8 @@ flowchart LR
     OCR10 --> OCR11["OCR-11 Entry points"]
     OCR11 --> OCR12["OCR-12 Tests + fixtures"]
     OCR12 --> OCR13["OCR-13 Four QA gates"]
+    OCR02 --> OCR14["OCR-14 Docling recording + replay"]
+    OCR14 --> OCR12
 ```
 
 ## 5. Execution waves
@@ -277,10 +319,10 @@ flowchart LR
 | Wave | Tasks | Entry condition | Exit condition |
 |---|---|---|---|
 | 1 — Foundations | OCR-01, OCR-02 | Phase 0 exit met; subplan §7 DoR satisfied | Package skeleton, contract dataclasses and the Docling seam exist; Docling pinned |
-| 2 — Engine + extraction | OCR-03, OCR-04, OCR-05 | Wave 1 green | All Docling access isolated in `ocr/primitives/`; `OCRDocument` produced and deterministically ordered |
+| 2 — Engine + extraction | OCR-03, OCR-04, OCR-05; OCR-14 in parallel after OCR-02 | Wave 1 green | All Docling access isolated in `ocr/primitives/`; `OCRDocument` produced and deterministically ordered; the Docling recording and its replay loader exist, so the fast tier can run with no engine |
 | 3 — Outputs | OCR-06 ∥ OCR-08 (after OCR-05) → OCR-07 ∥ OCR-09 | Wave 2 green | text/Markdown/JSON representations, table export, metrics and validation produced from the fixture |
 | 4 — Publish + entry points | OCR-10, OCR-11 | Wave 3 green | Atomic write under `ocr/` only; `process_ocr_image` round-trips the contract with real bytes |
-| 5 — Verification | OCR-12, OCR-13 | Wave 4 green | Happy path and three invariant tests green, each mutation-falsified; four QA gates clean |
+| 5 — Verification | OCR-12, OCR-13 | Wave 4 green | Happy path and three invariant tests green, each mutation-falsified; the fast tier passes with Docling absent and exactly one real test reaches it; four QA gates clean |
 
 Waves are strictly sequential; tasks within a wave that share no dependency may proceed in parallel (Wave 3 is the only wave with genuine parallelism here: OCR-06 ∥ OCR-08, then OCR-07 ∥ OCR-09).
 
@@ -300,6 +342,9 @@ It is critical because contracts precede the seam (OCR-01 → OCR-02), the Docli
 | Engine failure is contained | OCR-02, OCR-04, OCR-09, OCR-10 | OCR-12 engine-failure test (`status == "failed"`, `error.type == "ENGINE_ERROR"`, no `.tmp` left) |
 | Invariant 2 — no timestamps in functional content (mutation: `datetime.now()` in a builder) | OCR-05, OCR-06, OCR-07, OCR-10 | OCR-12 (must fail under mutation, then restore green) |
 | Invariant 3 — atomic publication, no partial artifacts (mutation: write to the final path) | OCR-10, OCR-11 | OCR-12 (must fail under mutation, then restore green) |
+| The replay refuses a stale recording (version A recording, version B pin) | OCR-14 | OCR-14 acceptance scenario (loader fails loudly, naming both versions) |
+| The real tier skips when the engine is absent | OCR-14, OCR-12 (real tier) | OCR-14 acceptance scenario (skip with explicit reason; gate does not fail) |
+| The fast tier never reaches Docling | OCR-14 | OCR-14 acceptance scenario (`pytest -m 'not engine'` green with zero Docling conversions) |
 
 ## 8. Definition of Ready (per task)
 
@@ -308,11 +353,14 @@ It is critical because contracts precede the seam (OCR-01 → OCR-02), the Docli
 - The `ocr/primitives/` skeleton and the Docling pin in `pyproject.toml` are agreed before OCR-02 starts.
 - Output schemas (`text.txt`, `document.md`, `document.json`) are frozen for this phase.
 - The committed image fixtures in `fixtures/` exist; the atomic-publication rule is stated.
+- For OCR-14: the recording format (`tests/fixtures/engines/docling/<engine_version>/<fixture-stem>.json`, native values with `schema_version` and `engine_version`) and the `convert_image_with_docling` injection point are agreed.
 - No unresolved dependency on any other processor (fully independent, per Phase 1).
 
 ## 9. Definition of Done (per task)
 
 - [ ] `pytest` green with the task's happy-path and/or invariant test using real bytes from a committed fixture.
+- [ ] The tier requirement holds: the fast tier (`pytest -m "not engine"`) passes with Docling absent, and exactly one real test reaches the engine — with the two-conversion determinism check folded into it.
+- [ ] The version check holds: a recording whose version differs from the pin is refused loudly, naming both versions; the skip-when-absent rule holds (real tier skips with an explicit reason).
 - [ ] `ruff check .` clean (import order included) · `ruff format --check .` clean · `pylint src tests` clean (`fixme` disabled).
 - [ ] Every invariant test touched by the task has been mutation-falsified: mutate → observe failure → restore → re-run green, both observations reported.
 - [ ] No silent stand-in (no empty string, `0`, `[]`, `None`-without-reason, no default engine or threshold); no aggregate confidence score in place of per-measurement evidence.
@@ -331,6 +379,7 @@ It is critical because contracts precede the seam (OCR-01 → OCR-02), the Docli
 | Interrupted publish leaves corrupt artifacts | OCR-10 | OCR-10 (atomic `.tmp/` → validate → rename) + OCR-12 invariant 3 |
 | Large images / many tables (memory) | OCR-04, OCR-07, OCR-10 | OCR-10 (PoC on small fixtures; resource caps tagged `# TODO: [RELEASE]`) |
 | Over-engineering (generic abstraction layers) | OCR-01, OCR-02, OCR-04 | OCR-02 (thin primitives, single entry point, happy path only, `# TODO` markers) |
+| A bumped Docling pin with a stale recording leaves the fast tier green | OCR-14 | OCR-14 (the loader fails loudly when the recording version differs from the pin) + OCR-12 real tier (the folded two-conversion determinism check) |
 
 ## 11. Out of scope
 

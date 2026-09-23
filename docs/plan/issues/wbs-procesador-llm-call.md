@@ -89,7 +89,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Blocks:** LLM-06
 - **Objective:** Provide a deterministic, scriptable provider so the whole processor can be tested without a real model, and commit the prompt/schema fixtures the tests use verbatim.
 - **Scope / Deliverables:** In-memory fake provider implementing the `llm/primitives/` interface, returning deterministic valid JSON, scriptable to return invalid JSON or raise timeouts, with a **call counter**; `fixtures/llm/template/simple_extract.md` with `<doc>`, `<extra>` and `<schema>` placeholders; `fixtures/llm/schema/simple.schema.json` exercising required fields and types.
-- **Out of bounds:** No real network access; the fake must not be reachable from production code paths as a fallback.
+- **Out of bounds:** No real network access; the fake must not be reachable from production code paths as a fallback. `LLM-03` stays a **scripted fake** deliberately and does **not** migrate to record/replay: LLM responses are not deterministic for a fixed input, and `LLM-08` needs a scripted sequence (`README.md` §9.7).
 - **Acceptance criteria:**
   - Given the fake provider scripted with a valid response, when it is called, then it returns the same JSON for the same input and the call counter increments.
   - Given the fake scripted to fail on attempt 1 and succeed on attempt 2, then both behaviours are reproducible in a test.

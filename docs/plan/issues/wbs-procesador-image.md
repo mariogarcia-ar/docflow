@@ -6,7 +6,7 @@
 | Phase | **1 — Processors, independently** (`docs/plan/README.md` §5) |
 | Derived from | `docs/plan/subplan-procesador-image.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-image.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
-| ID range | `IMG-01` … `IMG-14` |
+| ID range | `IMG-01` … `IMG-15` |
 | Status | All issues `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-image.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
@@ -16,9 +16,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Field | Value |
 |---|---|
 | Phase | 1 — processors, independently (parallel with `pdf`, `ocr`, `llm`) |
-| ID range | IMG-01 … IMG-14 |
-| # tasks | 14 |
-| Effort distribution | S ×6 (IMG-01, 03, 06, 09, 10, 14) · M ×8 (IMG-02, 04, 05, 07, 08, 11, 12, 13) · L ×0 |
+| ID range | IMG-01 … IMG-15 |
+| # tasks | 15 |
+| Effort distribution | S ×7 (IMG-01, 03, 06, 09, 10, 14, 15) · M ×8 (IMG-02, 04, 05, 07, 08, 11, 12, 13) · L ×0 |
 | Critical path | `IMG-01 → IMG-02 → IMG-03 → IMG-04 → IMG-06 → IMG-07 → IMG-11 → IMG-12 → IMG-13` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
@@ -40,8 +40,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-10 | `validate_image_result` + typed error classification | S | 3 — Outputs | IMG-06 | `validate_image_result`, `ImageError` kinds | this file §IMG-10 | NOT_STARTED |
 | IMG-11 | Atomic persistence + `metadata.json` | M | 4 — Publish | IMG-07, IMG-08, IMG-10 | `image/.tmp/` → rename; `image/metadata.json` | this file §IMG-11 | NOT_STARTED |
 | IMG-12 | `process_image` entry point | M | 4 — Publish | IMG-09, IMG-11 | `process_image` | this file §IMG-12 | NOT_STARTED |
-| IMG-13 | Happy-path + invariant tests, mutation evidence | M | 5 — Verify | IMG-12 | `tests/`, mutation observations | this file §IMG-13 | NOT_STARTED |
+| IMG-13 | Happy-path + invariant tests, mutation evidence | M | 5 — Verify | IMG-12, IMG-15 | `tests/`, mutation observations | this file §IMG-13 | NOT_STARTED |
 | IMG-14 | Four QA gates clean | S | 5 — Verify | IMG-13 | QA gate output | this file §IMG-14 | NOT_STARTED |
+| IMG-15 | OpenCV recording + replay loader | S | 2 — Analysis | IMG-02 | `tests/record_engine.py` (OpenCV path), `tests/fixtures/engines/opencv/`, `tests/fakes/engines/replay_opencv.py` | this file §IMG-15 | NOT_STARTED |
 
 ## 3. Detailed issues
 
@@ -242,7 +243,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Type:** Test
 - **Effort:** M
 - **Wave:** 5 — Verify
-- **Depends on:** IMG-12
+- **Depends on:** IMG-12, IMG-15
 - **Blocks:** IMG-14
 - **Objective:** Prove the loop end to end and prove each invariant test fails when its invariant is broken.
 - **Scope / Deliverables:** Happy-path test (`ImageRequest → ImageResult`, real bytes from a committed fixture); invariant 1 (input immutability), invariant 2 (OCR variant ≠ VLM variant), invariant 3 (namespace ownership); committed fixtures `fixtures/image/color_layout.png`, `skewed_text.png`, `embedded_logo.png`, `corrupt.png`; written mutation-falsification observations.
@@ -269,6 +270,44 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Captured output of the four gates; review of the DoD checklist in the subplan §7.
 - **Tags:** —
 
+### IMG-15 — OpenCV recording and replay loader
+
+- **Type:** Test infrastructure
+- **Effort:** S
+- **Wave:** 2 — Analysis
+- **Depends on:** IMG-02
+- **Blocks:** IMG-13
+- **Objective:** Give this processor a test double that **is a recording of what OpenCV really returned**, so that every test except the single real happy path runs with no OpenCV installed.
+- **Scope / Deliverables:** the OpenCV path in `tests/record_engine.py` (record the engine's native output: the decoded and transformed images as PNG, plus a `metrics.json` with the raw score values); the recordings under `tests/fixtures/engines/opencv/<library_version>/<fixture-stem>/{image.png, metrics.json}`; the replay loader `tests/fakes/engines/replay_opencv.py`, injecting at the **`image/primitives/` functions** (`load_image`, the transformations); the version check against the `pyproject.toml` pin, failing loudly and naming both versions.
+- **Out of bounds:** No replay of our translated types (`ImageResult`, the output of `analyze_image` / `normalize_image`) — the recorded layer is the engine's **native** output, or the primitives lose their coverage; no `if engine is None: use_fake` fallback anywhere; nothing under `src/docflow/` imports `tests/`; raw `.npy` arrays only where a test genuinely needs the array.
+- **Acceptance criteria:**
+  - Given a recording made for version A and a pin for version B, when the fast tier runs, then the loader fails loudly naming both versions and does not serve the recording.
+  - Given an environment without OpenCV, when `pytest -m "not engine"` runs, then every test of this processor passes with zero OpenCV invocations; and when `pytest -m engine` runs, the OpenCV tests skip with an explicit reason.
+  - Given `corrupt.png`, then the recorded failing `load_image` call is replayed as `DECODE_ERROR` with no live engine call.
+- **Evidence / DoD:** Both observations of each scenario above; the recorded fixture tree committed; the record step covers every input the tests use, good and bad.
+- **Tags:** `# TODO: [RELEASE]` for a scheduled re-record policy on pin bumps.
+
+```gherkin
+Scenario: The replay refuses a stale recording
+  Given an OpenCV recording made for version A
+  And a pin in pyproject.toml for version B
+  When the fast tier runs
+  Then the replay loader fails loudly, naming both versions
+  And it does not serve the stale recording
+
+Scenario: The real tier skips when the engine is absent
+  Given an environment without OpenCV installed
+  When the real tier runs
+  Then the OpenCV tests are skipped with an explicit reason
+  And the gate does not fail
+
+Scenario: The fast tier never reaches OpenCV
+  Given the recorded fixtures and the replay loader
+  When "pytest -m 'not engine'" runs
+  Then every test of this processor passes with zero OpenCV invocations
+  And no OpenCV module is touched
+```
+
 ## 4. Dependency graph
 
 ```mermaid
@@ -291,6 +330,8 @@ flowchart LR
     IMG11 --> IMG12
     IMG12 --> IMG13["IMG-13 Tests + mutation evidence"]
     IMG13 --> IMG14["IMG-14 Four QA gates"]
+    IMG02 --> IMG15["IMG-15 OpenCV recording + replay"]
+    IMG15 --> IMG13
 ```
 
 ## 5. Execution waves
@@ -298,10 +339,10 @@ flowchart LR
 | Wave | Tasks | Entry condition | Exit condition |
 |---|---|---|---|
 | 1 — Contracts & seam | IMG-01 → IMG-02 → IMG-03 | Phase 0 exit met; subplan §7 DoR satisfied | Contract dataclasses frozen; engine seam explicit; load/store returns real dimensions from a fixture |
-| 2 — Analysis | IMG-04 ∥ IMG-05 → IMG-06 | IMG-03 green | Metrics computed without side effects; transformation primitives exercised on fixtures |
+| 2 — Analysis | IMG-04 ∥ IMG-05 → IMG-06; IMG-15 in parallel after IMG-02 | IMG-03 green | Metrics computed without side effects; transformation primitives exercised on fixtures; the OpenCV recording and its replay loader exist, so the fast tier can run with no engine |
 | 3 — Outputs | IMG-07, IMG-09, IMG-10 (after IMG-06) ∥ IMG-08 (after IMG-05 + IMG-06) | Wave 2 green | Normalized artifact and two independent variants produced; classification and typed errors defined |
 | 4 — Publish | IMG-11 → IMG-12 (IMG-12 also consumes IMG-09) | Wave 3 green | Atomic publication under `image/` only; `process_image` round-trips the contract with real bytes |
-| 5 — Verify | IMG-13 → IMG-14 | Wave 4 green | Happy-path and three invariant tests green, each invariant mutation-falsified; four QA gates clean |
+| 5 — Verify | IMG-13 → IMG-14 | Wave 4 green | Happy-path and three invariant tests green, each invariant mutation-falsified; the fast tier passes with OpenCV absent and exactly one real test reaches it; four QA gates clean |
 
 ## 6. Critical path
 
@@ -318,7 +359,10 @@ It is critical because the contracts (IMG-01) and the engine seam (IMG-02) prece
 | Reject an invalid input with a typed error | IMG-03, IMG-10, IMG-11 | IMG-13 happy path / typed-error test; IMG-11 failure-path test (no partial artifact under `image/`) |
 | Leave the source untouched | IMG-03, IMG-05, IMG-12 | IMG-13 invariant 1 (input immutability) |
 | Invariant 3 — namespace ownership (mutation: redirect `metadata.json` outside `image/`) | IMG-11, IMG-12 | IMG-13 (must fail under mutation, then restore green) |
-| LOW_QUALITY classification boundary | IMG-06, IMG-09 | IMG-13 (classification unit test) |
+| LOW_QUALITY classification boundary | IMG-06, IMG-09 | IMG-13 (classification unit test over crafted `ImageMetrics`, never the real tier) |
+| The replay refuses a stale recording (version A recording, version B pin) | IMG-15 | IMG-15 acceptance scenario (loader fails loudly, naming both versions) |
+| The real tier skips when the engine is absent | IMG-15, IMG-13 (real tier) | IMG-15 acceptance scenario (skip with explicit reason; gate does not fail) |
+| The fast tier never reaches OpenCV | IMG-15 | IMG-15 acceptance scenario (`pytest -m 'not engine'` green with zero OpenCV invocations) |
 
 ## 8. Definition of Ready (per task)
 
@@ -327,11 +371,14 @@ It is critical because the contracts (IMG-01) and the engine seam (IMG-02) prece
 - The engine choice (OpenCV first, Pillow documented alternative) and the `image/primitives/` skeleton are recorded before IMG-02 starts.
 - For IMG-06 / IMG-08: the numeric thresholds (`LOW_QUALITY`, binarization) are named constants before coding starts.
 - The `image/` artifact namespace and the atomic-publication rule are agreed, and the fixtures of subplan §6 exist.
+- For IMG-15: the recording format (`tests/fixtures/engines/opencv/<library_version>/<fixture-stem>/{image.png, metrics.json}`) and the `image/primitives/` injection point are agreed, and the OpenCV/Pillow pin exists in `pyproject.toml`.
 - No open question blocks the happy path; no domain noun is introduced into the processor API.
 
 ## 9. Definition of Done (per task)
 
 - [ ] `pytest` green with the task's happy-path and/or invariant test using real bytes from a committed fixture.
+- [ ] The tier requirement holds: the fast tier (`pytest -m "not engine"`) passes with OpenCV absent, and exactly one real test reaches the engine — asserting 2–3 concrete metric values with a tolerance, never `status == "success"` alone.
+- [ ] The version check holds: a recording whose version differs from the pin is refused loudly, naming both versions; the skip-when-absent rule holds (real tier skips with an explicit reason).
 - [ ] `ruff check .` clean (import order included) · `ruff format --check .` clean · `pylint src tests` clean (`fixme` disabled).
 - [ ] Every invariant test touched by the task has been mutation-falsified: mutate → observe failure → restore → re-run green, both observations reported.
 - [ ] No silent stand-in (no empty path, `0`, `[]`, `None`-without-reason, no default engine or threshold).
@@ -349,6 +396,7 @@ It is critical because the contracts (IMG-01) and the engine seam (IMG-02) prece
 | Partially written artifact seen as valid by the orchestrator | IMG-11 | IMG-11 (atomic `.tmp` → validate → rename) |
 | Scope creep into a full image-processing library | IMG-02, IMG-05 | IMG-02 (thin primitives, engine swappable behind the contract, happy path only) |
 | No labelled golden set to judge legibility | IMG-06, IMG-09, IMG-14 | IMG-06/IMG-09 (technical thresholds) + IMG-13 (mutation-falsified invariants); golden set deferred |
+| A bumped OpenCV pin with a stale recording leaves the fast tier green | IMG-15 | IMG-15 (the loader fails loudly when the recording version differs from the pin) + IMG-13 real tier (concrete metric values with a tolerance) |
 
 ## 11. Out of scope
 

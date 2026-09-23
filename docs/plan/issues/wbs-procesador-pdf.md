@@ -6,7 +6,7 @@
 | Phase | **1 — Processors, independently** (`docs/plan/README.md` §5) |
 | Derived from | `docs/plan/subplan-procesador-pdf.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-pdf.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
-| ID range | `PDF-01` … `PDF-13` |
+| ID range | `PDF-01` … `PDF-14` |
 | Status | All issues `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-pdf.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
@@ -16,9 +16,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Field | Value |
 |---|---|
 | Phase | 1 — processors, independently (parallel with `image`, `ocr`, `llm`) |
-| ID range | PDF-01 … PDF-13 |
-| # tasks | 13 |
-| Effort distribution | S ×5 (PDF-01, 05, 08, 11, 12) · M ×8 (PDF-02, 03, 04, 06, 07, 09, 10, 13) · L ×0 |
+| ID range | PDF-01 … PDF-14 |
+| # tasks | 14 |
+| Effort distribution | S ×6 (PDF-01, 05, 08, 11, 12, 14) · M ×8 (PDF-02, 03, 04, 06, 07, 09, 10, 13) · L ×0 |
 | Critical path | `PDF-01 → PDF-02 → PDF-04 → PDF-09 → PDF-10 → PDF-11` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
@@ -40,7 +40,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | PDF-10 | Document entry point | M | 3 — Composition | PDF-03, PDF-09 | `process_pdf`, `metadata.json` | this file §PDF-10 | NOT_STARTED |
 | PDF-11 | Validation + error model | S | 4 — Hardening | PDF-09, PDF-10 | `validate_pdf_result`, `validate_pdf_page_result` | this file §PDF-11 | NOT_STARTED |
 | PDF-12 | Atomic persistence | S | 4 — Hardening | PDF-09, PDF-10 | `.tmp` → validate → rename across all artifacts | this file §PDF-12 | NOT_STARTED |
-| PDF-13 | Fixtures + tests | M | 4 — Hardening | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 | `fixtures/pdf_sample_*.pdf`, `tests/` | this file §PDF-13 | NOT_STARTED |
+| PDF-13 | Fixtures + tests | M | 4 — Hardening | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12, PDF-14 | `fixtures/pdf_sample_*.pdf`, `tests/` | this file §PDF-13 | NOT_STARTED |
+| PDF-14 | Poppler recording + replay loader | S | 2 — Primitives | PDF-02 | `tests/record_engine.py` (Poppler path), `tests/fixtures/engines/poppler/`, `tests/fakes/engines/replay_poppler.py` | this file §PDF-14 | NOT_STARTED |
 
 ## 3. Detailed issues
 
@@ -242,7 +243,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Type:** Test
 - **Effort:** M
 - **Wave:** 4 — Hardening (fixture *bytes* land in Wave 1; the tests cannot start before PDF-10 and PDF-12 are green)
-- **Depends on:** PDF-01, PDF-02, PDF-10, PDF-11, PDF-12
+- **Depends on:** PDF-01, PDF-02, PDF-10, PDF-11, PDF-12, PDF-14
 - **Blocks:** —
 - **Objective:** Land the committed fixtures and the happy-path plus invariant tests, and prove each invariant test fails under its documented mutation.
 - **Scope / Deliverables:** `fixtures/pdf_sample_text.pdf` (multi-page, text-dominant), `fixtures/pdf_sample_image.pdf` (single page, image-dominant), `fixtures/pdf_sample_mixed.pdf` (text + image), `fixtures/pdf_corrupt.pdf` (truncated header); happy-path test over `process_pdf`; invariant tests 1–3 of the subplan §6; `tests/` mirroring `src/docflow/pdf/`.
@@ -252,6 +253,44 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given each invariant test, when its documented mutation is applied to the source, then the test fails; after restoring the source, it is green again.
 - **Evidence / DoD:** Test run output for the happy path; both observations (failure under mutation, green after restore) reported per invariant.
 - **Tags:** `# TODO: [MVP]` where a fixture stands in for a real-world document.
+
+### PDF-14 — Poppler recording and replay loader
+
+- **Type:** Test infrastructure
+- **Effort:** S
+- **Wave:** 2 — Primitives
+- **Depends on:** PDF-02
+- **Blocks:** PDF-13
+- **Objective:** Give this processor a test double that **is a recording of what Poppler really returned**, so that every test except the single real happy path runs with no Poppler installed.
+- **Scope / Deliverables:** the Poppler path in `tests/record_engine.py` (record the native artifacts plus a `sidecar.json` with exit code and stderr); the recordings under `tests/fixtures/engines/poppler/<engine_version>/<fixture-stem>/`; the replay loader `tests/fakes/engines/replay_poppler.py`, intercepting the **`subprocess.run`** call inside `pdf/primitives/`; the version check against the `pyproject.toml` pin, failing loudly and naming both versions.
+- **Out of bounds:** No replay of our translated types (`PDFPageResult`, the output of `extract_text_from_page` / `extract_images_from_page`) — the recorded layer is Poppler's **native** output, or the translation layer loses its coverage, which is half the reason the replay exists; no `if engine is None: use_fake` fallback anywhere; nothing under `src/docflow/` imports `tests/`; no session-scoped fixture (`dpi` is a per-test option, not a lever on the replay).
+- **Acceptance criteria:**
+  - Given a recording made for version A and a pin for version B, when the fast tier runs, then the loader fails loudly naming both versions and does not serve the recording.
+  - Given an environment without Poppler, when `pytest -m "not engine"` runs, then every test of this processor passes with zero Poppler invocations; and when `pytest -m engine` runs, the Poppler tests skip with an explicit reason.
+  - Given the record step, then it covers **every input the tests use, good and bad**, so a recorded failure costs no live run at test time.
+- **Evidence / DoD:** Both observations of each scenario above; the recorded fixture tree committed; `pdf_corrupt.pdf` classified into its bucket (§6 of the subplan — *pre-engine* if `validate_pdf`'s fail-fast precedes the subprocess, otherwise *recordable*).
+- **Tags:** `# TODO: [RELEASE]` for a scheduled re-record policy on pin bumps.
+
+```gherkin
+Scenario: The replay refuses a stale recording
+  Given a Poppler recording made for version A
+  And a pin in pyproject.toml for version B
+  When the fast tier runs
+  Then the replay loader fails loudly, naming both versions
+  And it does not serve the stale recording
+
+Scenario: The real tier skips when the engine is absent
+  Given an environment without Poppler installed
+  When the real tier runs
+  Then the Poppler tests are skipped with an explicit reason
+  And the gate does not fail
+
+Scenario: The fast tier never reaches Poppler
+  Given the recorded fixtures and the replay loader
+  When "pytest -m 'not engine'" runs
+  Then every test of this processor passes with zero Poppler invocations
+  And no Poppler binary is touched
+```
 
 ## 4. Dependency graph
 
@@ -280,6 +319,8 @@ flowchart LR
     PDF10 --> PDF13
     PDF11 --> PDF13
     PDF12 --> PDF13
+    PDF02 --> PDF14["PDF-14 Poppler recording + replay"]
+    PDF14 --> PDF13
 ```
 
 ## 5. Execution waves
@@ -287,9 +328,9 @@ flowchart LR
 | Wave | Tasks | Entry condition | Exit condition |
 |---|---|---|---|
 | 1 — Foundations | PDF-01, PDF-02; the fixture *bytes* for PDF-13 | Phase 0 exit met; subplan §7 DoR satisfied | Contracts and primitives seam import cleanly; no silent engine default; fixtures committed |
-| 2 — Primitives (parallel) | PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | PDF-02 landed | Each primitive returns real data from a committed fixture |
+| 2 — Primitives (parallel) | PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08, PDF-14 | PDF-02 landed | Each primitive returns real data from a committed fixture; the Poppler recording and its replay loader exist, so the fast tier can run with no engine |
 | 3 — Composition | PDF-09 → PDF-10 | Wave 2 primitives green | `Request → Result` round-trip works with real bytes; page order and namespace ownership hold |
-| 4 — Hardening | PDF-11, PDF-12 → PDF-13 (its predecessors must be green) → four QA gates | Wave 3 green | Typed error model and atomic publication in place; invariant tests mutation-falsified; all four gates pass |
+| 4 — Hardening | PDF-11, PDF-12 → PDF-13 (its predecessors must be green) → four QA gates | Wave 3 green | Typed error model and atomic publication in place; invariant tests mutation-falsified; the fast tier passes with Poppler absent and exactly one real test reaches it; all four gates pass |
 
 ## 6. Critical path
 
@@ -308,6 +349,9 @@ It is critical because nothing can be extracted before the contracts exist (PDF-
 | Invariant 1 — page completeness (mutation: drop the last page) | PDF-03, PDF-09, PDF-10 | PDF-13 (must fail under mutation, then restore green) |
 | Invariant 2 — immutable input (mutation: `extract_page` writes to `pdf_path`) | PDF-04, PDF-10 | PDF-13 (must fail under mutation, then restore green) |
 | Invariant 3 — classification vocabulary & purity (mutation: return `"OCR"` / read a `force_ocr` flag) | PDF-08 | PDF-13 (must fail under mutation, then restore green) |
+| The replay refuses a stale recording (version A recording, version B pin) | PDF-14 | PDF-14 acceptance scenario (loader fails loudly, naming both versions) |
+| The real tier skips when the engine is absent | PDF-14, PDF-13 (real tier) | PDF-14 acceptance scenario (skip with explicit reason; gate does not fail) |
+| The fast tier never reaches Poppler | PDF-14 | PDF-14 acceptance scenario (`pytest -m 'not engine'` green with zero Poppler invocations) |
 
 ## 8. Definition of Ready (per task)
 
@@ -315,11 +359,14 @@ It is critical because nothing can be extracted before the contracts exist (PDF-
 - Its predecessors are `SUCCESS` (or the task is Wave 1 and Phase 0 has exited).
 - For PDF-11/PDF-12: the artifact ownership rule and the atomic-publication rule are agreed; for PDF-08: the threshold constants are named before coding starts.
 - For PDF-13: the four fixtures of subplan §6 exist and are named for the failure they provoke; PDF-10, PDF-11 and PDF-12 are green, since the happy-path and atomic-publication tests cannot be written against a non-existent `process_pdf`.
+- For PDF-14: the recording format (`tests/fixtures/engines/poppler/<engine_version>/<fixture-stem>/`, artifacts plus `sidecar.json`) and the `subprocess.run` injection point are agreed, and the Poppler pin exists in `pyproject.toml`.
 - No open question blocks the happy path; no domain noun is introduced into the processor API.
 
 ## 9. Definition of Done (per task)
 
 - [ ] `pytest` green with the task's happy-path and/or invariant test using real bytes from a committed fixture.
+- [ ] The tier requirement holds: the fast tier (`pytest -m "not engine"`) passes with Poppler absent, and exactly one real test reaches the engine.
+- [ ] The version check holds: a recording whose version differs from the pin is refused loudly, naming both versions; the skip-when-absent rule holds (real tier skips with an explicit reason).
 - [ ] `ruff check .` clean (import order included) · `ruff format --check .` clean · `pylint src tests` clean (`fixme` disabled).
 - [ ] Every invariant test touched by the task has been mutation-falsified: mutate → observe failure → restore → re-run green, both observations reported.
 - [ ] No silent stand-in (no empty string, `0`, `[]`, `None`-without-reason, no default engine/threshold) and no domain noun in the processor API.
@@ -337,6 +384,7 @@ It is critical because nothing can be extracted before the contracts exist (PDF-
 | Large PDFs exhausting memory | PDF-09, PDF-10 | PDF-09 (page-by-page processing, one render at a time, no full-document buffer) |
 | Arbitrary classification thresholds | PDF-08 | PDF-08 (explicit named constants; classification is descriptive and never drives routing) |
 | Partially written artifacts observed downstream | PDF-09, PDF-12 | PDF-12 (`.tmp` → validate → rename) + PDF-09 (`status = PARTIAL` keeps only valid artifacts) |
+| A bumped Poppler pin with a stale recording leaves the fast tier green | PDF-14 | PDF-14 (the loader fails loudly when the recording version differs from the pin, so the staleness is loud, not silent) |
 
 ## 11. Out of scope
 

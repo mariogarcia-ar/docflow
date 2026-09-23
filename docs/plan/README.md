@@ -159,6 +159,8 @@ src/docflow/
          select_source, select_extraction_strategy, build_llm_input,
          invalidate_downstream, resume_document, execute_document_workflow)
 tests/                   # mirrors src/docflow, one test module per source module
+    record_engine.py     # the recorder: refreshes the acceptance-engine recordings on a pin bump
+    fixtures/engines/    # the recordings, one directory per engine + version (§9.7)
 ```
 
 The `workflow/` block lists **symbols the orchestrator exposes**, not a file tree: they are
@@ -236,6 +238,12 @@ within a phase, independent processors may proceed in parallel.
   three identities: `document_id`, `workflow_run_id`, `processing_key`.
 - Tooling: `pyproject.toml` as the single config home for `pytest`, `ruff`, `pylint`,
   `coverage`.
+- The **acceptance-engine recordings convention** (§9.7): the path
+  `tests/fixtures/engines/<engine>/<engine_version>/…`, the provenance keys every recording
+  carries (`engine_version`, `schema_version`), and the rule that a replay loader fails
+  loudly when a recording's version differs from the pin in `pyproject.toml`. The convention
+  and the directory layout are stated here; the recordings themselves are Phase 1
+  deliverables (`PDF-14`, `IMG-15`, `OCR-14`).
 
 **Exit:** skeleton imports cleanly; one happy-path test per contract round-trips an
 in-memory fake end to end; the four QA gates (§7) pass on the skeleton.
@@ -323,6 +331,9 @@ image → OCR → LLM) produces a `DocumentResult`; four QA gates pass.
 - Atomic persistence everywhere an artifact is published.
 - Full four-gate hygiene and a mutation-falsified invariant test for each non-obvious
   guarantee (see §7).
+- The **frontier assertion** that no module under `src/docflow/` imports anything under
+  `tests/` (`GEN-19`), and the **recordings compliance check**: one version rule across the
+  three replay loaders, and a declared provenance on every recording (`GEN-22`).
 
 **Exit:** all phases' acceptance evidence re-run green; every shortcut carries an explicit
 `# TODO: [MVP]` / `# TODO: [RELEASE]` tag.
@@ -362,6 +373,12 @@ ruff check .            # linter, includes import order
 ruff format --check .   # formatter
 pylint src tests        # fixme disabled; the rest clean
 ```
+
+`pytest` with no flags still means "everything", including the single real-engine test per
+processor. `pytest -m "not engine"` is a documented inner-loop shortcut and never a gate;
+`pytest -m engine` runs the real tier. When the engine is not installed, the real tier
+**skips with an explicit reason** instead of failing. The `engine` marker is registered in
+`pyproject.toml` (`GEN-05`), so `--strict-markers` stays on.
 
 ### Rules carried into implementation
 
@@ -425,3 +442,23 @@ Each was open; each is now **resolved from `docs/idea/`** (the source of truth) 
 6. **Stage-state vocabulary — RESOLVED.** The nine states listed in §5 Phase 0
    (`NOT_STARTED`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`, `SKIPPED`, `REUSED`,
    `INVALIDATED`, `PAUSED`) are the closed set; no open ellipsis, no silent alias.
+7. **Test tiers and engine recordings — RESOLVED.** The real engine runs exactly once per
+   processor, as phase-exit evidence (the happy path of `PDF-13` / `IMG-13` / `OCR-12`). Every
+   other test in `pdf`, `image` and `ocr` runs on a **recorded engine response** replayed
+   through the real code, injected at the engine call and nowhere higher — the same pattern the
+   plan already applied to `llm` (`LLM-03`) and to the orchestrator (contract fakes,
+   `subplan-orquestador.md` §6). A replay is never a fallback: there is no
+   `if engine is None: use_fake`, and nothing under `src/docflow/` imports `tests/`. The replay
+   loader fails loudly when the recorded version does not match the pin in `pyproject.toml`,
+   and the real tier skips with an explicit reason when the engine is absent. `llm` keeps its
+   scripted fake (`LLM-03`) deliberately: LLM responses are not deterministic for a fixed
+   input, and `LLM-08` needs a scripted sequence.
+
+   **The convention, stated once and cited everywhere.** A recording lives under
+   `tests/fixtures/engines/<engine>/<engine_version>/<fixture-stem>/`: for `docling` (OCR) and
+   `opencv` (image) a JSON payload carrying `engine_version` and `schema_version`; for
+   `poppler` (PDF) the artifacts copied verbatim plus a `sidecar.json` with the exit code and
+   stderr, because Poppler is reached through CLI subprocesses and returns no value. The
+   recorder is `tests/record_engine.py` (dev tooling, not library code); each processor owns
+   its own engine's path in it (`PDF-14`, `IMG-15`, `OCR-14`). Only *compliance* with this
+   convention is a cross-cutting task (`GEN-22`).

@@ -342,6 +342,14 @@ reports `status == "SUCCESS"`, `schema_valid == true`, non-empty `usage` and `ti
   scripted to return invalid JSON / raise timeouts for retry tests, with a call counter to
   prove reuse (invariant 1) and attempt tracking (invariant 2 / retry scenario).
 
+### Why this processor keeps a scripted fake — deliberately
+
+`LLM-03` stays a **scripted fake** and does **not** migrate to record/replay: LLM responses
+are not deterministic for a fixed input, and `LLM-08` needs a scripted *sequence* (invalid
+JSON on attempt 1, valid on attempt 2), which a recording of one real call cannot express.
+Record/replay applies to `pdf`, `image` and `ocr` only (`README.md` §9.7). Unifying the two
+patterns later would be a mistake; this line exists so nobody tries.
+
 ## 7. Definition of Ready / Definition of Done
 
 ### Definition of Ready

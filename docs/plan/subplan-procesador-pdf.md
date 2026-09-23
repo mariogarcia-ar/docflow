@@ -148,6 +148,26 @@ public contract (`PDFRequest → procesador-pdf → PDFResult`) is engine-agnost
 Poppler with another PDF reader changes only `primitives/`, never the contract or the
 workflow. The engine is always explicit — never a silent default.
 
+### Acceptance-engine recording (the test double)
+
+The only test double for Poppler is **a recording of what Poppler really returned**, replayed
+through the real code — not a fake we invent (`README.md` §9.7). Poppler is reached through
+CLI subprocesses and hands back **files plus an exit code and stderr — no return value**, so
+this recording has a different shape from the Docling and OpenCV ones:
+
+| | |
+|---|---|
+| **Recorded layer** | Poppler's **native artifacts** (`page.pdf`, `page.png`, `text.txt`, `blocks.json`, embedded images) copied verbatim, plus a `sidecar.json` carrying the exit code and stderr. Never our `PDFPageResult`, and never the output of `extract_text_from_page` / `extract_images_from_page`: recording the translated result would delete the translation layer's coverage, which is half the reason the replay exists. |
+| **Format** | `tests/fixtures/engines/poppler/<engine_version>/<fixture-stem>/{<artifacts…>, sidecar.json}` |
+| **Injection point** | the **`subprocess.run` call** inside `pdf/primitives/` — the engine call itself, and nowhere higher. |
+| **Version check** | the replay loader reads the Poppler version pinned in `pyproject.toml` and **fails loudly**, naming both versions, when it differs from the recording directory it is about to use. |
+| **Recorder** | `tests/record_engine.py`, Poppler path (owned by `PDF-14`). |
+
+Two consequences specific to this engine: the replay intercepts a **subprocess**, not a
+function call, so it **cannot share a helper** with the OCR/Image replays; and a
+session-scoped fixture buys nothing here, because `dpi` is not a lever on the replay — it is a
+per-test option.
+
 ### Determinism class
 **Deterministic.** Same PDF + same normalized options + same processor/engine versions → same logical artifacts and same classification. Enforced by: normalized option ordering, preserved page order, deterministic artifact names (`page_001/…`, `image_001.png`), stable formats, and recording `processor`, `processor_version`, `engine`, `engine_version` in `metadata.json`. Volatile metadata (timing) is kept out of functional content.
 
@@ -179,10 +199,11 @@ Typed results, not thrown exceptions, where a result is the contract. Failures a
 | PDF-11 | Validation + error model: `validate_pdf_result`, `validate_pdf_page_result` | S | PDF-09, PDF-10 |
 | PDF-12 | Atomic persistence (`.tmp` → validate → rename) across all artifacts | S | PDF-09, PDF-10 |
 | PDF-13 | Committed fixtures + happy-path and invariant tests | M | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 |
+| PDF-14 | Poppler recording + replay loader (subprocess interception) + version check | S | PDF-02 |
 
 ### Order / waves
 - **Wave 1 (foundations):** PDF-01, PDF-02, and the fixture *bytes* for PDF-13 (contracts and primitives land first; everything imports from them). The fixtures are committed here; the tests that consume them belong to Wave 4.
-- **Wave 2 (primitives, parallel):** PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 — independent once the primitives skeleton exists.
+- **Wave 2 (primitives, parallel):** PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 — independent once the primitives skeleton exists — plus PDF-14 (the recording and its replay loader, which gate the fast tier of PDF-13).
 - **Wave 3 (composition):** PDF-09 (page entry point), then PDF-10 (document entry point).
 - **Wave 4 (hardening):** PDF-11, PDF-12, then PDF-13 (the tests need `process_pdf` and the atomic-publication guarantee to exist), and run the four QA gates.
 
@@ -213,12 +234,48 @@ Scenario: One failing stage yields a partial page
   Then the page status is PARTIAL
   And the valid artifacts (page.pdf, page.png, text.txt) are preserved
   And the failure is recorded in PDFError with recoverable set
+
+Scenario: The replay refuses a stale recording
+  Given a Poppler recording made for version A
+  And a pin in pyproject.toml for version B
+  When the fast tier runs
+  Then the replay loader fails loudly, naming both versions
+  And it does not serve the stale recording
+
+Scenario: The real tier skips when the engine is absent
+  Given an environment without Poppler installed
+  When the real tier runs
+  Then the Poppler tests are skipped with an explicit reason
+  And the gate does not fail
+
+Scenario: The fast tier never reaches Poppler
+  Given the recorded fixtures and the replay loader
+  When "pytest -m 'not engine'" runs
+  Then every test of this processor passes with zero Poppler invocations
+  And no Poppler binary is touched
 ```
 
 ## 6. Test plan
 
+### Two tiers
+
+| Tier | Runs | What it proves |
+|---|---|---|
+| **fast** — `pytest -m "not engine"` | every commit, with no Poppler installed | invariants, classification, validation and atomic publication, on **recorded Poppler artifacts replayed through the real code** |
+| **real** — `pytest -m engine` | the gate, once per processor | the `subprocess.run` adaptation lines of `pdf/primitives/`, and that the recording still matches the pinned Poppler version |
+
+`PDF-13` owns the one real happy path (see below). Every other test of this module — the
+three invariants, the classification vectors, the validation states and the
+atomic-publication failure path — runs on the replay (formats and injection point in §3)
+and never reaches Poppler. When Poppler is absent the real tier **skips with an explicit
+reason**; the fast tier must pass with no engine installed.
+
 ### Happy-path test
-`process_pdf` over a small committed multi-page fixture returns a `PDFResult` with `status == SUCCESS`, `len(pages) == page_count`, every page carrying non-empty `page.pdf`, `page.png`, `text.txt`, `blocks.json`, `embedded_images/` (where present), `metrics` and `classification`, and the artifact tree matching the ownership namespace exactly (no files under `image/`, `ocr/`, `llm/`).
+The **real tier** test: `process_pdf` over a small committed multi-page fixture, with the
+engine present, returns a `PDFResult` with `status == SUCCESS`, `len(pages) == page_count`,
+every page carrying non-empty `page.pdf`, `page.png`, `text.txt`, `blocks.json`,
+`embedded_images/` (where present), `metrics` and `classification`, and the artifact tree
+matching the ownership namespace exactly (no files under `image/`, `ocr/`, `llm/`).
 
 ### Invariant tests (must-fail rule)
 Each invariant test must FAIL when the invariant is broken — proven by mutating the source, observing the failure, then restoring green.
@@ -236,6 +293,20 @@ Each invariant test must FAIL when the invariant is broken — proven by mutatin
 - `fixtures/pdf_sample_mixed.pdf` — single page, text + image.
 - `fixtures/pdf_corrupt.pdf` — truncated header, for the error path.
 
+### Failure fixtures, in three buckets
+
+Every existing failure fixture is classified explicitly, because the bucket decides whether
+the real engine runs on that path at all:
+
+| Fixture | Bucket | Test mechanism |
+|---|---|---|
+| `pdf_corrupt.pdf` | **Pre-engine** — *if* `validate_pdf`'s fail-fast returns `CORRUPTED_PDF` before Poppler is invoked. Confirm this at `PDF-11` start: if the subprocess is reached first, the case moves to *Recordable* and the `record` step covers it | an ordinary unit test on the replay: no engine, no live call |
+
+The rule that keeps the "once per processor" promise intact: the `record` step covers
+**every input the tests use, good and bad**, so a recorded failure costs no live run at test
+time. `ENCRYPTED_PDF` / `UNSUPPORTED_PDF` are typed fail-fast paths of `validate_pdf` and are
+covered the same way once `PDF-11` fixes where the check sits.
+
 ## 7. Definition of Ready / Definition of Done
 
 ### Definition of Ready
@@ -244,10 +315,14 @@ Each invariant test must FAIL when the invariant is broken — proven by mutatin
 - Classification thresholds are explicit named constants (not magic numbers, not implicit defaults).
 - Artifact ownership (`source/`, `render/`, `native_text/`, `embedded_images/`, `metadata.json`) and the atomic-publication rule are stated.
 - The committed fixtures listed in §6 exist and are named for the failure they provoke.
+- The Poppler recording format of §3 (`tests/fixtures/engines/poppler/<engine_version>/<fixture-stem>/`, artifacts plus `sidecar.json`) and the `subprocess.run` injection point are agreed; `PDF-14` is a row in §4.
 - No open question blocks the happy path.
 
 ### Definition of Done
-- All WBS tasks PDF-01 … PDF-13 are complete; `process_pdf` and `process_pdf_page` round-trip `Request → Result` with real bytes from a committed fixture.
+- All WBS tasks PDF-01 … PDF-14 are complete; `process_pdf` and `process_pdf_page` round-trip `Request → Result` with real bytes from a committed fixture.
+- The **tier requirement** holds: the fast tier (`pytest -m "not engine"`) passes with Poppler absent, and exactly one real test per processor reaches the engine.
+- The **version check** holds: the replay loader fails loudly, naming both versions, when the recording's version differs from the pin in `pyproject.toml`.
+- The **skip-when-absent rule** holds: with no Poppler installed the real tier skips with an explicit reason instead of failing, and no test substitutes a fake for the replay.
 - No import of, or call to, any other processor; no workflow decision, OCR, LLM/VLM or source selection inside the module.
 - No domain noun (invoice, field, verdict, pipeline code) in the processor API; all identifiers/docstrings/comments in English.
 - Artifacts are published atomically (`.tmp` → validate → rename); the input PDF is never modified.
