@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import contextlib
 import importlib
-import subprocess
 import sys
 from collections.abc import Iterator
 from unittest.mock import patch
@@ -40,6 +39,8 @@ from docflow.ocr.primitives.engine import (
     is_engine_available,
     loaded_engines,
 )
+from tests.ocr.primitives import probes
+from tests.ocr.primitives.probes import run_in_clean_interpreter
 
 REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[3]
 
@@ -88,22 +89,9 @@ def test_importing_the_seam_loads_no_engine() -> None:
     Run in a fresh interpreter, because the in-process answer would be a fact about what pytest
     had already imported rather than about the module under test.
     """
-    code = (
-        "import sys\n"
-        "import docflow.ocr, docflow.ocr.primitives, docflow.ocr.primitives.engine\n"
-        "print('docling' in sys.modules)\n"
+    assert probes.module_absent_from_a_clean_import(
+        "docflow.ocr.primitives.engine", DOCLING_MODULE_NAME
     )
-    completed = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=False,
-        env=CLEAN_INTERPRETER_ENV,
-        cwd=REPO_ROOT,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "False", "importing the seam pulled Docling in"
 
 
 def test_probing_for_the_engine_does_not_load_it() -> None:
@@ -263,13 +251,7 @@ def test_the_package_itself_does_not_expose_the_conversion_api() -> None:
         "has = hasattr(docling, 'document_converter')\n"
         "print(docling.document_converter if has else 'absent')\n"
     )
-    completed = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=REPO_ROOT,
-    )
+    completed = run_in_clean_interpreter(code)
 
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "absent"

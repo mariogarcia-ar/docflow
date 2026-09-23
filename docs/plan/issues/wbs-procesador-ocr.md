@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-procesador-ocr.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-procesador-ocr.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `OCR-01` … `OCR-14` |
-| Status | `OCR-01`…`OCR-02` **DONE** - the contract is frozen and the Docling seam is in place with every downstream signature declared; `OCR-03` … `OCR-14` `NOT_STARTED` |
+| Status | `OCR-01`…`OCR-03` **DONE** - the contract is frozen, the Docling seam is in place with every downstream signature declared, and the pipeline/configuration primitives are implemented; `OCR-04` … `OCR-14` `NOT_STARTED` |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-ocr.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
@@ -30,7 +30,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 |---|---|---|---|---|---|---|---|
 | OCR-01 | Sub-package skeleton + contract dataclasses | S | 1 — Foundations | — | `src/docflow/ocr/`, `OCRRequest`, `OCRResult`, `NormalizedOCROptions`, `OCRMetrics`, `OCRMetadata`, `OCRValidation`, `OCRError`, `ArtifactPaths` | this file §OCR-01 | DONE |
 | OCR-02 | Docling seam + pin | S | 1 — Foundations | OCR-01 | `ocr/primitives/`, `docling` pinned in `pyproject.toml` | this file §OCR-02 | DONE |
-| OCR-03 | Pipeline/config primitives | M | 2 — Engine + extraction | OCR-02 | `load_docling_pipeline`, `configure_image_pipeline`, `enable_*`, `normalize_docling_options` | this file §OCR-03 | NOT_STARTED |
+| OCR-03 | Pipeline/config primitives | M | 2 — Engine + extraction | OCR-02 | `load_docling_pipeline`, `configure_image_pipeline`, `enable_*`, `normalize_docling_options` | this file §OCR-03 | DONE |
 | OCR-04 | Execution + extraction primitives | M | 2 — Engine + extraction | OCR-03 | `convert_image_with_docling`, `extract_docling_*`, `OCRDocument` | this file §OCR-04 | NOT_STARTED |
 | OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering | this file §OCR-05 | NOT_STARTED |
 | OCR-06 | Output builders | M | 3 — Outputs | OCR-05 | `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` | this file §OCR-06 | NOT_STARTED |
@@ -180,6 +180,70 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given `tables` disabled, then the pipeline is configured without table detection and no table artifact is claimed.
 - **Evidence / DoD:** Unit test asserting normalization stability and predicate branch behaviour.
 - **Tags:** `# TODO: [MVP]` for full option coverage.
+
+- **Status: DONE.** Evidence: `src/docflow/ocr/primitives/pipeline.py` implements all ten
+  primitives the scope names; `tests/ocr/primitives/test_pipeline.py` (34 tests) covers both
+  acceptance criteria. All four gates green: **944 tests**, `ruff` clean, 10.00/10 on
+  `pylint src tests`. Ten mutations applied, all killed.
+
+- **Defect found in `OCR-02`'s own work: three primitives the plan names were never declared.**
+  `enable_ocr`, `enable_table_detection` and `enable_layout_analysis` are in §3.4 *and* in this
+  task's deliverable list, but `OCR-02` declared only the predicates and the two builders. The
+  signature suite did not catch it, and **could not have**: it was written from the modules rather
+  than from the plan, so it asserted the names that existed instead of the names that were
+  required. A test derived from what has been built can only ever confirm that what has been built
+  is what was built. The list in `test_signatures.py` is now the plan's, transcribed from §3.4.
+
+  The same review caught two primitives I had *invented* — `image_format_option` and
+  `with_engine_options`, neither of which appears in the plan — and they were removed rather than
+  kept. Building the converter belongs to `OCR-04`, and an unrequired public function is the
+  "scope creep into a full library" the subplan's risk table names.
+
+- **The predicate/enabler split is what makes both halves testable.** ``should_enable_*`` answers a
+  question from the processor's options; ``enable_*`` sets Docling's flag from the answer. A single
+  function doing both would have to construct a request *and* have Docling installed to test a
+  boolean; split, the decisions are tested with no engine and the mechanism is tested with no
+  request.
+
+- **Measured: Docling has no ``do_layout``.** Layout is on when ``layout_options`` holds a value
+  and off when it is ``None``. A primitive that looked for a boolean would have found nothing, set
+  a stray attribute, and changed no behaviour **while appearing to work** — which is why the
+  absence is asserted by `test_layout_is_not_a_boolean_flag_in_this_engine` rather than assumed.
+  The field name lives in the seam-adjacent constant `DOCLING_LAYOUT_FIELD`, and turning layout on
+  when it is already configured leaves the existing options alone rather than rebuilding them.
+
+- **Measured: Docling defaults ``do_ocr`` and ``do_table_structure`` to ``True``.** That turns
+  "set the flag in both directions" from a style preference into a requirement: a processor that
+  only ever switched capabilities *on* would look correct on every request that asks for them and
+  be silently wrong on every one that does not. The acceptance criterion's own example —
+  ``tables=False`` — is exactly that case, and the sweep over all eight combinations of the three
+  flags is there because the failure is asymmetric.
+
+- **A non-boolean flag is refused, not coerced.** ``bool("false")`` is ``True``. A request that
+  arrives as JSON with a string where a flag belongs would turn a capability *on* while the caller
+  asked for it off, with nothing downstream able to tell — the silent stand-in arriving through the
+  type system instead of through a default. The predicates then compare with ``is True`` rather
+  than testing truthiness, so a value that slips past normalization fails toward *disabled*.
+
+- **Mutation evidence.** Ten mutations applied, all killed: tables-disabled ignored (only ever
+  enabling), the OCR flag never set so the engine default leaks through, layout implemented as a
+  non-existent boolean, coercion instead of refusal, engine-option keys unsorted, the language left
+  uncanonicalized, a predicate testing truthiness, every predicate reading the first field, an
+  implemented primitive left in the stub set, and the stub check reading the module instead of the
+  function.
+
+  **One survivor earned its keep.** Deleting the engine-option sort changed nothing the test could
+  see, because the "forward" input was already written in alphabetical order — a test whose input
+  is already in the expected order cannot test the ordering. Both inputs are now written out of
+  order, and the assertion compares serialized output rather than dict equality, because dicts
+  compare equal regardless of order and it is the *serialization* that reaches the processing key.
+
+- **The stub guard now measures the right thing, and `OCR-04` … `OCR-10` must keep it honest.**
+  ``test_every_primitive_is_implemented_not_a_stub`` reads the **function's** source, not its
+  module's. The first version read the module, which contains every function in the group, so
+  ``"raise NotImplementedError" in source`` was true whenever *any* sibling was still a stub — it
+  passed for primitives that had been implemented and measured nothing. A mutation that restores
+  the module-wide read is now caught, and so is forgetting to move a name into ``IMPLEMENTED``.
 
 ### OCR-04 — Execution and extraction primitives
 

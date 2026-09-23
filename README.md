@@ -39,7 +39,7 @@ would be a silent stand-in, which this project forbids at every stage.
 | Phase | What | Owner |
 |---|---|---|
 | **0 — contracts & skeleton** | ✅ **done** | `GEN-01`…`GEN-06` |
-| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). ✅ `image` **complete** (`IMG-01`…`IMG-15`, Waves 0–6). 🔄 `ocr` started (`OCR-01`…`OCR-02` done). ⏳ `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
+| **1 — processors, independently** | ✅ `pdf` **complete** (`PDF-01`…`PDF-14`, Waves 1–5). ✅ `image` **complete** (`IMG-01`…`IMG-15`, Waves 0–6). 🔄 `ocr` started (`OCR-01`…`OCR-03` done). ⏳ `llm`: not started | `PDF-01`…`PDF-13`, `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |

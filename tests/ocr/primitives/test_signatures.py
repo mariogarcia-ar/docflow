@@ -35,12 +35,24 @@ from docflow.ocr.primitives import (
 PIPELINE_PRIMITIVES = (
     "load_docling_pipeline",
     "configure_image_pipeline",
+    "enable_ocr",
+    "enable_table_detection",
+    "enable_layout_analysis",
     "normalize_docling_options",
     "should_enable_ocr",
     "should_enable_layout",
     "should_enable_tables",
     "should_enable_reading_order",
 )
+"""``subplan-procesador-ocr.md`` §3.4's *Pipeline/config* group, name for name.
+
+``enable_ocr``, ``enable_table_detection`` and ``enable_layout_analysis`` are in the plan and in
+``OCR-03``'s deliverable list, but ``OCR-02`` **did not declare them**. That went unnoticed
+because the surface test was written from the modules rather than from the plan: it asserted the
+names that existed instead of the names that were required, so a plan primitive that was never
+created could not fail it. The list below is now the plan's, and that is the fix — a test derived
+from what has been built can only ever confirm that what has been built is what was built.
+"""
 
 EXECUTION_PRIMITIVES = (
     "convert_image_with_docling",
@@ -122,6 +134,28 @@ def _locate(name: str) -> object:
     raise AssertionError(f"no group declares {name}")
 
 
+IMPLEMENTED = (
+    "load_docling_pipeline",
+    "configure_image_pipeline",
+    "enable_layout_analysis",
+    "enable_ocr",
+    "enable_table_detection",
+    "get_processor_version",
+    "normalize_docling_options",
+    "should_enable_layout",
+    "should_enable_ocr",
+    "should_enable_reading_order",
+    "should_enable_tables",
+)
+"""Primitives whose tasks have landed, so they no longer raise ``NotImplementedError``.
+
+Each of ``OCR-03`` … ``OCR-10`` moves its own names in as it lands. The list is what keeps the
+stub guard meaningful in both directions: without it, a primitive that had been implemented would
+fail a test asserting it still refuses, and the temptation would be to delete that test rather
+than to say which names are real.
+"""
+
+
 def _primitive(module: object, name: str) -> Callable[..., object]:
     """Return a named primitive, failing the test if it is absent.
 
@@ -149,21 +183,33 @@ def test_every_primitive_the_plan_names_exists(
         _primitive(module, name)
 
 
+# Primitives ``OCR-03`` and later have implemented are no longer stubs, so the guard below no
+# longer applies to them. Each task moves its own names out as it lands.
 @pytest.mark.parametrize("name", [n for _, names in ALL_GROUPS for n in names])
 def test_every_primitive_is_implemented_not_a_stub(name: str) -> None:
-    """OCR-03 … OCR-10 have not run yet, so every body still refuses to answer.
+    """A primitive either refuses to answer or is implemented — never a plausible stand-in.
 
-    This is the inverse of the guard the image suite grew: there the stubs had been filled, and
-    the test flipped to assert no ``NotImplementedError`` remained. Here nothing is implemented,
-    so the assertion is that the surface refuses rather than returning a plausible value. It must
-    be **updated** by each of OCR-03 … OCR-10 as they land, which is the point: a task that
-    implements a primitive without removing its stub guard would be caught.
+    The assertion runs in whichever direction the name's task has reached. While ``OCR-03`` …
+    ``OCR-10`` are still landing, most of the surface must **refuse**: a skeleton returning ``0``
+    would put a measured-looking zero into every :class:`~docflow.ocr.contracts.OCRMetrics`. The
+    names in :data:`IMPLEMENTED` have landed and must have stopped refusing.
+
+    A task that implements a primitive without moving its name into :data:`IMPLEMENTED` fails
+    here, which is the prompt to update the list in the same change.
     """
-    source = inspect.getsource(_locate(name))
-    assert "raise NotImplementedError" in source, (
-        f"{name} no longer raises NotImplementedError. If it has just been implemented, move it "
-        "out of this test's list in the same change."
-    )
+    function = getattr(_locate(name), name)
+    source = inspect.getsource(function)
+    has_stub = "raise NotImplementedError" in source
+
+    if name in IMPLEMENTED:
+        assert not has_stub, (
+            f"{name} is implemented but still carries a NotImplementedError body"
+        )
+    else:
+        assert has_stub, (
+            f"{name} no longer raises NotImplementedError. If it has just been implemented, "
+            "move it into IMPLEMENTED in the same change."
+        )
 
 
 @pytest.mark.parametrize("name", [n for _, names in ALL_GROUPS for n in names])
