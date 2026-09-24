@@ -24,7 +24,7 @@
 | 1 | Processors, independently (parallel) | — | `PDF-01`…`PDF-14`, `IMG-01`…`IMG-15`, `OCR-01`…`OCR-14`, `LLM-01`…`LLM-15` | 58 | 22 / 32 / 4 | each processor has a green happy-path test proving `Request → Result` with real bytes from a small committed fixture, with no engine installed; no processor imports another processor's module; four QA gates pass |
 | 2 | Orchestrator: state, reuse, resume | — | `ORC-01`…`ORC-19` | 19 | 3 / 13 / 3 | a run interrupted mid-pipeline resumes without re-running completed stages (proved by a test that observes stage states after a resume); forcing a stage invalidates its downstream dependents; four QA gates pass |
 | 3 | Integration: source selection and end-to-end result | `GEN-07`…`GEN-10` | `ORC-12`, `ORC-13`, `ORC-17` (implementation owners, already counted in Phase 2) | 4 | 0 / 3 / 1 | one end-to-end happy-path test per input type (PDF with native text; scanned image → OCR → LLM) produces a `DocumentResult`; four QA gates pass |
-| 4 | Hardening + programme close-out | `GEN-11`…`GEN-22` | `PDF-11`, `PDF-12`, `PDF-14`, `IMG-13`, `IMG-14`, `IMG-15`, `OCR-12`, `OCR-13`, `OCR-14`, `LLM-13`, `ORC-19` | 12 | 6 / 4 / 2 | all phases' acceptance evidence re-run green; every shortcut carries an explicit `# TODO: [MVP]` / `# TODO: [RELEASE]` tag |
+| 4 | Hardening + programme close-out | `GEN-11`…`GEN-22` | `PDF-11`, `PDF-12`, `PDF-13`, `PDF-14`, `IMG-10`, `IMG-11`, `IMG-13`, `IMG-14`, `IMG-15`, `OCR-09`, `OCR-10`, `OCR-12`, `OCR-13`, `OCR-14`, `LLM-13`, `ORC-15`, `ORC-16`, `ORC-19` | 12 | 6 / 4 / 2 | all phases' acceptance evidence re-run green; every shortcut carries an explicit `# TODO: [MVP]` / `# TODO: [RELEASE]` tag |
 | **Total** | | **22** | **77** | **99** | **34 / 55 / 10** | |
 
 **Scope.** This document owns the work that belongs to no single processor: the shared
@@ -150,7 +150,7 @@ Scenario: One config file drives all four tools
 - **Type:** test
 - **Effort:** M
 - **Phase:** 0 · **Wave:** 0.3
-- **Depends on:** `GEN-02`, `GEN-03`, `GEN-04`, `GEN-05` · **Blocks:** `GEN-10`, `GEN-15`, `PDF-13`, `IMG-13`, `OCR-12`, `LLM-03`, `ORC-19`
+- **Depends on:** `GEN-02`, `GEN-03`, `GEN-04`, `GEN-05` · **Blocks:** `GEN-10`, `GEN-15`, `ORC-19` (the four processor test rows — `PDF-13`, `IMG-13`, `OCR-12`, `LLM-03` — are gated by the Phase 0 exit this issue closes, declared as their entry condition rather than as a row-level dependency)
 - **Objective:** Prove the Phase 0 exit: every contract round-trips an in-memory fake end to end before any real engine exists.
 - **Scope / Deliverables:** one committed fake per contract (`PDFRequest → PDFResult`, `ImageRequest → ImageResult`, `OCRRequest → OCRResult`, `LLMInput → LLMResult`, `DocumentRequest → DocumentResult`) and one happy-path test per contract that asserts the result type, the propagated identity and the absence of a silent stand-in.
 - **Out of bounds:** Real engine calls (`PDF-02`, `IMG-02`, `OCR-02`, `LLM-02`), edge cases, error paths (`GEN-13`).
@@ -280,7 +280,7 @@ Scenario: A repeated request reuses instead of re-running
 - **Phase:** 4 · **Wave:** 4.1
 - **Depends on:** `GEN-11`, `PDF-02`, `IMG-02`, `OCR-02`, `LLM-02` · **Blocks:** `GEN-16`
 - **Objective:** Classify each processor as deterministic, sampled or external, and make resume decisions depend on the class instead of on an assumption.
-- **Scope / Deliverables:** a documented determinism class per processor in `src/docflow/`; the recorded `engine` + `engine_version` in every artifact `metadata.json` (`PDF-12`, `IMG-11`, `OCR-10`, `LLM-11`); deterministic ordering assertions for OCR (`OCR-05`) and PDF (`PDF-09`).
+- **Scope / Deliverables:** a documented determinism class per processor in `src/docflow/`; the recorded `engine` + `engine_version` in every artifact `metadata.json` — `PDF-09` (per page) and `PDF-10` (document), `IMG-11`, `OCR-10`, `LLM-11`; deterministic ordering assertions for OCR (`OCR-05`) and PDF (`PDF-09`).
 - **Out of bounds:** Stability of the engine itself; comparing raw bytes of non-deterministic engines (compare normalized structure instead).
 - **Evidence / DoD:** each processor declares its class; re-running the deterministic ones yields identical normalized output; a test that omits `engine_version` from metadata is red.
 - **Tags:** —
@@ -600,6 +600,7 @@ flowchart LR
 - **Issues:** `PDF-01`…`PDF-14`; `IMG-01`…`IMG-15`; `OCR-01`…`OCR-14`; `LLM-01`…`LLM-15` (see [`wbs-procesador-pdf.md`](wbs-procesador-pdf.md), [`wbs-procesador-image.md`](wbs-procesador-image.md), [`wbs-procesador-ocr.md`](wbs-procesador-ocr.md), [`wbs-procesador-llm-call.md`](wbs-procesador-llm-call.md)). The four processors run in parallel; no `GEN` issue is needed here beyond `GEN-01`…`GEN-06` being already met.
 - **Deliverables:** each processor implemented in isolation behind its own contract with engines encapsulated in its own `primitives/`; each of `pdf`, `image` and `ocr` additionally owning its in-memory engine double (`PDF-14`, `IMG-15`, `OCR-14`), so the whole suite of that processor runs with no engine installed.
 - **Exit criterion:** "each processor has a green happy-path test proving `Request → Result` with real bytes from a small committed fixture, with no engine installed; no processor imports another processor's module; four QA gates pass."
+- **Owner of the exit evidence:** the happy path and the four gates are owned per processor — `PDF-13` (`# PDF-14` supplies the double), `IMG-14`, `OCR-13` and `LLM-13` (with `LLM-06` owning the `llm` happy path) — so no part of this criterion is a side effect. The "no processor imports another processor" half of the criterion is checked on the integrated tree by `GEN-18`, because a processor's own sub-package cannot prove the absence of an import it does not make.
 - **Gate:** all four gates, run per processor sub-package.
 
 ### 4.3 Phase 2 — Orchestrator: state, reuse, resume
@@ -621,7 +622,7 @@ flowchart LR
 ### 4.5 Phase 4 — Hardening and close-out
 
 - **Entry condition:** Phase 3 exit met.
-- **Issues:** `GEN-11`…`GEN-16` (hardening); `GEN-17`…`GEN-22` (close-out). Child tasks whose guarantees Phase 4 re-verifies on the integrated tree — not re-owned here: `PDF-11`, `PDF-12`, `PDF-14`, `IMG-10`, `IMG-11`, `IMG-13`, `IMG-14`, `IMG-15`, `OCR-09`, `OCR-10`, `OCR-12`, `OCR-13`, `OCR-14`, `LLM-13`, `ORC-15`, `ORC-16`, `ORC-19`.
+- **Issues:** `GEN-11`…`GEN-16` (hardening); `GEN-17`…`GEN-22` (close-out). Child tasks whose guarantees Phase 4 re-verifies on the integrated tree — not re-owned here: `PDF-11`, `PDF-12`, `PDF-13`, `PDF-14`, `IMG-10`, `IMG-11`, `IMG-13`, `IMG-14`, `IMG-15`, `OCR-09`, `OCR-10`, `OCR-12`, `OCR-13`, `OCR-14`, `LLM-13`, `ORC-15`, `ORC-16`, `ORC-19`.
 - **Deliverables:** idempotency at both levels; determinism classes per processor; error containment; atomic persistence everywhere an artifact is published; full four-gate hygiene; a mutation-falsified invariant test per non-obvious guarantee; the CI gate workflow (`GEN-21`); the engine-double compliance check (`GEN-22`); the frontier assertion that no module under `src/docflow/` imports `tests/` (`GEN-19`).
 - **Exit criterion:** "all phases' acceptance evidence re-run green; every shortcut carries an explicit `# TODO: [MVP]` / `# TODO: [RELEASE]` tag."
 - **Gate:** all four gates on the whole tree, plus the two frontier assertions (`GEN-18`, `GEN-19`) and the CI workflow that enforces them (`GEN-21`).
@@ -678,7 +679,7 @@ Derived from [`../README.md`](../README.md) §8 and §7, with the mitigating tas
 | Repeating expensive LLM/OCR work | Cost and latency | `ORC-02` (`processing_key`), `ORC-07`/`ORC-08` (reuse rule and validation), `LLM-05` (`request_key`), `LLM-13` (graph resume), `GEN-11` (both-level idempotency) |
 | Silent failures (truncated prompt, plausible wrong value) | A wrong result reported as correct | `PDF-11`, `IMG-10`, `OCR-09`, `LLM-07` (structural validation), `ORC-16` (error records), `GEN-13` (no exception across a contract), `GEN-09` (per-field verdict vector preserved) |
 | File existence falsely treated as a valid result | Stale or partial output silently reused | `ORC-08` (artifact validation, never existence alone), `GEN-11` (reuse rule), `GEN-14` (no partial artifact survives) |
-| Golden set unavailable (circular labelling) | Extraction quality cannot be measured | `GEN-16` (mutation-falsified invariants replace goldens), `PDF-13`, `IMG-13`, `OCR-12`, `LLM-14`, `ORC-19` (subplan-level invariant tests) |
+| Golden set unavailable (circular labelling) | Extraction quality cannot be measured | `GEN-16` (mutation-falsified invariants replace goldens), `PDF-13`, `IMG-13`, `OCR-12`, `LLM-13`, `ORC-19` (subplan-level invariant tests) |
 | Docling residual non-determinism on identical input | Flaky determinism test | `OCR-05` (normalized logical structure, deterministic ordering), `GEN-12` (class recorded instead of assumed) |
 | Interrupted run leaves a `RUNNING` stage forever | Resume deadlock | `ORC-15` (recover interrupted `RUNNING`), `ORC-04` (`claim`/`release` atomic), `GEN-16` |
 | Orchestrator absorbs processor logic | Single-responsibility violated; monolith | `ORC-14` (only invocation point), `GEN-18` (no cross-processor import), `GEN-19` (no `primitives/` from workflow) |

@@ -19,7 +19,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | ID range | PDF-01 … PDF-14 |
 | # tasks | 14 |
 | Effort distribution | S ×6 (PDF-01, 05, 08, 11, 12, 14) · M ×8 (PDF-02, 03, 04, 06, 07, 09, 10, 13) · L ×0 |
-| Critical path | `PDF-01 → PDF-02 → PDF-04 → PDF-09 → PDF-10 → PDF-11` |
+| Critical path | `PDF-01 → PDF-02 → PDF-04 → PDF-09 → PDF-10 → PDF-11 → PDF-13` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
 **Scope.** Turn a `PDFRequest` into a `PDFResult` (+ one `PDFPageResult` per page) describing only what the PDF natively contains: page split, render, native text, text blocks, embedded images, per-page composition metrics and a descriptive `TEXT`/`IMAGE`/`MIXED` classification, published atomically under the `source/`, `render/`, `native_text/`, `embedded_images/` and `metadata.json` namespaces. Poppler is reached only from `pdf/primitives/`. No workflow decision, no OCR, no LLM, no other processor import.
@@ -69,7 +69,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** M
 - **Wave:** 1 — Foundations
 - **Depends on:** PDF-01
-- **Blocks:** PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08, PDF-13
+- **Blocks:** PDF-03, PDF-04, PDF-05, PDF-06, PDF-07, PDF-08, PDF-13, PDF-14
 - **Objective:** Create the single seam through which Poppler (`pdftotext`, `pdfimages`, `pdfseparate`) is reached, with the engine named explicitly — never a silent default.
 - **Scope / Deliverables:** `pdf/primitives/` package with the low-level function signatures of PDF-03 … PDF-08 declared and mocked; one concrete engine selected (Poppler); engine name and version surfaced for metadata.
 - **Out of bounds:** No OpenCV, OCR, Docling, LLM or workflow knowledge; no engine access from `pdf/utils/`, `pdf/helpers/` or outside this processor; no default engine substituted when configuration is missing.
@@ -198,7 +198,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** M
 - **Wave:** 3 — Composition
 - **Depends on:** PDF-03, PDF-09
-- **Blocks:** PDF-11, PDF-12
+- **Blocks:** PDF-11, PDF-12, PDF-13
 - **Objective:** Run the page loop over the whole document, consolidate per-page results and emit the aggregate `PDFResult` with the document-level `metadata.json`.
 - **Scope / Deliverables:** `process_pdf(request) -> PDFResult` iterating pages via `process_pdf_page`, immutable reference copy at `source/document.pdf`, aggregate `PDFMetrics`, `artifacts` list, and identity/provenance fields (`processor`, `processor_version`, `engine`, `engine_version`) in `metadata.json`.
 - **Out of bounds:** No page-count shortcut that drops pages; no full-document in-memory buffering; no workflow decision (no `REUSE`/`SKIP`/`FORCE`/`RESUME`); no other processor import.
@@ -214,7 +214,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** S
 - **Wave:** 4 — Hardening
 - **Depends on:** PDF-09, PDF-10
-- **Blocks:** —
+- **Blocks:** PDF-13
 - **Objective:** Make result validation structural and mandatory, and give every failure a typed, descriptive classification rather than an exception or a guess.
 - **Scope / Deliverables:** `validate_pdf_result(result)`, `validate_pdf_page_result(page_result)`, `validate_pdf` fail-fast paths for `ENCRYPTED_PDF` / `CORRUPTED_PDF` / `UNSUPPORTED_PDF`, and the state mapping `VALID` / `PARTIAL` / `INVALID` / `ERROR`.
 - **Out of bounds:** Never convert a validation state into a workflow action; never substitute a silent stand-in (empty string, `0`, `[]`, default engine); never throw where a typed result is the contract.
@@ -230,7 +230,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** S
 - **Wave:** 4 — Hardening
 - **Depends on:** PDF-09, PDF-10
-- **Blocks:** —
+- **Blocks:** PDF-13
 - **Objective:** Guarantee that no partially written artifact is ever observable: every artifact is written to `.tmp`, validated, then atomically renamed into place.
 - **Scope / Deliverables:** The publication helper used by every artifact write in `page_NNN/` and at document level (`.tmp` → validate → rename); partial pages retain only valid artifacts with `status = PARTIAL`.
 - **Out of bounds:** No final-named artifact written before validation; no direct overwrite of the input PDF; no change to the artifact namespace layout.
@@ -323,9 +323,9 @@ flowchart LR
 
 ## 6. Critical path
 
-`PDF-01 → PDF-02 → PDF-04 → PDF-09 → PDF-10 → PDF-11`
+`PDF-01 → PDF-02 → PDF-04 → PDF-09 → PDF-10 → PDF-11 → PDF-13`
 
-It is critical because nothing can be extracted before the contracts exist (PDF-01) and the Poppler seam is fixed (PDF-02); a page cannot be assembled without the page-split primitive (PDF-04); the page entry point (PDF-09) gates the document entry point (PDF-10); and the DoD cannot close until validation (PDF-11) is in place. PDF-05, PDF-06, PDF-07, PDF-08 are also hard predecessors of PDF-09, so any of them slipping delays the same chain; PDF-03 gates PDF-10.
+It is critical because nothing can be extracted before the contracts exist (PDF-01) and the Poppler seam is fixed (PDF-02); a page cannot be assembled without the page-split primitive (PDF-04); the page entry point (PDF-09) gates the document entry point (PDF-10); the DoD cannot close until validation (PDF-11) is in place; and the phase closes with the tests (PDF-13), which produce its exit evidence. PDF-05, PDF-06, PDF-07, PDF-08 are also hard predecessors of PDF-09, so any of them slipping delays the same chain; PDF-03 gates PDF-10; and PDF-14 joins as PDF-13's other hard predecessor, since no test may reach the engine.
 
 ## 7. Traceability
 
@@ -360,6 +360,7 @@ It is critical because nothing can be extracted before the contracts exist (PDF-
 - [ ] Artifacts published atomically; the input PDF is never modified; writes stay inside `source/`, `render/`, `native_text/`, `embedded_images/`, `metadata.json`.
 - [ ] The primitive surface is the one in the subplan §3: no second reader for an engine call already covered (`inspect_pdf`, `extract_text_from_page`, `extract_images_from_page`).
 - [ ] Every shortcut carries an inline `# TODO: [MVP]` or `# TODO: [RELEASE]` tag; output, identifiers, docstrings and comments in English.
+- [ ] The phase exit is owned by `PDF-13`: the happy path, the three invariants and the four QA gates all report from that task, so the exit criterion is a deliverable rather than a side effect. The "no processor imports another processor" half is checked on the integrated tree by `GEN-18`.
 
 ## 10. Risks & mitigations (execution view)
 

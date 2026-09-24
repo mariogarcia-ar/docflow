@@ -325,7 +325,7 @@ pylint src tests
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| Orchestrator absorbs processor logic (scope creep into PDF/image/OCR/LLM internals) | Violates single-responsibility principle; becomes a monolith | Keep the "does NOT" list as a review checklist; route every capability through the Phase 1 contracts; fail review if any processor internal appears in `orchestrator.py` |
+| Orchestrator absorbs processor logic (scope creep into PDF/image/OCR/LLM internals) | Violates single-responsibility principle; becomes a monolith | Keep the "does NOT" list as a review checklist; route every capability through the Phase 1 contracts; fail review if any processor internal appears under `src/docflow/workflow/` |
 | Re-running costly OCR/LLM work | Cost and latency | `processing_key` + reuse rule; resume without re-execution; dry-run before costly runs |
 | File-existence falsely treated as a valid result | Wrong reuse of stale/partial output | Reuse requires `processing_key` match + artifact hash validation, never existence alone |
 | Force not invalidating dependents | Downstream uses stale input silently | `invalidate_downstream` + invariant test #2; invalidated artifacts are preserved but never reused |

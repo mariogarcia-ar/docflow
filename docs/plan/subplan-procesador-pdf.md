@@ -209,7 +209,7 @@ Typed results, not thrown exceptions, where a result is the contract. Failures a
 | PDF-10 | Document entry point: `process_pdf` + consolidation + `PDFResult` | M | PDF-03, PDF-09 |
 | PDF-11 | Validation + error model: `validate_pdf_result`, `validate_pdf_page_result` | S | PDF-09, PDF-10 |
 | PDF-12 | Atomic persistence (`.tmp` → validate → rename) across all artifacts | S | PDF-09, PDF-10 |
-| PDF-13 | Committed fixtures + happy-path and invariant tests | M | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12 |
+| PDF-13 | Committed fixtures + happy-path and invariant tests | M | PDF-01, PDF-02, PDF-10, PDF-11, PDF-12, PDF-14 |
 | PDF-14 | In-memory Poppler double (subprocess injection) | S | PDF-02 |
 
 ### Order / waves

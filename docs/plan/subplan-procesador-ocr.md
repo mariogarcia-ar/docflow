@@ -257,7 +257,7 @@ result is the contract:
 | OCR-09 | Technical validation: `validate_ocr_result` + `validate_output_artifacts`, statuses `VALID/EMPTY/LOW_CONTENT/…`. | S | OCR-06, OCR-08 |
 | OCR-10 | Atomic persistence + `metadata.json` + publish (`ocr/.tmp/` → rename). | M | OCR-07, OCR-09 |
 | OCR-11 | Entry points: `process_ocr_image` orchestration + optional `process_ocr_from_page` wrapper. | M | OCR-10 |
-| OCR-12 | Tests: happy path + invariant tests + committed image fixtures. | M | OCR-11 |
+| OCR-12 | Tests: happy path + invariant tests + committed image fixtures. | M | OCR-11, OCR-14 |
 | OCR-13 | Four QA gates green; mutation-falsify each invariant test and document observations. | S | OCR-12 |
 | OCR-14 | In-memory Docling double (native shape, adversarial order) | S | OCR-02 |
 

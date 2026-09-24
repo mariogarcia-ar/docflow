@@ -70,7 +70,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** M
 - **Wave:** 1 — Contracts & seam
 - **Depends on:** IMG-01
-- **Blocks:** IMG-03
+- **Blocks:** IMG-03, IMG-15
 - **Objective:** Create the single seam that encapsulates the image engine (OpenCV first, Pillow as the documented drop-in alternative) with no engine silently substituted.
 - **Scope / Deliverables:** `image/primitives/` package with the signatures of IMG-03, IMG-04 and IMG-05 declared; engine name and library version surfaced for `metadata.json`.
 - **Out of bounds:** No OCR, Docling, LLM or workflow knowledge; no engine access from outside `image/primitives/`; no Pillow fallback activated implicitly when OpenCV is absent.
@@ -134,7 +134,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** S
 - **Wave:** 2 — Analysis
 - **Depends on:** IMG-04
-- **Blocks:** IMG-07, IMG-09, IMG-10
+- **Blocks:** IMG-07, IMG-08, IMG-09, IMG-10
 - **Objective:** Aggregate the analysis primitives into one side-effect-free `ImageMetrics` snapshot of the input.
 - **Scope / Deliverables:** `analyze_image` producing `ImageMetrics` (dimensions, resolution, format, size, quality scores, orientation, skew, text regions, text coverage).
 - **Out of bounds:** No file writes, no normalization, no classification, no OCR/VLM decision; never return a placeholder where a real measurement is expected.

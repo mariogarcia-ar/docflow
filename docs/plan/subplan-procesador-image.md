@@ -146,7 +146,7 @@ Errors are classified technically into a typed `ImageError` with a `recoverable`
 | IMG-10 | Implement `validate_image_result` + typed `ImageError` classification | S | IMG-06 |
 | IMG-11 | Implement atomic persistence (`.tmp` → validate → rename) and `metadata.json` generation | M | IMG-07, IMG-08, IMG-10 |
 | IMG-12 | Implement `process_image` entry point wiring the full flow | M | IMG-09, IMG-11 |
-| IMG-13 | Write happy-path + invariant tests; record mutation-falsification evidence | M | IMG-12 |
+| IMG-13 | Write happy-path + invariant tests; record mutation-falsification evidence | M | IMG-12, IMG-15 |
 | IMG-14 | Run the four QA gates clean | S | IMG-13 |
 | IMG-15 | In-memory OpenCV double (primitives injection) | S | IMG-02 |
 

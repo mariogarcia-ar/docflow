@@ -69,7 +69,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** S
 - **Wave:** 1 — Foundations
 - **Depends on:** OCR-01
-- **Blocks:** OCR-03
+- **Blocks:** OCR-03, OCR-14
 - **Objective:** Create the only place that knows Docling, and pin the engine so output differences are auditable.
 - **Scope / Deliverables:** `ocr/primitives/` carrying exactly the seam the subplan §3.4 names (`load_docling_pipeline`, `configure_image_pipeline`, `normalize_docling_options`, `convert_image_with_docling`, `get_engine_version`); `docling` pinned in `pyproject.toml`; `get_engine_version` recorded into `metadata.json`.
 - **Out of bounds:** Docling is fixed and never exposed as a user-selectable engine option; no other processor and never the orchestrator reaches Docling; no silent engine substitution.

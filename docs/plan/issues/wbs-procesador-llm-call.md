@@ -358,6 +358,7 @@ It is critical because the contracts (LLM-01) and the provider seam (LLM-02) pre
 - [ ] Providers reached only through `llm/primitives/`; no import of another processor; no domain noun in any API; no documental decision (source selection, OCR/VLM routing, page consolidation) taken here.
 - [ ] Artifacts persisted atomically (`*.tmp` → validate → rename) and only under `llm/`; a failed node reported as a typed `FAILED`, never propagated as a corrupting exception.
 - [ ] Every shortcut carries an inline `# TODO: [MVP]` (real provider transport, real persistence) or `# TODO: [RELEASE]` (telemetry, HA, caching) tag; output, identifiers, docstrings and comments in English.
+- [ ] The phase exit is owned: `LLM-06` owns the happy path and `LLM-13` closes Wave 3 with the four QA gates and their captured output, so the exit criterion is a deliverable rather than a side effect. The "no processor imports another processor" half is checked on the integrated tree by `GEN-18`.
 
 ## 10. Risks & mitigations (execution view)
 

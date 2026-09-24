@@ -94,7 +94,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** M
 - **Wave:** 1 — Foundation
 - **Depends on:** ORC-01
-- **Blocks:** ORC-11, ORC-15
+- **Blocks:** ORC-10, ORC-11, ORC-14, ORC-15
 - **Objective:** Create, load and save the durable document context and manage per-page contexts, with atomic persistence.
 - **Scope / Deliverables:** create / load / save `DocumentContext`; create / get `PageContext`; JSON serialization with atomic writes (`.tmp` → validate → rename); in-memory store first.
 - **Out of bounds:** No workflow decision, no stage resolution, no processor invocation; the store is transient in the PoC (`# TODO: [MVP]` for a durable backend) but the serialized shape must be real, never a placeholder.
@@ -110,7 +110,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** M
 - **Wave:** 1 — Foundation
 - **Depends on:** ORC-01
-- **Blocks:** ORC-08, ORC-09, ORC-18
+- **Blocks:** ORC-06, ORC-08, ORC-09, ORC-18
 - **Objective:** Provide the atomic control unit of the workflow: create a `StageExecution`, transition its status, and claim/release it so that only one owner runs a stage.
 - **Scope / Deliverables:** `StageExecution` lifecycle helpers, `set_stage_status`, `claim_stage` (atomic `READY → RUNNING`), `release_stage`.
 - **Out of bounds:** No stage resolution policy, no processor call, no artifact validation; a status transition must never be applied to a stage claimed by another owner.
@@ -286,7 +286,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** L
 - **Wave:** 4 — Resilience
 - **Depends on:** ORC-03, ORC-09
-- **Blocks:** —
+- **Blocks:** ORC-19
 - **Objective:** Make a stopped run resumable without repeating completed work, including recovery of a stage left `RUNNING`. The stop side is declarative: `ExecutionPolicy.stop_after_stage` is what leaves a document `PAUSED`.
 - **Scope / Deliverables:** `resume_document` (load `DocumentContext`, validate artifacts, rebuild the plan, continue); the resume mapping `SUCCESS → REUSE`, `REUSED → REUSE`, `SKIPPED → keep SKIPPED`, `INVALIDATED → EXECUTE`, `FAILED → RETRY per policy`, `NOT_STARTED → EXECUTE`, `RUNNING → recover (→ READY, then per policy)`. `request_stop` and its `stop_requested` field are deferred (`# TODO: [MVP]`): the PoC has no imperative stop, and a field nothing writes is worse than no field.
 - **Out of bounds:** No per-processor cancel in the PoC; no LLM-internal retries (they belong to `procesador-llm-call`); a `SUCCESS` stage must never be mapped to `EXECUTE`.
@@ -302,7 +302,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** M
 - **Wave:** 4 — Resilience
 - **Depends on:** ORC-11
-- **Blocks:** —
+- **Blocks:** ORC-19
 - **Objective:** Contain a failed stage: record it, decide according to policy and continue or pause, without propagating the failure as an untyped exception.
 - **Scope / Deliverables:** `handle_processor_error`, error records on the stage and the document, and the two outcomes the PoC implements: `retry processor` / `REVIEW_REQUIRED`. `fallback` / `continue partial` / `stop page` / `pause document` are deferred (`# TODO: [MVP]`) and are not advertised in the API.
 - **Out of bounds:** No processor internals, no LLM-internal retry handling; a failed stage is reported, never silently swallowed; richer fallbacks beyond `retry processor` and `REVIEW_REQUIRED` are deferred.
@@ -334,7 +334,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Effort:** S
 - **Wave:** 5 — Consolidation & QA
 - **Depends on:** ORC-04
-- **Blocks:** —
+- **Blocks:** ORC-19
 - **Objective:** Make every routing decision and every error inspectable after the run.
 - **Scope / Deliverables:** `register_decision`, `register_error`, `append_workflow_trace` writing to `DocumentContext.decisions` / `.errors` and the page-level equivalents.
 - **Out of bounds:** No telemetry, metrics export or observability stack (`# TODO: [RELEASE]`); no logging that replaces the structured record; no decision recorded without a reason.
