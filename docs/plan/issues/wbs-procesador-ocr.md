@@ -269,6 +269,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the fake in place, when the whole suite runs, then every test of this processor passes with zero Docling conversions, and the run needs no engine installed.
   - Given the fake, when blocks are handed to the invariant-1 test, then they are returned in **adversarial (unsorted) order**, so a broken sort fails the test.
   - Given the fake returns an empty document, then the `EMPTY` path is asserted with no live conversion; given the fake raises, then `ENGINE_ERROR` is contained and no `.tmp` residue remains.
+  - Given this seam replaces a symbol of ours rather than an engine namespace, the attribute check of `tests/fakes/engines/convention.py` does not apply here: what this double must model is Docling's **native return shape**, asserted by the invariant tests that consume it.
 - **Evidence / DoD:** The suite green with Docling absent; no engine symbol imported by any test module of this processor; any cached corpus helper's cache key includes **which engine** produced the result.
 - **Tags:** `# TODO: [RELEASE]` for a re-check of the double against the real engine's shape on a pin bump.
 

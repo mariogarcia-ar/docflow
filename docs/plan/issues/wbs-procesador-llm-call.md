@@ -93,6 +93,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Acceptance criteria:**
   - Given the fake provider scripted with a valid response, when it is called, then it returns the same JSON for the same input and the call counter increments.
   - Given the fake scripted to fail on attempt 1 and succeed on attempt 2, then both behaviours are reproducible in a test.
+  - Given this seam replaces a provider primitive of ours rather than an engine namespace, the attribute check of `tests/fakes/engines/convention.py` does not apply here: what this double must model is the provider's **native return shape** plus the scripted sequence, asserted by the tests that consume it.
 - **Evidence / DoD:** Fake provider is exercised by the LLM-06, LLM-08 and LLM-13 tests; fixtures are committed.
 - **Tags:** `# TODO: [MVP]` where the fake stands in for a real provider.
 

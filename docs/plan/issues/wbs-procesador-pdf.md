@@ -270,6 +270,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the fake in place, when the whole suite runs, then every test of this processor passes with zero Poppler invocations, and the run needs no engine installed.
   - Given the fake's failing exit code, when the corrupt/unreadable path is exercised, then a typed `PDFError` is produced with no live call.
   - Given `pdf_corrupt.pdf` falls into the *pre-engine* bucket (`validate_pdf` fail-fast precedes the subprocess), then the case needs the fake only for the branches that do reach it.
+  - Given the seam's engine calls, then the double models every one of them: `missing_from_double(seam, "subprocess", fake_poppler)` in `tests/fakes/engines/convention.py` returns an empty set, so adding an engine call without updating the double turns this red.
 - **Evidence / DoD:** The suite green with Poppler absent; `pdf_corrupt.pdf` classified into its bucket (subplan §6); no engine symbol imported by any test module of this processor.
 - **Tags:** `# TODO: [RELEASE]` for a re-check of the double against the real engine's shape on a pin bump.
 

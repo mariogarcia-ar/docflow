@@ -286,6 +286,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the fake in place, when the whole suite runs, then every test of this processor passes with zero OpenCV invocations, and the run needs no engine installed.
   - Given `corrupt.png`, then the double raises `DECODE_ERROR` and the typed error path is asserted with no live call.
   - Given crafted `ImageMetrics`, then the `LOW_QUALITY` boundary is tested as a rule of ours, not as an engine reading.
+  - Given the seam's engine calls, then the double models every one of them: `missing_from_double(seam, "cv2", fake_opencv)` in `tests/fakes/engines/convention.py` returns an empty set, so adding an engine call without updating the double turns this red.
 - **Evidence / DoD:** The suite green with OpenCV absent; no engine symbol imported by any test module of this processor; the mutation observations of IMG-13 unaffected by the double.
 - **Tags:** `# TODO: [RELEASE]` for a re-check of the double against the real engine's shape on a pin bump.
 

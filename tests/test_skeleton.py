@@ -62,6 +62,11 @@ PRIMITIVE_MODULES = (
     "docflow.llm.primitives",
 )
 
+# Test infrastructure that is not a mirror of a source package: `tests/fakes/engines/` holds
+# the engine doubles the convention fixes (`README.md` §9.7). Anything else under `tests/`
+# still has to mirror `src/docflow/`.
+NON_MIRROR_TEST_PACKAGES = ("fakes",)
+
 ENTRY_POINTS: dict[str, tuple[str, ...]] = {
     "docflow.pdf": ("process_pdf", "process_pdf_page"),
     "docflow.image": ("process_image", "process_image_from_page"),
@@ -213,7 +218,7 @@ def test_tests_mirrors_the_source_tree() -> None:
         path.name
         for path in (REPO_ROOT / "tests").iterdir()
         if path.is_dir() and (path / "__init__.py").exists()
-    }
+    } - set(NON_MIRROR_TEST_PACKAGES)
 
     assert source_packages == test_packages
 

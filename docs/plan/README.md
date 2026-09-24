@@ -395,6 +395,20 @@ no marker and no second tier — `pytest` is the gate.
 - A test that guards an invariant **must fail when the invariant is broken** — prove it by
   mutating the source, observing the failure, then restoring green; report both
   observations.
+
+**Mutation evidence is recorded, not narrated.** Every invariant test leaves the same
+four-row record, because `GEN-16` audits the set and a free-form summary cannot be audited:
+
+| Field | What goes in it |
+|---|---|
+| Invariant | the test's name, and the guarantee it guards, in one line |
+| Mutation | the exact edit, and where it was made (`file:line`, as it read before the edit) |
+| Observed failure | the command, and the failing assertion verbatim |
+| Restored green | the same command after `git checkout -- <file>`, with the pass count |
+
+A record whose mutation did not turn its test red is a defect of the test, not a note about
+it. The record is the deliverable — the template exists so that ~19 records stay comparable
+instead of each being written in whichever shape occurred to its author.
 - No silent stand-in (no empty string, `0`, `[]`, or default model/engine/threshold used
   in place of a real answer).
 - No domain noun (invoice, field, verdict, pipeline code) in a processor API.
@@ -470,7 +484,14 @@ Each was open; each is now **resolved from `docs/idea/`** (the source of truth) 
    lives under `tests/fakes/engines/`, there is no `if engine is None: use_fake` fallback, and
    nothing under `src/docflow/` imports `tests/`, so a double can never become a production
    fallback. Each processor owns its own engine's fake (`PDF-14`, `IMG-15`, `OCR-14`); only
-   *compliance* with this convention is a cross-cutting task (`GEN-22`).
+   *compliance* with this convention is a cross-cutting task (`GEN-22`). Where a seam reaches
+   an engine **namespace** the convention is checkable rather than merely stated:
+   `tests/fakes/engines/convention.py` reads the seam statically and reports every engine
+   attribute the seam uses that its double does not provide (`pdf` → `subprocess`,
+   `image` → `cv2`), so a seam that grows without its double fails instead of drifting. For
+   `ocr` and `llm` the seam replaces a symbol of ours, so what their doubles must model is
+   the engine's **native return shape** — which no attribute comparison can prove, and which
+   stays with the native-shape rule and the `GEN-22` audit.
 
    **What this gives up.** A hand-written fake can drift from the real engine's shape with
    nothing turning red: a shape change on a branch the fake does not model would break
