@@ -479,4 +479,6 @@ Each was open; each is now **resolved from `docs/idea/`** (the source of truth) 
 
    `llm` keeps its **scripted** fake (`LLM-03`) deliberately: LLM responses are not
    deterministic for a fixed input, and `LLM-08` needs a scripted sequence (invalid JSON on
-   attempt 1, valid on attempt 2).
+   attempt 1, valid on attempt 2). It lives in the same place as the others —
+   `tests/fakes/engines/fake_provider.py` — and obeys the same two rules: injected at the
+   seam, never a fallback.

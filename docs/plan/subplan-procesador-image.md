@@ -114,6 +114,7 @@ engine's readings, and the engine is not the deliverable.
 | **What the fake returns** | the engine's **native** output — decoded pixels (a small synthetic array) and raw score values (`blur`, `sharpness`, `contrast`, …). Never our `ImageResult`, and never the output of `analyze_image` / `normalize_image`: faking the translated result would delete the primitives' coverage, which is half the reason the double exists. |
 | **Location** | `tests/fakes/engines/fake_opencv.py` — in memory, no fixtures on disk. |
 | **Injection point** | the **`image/primitives/` functions** (`load_image`, the transformations) — the engine call itself, and nowhere higher. |
+| **How it is injected** | the fixture replaces the module attribute the seam resolves at call time — `monkeypatch.setattr("docflow.image.primitives.cv2", fake_opencv)`, where the fake is a **plain namespace** exposing only the attributes the seam uses (`imread`, `imwrite`, `cvtColor`, …), so the test never imports `cv2`. Importing `docflow.image.primitives` must succeed with OpenCV absent. |
 | **Failure modes** | the fake can raise `DECODE_ERROR` for an unreadable input, so the failure path of §6 is reachable with no engine installed. |
 
 **Our rules are tested against crafted metrics, not against the engine.** `IMG-09`'s

@@ -263,7 +263,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-02
 - **Blocks:** OCR-12
 - **Objective:** Give this processor a test double so that the whole suite runs with no Docling installed, without any test invoking, importing or asserting the engine (`README.md` §9.7).
-- **Scope / Deliverables:** `tests/fakes/engines/fake_docling.py` — an in-memory fake injected at **`convert_image_with_docling`**, returning Docling's **native** values (text, markdown, tables, blocks, layout, metadata) as Python objects or plain dicts, able to return an empty document and able to raise during conversion.
+- **Scope / Deliverables:** `tests/fakes/engines/fake_docling.py` — an in-memory fake injected at **`convert_image_with_docling`**, returning Docling's **native** values (text, markdown, tables, blocks, layout, metadata) as Python objects or plain dicts, able to return an empty document and able to raise during conversion. The fixture patches the symbol itself (`docflow.ocr.primitives.convert_image_with_docling`) and the Docling import sits inside that function, so importing the seam needs no Docling installed.
 - **Out of bounds:** Never substitute at `extract_docling_*` — that is the half of the module the fake must **exercise** rather than replace; no faking of our translated `OCRDocument`/`OCRResult`; no `if engine is None: use_fake` fallback; nothing under `src/docflow/` imports `tests/`; no assertion that the engine is deterministic, correct or complete; no JSON fixture tree standing in for the engine.
 - **Acceptance criteria:**
   - Given the fake in place, when the whole suite runs, then every test of this processor passes with zero Docling conversions, and the run needs no engine installed.

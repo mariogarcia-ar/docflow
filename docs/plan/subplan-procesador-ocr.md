@@ -202,6 +202,7 @@ our own ordering and format guarantees are what the suite proves.
 | **What the fake returns** | Docling's **native** values — text, markdown, tables, blocks, layout, metadata — as Python objects or plain dicts. **Not** our translated `OCRDocument`/`OCRResult`. |
 | **Location** | `tests/fakes/engines/fake_docling.py` — in memory, no fixtures on disk. |
 | **Injection point** | the engine call **`convert_image_with_docling`** — never at `extract_docling_*`, which is the half of the module the fake must exercise rather than replace. |
+| **How it is injected** | the fixture replaces the symbol itself — `monkeypatch.setattr("docflow.ocr.primitives.convert_image_with_docling", fake_docling)` — and the Docling import happens **inside** that function, never at module import, so `import docflow.ocr.primitives` succeeds with Docling absent. |
 | **Failure modes** | the fake can raise during conversion, so the `ENGINE_ERROR` path is reachable with no engine installed. |
 
 Two consequences specific to this engine:

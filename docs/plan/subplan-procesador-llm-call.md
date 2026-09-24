@@ -242,6 +242,14 @@ surface needed: `generate_text`, `generate_multimodal`, `generate_structured`,
 behind the `LLMInput → LLMResult` contract — a different provider changes only
 `llm/primitives/`, never the contract or the workflow.
 
+The provider SDK is imported **inside** the primitive that needs it, never at module import
+time: importing `docflow.llm.primitives` must succeed on a machine with no provider
+installed (`tests/test_skeleton.py` guards it). The scripted fake of `LLM-03` is injected at
+the same seam — the provider primitive the call resolves, replaced with
+`monkeypatch.setattr("docflow.llm.primitives.<primitive>", fake_provider)` — and lives at
+`tests/fakes/engines/fake_provider.py`, the same home as the engine doubles of `pdf`,
+`image` and `ocr`.
+
 ### Error-handling posture
 
 Errors are classified, never swallowed: `PROVIDER_ERROR`, `TIMEOUT`, `MODEL_UNAVAILABLE`,

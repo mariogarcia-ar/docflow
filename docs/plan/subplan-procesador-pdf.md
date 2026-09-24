@@ -172,6 +172,7 @@ return value**, so this fake is shaped by the subprocess contract:
 | **What the fake returns** | the subprocess's **native** result — the artifacts the CLI would have written (`page.pdf`, `page.png`, `text.txt`, embedded images) plus an exit code and stderr. Never our `PDFPageResult`, and never the output of `extract_text_from_page` / `extract_images_from_page`: faking the translated result would delete the translation layer's coverage, which is half the reason the double exists. |
 | **Location** | `tests/fakes/engines/fake_poppler.py` — in memory, no fixtures on disk. |
 | **Injection point** | the **`subprocess.run` call** inside `pdf/primitives/` — the engine call itself, and nowhere higher. |
+| **How it is injected** | the fixture replaces the attribute the seam resolves **at call time** — `monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", fake_poppler)`. The seam must not bind the engine at import time, so `import docflow.pdf.primitives` succeeds with Poppler absent; `tests/test_skeleton.py` guards that. |
 | **Failure modes** | the fake can return a non-zero exit code with stderr (a failing *engine* call) or raise, so both the pre-engine and the injected failure paths of §6 are reachable with no engine installed. |
 
 Two consequences specific to this engine: the fake intercepts a **subprocess**, not a
