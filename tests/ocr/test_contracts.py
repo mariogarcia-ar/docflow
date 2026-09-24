@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
@@ -16,6 +17,7 @@ from docflow.ocr import (
     BlockResult,
     LayoutResult,
     NormalizedOCROptions,
+    OCRErrorType,
     OCRMetadata,
     OCRMetrics,
     OCRRequest,
@@ -169,3 +171,25 @@ def test_a_missing_required_option_is_rejected_instead_of_defaulted() -> None:
 
     with pytest.raises(TypeError):
         incomplete_call(type(complete), incomplete)
+
+
+def test_the_failure_kinds_are_exactly_the_documented_nine() -> None:
+    """``OCR-01``: the failed-run vocabulary, and nothing else.
+
+    The expected list is restated here on purpose: deriving it from ``OCRErrorType``
+    would make the assertion tautological, and the restatement is what lets the test fail
+    when a kind drifts out of the documented nine. That restatement is also why the lines
+    resemble the source literal, so ``duplicate-code`` does not apply to this function.
+    """
+    # pylint: disable=duplicate-code
+    assert get_args(OCRErrorType) == (
+        "INVALID_INPUT",
+        "UNSUPPORTED_IMAGE",
+        "ENGINE_ERROR",
+        "OCR_ERROR",
+        "LAYOUT_ERROR",
+        "TABLE_EXTRACTION_ERROR",
+        "EXPORT_ERROR",
+        "IO_ERROR",
+        "INTERNAL_ERROR",
+    )

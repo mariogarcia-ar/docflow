@@ -30,13 +30,16 @@ OCRValidationState = Literal[
     "ERROR",
 ]
 
+# Typed failure classification, exactly as `subplan-procesador-ocr.md` §3.7 and `OCR-09`
+# fix it: every failure carries one of these kinds, never a free-text reason.
 OCRErrorType = Literal[
-    "MISSING_FILE",
-    "UNSUPPORTED_FORMAT",
-    "DECODE_ERROR",
+    "INVALID_INPUT",
+    "UNSUPPORTED_IMAGE",
     "ENGINE_ERROR",
-    "PARSE_ERROR",
-    "WRITE_ERROR",
+    "OCR_ERROR",
+    "LAYOUT_ERROR",
+    "TABLE_EXTRACTION_ERROR",
+    "EXPORT_ERROR",
     "IO_ERROR",
     "INTERNAL_ERROR",
 ]
