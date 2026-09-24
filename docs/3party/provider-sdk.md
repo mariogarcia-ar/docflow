@@ -11,7 +11,7 @@
 | `engine` value in metadata | the provider/API name — `TBD` (the plan says "hosted OpenAI-compatible API") |
 | Kind | **SDK** over HTTP; also usable as a client for a local OpenAI-compatible server (do not let that coupling leak past the seam) |
 | Upstream | the provider's own API docs; SDK: `openai` (OpenAI Python SDK) |
-| Context7 ID | `TBD` |
+| Context7 ID | `/openai/openai-python` — **resolved but not yet queried** (the per-request lookup budget went to Pillow, Poppler and vLLM). Its listed snapshots are `v1.68.0`, `v1_105_0`, `v2.8.1`, `v2.11.0`, and **none matches the installed 3.13.0** — so cite the ID *and* the snapshot a fact came from when this page is filled |
 | Version this page was read against | local **openai 3.13.0**, `httpx` 0.28.1 (the SDK's transport) |
 
 ## B. Install, pin and version discovery
@@ -33,7 +33,7 @@
 |---|---|
 | `generate_text` | `client.chat.completions.create(model=..., messages=[...], temperature=..., max_tokens=..., timeout=...)` |
 | `generate_multimodal` | same call, with an image content part in the user message |
-| `generate_structured` | same call with `response_format={"type": "json_schema", "json_schema": {...}}` (`json_object` is the weaker variant) |
+| `generate_structured` | same call with `response_format={"type": "json_schema", "json_schema": {"name": ..., "strict": True, "schema": {...}}}` (`json_object` is the weaker variant). **Shape verified** against the OpenAI-client example in the vLLM serving docs — the nested `name`/`strict`/`schema` keys are part of the request, not decoration |
 | `list_models` | `client.models.list()` |
 | `check_model_available` | membership of `models.list()` |
 | `get_context_window` | **not exposed** by the OpenAI surface — `TBD`: declare per model, or drop the primitive for this provider |

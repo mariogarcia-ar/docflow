@@ -60,17 +60,34 @@ engine is never reached from anywhere else.
 | Utility | Kind | Processor | Seam (owner) | Pin home | Version seen locally | Context7 ID | Doc status |
 |---|---|---|---|---|---|---|---|
 | Poppler | CLI binaries (`pdftotext`, `pdfimages`, `pdfseparate`, `pdftoppm`, `pdftocairo`, `pdfinfo`) | `pdf` | `docflow.pdf.primitives` | system package — not pinnable in `pyproject.toml` | **25.02.0** | `/websites/pdf2image_readthedocs_io_en` (CLI contract), `/fdawgs/node-poppler` (binary inventory), `/cbrunet/python-poppler` (bindings, unused) | collecting — `poppler.md` |
-| OpenCV | Python library (`cv2`) | `image` | `docflow.image.primitives` | `pyproject.toml` | **5.0.0.93** (both `opencv-python` and `-headless`) | `TBD` | collecting — `opencv.md` |
-| Pillow | Python library (`PIL`) | `image` | `docflow.image.primitives` | `pyproject.toml` | **12.3.0** | `TBD` | collecting — `pillow.md` |
-| Docling | Python library (`+` CLI) | `ocr` | `docflow.ocr.primitives` | `pyproject.toml` (`OCR-02`) | **2.126.0** (core 2.95.0, ibm-models 4.0.2) | `TBD` | collecting — `docling.md` |
-| Ollama | Local HTTP service | `llm` | `docflow.llm.primitives` | not pinned by us (service) | client **0.31.1**, server not running | `TBD` | collecting — `ollama.md` |
-| vLLM | Local HTTP service (OpenAI-compatible) | `llm` | `docflow.llm.primitives` | not pinned by us (service) | **not installed** | `TBD` | collecting — `vllm.md` |
-| Provider SDK | Python library over a hosted API | `llm` | `docflow.llm.primitives` | `pyproject.toml` (`LLM-09`) | `openai` **3.13.0** (+ `httpx` 0.28.1) | `TBD` | collecting — `provider-sdk.md` |
+| OpenCV | Python library (`cv2`) | `image` | `docflow.image.primitives` | `pyproject.toml` | **5.0.0.93** (both `opencv-python` and `-headless`) | `/websites/opencv_5_0` | collecting — `opencv.md` |
+| Pillow | Python library (`PIL`) | `image` | `docflow.image.primitives` | `pyproject.toml` | **12.3.0** | `/python-pillow/pillow/12.3.0` | collecting — `pillow.md` |
+| Docling | Python library (`+` CLI) | `ocr` | `docflow.ocr.primitives` | `pyproject.toml` (`OCR-02`) | **2.126.0** (core 2.95.0, ibm-models 4.0.2) | `/websites/docling-project_github_io_docling` | collecting — `docling.md` |
+| Ollama | Local HTTP service | `llm` | `docflow.llm.primitives` | not pinned by us (service) | client **0.31.1**, server not running | `/websites/ollama_api` | collecting — `ollama.md` |
+| vLLM | Local HTTP service (OpenAI-compatible) | `llm` | `docflow.llm.primitives` | not pinned by us (service) | **not installed** | `/websites/vllm_ai_en_stable` | collecting — `vllm.md` |
+| Provider SDK | Python library over a hosted API | `llm` | `docflow.llm.primitives` | `pyproject.toml` (`LLM-09`) | `openai` **3.13.0** (+ `httpx` 0.28.1) | `/openai/openai-python` (resolved, not queried) | collecting — `provider-sdk.md` |
 | pytest / ruff / pylint / coverage | Developer tooling | — | — | `pyproject.toml` | 9.1.1 / 0.16.7 / 4.0.8 / 7.16.0 | `TBD` | collecting — `tooling.md` |
 
 `Version seen locally` is **evidence about this machine, not the pin**: `pyproject.toml`
 still has `dependencies = []`, so no engine is pinned yet. It exists so that the next reader
 knows which version the collected facts were checked against.
+
+### Context7 coverage
+
+Six of the eight pages carry a **resolved Context7 ID**, and five of them have been queried:
+`poppler` (three IDs — there is no canonical CLI reference, so the CLI contract comes from a
+subprocess wrapper's source), `opencv`, `docling`, `ollama`, `pillow` and `vllm`. Two remain
+open:
+
+| Page | Why | Next step |
+|---|---|---|
+| `provider-sdk.md` | ID **resolved and recorded**, method query not yet spent | query `/openai/openai-python` at the snapshot closest to the pinned version |
+| `tooling.md` | pytest/ruff/pylint are not API surfaces we code against | optional, probably never |
+
+The docs server answers **three library lookups per request**, so this coverage took two
+passes with the budget spent on the libraries whose `TBD`s were load-bearing (maximum
+method-verification value per call). A page with `TBD` is not an uncollected page: it means
+the ID has not been cited yet.
 
 ## 4. What we must capture — the field set
 
@@ -248,6 +265,9 @@ utility page, and each page now carries the same question in its own §K.
 - [x] `docling`: the reading path behind `get_engine_version` (`OCR-02`) — **answered**:
       `docling.__version__`, with `docling-core` and `docling-ibm-models` versions visible
       from the CLI (`docling.md` §B). Which of the three is *the* value remains open there.
+- [x] `ollama`: which endpoint answers `check_model_available` and `get_context_window` —
+      **answered**: `GET /api/tags` (membership, and a SHA256 digest per model) and
+      `POST /api/show` (`parameters`, incl. `num_ctx`) — `ollama.md` §D.
 - [ ] `poppler`: which binary renders a page — `pdftoppm` or `pdftocairo`? `PDF-05` defines
       `render_page_to_image` but the subplan names only `pdftotext` / `pdfimages` /
       `pdfseparate` as the encapsulated binaries. Both candidates are documented in

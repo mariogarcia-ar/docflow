@@ -11,7 +11,7 @@
 | `engine` value in metadata | `vllm` (see the open question on what `engine`/`engine_version` mean for a provider call) |
 | Kind | **HTTP service**: `vllm serve <model>` exposes an OpenAI-compatible API on a local port |
 | Upstream | <https://docs.vllm.ai> — "OpenAI-Compatible Server" |
-| Context7 ID | `TBD` |
+| Context7 IDs | `/websites/vllm_ai_en_stable` (serving docs — queried 2026-09-24), `/vllm-project/vllm` (repo; its versioned snapshots are `v0.14.0rc2` / `v0.26.0` — record which one a fact came from) |
 | Maintainer / cadence | vLLM project (PyTorch Foundation); fast-moving releases |
 | Version this page was read against | docs of the 0.8.x/`stable` line; **not installed locally** (no `vllm` binary in the venv) |
 
@@ -33,10 +33,18 @@
 |---|---|
 | `generate_text` | `POST /v1/chat/completions` (chat template) or `POST /v1/completions` (raw text models) |
 | `generate_multimodal` | `POST /v1/chat/completions` with an image content part (vision models) |
-| `generate_structured` | `POST /v1/chat/completions` with `response_format={"type": "json_schema", "json_schema": {...}}` — enforced by **guided decoding** at the token level |
-| `list_models` | `GET /v1/models` (OpenAI shape) |
+| `generate_structured` | `POST /v1/chat/completions` with `response_format={"type": "json_schema", "json_schema": {"name": ..., "strict": True, "schema": {...}}}` — enforced by **guided decoding** at the token level. The wrapper's `name`/`strict`/`schema` keys are required, not optional |
+| `list_models` | `GET /v1/models` (OpenAI shape: `data[].id`, plus `root`) |
 | `check_model_available` | membership of `GET /v1/models` |
-| `get_context_window` | `TBD` — the OpenAI-compatible surface does not expose it; the serving flag `--max-model-len` is the authority |
+| `get_context_window` | **answered in part**: the OpenAI-compatible surface does not expose it, but the server has **utility endpoints — `/health`, `/ping`, `/version`, `/load`, `/tokenize`, `/detokenize`**. The context length itself is set by `--max-model-len` at serve time, so it is configuration we must know, not an endpoint we can read reliably |
+
+**Verified request fields** (Context7, `/websites/vllm_ai_en_stable` — `ChatCompletionRequest`):
+
+- `max_tokens` is **deprecated in favour of `max_completion_tokens`** — a new primitive should not emit the deprecated name.
+- `stream` defaults to **`False`** (unlike Ollama's `/api/generate`, which defaults to `True`); `seed` is an int64; `response_format` is typed `AnyResponseFormat`.
+- `tool_choice` defaults to `"none"`, and `parallel_tool_calls` defaults to `True` in the schema even though the serving docs describe it as ignored — treat that as a discrepancy to check against the pinned version.
+- `reasoning_effort`, `thinking_token_budget` and `include_reasoning` are **vLLM extensions**, not OpenAI fields (the docs note `"max"` is specific to reasoning models) — using them makes the call vLLM-only, which weakens the `base_url`-swap story.
+- **Server version is readable:** `GET /version`. That closes §K's first question — no log scraping needed.
 
 **Details that matter**
 
@@ -108,9 +116,10 @@ Error kinds per the subplan's posture list; the `LLMProvider` result/error types
 
 ## K. Open questions and drift log
 
-- [ ] Where does the **server version** come from (endpoint vs startup log) for `engine_version`?
+- [x] Where does the **server version** come from — **answered**: `GET /version` (listed with `/health`, `/ping`, `/load`, `/tokenize`, `/detokenize` as utility endpoints).
 - [ ] Does our `generate_structured` rely on guided decoding always being available, or does it validate the response afterwards regardless? (Validation is mandatory per the plan; the backend is an optimisation.)
 - [ ] Is `seed` honoured identically across providers? If not, "reproducible" must be claimed per provider, not globally.
 - [ ] `get_context_window`: read from a health/metadata endpoint, from configuration, or declared per model?
-- [ ] Context7 ID to cite for vLLM serving answers.
-- [ ] Drift log: (2026-09-24) vLLM is **not installed** in this venv and no server is running — every fact above is from upstream documentation. Nothing was exercised live.
+- [ ] `parallel_tool_calls` defaults to `True` in the request schema but the serving docs describe it as ignored — resolve against the pinned version before a request depends on it.
+- [ ] `max_completion_tokens` vs `max_tokens`: emit the former, but confirm the floor version that accepts it.
+- [ ] Drift log: (2026-09-24) vLLM is **not installed** in this venv and no server is running — every fact above is from the Context7-read serving docs. Nothing was exercised live.

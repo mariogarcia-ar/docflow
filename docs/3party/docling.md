@@ -11,7 +11,7 @@
 | `engine` value in metadata | `docling` — recorded in metadata, **not** a user-selectable engine option |
 | Kind | **Python library** (with a `docling` CLI that we do not use); model inference behind a pipeline |
 | Upstream | <https://docling-project.github.io/docling> — repo `docling-project/docling` |
-| Context7 ID | `TBD` |
+| Context7 IDs | `/websites/docling-project_github_io_docling` (general docs — queried 2026-09-24), `/websites/docling-project_github_io_docling_reference_document_converter` (API reference), `/docling-project/docling` (repo) |
 | Maintainer / cadence | IBM Research / docling-project; frequent releases (2.x) |
 | Version this page was read against | local **2.126.0** (`docling-core` 2.95.0, `docling-ibm-models` 4.0.2); docs read at the 2.x line |
 
@@ -56,6 +56,21 @@ Mapped to `subplan-procesador-ocr.md` §3.4 (the closed 25-name surface).
 | `get_engine_version` | `docling.__version__` (see B) |
 | `build_ocr_metadata` | plus `result.status`, `result.errors`, `result.input` |
 | `validate_ocr_*`, `write_*_atomic`, `ensure_directory` | ours — no Docling call |
+
+**Verified imports** (Context7, `/websites/docling-project_github_io_docling`) — the names and their homes, so the seam does not guess a module path:
+
+```python
+from docling.document_converter import DocumentConverter, ImageFormatOption, PdfFormatOption
+from docling.datamodel.base_models import ConversionStatus, DocumentStream, InputFormat
+from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
+from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions, TesseractOcrOptions
+```
+
+- **Image input is a first-class format, not a PDF with one page:**
+  `DocumentConverter(format_options={InputFormat.IMAGE: ImageFormatOption(pipeline_cls=..., pipeline_options=...)})`, where `ImageFormatOption` exposes `backend`, `backend_options`, `pipeline_cls`, `pipeline_options`.
+- **There is an in-memory input path:** `DocumentStream(name="doc_0.tiff", stream=buf)` converts bytes without a file on disk. Our contract publishes artifacts, so the image is already a file when the OCR processor gets it — but this is the escape hatch if a future caller hands us bytes.
+- **Batch sizes are throughput knobs, not output knobs:** `PdfPipelineOptions(ocr_options=..., ocr_batch_size=..., layout_batch_size=..., table_batch_size=...)`. They belong in `AcceleratorOptions`-style metadata, never in `processing_key`.
+- **`enable_remote_services=True` is required for a remote inference service** (e.g. a VLM served over HTTP) — i.e. the `False` default is a real guard, not a no-op.
 
 **Input formats:** `InputFormat` includes `IMAGE` alongside `PDF`, `DOCX`, `PPTX`, `HTML`, `MD`, `CSV`, `XLSX` — verified locally (first 12 members). The OCR processor is fed a prepared **image**, so `InputFormat.IMAGE` is the path we use; `PDF` is Docling's own option, not ours.
 
@@ -126,10 +141,11 @@ Docling's failures arrive in two shapes: a raised Python exception, and a `Conve
 
 ## K. Open questions and drift log
 
+- [x] The reading path for `get_engine_version` — **answered**: `docling.__version__` (`2.126.0`), with the CLI printing core + models versions too.
+- [x] Which module a Docling symbol lives in — **answered** by the verified imports in §D (the reference and the general docs agree).
 - [ ] Which version string is `engine_version` when three are installed (`docling`, `docling-core`, `docling-ibm-models`)? The models version is the one that changes output.
-- [ ] Which OCR backend does `configure_image_pipeline` select, and is `tesseract` (present locally) or EasyOCR the intent? A backend that is not installed must be an `ENGINE_ERROR`, not a silent fallback to another one.
+- [ ] Which OCR backend does `configure_image_pipeline` select, and is `tesseract` (present locally) or `RapidOcrOptions`/EasyOCR the intent? A backend that is not installed must be an `ENGINE_ERROR`, not a silent fallback to another one.
 - [ ] Are model weights vendored, pinned or downloaded? Determinism and licensing both depend on the answer.
 - [ ] The exact `ConversionStatus.PARTIAL_SUCCESS` → our `PARTIAL` mapping, written once where both sides are visible.
 - [ ] `images_scale` / `generate_page_images`: does the OCR processor ever emit an image artifact, or are they always off?
-- [ ] Context7 ID to cite for Docling API answers.
-- [ ] Drift log: (2026-09-24) docling 2.126.0 / core 2.95.0 / ibm-models 4.0.2 installed; `InputFormat.IMAGE` confirmed present; `enable_remote_services` left at its `False` default. No seam change observed.
+- [ ] Drift log: (2026-09-24) docling 2.126.0 / core 2.95.0 / ibm-models 4.0.2 installed; `InputFormat.IMAGE` and `ImageFormatOption` confirmed; `enable_remote_services` left at its `False` default; the `DocumentConverter` reference page also documents a `ConversionResult.pages` accessor in the image-parquet example — that accessor is **not** used by us (`result.document` is). No seam change observed.

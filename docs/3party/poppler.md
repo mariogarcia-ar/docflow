@@ -11,7 +11,7 @@
 | `engine` value in metadata | `poppler` (already asserted in `tests/pdf/test_contracts.py`) |
 | Kind | **CLI binaries**, one process per call — no library, no return value |
 | Upstream | <https://poppler.freedesktop.org> (fork of Xpdf); man pages via `manpages.debian.org/testing/poppler-utils/` |
-| Context7 IDs | `/websites/pdf2image_readthedocs_io_en` — the reference for the **CLI** contract (a subprocess driver); `/fdawgs/node-poppler` — the binary inventory; `/cbrunet/python-poppler` — bindings we do **not** use |
+| Context7 IDs | `/websites/pdf2image_readthedocs_io_en` — the reference for the **CLI** contract (a subprocess driver; re-queried 2026-09-24 for the `pdfinfo` and render contract); `/fdawgs/node-poppler` — the binary inventory; `/cbrunet/python-poppler` — bindings we do **not** use |
 | Maintainer / cadence | The Poppler Developers; monthly-ish point releases (see `poppler.freedesktop.org/releases.html`) |
 | Version this page was read against | man pages of `poppler-utils 26.01.0-5` (Debian testing) + local binaries **25.02.0** — the two disagree where noted |
 
@@ -28,6 +28,7 @@
 
   Normalization for `engine_version`: first line, token after `version`. Every binary we call supports `-v` and `-h`.
 - **Probe safety:** Poppler ≤ 0.24.2 returned `99`/`1` for `-h`, `-v` and `-printenc`; fixed in 0.24.3 ("Do not return 99 (or 1) with -h, -v and -printenc"). A version probe must still run with `check=False`.
+- **Feature gates by version** (read from the `pdf2image` source, Context7): a feature is not available on every Poppler. `-jpegopt` is dropped for ≤ 0.57 and `-hide-annotations` for ≤ 0.83. A primitive that passes an option without a version guard fails on an older engine; our recorded floor must therefore be a **version check**, not a hope. 25.02.0 clears both.
 - **Absent / present check at the right stage:** `import docflow.pdf.primitives` must succeed with Poppler absent (`tests/test_skeleton.py`); the engine is resolved **at call time**, so absence surfaces as `FileNotFoundError` from `subprocess.run`, not as an import error.
 - **Suite without it:** the whole suite runs on the in-memory double; nothing here is ever installed by CI (`GEN-21`).
 
@@ -50,6 +51,14 @@ Argv shapes read from the Debian man pages (`26.01.0-5`).
 | `pdftoppm` | `pdftoppm [options] PDF-file PPM-root` | `-f`, `-l`, `-o`/`-e` (odd/even), `-r <n>` DPI (default **150**), `-rx`/`-ry`, `-scale-to`/`-scale-to-x`/`-scale-to-y`, `-png`, `-jpeg`, `-jpegopt <opts>`, `-tiff`, `-gray`, `-singlefile` |
 | `pdftocairo` | `pdftocairo [options] PDF-file [output-file]` | exactly **one** format flag required (`-png`, `-jpeg`, `-tiff`, `-pdf`, `-ps`, `-eps`, `-svg`); `-r` (default **150 PPI**), `-rx`/`-ry`, `-scale-to`, `-singlefile`, `-f`/`-l`, `-o`/`-e`, `-transp`, `-gray` |
 
+**Verified from the `pdf2image` source** (Context7, `/websites/pdf2image_readthedocs_io_en`) — the parts of the CLI contract a caller must not guess:
+
+- **`pdfinfo` is parsed from stdout, `key: value` per line** — no `-json` needed (and none exists in the man page read). `pdf2image` splits each line on `:`, strips it, casts the numeric keys, and **fails when `Pages` is missing** (`if "Pages" not in d:` → raise). That is the shape `inspect_pdf` consumes.
+- **Passwords go to `pdfinfo` too**: `pdfinfo -upw <pw> -opw <pw>`, and `-rawdates` when undated metadata must be preserved.
+- **Page count is obtained first**, then `first_page`/`last_page` are **clamped** to it (`last_page > page_count` → `page_count`; `first_page < 1` → `1`), and `first_page > last_page` returns an **empty list** rather than failing. Our `PAGE_OUT_OF_RANGE` decision has to be taken deliberately, not inherited from that silent behaviour.
+- **The render binary is chosen by output need, not by preference**: `pdftocairo` is used when the format requires it or a transparent background is requested; otherwise `pdftoppm`. That is the decision rule for §K's open question.
+- **Failure detection is `Popen` + `communicate`**: `TimeoutExpired` → kill and raise a timeout error; `OSError` → "is poppler installed and in PATH?"; a `Syntax Error` in stderr is fatal when strict. Nothing inspects a return value, because there is none.
+
 **Output naming (the engine's, before our rename):** `pdftotext` → `file.txt`; `pdfimages` → `image-root-nnn.xxx` (sequential number, extension by format); `pdfseparate` → the caller's `%d` pattern; `pdftoppm`/`pdftocairo` → `root-number.ext`, digits suppressed by `-singlefile`.
 
 **Must be explicit, never inherited:** `dpi` (`-r 200`, because the engine default is 150 while `subplan-procesador-pdf.md` fixes `dpi=200`), the page range, the output format, and the passwords. A missed flag is a silent artifact, not an error.
@@ -63,7 +72,7 @@ Argv shapes read from the Debian man pages (`26.01.0-5`).
 | Inputs | a PDF path (and `-` for stdin on most binaries) |
 | Outputs | **files** (text, images, per-page PDFs), not return values; `pdfinfo` is the only one whose useful payload is **stdout** |
 | Our naming | `page_001/…`, `image_001.png`, `native_text/text.txt` — the engine writes into a temporary root and we rename. The engine's numbering is **not** our contract |
-| Ordering | `pdfimages` numbering follows the page scan order with `-f`/`-l`; our artifact order is ours to preserve |
+| Ordering | `pdfimages` numbering follows the page scan order with `-f`/`-l`; our artifact order is ours to preserve. **Beware the sort:** `pdf2image` recovers page order by sorting the directory listing lexicographically — which is only correct if the numbers are zero-padded (`page-10` sorts before `page-2`). Our `page_001` naming is padded for exactly this reason; keep it |
 | Encoding | `pdftotext -enc` defaults to UTF-8; fix it explicitly rather than relying on the default |
 
 ## F. Determinism levers
@@ -142,10 +151,11 @@ A swap touches `pdf/primitives/` only — never the contract or the workflow —
 
 ## K. Open questions and drift log
 
-- [ ] Which binary renders a page — `pdftoppm` or `pdftocairo`? `PDF-05` names neither, and `pdftocairo` requires exactly one format flag while `pdftoppm` defaults to PPM/PGM/PBM.
+- [ ] Which binary renders a page — `pdftoppm` or `pdftocairo`? §D now gives the rule (`pdftocairo` when the format needs it or transparency is wanted), but `PDF-05` still has to state it as a decision rather than leave it to the implementation.
+- [ ] Does `inspect_pdf` inherit `pdf2image`'s clamping (`last_page > page_count` → `page_count`), or does it report `PAGE_OUT_OF_RANGE` instead? The engine's behaviour is *silent*, so this is ours to choose explicitly.
 - [ ] Does `pdfinfo` support a JSON output (`-json`)? **Not** in the man page read (`26.01.0-5`) — confirm against `pdfinfo -h` on **25.02.0** before relying on it.
 - [ ] Ordered text blocks come from `-bbox-layout` (XHTML) or `-tsv` — which one feeds `extract_text_from_page(layout=True)`'s `blocks.json`?
 - [ ] Exit code for "PDF is fine but has no text layer" is **0** with an empty file — an empty `text.txt` must be a reported `TEXT_EXTRACTION_ERROR`, never a silent empty artifact.
 - [ ] Exact GPL variant, and whether the PoC distributes a Poppler binary at all.
 - [ ] `-nodiag` needs Poppler ≥ 0.80 — satisfied by 25.02.0; record the floor if the pin is ever stated as a range.
-- [ ] Drift log: (2026-09-24) local binaries 25.02.0; man pages read at 26.01.0-5. No seam change observed.
+- [ ] Drift log: (2026-09-24) local binaries 25.02.0; man pages read at 26.01.0-5; the CLI contract re-verified against the `pdf2image` source (`pdfinfo` parsing, render-binary rule, clamping, error detection). No seam change observed.

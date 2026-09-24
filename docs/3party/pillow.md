@@ -11,7 +11,7 @@
 | `engine` value in metadata | `pillow` (only if it ever becomes the engine in use — today OpenCV is primary) |
 | Kind | **Python library**, imported at call time inside the primitive |
 | Upstream | <https://python-pillow.org>; docs <https://pillow.readthedocs.io> |
-| Context7 ID | `TBD` |
+| Context7 ID | `/python-pillow/pillow/12.3.0` — **the ID is version-pinned to the installed release** (queried 2026-09-24); `/websites/pillow_readthedocs_io_en_stable` is the unversioned mirror |
 | Maintainer / cadence | Pillow maintainers (Tidelift-backed); monthly releases |
 | Version this page was read against | local **12.3.0**; docs read at 12.3.0 (stable) |
 
@@ -46,6 +46,25 @@
 | `detect_orientation` | `img.getexif().get(ExifTags.Base.Orientation)`; `ImageOps.exif_transpose(img)` applies it and **removes the tag** |
 | `calculate_*_score` | `ImageStat.Stat(img).mean` / `.stddev` / `.var` / `.median` / `.rms` / `.extrema` (per band, so grayscale first) |
 | `detect_text_regions` | **no equivalent** — a swap would have to be redefined or re-drawn on `ImageFilter`/morphology |
+
+**Verified signature — `exif_transpose`** (Context7, `/python-pillow/pillow/12.3.0`, read from `src/PIL/ImageOps.py`):
+
+```python
+def exif_transpose(image: Image.Image, *, in_place: bool = False) -> Image.Image | None:
+    """Transpose the image according to its EXIF Orientation tag, and remove the orientation data."""
+```
+
+What the source makes unambiguous:
+
+- `orientation = image_exif.get(ExifTags.Base.Orientation, 1)`; the mapping is tag 2 → `Transpose.FLIP_LEFT_RIGHT`, 3 → `ROTATE_180`, 4 → `FLIP_TOP_BOTTOM`, 5 → `TRANSPOSE`, 6 → `ROTATE_270`, 7 → `TRANSVERSE`, 8 → `ROTATE_90`. Note `ROTATE_270` for the common "camera rotated right" case.
+- It removes the `Orientation` tag from the EXIF **and** rewrites `XML:com.adobe.xmp` / `xmp` to drop `tiff:Orientation`, then re-serialises `info["exif"]`.
+- With no transposition it returns **a copy**, not the original (`image.copy()`), so an `is` check against the source is always wrong.
+- `in_place=True` returns `None`, so a caller that wants the image back must use the default.
+- It calls `image.load()` first — the EXIF read forces the pixel data into memory.
+
+**Context-manager trap:** the docs' own idiom is `with Image.open("x.ppm") as im: im = im.convert("L")` — the file handle closes on exit, so an `Image` that must outlive the block has to be copied or `.load()`ed first.
+
+**Other verified details:** `im.convert("L")` for grayscale; `im.save("out.jpg", quality=0)` is legal (`0` stopped meaning "default quality" in 7.1.0); `im.filter(filter=ImageFilter.BLUR)` takes the filter as a keyword; `ImageFilter`'s blur quality changed in 2.7.0, so a blur-radius constant is only comparable within one Pillow version.
 
 **ImageEnhance semantics** (they are the named constants a caller must not guess): contrast `0.0` = solid gray, `1.0` = original; brightness `0.0` = black, `1.0` = original; sharpness `0.0` = blurred, `1.0` = original, `2.0` = sharpened. `ImageStat.Stat.extrema` is documented as unreliable for non-8-bit modes — use `getextrema()` there.
 
@@ -104,7 +123,9 @@
 
 ## K. Open questions and drift log
 
+- [x] Context7 ID to cite for Pillow method answers — **answered**: `/python-pillow/pillow/12.3.0`, pinned to the installed release.
+- [x] The EXIF behaviour of `exif_transpose` — **answered** in §D: applies the orientation, strips the tag and the XMP copy, returns a copy when there is nothing to do.
 - [ ] Is Pillow a real dependency of the PoC, or only the documented alternative? The `# TODO: [MVP]` tag on a fallback path is the honest answer if it is never exercised.
-- [ ] Context7 ID to cite for Pillow method answers.
+- [ ] `in_place=True` vs the default: which one does `detect_orientation` / `rotate_image` use, and is the resulting **copy** accounted for (an extra full-size array per call)?
 - [ ] The binarize threshold and the `MAX_IMAGE_PIXELS` policy are decisions, not library defaults.
-- [ ] Drift log: (2026-09-24) Pillow 12.3.0 installed; docs read at 12.3.0. No seam change observed.
+- [ ] Drift log: (2026-09-24) Pillow 12.3.0 installed; `exif_transpose` source and the tutorial idioms read at the same version. Blur/enhance constants are only comparable within a version.

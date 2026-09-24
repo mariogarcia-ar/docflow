@@ -10,8 +10,8 @@
 |---|---|
 | `engine` value in metadata | `ollama` (see the open question on what `engine`/`engine_version` mean for a provider call) |
 | Kind | **HTTP service** on `localhost:11434` (`/api/*`), reached either over HTTP or through the bundled client |
-| Upstream | <https://ollama.com>; API reference: `github.com/ollama/ollama/blob/main/docs/api.md` |
-| Context7 ID | `TBD` |
+| Upstream | <https://ollama.com>; API reference: `github.com/ollama/ollama/blob/main/docs/api.md`, rendered at <https://docs.ollama.com/api> |
+| Context7 IDs | `/websites/ollama_api` (**the endpoint reference — queried 2026-09-24**), `/ollama/ollama-python` (official Python client), `/ollama/ollama` (repo + docs) |
 | Maintainer / cadence | Ollama; frequent releases |
 | Version this page was read against | local client **0.31.1** (server **not running** on 2026-09-24) |
 
@@ -34,10 +34,20 @@
 | `generate_text` | `POST /api/generate` with `{model, prompt, stream: false, options}` → `response` |
 | `generate_multimodal` | `POST /api/chat` with a `message` whose `images` field carries base64 images (vision models) |
 | `generate_structured` | `POST /api/chat` (or `/api/generate`) with **`format`** set to a JSON schema → the response matches the schema. `format: "json"` is the weaker JSON-mode variant |
-| `list_models` | `GET /api/tags` → locally available models (the names usable as `model`) |
-| `check_model_available` | membership of `list_models`, or `POST /api/show` for model details — `TBD` which |
-| `get_context_window` | `TBD` — likely `POST /api/show` (model info); verify before relying on it |
+| `list_models` | `GET /api/tags` → for each model: `name`, `size`, `modified_at`, **`digest` (SHA256)**, and `details` (`format`, `family`, `parameter_size`, `quantization_level`) |
+| `check_model_available` | membership of `GET /api/tags` — **answered**: the same endpoint `list_models` uses, so the two primitives share one call shape and differ only in what they return |
+| `get_context_window` | **answered in part**: `POST /api/show` with `{"model": …}` returns a `parameters` string (e.g. `"temperature 0.7\nnum_ctx 2048"`) plus the model `license`; `num_ctx` is the context setting. Whether the model's *maximum* window comes from `model_info` on the same response is `TBD` |
 | model load/unload | `POST /api/generate` with an **empty prompt** loads the model; `keep_alive` controls how long it stays resident (default `5m`) |
+
+**Verified request/response shapes** (Context7, `/websites/ollama_api`):
+
+- `POST /api/generate`: `{model, prompt, stream, options, format}` → `{model, created_at, response, done, done_reason, total_duration, load_duration, prompt_eval_count, prompt_eval_duration, eval_count, eval_duration}` (durations in **nanoseconds**).
+- `POST /api/chat`: `{model, messages[{role, content}], stream, format, tools}` → `{model, created_at, message{role, content}, done, done_reason, …counters}`.
+- `POST /api/show`: `{model}` → `{parameters, license, …}`.
+- `GET /api/tags`: the model list with digests (above).
+- `format` is an **object** (a JSON schema: `type`, `properties`, `required`) on both generation endpoints — the schema-constrained path `generate_structured` needs.
+- `options` carries `temperature`, `top_p`, `seed` — `seed` is documented as "seed for reproducible generation", which is the only honest way `generate_structured` becomes reproducible.
+- **`stream` defaults to `true` on `/api/generate`** — so the primitive must send `stream: false` explicitly, exactly as noted below.
 
 **Request details that matter**
 
@@ -106,9 +116,9 @@ Error kind names come from the subplan's posture list (`PROVIDER_ERROR`, `TIMEOU
 
 ## K. Open questions and drift log
 
-- [ ] `engine_version`: client version, server version, model digests, or all three? A recorded model tag without a digest does not identify the weights.
-- [ ] `get_context_window` and `check_model_available`: which endpoint (`/api/show` vs `/api/tags`) — verify against the running server before `LLM-09`.
-- [ ] The exact error string for a context overflow, so `CONTEXT_OVERFLOW` is detected rather than guessed.
-- [ ] Is the call made with `httpx` (installed, 0.28.1) or the `ollama` client package? That choice sets the timeout knob.
-- [ ] Context7 ID to cite for Ollama API answers.
-- [ ] Drift log: (2026-09-24) client 0.31.1 present at `/opt/homebrew/bin/ollama`; **no server running**, so no endpoint was exercised — every endpoint above is from upstream documentation, not from a live call.
+- [x] `get_context_window` and `check_model_available`: which endpoints — **answered**: `POST /api/show` (parameters, incl. `num_ctx`) and `GET /api/tags` (membership) respectively; see §D.
+- [ ] `engine_version`: client version, server version, model digests, or all three? A recorded model tag without a digest does not identify the weights — and `/api/tags` **does** return a SHA256 digest per model, so the digest is available if we choose to record it.
+- [ ] Does `engine_version` come from `GET /api/version` (server) or `ollama --version` (client)? Both exist and can differ — the server one is what actually generated the answer.
+- [ ] The exact error string for a context overflow, so `CONTEXT_OVERFLOW` is detected rather than guessed. The API reference read documents request/response schemas and no error taxonomy beyond the missing-model 404.
+- [ ] Is the call made with `httpx` (installed, 0.28.1) or the official `ollama` Python client (`/ollama/ollama-python`)? That choice sets the timeout knob and the exception classes the mapping table in §G is written against.
+- [ ] Drift log: (2026-09-24) client 0.31.1 present at `/opt/homebrew/bin/ollama`; **no server running**, so no endpoint was exercised — every shape above is from the Context7-read API reference, not from a live call.

@@ -11,7 +11,7 @@
 | `engine` value in metadata | `opencv` |
 | Kind | **Python library**, imported at call time inside the primitive (never at module import) |
 | Upstream | <https://opencv.org>; wheels `opencv-python` / `opencv-python-headless` |
-| Context7 ID | `TBD` |
+| Context7 IDs | `/websites/opencv_5_0` (**matches the installed 5.0.0.93**, queried 2026-09-24), `/opencv/opencv-python` (wheel packaging, not methods), `/opencv/opencv` (repo) |
 | Maintainer / cadence | OpenCV.org; quarterly-ish minor releases |
 | Version this page was read against | local wheels **5.0.0.93** (both `opencv-python` and `opencv-python-headless` are installed in this venv) |
 
@@ -59,6 +59,23 @@ One row per primitive of `subplan-procesador-image.md` §3.4. `img` is a `numpy.
 | `deskew_image` | same pair, angle from `detect_skew_angle`, `borderValue=(255, 255, 255)` on a white page |
 | `detect_text_regions` | `cv2.morphologyEx(..., cv2.MORPH_CLOSE, kernel)` over a gradient/threshold image → `cv2.findContours` |
 | `calculate_text_coverage` | **ours**: union area of the detected regions ÷ page area |
+
+**Verified signatures** (Context7, `/websites/opencv_5_0`):
+
+```python
+cv.fastNlMeansDenoising(src[, dst[, h[, templateWindowSize[, searchWindowSize]]]]) -> dst
+cv.fastNlMeansDenoising(src, h[, dst[, templateWindowSize[, searchWindowSize[, normType]]]]) -> dst
+# rotation + affine, as in the official geometric-transformations tutorial:
+M = cv.getRotationMatrix2D(center, angle, scale)
+dst = cv.warpAffine(img, M, (w, h))
+```
+
+- `fastNlMeansDenoising` lives in the **photo** module — if a build lacks it, the primitive must report `TRANSFORMATION_ERROR` rather than skip the step.
+- `cv.warpAffine(img, M, (cols, rows))`: **the dsize argument is `(width, height)`**, in that order, and `np.float32` for `M` in the translation case.
+- `cv.ImreadModes` includes `IMREAD_GRAYSCALE`, `IMREAD_UNCHANGED`, `IMREAD_IGNORE_ORIENTATION` and the 2×/4×/8× reduced-resolution flags (`IMREAD_REDUCED_GRAYSCALE_2`, …). Reduced reads are a real cost lever and therefore a **determinism lever**: a silent half-scale decode changes every downstream score.
+- `cvtColor(img, COLOR_BGR2GRAY)` for grayscale; `convertTo` (or a NumPy cast) when a score needs `float32/float64` instead of `uint8`.
+- **Docs gotcha:** the official Python examples write `cv.` (`import cv2 as cv`), while our code must use `cv2.`. Same bindings, different spelling — do not "fix" a doc snippet into `cv.`.
+- **The docs' own idiom corroborates the silent-`None` trap:** the tutorial reads an image and immediately asserts it (`assert img is not None, "file could not be read"`). `cv2` never raises for a missing or undecodable file.
 
 **Required to be explicit:** every threshold, kernel size, `clipLimit`, `blockSize`, `C`, DPI and quality factor is a named parameter with a documented value — never `cv2`'s or our own silent default (`no silent stand-in`). `cv2.warpAffine`'s `borderMode`/`borderValue` especially: the default (`BORDER_CONSTANT` with black) leaves black wedges on a deskewed white page.
 
@@ -118,9 +135,10 @@ One row per primitive of `subplan-procesador-image.md` §3.4. `img` is a `numpy.
 
 ## K. Open questions and drift log
 
+- [x] Context7 ID to cite for OpenCV method answers — **answered**: `/websites/opencv_5_0`, the docs line that matches the installed 5.0.0.93.
 - [ ] `opencv-python` vs `opencv-python-headless` as the pin (both installed at 5.0.0.93 today).
-- [ ] Context7 ID to cite for OpenCV method answers.
-- [ ] OpenCV **5.x** API differences against the 4.x tutorials most material is written for — check every call above against the installed 5.0.0.93 signature rather than a blog post.
+- [ ] OpenCV **5.x** API differences against the 4.x tutorials most material is written for — check every call in §D against the installed 5.0.0.93 signature rather than a blog post.
 - [ ] Which primitives are OpenCV-only (CLAHE, adaptive threshold, NlMeans) — that list decides how honest the "Pillow fallback" claim is.
 - [ ] The named threshold values for `calculate_blur_score` / `detect_skew_angle` limits (a threshold is a decision, and belongs to `IMG-08`, not to a library default).
-- [ ] Drift log: (2026-09-24) wheels 5.0.0.93, NumPy 2.3.5. No seam change observed.
+- [ ] Do we ever read at reduced resolution (`IMREAD_REDUCED_*`), and if so is the factor recorded as an option? A silent factor is a silent default.
+- [ ] Drift log: (2026-09-24) wheels 5.0.0.93, NumPy 2.3.5; signatures above checked against the 5.0 docs. No seam change observed.
