@@ -169,7 +169,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Blocks:** IMG-11
 - **Objective:** Build two genuinely independent preparation pipelines, because the OCR-optimal image is not assumed to be the VLM-optimal image.
 - **Scope / Deliverables:** `prepare_image_for_ocr` (may grayscale, deskew, binarize, raise contrast) writing `image/ocr_ready.png`; `prepare_image_for_vlm` (preserves colour, layout and visual context) writing `image/vlm_ready.png`.
-- **Out of bounds:** The VLM pipeline must never alias or return the OCR path; no decision of which variant is used downstream; no automatic region selection (only explicitly requested crops).
+- **Out of bounds:** The VLM pipeline must never alias or return the OCR path; no decision of which variant is used downstream; no crop of any kind in Phase 1 (`crop_region` / `image/regions/` deferred, `# TODO: [MVP]`).
 - **Acceptance criteria:**
   - Given `color_layout.png` with `prepare_for_ocr=true` and `prepare_for_vlm=true`, when both run, then two distinct files exist and the VLM variant preserves colour channels while the OCR variant may be grayscale.
   - Given only `prepare_for_vlm=true`, then no `ocr_ready.png` is produced.
@@ -232,7 +232,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** IMG-09, IMG-11
 - **Blocks:** IMG-13
 - **Objective:** Wire the full flow — validate input → load → analyze → normalize → classify → prepare variants → validate → persist — into the single public entry point.
-- **Scope / Deliverables:** `process_image(request) -> ImageResult`; `status == "success"` on the happy path, a typed `ImageError` otherwise; the artifact tree exactly `image/normalized.png`, optional `image/ocr_ready.png`, optional `image/vlm_ready.png`, optional `image/regions/`, `image/metadata.json`.
+- **Scope / Deliverables:** `process_image(request) -> ImageResult`; `status == "success"` on the happy path, a typed `ImageError` otherwise; the artifact tree exactly `image/normalized.png`, optional `image/ocr_ready.png`, optional `image/vlm_ready.png`, `image/metadata.json`.
 - **Out of bounds:** No import of another processor; no workflow decision (skip/force/reuse/resume belongs to the orchestrator's `StageExecution`); no mutation of the input image; no default engine or threshold substitution.
 - **Acceptance criteria:**
   - Given a valid `ImageRequest`, when `process_image` runs, then `status == "success"`, `classification` is one of the four defined values and all outputs live under `image/`.
@@ -369,7 +369,7 @@ It is critical because the contracts (IMG-01) and the engine seam (IMG-02) prece
 - [ ] Every invariant test touched by the task has been mutation-falsified: mutate → observe failure → restore → re-run green, both observations reported.
 - [ ] No silent stand-in (no empty path, `0`, `[]`, `None`-without-reason, no default engine or threshold).
 - [ ] No import of, or call to, another processor module; OpenCV/Pillow reached only from `image/primitives/`; no workflow decision, no OCR/VLM execution, no source selection.
-- [ ] Input image immutable; outputs published atomically and only under `image/`; OCR and VLM variants produced independently.
+- [ ] Input image immutable; outputs published atomically and only under `image/`; OCR and VLM variants produced independently; whole-image artifacts only (`crop_region` / `image/regions/` deferred, `# TODO: [MVP]`).
 - [ ] Every shortcut carries an inline `# TODO: [MVP]` or `# TODO: [RELEASE]` tag; output, identifiers, docstrings and comments in English.
 
 ## 10. Risks & mitigations (execution view)
@@ -389,6 +389,6 @@ It is critical because the contracts (IMG-01) and the engine seam (IMG-02) prece
 - PDF splitting, rendering and page extraction (→ `procesador-pdf`).
 - OCR execution and LLM/VLM inference (→ `procesador-ocr`, `procesador-llm-call`).
 - Source selection, `skip`/`force`/`reuse`/`resume`, and `processing_key` computation (→ `procesador-orquestador`).
-- Automatic region selection for OCR or LLM; only explicitly requested crops are produced.
+- Explicit crops (`crop_region`, `image/regions/`) — deferred to the MVP gate (`# TODO: [MVP]`); Phase 1 produces whole-image artifacts only.
 - Multi-document corpus batching and distributed execution.
 - Labelled golden-set quality scoring (deferred per the general plan).

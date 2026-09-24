@@ -167,6 +167,10 @@ functions of the `docflow.workflow` sub-package, distributed across its own modu
 orchestrator's own layout decides. The same reading applies to `primitives/`, `utils/` and
 `helpers/`, which are directories.
 
+Only `primitives/` is populated in Phase 1. `utils/` and `helpers/` are **reserved and stay
+empty**: a symbol belongs there only when it has more than one caller, so an empty directory
+is cheaper than a wrapper nobody calls twice.
+
 Entry-point names (from the idea, `readme.md` §"Naming"):
 
 ```text

@@ -22,7 +22,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Critical path | `OCR-01 → OCR-02 → OCR-03 → OCR-04 → OCR-05 → OCR-06 → OCR-09 → OCR-10 → OCR-11 → OCR-12 → OCR-13` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
-**Scope.** Turn an already-prepared image into a textual and structured representation through `OCRRequest → OCRResult`: plain text, Markdown, a stable versioned `document.json`, blocks, tables, layout, reading order, metrics, technical metadata and an extraction status, published atomically inside the `ocr/` namespace. Docling is the only OCR engine and is reached only from `ocr/primitives/`; the rest of the module works on the engine-independent `OCRDocument`. No PDF work, no image normalization, no LLM, no workflow decision.
+**Scope.** Turn an already-prepared image into a textual and structured representation through `OCRRequest → OCRResult`: plain text, Markdown, a stable versioned `document.json`, blocks, tables, layout, reading order, metrics, technical metadata and an extraction status, published atomically inside the `ocr/` namespace. Docling is the only OCR engine and is reached only from `ocr/primitives/`; the rest of the module works on the engine-independent `OCRDocument`. The list in the subplan §3.4 is closed at 25 names: one engine call (`convert_image_with_docling`), one measurement (`OCRMetrics`), one producer per artifact (`OCR-06`). No PDF work, no image normalization, no LLM, no workflow decision.
 
 **Test framing.** Every primitive below is exercised with the in-memory Docling double in place of `convert_image_with_docling` (`OCR-14`): the assertions are about **our** translation, ordering, builders, tables, metrics and error mapping, never about what Docling returns, how it iterates, or whether it is deterministic (`README.md` §9.7). Where a criterion needs engine output as *input*, the double supplies it.
 
@@ -31,10 +31,10 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | ID | Task (short) | Effort | Wave | Depends on | Deliverable artifact(s) | Issue file | Status |
 |---|---|---|---|---|---|---|---|
 | OCR-01 | Sub-package skeleton + contract dataclasses | S | 1 — Foundations | — | `src/docflow/ocr/`, `OCRRequest`, `OCRResult`, `NormalizedOCROptions`, `OCRMetrics`, `OCRMetadata`, `OCRValidation`, `OCRError`, `ArtifactPaths` | this file §OCR-01 | NOT_STARTED |
-| OCR-02 | Docling seam + pin | S | 1 — Foundations | OCR-01 | `ocr/primitives/`, `docling` pinned in `pyproject.toml` | this file §OCR-02 | NOT_STARTED |
-| OCR-03 | Pipeline/config primitives | M | 2 — Engine + extraction | OCR-02 | `load_docling_pipeline`, `configure_image_pipeline`, `enable_*`, `normalize_docling_options` | this file §OCR-03 | NOT_STARTED |
+| OCR-02 | Docling seam + pin | S | 1 — Foundations | OCR-01 | `ocr/primitives/` (five named seam functions), `docling` pinned in `pyproject.toml` | this file §OCR-02 | NOT_STARTED |
+| OCR-03 | Pipeline configuration | M | 2 — Engine + extraction | OCR-02 | `load_docling_pipeline` + `configure_image_pipeline` (flags folded in; no `should_enable_*`) | this file §OCR-03 | NOT_STARTED |
 | OCR-04 | Execution + extraction primitives | M | 2 — Engine + extraction | OCR-03 | `convert_image_with_docling`, `extract_docling_*`, `OCRDocument` | this file §OCR-04 | NOT_STARTED |
-| OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering | this file §OCR-05 | NOT_STARTED |
+| OCR-05 | Deterministic normalization | M | 2 — Engine + extraction | OCR-04 | `normalize_bbox`, `normalize_layout`, `preserve_reading_order`, block ordering (no `count_*`) | this file §OCR-05 | NOT_STARTED |
 | OCR-06 | Output builders | M | 3 — Outputs | OCR-05 | `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` | this file §OCR-06 | NOT_STARTED |
 | OCR-07 | Table processing | M | 3 — Outputs | OCR-06 | `process_tables`, `normalize_table`, `table_to_markdown`, `ocr/tables/table_NNN.md` | this file §OCR-07 | NOT_STARTED |
 | OCR-08 | Metrics | S | 3 — Outputs | OCR-05 | `analyze_ocr_result` → `OCRMetrics` | this file §OCR-08 | NOT_STARTED |
@@ -71,7 +71,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-01
 - **Blocks:** OCR-03
 - **Objective:** Create the only place that knows Docling, and pin the engine so output differences are auditable.
-- **Scope / Deliverables:** `ocr/primitives/` with the thin signatures of OCR-03 … OCR-10 declared; `docling` pinned in `pyproject.toml`; `get_engine_version` recorded into `metadata.json`.
+- **Scope / Deliverables:** `ocr/primitives/` carrying exactly the seam the subplan §3.4 names (`load_docling_pipeline`, `configure_image_pipeline`, `normalize_docling_options`, `convert_image_with_docling`, `get_engine_version`); `docling` pinned in `pyproject.toml`; `get_engine_version` recorded into `metadata.json`.
 - **Out of bounds:** Docling is fixed and never exposed as a user-selectable engine option; no other processor and never the orchestrator reaches Docling; no silent engine substitution.
 - **Acceptance criteria:**
   - Given the primitives package, when the engine is used, then `"docling"` is recorded as `engine` in metadata and never presented as a configurable option.
@@ -86,13 +86,13 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Wave:** 2 — Engine + extraction
 - **Depends on:** OCR-02
 - **Blocks:** OCR-04
-- **Objective:** Configure the Docling pipeline from normalized options, with each enablement decided by an explicit predicate.
-- **Scope / Deliverables:** `load_docling_pipeline`, `configure_image_pipeline`, `enable_ocr`, `enable_table_detection`, `enable_layout_analysis`, `normalize_docling_options`, `should_enable_ocr`, `should_enable_layout`, `should_enable_tables`, `should_enable_reading_order` in `ocr/primitives/`.
+- **Objective:** Configure the Docling pipeline from normalized options, with each capability decided by the option value itself, inline.
+- **Scope / Deliverables:** `load_docling_pipeline`, `configure_image_pipeline` and `normalize_docling_options` in `ocr/primitives/`; the option flags are folded into the pipeline configuration inline, so no `enable_*` / `should_enable_*` predicate layer exists.
 - **Out of bounds:** No extraction, no file writes, no workflow decision; a missing option must not silently enable a capability.
 - **Acceptance criteria:**
   - Given raw `OCROptions`, when they are normalized, then `NormalizedOCROptions` is order-stable and identical across runs for equal input.
   - Given `tables` disabled, then the pipeline is configured without table detection and no table artifact is claimed.
-- **Evidence / DoD:** Unit test asserting normalization stability and predicate branch behaviour.
+- **Evidence / DoD:** Unit test asserting normalization stability and the flag → configuration mapping.
 - **Tags:** `# TODO: [MVP]` for full option coverage.
 
 ### OCR-04 — Execution and extraction primitives
@@ -103,7 +103,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-03
 - **Blocks:** OCR-05
 - **Objective:** Run the Docling conversion once and translate its native structures into the engine-independent `OCRDocument`, so the rest of the system never touches Docling types.
-- **Scope / Deliverables:** `convert_image_with_docling`, `extract_docling_text`, `extract_docling_markdown`, `extract_docling_tables`, `extract_docling_blocks`, `extract_docling_layout`, `extract_docling_metadata`; the `OCRDocument` builder; `export_docling_text`, `export_docling_markdown`, `export_docling_json`, `export_docling_tables`.
+- **Scope / Deliverables:** `convert_image_with_docling`; `extract_docling_text`, `extract_docling_markdown`, `extract_docling_tables`, `extract_docling_blocks`, `extract_docling_layout`; the `OCRDocument` builder. The four `export_docling_*` functions are not built: `OCR-06` is the single producer of the three artifacts.
 - **Out of bounds:** No ordering guarantees here (that is OCR-05); no validation, no persistence; Docling native structures must not leak past `ocr/primitives/`.
 - **Acceptance criteria:**
   - Given `fixtures/ocr_prepared_text_and_table.png`, when extraction runs, then the `OCRDocument` contains a heading, a paragraph and one table with its cells.
@@ -119,7 +119,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-04
 - **Blocks:** OCR-06, OCR-08
 - **Objective:** Make the logical output structure reproducible: deterministic block ordering and normalized coordinates independent of Docling's iteration order.
-- **Scope / Deliverables:** Block ordering (sort by reading order, tie-break by normalized `bbox`), `normalize_bbox` (0–1 reference), `normalize_layout`, `preserve_reading_order`; helpers `count_blocks`, `calculate_ocr_text_density`.
+- **Scope / Deliverables:** Block ordering (sort by reading order, tie-break by normalized `bbox`), `normalize_bbox` (0–1 reference), `normalize_layout`, `preserve_reading_order`. No `count_*` helper: `OCRMetrics` (`OCR-08`) is the single measurement.
 - **Out of bounds:** No file writing or export; no timestamp injection; no dependence on engine iteration order.
 - **Acceptance criteria:**
   - Given the same image and normalized options, when normalization runs twice, then `blocks` and `reading_order` are identical in order and content.
@@ -135,7 +135,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-05
 - **Blocks:** OCR-07, OCR-09
 - **Objective:** Render the three canonical representations from the `OCRDocument`: plain text, Markdown and the versioned JSON schema, none of which contains run-time data.
-- **Scope / Deliverables:** Build `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` (stable, versioned, additive-only schema); helpers `normalize_markdown`, `merge_ocr_blocks`, `clean_ocr_text`, `normalize_ocr_text`, `is_ocr_empty`, `count_ocr_characters`, `count_ocr_words`.
+- **Scope / Deliverables:** Build `ocr/text.txt`, `ocr/document.md`, `ocr/document.json` (stable, versioned, additive-only schema); helpers `normalize_ocr_text` (one normalizer, not two), `normalize_markdown`, `merge_ocr_blocks`. The counters are not built: `OCRMetrics` (`OCR-08`) measures, and `empty` lives there too.
 - **Out of bounds:** No timestamps in functional content (timing lives only in `metadata.json`); no table export (that is OCR-07); no writes before OCR-10's atomic publish.
 - **Acceptance criteria:**
   - Given a prepared image with known content, when the builders run, then `text.txt` is non-empty, `document.md` is valid Markdown and `document.json` deserialises to the documented schema.
@@ -151,7 +151,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-06
 - **Blocks:** OCR-10
 - **Objective:** Export detected tables in preserved reading order under deterministic zero-padded names.
-- **Scope / Deliverables:** `process_tables`, `normalize_table`, `table_to_markdown`, `count_tables`; outputs `ocr/tables/table_001.md`, `table_002.md`, … in reading order.
+- **Scope / Deliverables:** `process_tables`, `normalize_table`, `table_to_markdown`; outputs `ocr/tables/table_001.md`, `table_002.md`, … in reading order. `count_tables` is not built: `OCRMetrics.tables` (`OCR-08`) counts once.
 - **Out of bounds:** No `table_NNN.json` export in this phase (deferred); no table re-ordering; no invented structure when no table is detected (an empty table list is data, not a failure).
 - **Acceptance criteria:**
   - Given a fixture with one 2×2 table, when table processing runs, then `ocr/tables/table_001.md` exists and preserves the cell values in reading order.
@@ -183,7 +183,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-06, OCR-08
 - **Blocks:** OCR-10
 - **Objective:** Validate the produced result and artifacts structurally and map failures to typed statuses, including the empty-input path.
-- **Scope / Deliverables:** `validate_ocr_result`, `validate_output_artifacts`, `validate_ocr_request`, `validate_ocr_input`; statuses `VALID` / `EMPTY` / `LOW_CONTENT` / `INCOMPLETE` / `PARSE_ERROR` / `ERROR`; `OCRError` types `INVALID_INPUT`, `UNSUPPORTED_IMAGE`, `ENGINE_ERROR`, `OCR_ERROR`, `LAYOUT_ERROR`, `TABLE_EXTRACTION_ERROR`, `EXPORT_ERROR`, `IO_ERROR`, `INTERNAL_ERROR`.
+- **Scope / Deliverables:** `validate_ocr_result`, `validate_output_artifacts`, `validate_ocr_input`; statuses `VALID` / `EMPTY` / `LOW_CONTENT` / `INCOMPLETE` / `PARSE_ERROR` / `ERROR`; `OCRError` types `INVALID_INPUT`, `UNSUPPORTED_IMAGE`, `ENGINE_ERROR`, `OCR_ERROR`, `LAYOUT_ERROR`, `TABLE_EXTRACTION_ERROR`, `EXPORT_ERROR`, `IO_ERROR`, `INTERNAL_ERROR`.
 - **Out of bounds:** Validation states are descriptive only and never become workflow actions; no exception thrown where the typed result is the contract; no silent empty result reported as valid.
 - **Acceptance criteria:**
   - Given an image that contains no text, when validation runs, then the status is `EMPTY` and no exception escapes the call.
@@ -199,7 +199,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-07, OCR-09
 - **Blocks:** OCR-11
 - **Objective:** Publish every artifact atomically and record engine, version, options, metrics, validation, timing and transformations in `metadata.json`.
-- **Scope / Deliverables:** `create_ocr_directory`, `build_ocr_output_paths`, `ensure_directory`, `write_text_atomic`, `write_json_atomic`, `read_json`; `build_ocr_metadata`, `merge_ocr_metadata`, `get_processor_version`; publish via `ocr/.tmp/` → validate → rename; `ocr/metadata.json` as the only home of timing.
+- **Scope / Deliverables:** `ensure_directory`, `write_text_atomic`, `write_json_atomic`; `build_ocr_metadata`; publish via `ocr/.tmp/` → validate → rename; `ocr/metadata.json` as the only home of timing. `create_ocr_directory`, `build_ocr_output_paths`, `read_json`, `merge_ocr_metadata` and `get_processor_version` are not built: `ArtifactPaths` already names the paths, and one builder writes one metadata file.
 - **Out of bounds:** No final-named artifact before validation; no writes outside `ocr/`; no timestamp leak into functional content; no placeholder metadata.
 - **Acceptance criteria:**
   - Given a failure forced after conversion, when `ocr/` is inspected, then no `.tmp` files and no final-named artifacts remain.
@@ -215,7 +215,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-10
 - **Blocks:** OCR-12
 - **Objective:** Orchestrate the module's internal flow behind a single public entry point and expose the deferred thin wrapper.
-- **Scope / Deliverables:** `process_ocr_image(request) -> OCRResult` chaining validate request → validate input → normalize options → configure → convert → extract → build text/markdown/json → process tables → metrics → validate → atomic persist; optional `process_ocr_from_page(...)` that only builds an `OCRRequest` and delegates (deferred to Phase 3 integration).
+- **Scope / Deliverables:** `process_ocr_image(request) -> OCRResult` chaining validate input → normalize options → configure → convert → extract → build text/markdown/json → process tables → metrics → validate → atomic persist; optional `process_ocr_from_page(...)` that only builds an `OCRRequest` and delegates (deferred to Phase 3 integration).
 - **Out of bounds:** No PDF reading and no page selection in the wrapper; no workflow decision (whether OCR runs, which source wins, retries); no Docling access outside `ocr/primitives/`; no import of another processor.
 - **Acceptance criteria:**
   - Given a valid `OCRRequest` on `image/normalized.png`, when `process_ocr_image` runs, then `status == "success"`, `validation.status == "VALID"` and the `ocr/` namespace holds `text.txt`, `document.md`, `document.json` and `metadata.json`.
@@ -351,6 +351,7 @@ It is critical because contracts precede the seam (OCR-01 → OCR-02), the Docli
 - [ ] No silent stand-in (no empty string, `0`, `[]`, `None`-without-reason, no default engine or threshold); no aggregate confidence score in place of per-measurement evidence.
 - [ ] Docling reached only through `ocr/primitives/`; everything downstream works on `OCRDocument`; no import of another processor; no workflow decision, no source selection, no source comparison.
 - [ ] All artifacts written atomically and only inside `ocr/`; `engine` + `engine_version` recorded in `metadata.json`; no timestamps in functional content.
+- [ ] The surface is exactly the subplan §3.4 list: no `enable_*` / `should_enable_*` predicate, no `export_docling_*` beside the `OCR-06` builders, no `count_*` beside `OCRMetrics`.
 - [ ] Every shortcut carries an inline `# TODO: [MVP]` or `# TODO: [RELEASE]` tag; output, identifiers, docstrings and comments in English.
 
 ## 10. Risks & mitigations (execution view)
@@ -363,7 +364,7 @@ It is critical because contracts precede the seam (OCR-01 → OCR-02), the Docli
 | Silent empty/partial extraction reported as correct | OCR-08, OCR-09 | OCR-09 (mandatory structural validation with `EMPTY`/`LOW_CONTENT`) + OCR-12 (blank-image fixture test) |
 | Interrupted publish leaves corrupt artifacts | OCR-10 | OCR-10 (atomic `.tmp/` → validate → rename) + OCR-12 invariant 3 |
 | Large images / many tables (memory) | OCR-04, OCR-07, OCR-10 | OCR-10 (PoC on small fixtures; resource caps tagged `# TODO: [RELEASE]`) |
-| Over-engineering (generic abstraction layers) | OCR-01, OCR-02, OCR-04 | OCR-02 (thin primitives, single entry point, happy path only, `# TODO` markers) |
+| Over-engineering (generic abstraction layers) | OCR-01, OCR-02, OCR-04 | OCR-02 (thin primitives with a closed list; a name that is not in subplan §3.4 does not exist), single entry point, one measurement (`OCRMetrics`), one producer per artifact (`OCR-06`) |
 | A bumped Docling pin changes the engine's output shape | Our extraction and translation break in production while the suite stays green | OCR-14 (the double is the single place a shape change has to be re-checked on the bump; `# TODO: [RELEASE]` for the scheduled re-check) — accepted PoC trade-off, recorded in `GEN-17` |
 
 ## 11. Out of scope

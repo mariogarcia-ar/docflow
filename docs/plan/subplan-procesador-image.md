@@ -59,7 +59,6 @@ image/
 ├── normalized.png
 ├── ocr_ready.png      # optional
 ├── vlm_ready.png      # optional
-├── regions/           # optional, explicit crops only
 └── metadata.json
 ```
 
@@ -90,7 +89,9 @@ Low-level functions that encapsulate the image library; none knows the document 
 - **Enhance:** `normalize_contrast`, `normalize_brightness`, `denoise_image`, `sharpen_image`, `binarize_image`
 - **Quality:** `calculate_blur_score`, `calculate_sharpness_score`, `calculate_contrast_score`, `calculate_brightness_score`, `calculate_noise_score`
 - **Orientation:** `detect_orientation`, `detect_skew_angle`, `rotate_image`, `deskew_image`
-- **Visual analysis:** `detect_text_regions`, `calculate_text_coverage`, `crop_region`
+- **Visual analysis:** `detect_text_regions`, `calculate_text_coverage`. `crop_region` and the
+  `image/regions/` namespace are deferred to the MVP gate (`# TODO: [MVP]`): nothing in the
+  Phase 1 pipeline asks for a crop, so a crop primitive would have no caller.
 
 ### Engine encapsulation
 
@@ -256,7 +257,8 @@ installed; there is no real tier, no marker and no skip rule (`README.md` §7, �
 - PDF splitting, rendering and page extraction (owned by `procesador-pdf`).
 - OCR execution and LLM/VLM inference.
 - Source selection, skip/force/reuse/resume, and `processing_key` computation (owned by the orchestrator).
-- Automatic region selection for OCR or LLM; only *explicitly requested* crops are produced.
+- Explicit crops: `crop_region` and the `image/regions/` namespace (`# TODO: [MVP]`) — Phase 1
+  produces whole-image artifacts only, and no downstream consumer requests a region.
 - Multi-document corpus batching and distributed execution.
 - Labelled golden-set quality scoring (deferred per the general plan).
 
@@ -266,10 +268,15 @@ installed; there is no real tier, no marker and no skip rule (`README.md` §7, �
 2. **Primary engine — RESOLVED:** OpenCV first, Pillow as the drop-in alternative behind
    the same contract.
 3. **Module vs. sub-package — RESOLVED:** sub-package `image/` with
-   `primitives/` / `utils/` / `helpers/`, per the idea's §"Estructura del proyecto".
+   `primitives/` / `utils/` / `helpers/`, per the idea's §"Estructura del proyecto";
+   `utils/` and `helpers/` are reserved and stay empty in Phase 1, since a symbol belongs
+   there only when it has more than one caller.
 4. **Metric thresholds — RESOLVED for PoC.** Concrete numeric thresholds for
    `LOW_QUALITY` classification and OCR binarization are explicit constants marked
    `# TODO: [MVP]`; their exact values are fixed when IMG-06/IMG-08 start.
 5. **Naming mapping — RESOLVED:** code uses `docflow.image` (path `src/docflow/image/`) with the entry points the
    idea names (`process_image`, `process_image_from_page`); the Spanish `procesador-image`
    remains only as the idea document's title.
+6. **Whole-image only — RESOLVED for PoC:** no crop primitive and no `regions/` namespace in
+   Phase 1 (`# TODO: [MVP]`). `docs/idea/procesador-image.md` lists `crop_region`; dropping it
+   is a deliberate divergence, recorded for `GEN-17`.

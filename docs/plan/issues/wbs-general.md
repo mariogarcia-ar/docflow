@@ -380,7 +380,7 @@ Scenario: An invariant test fails when its invariant is broken
 - **Phase:** 4 · **Wave:** 4.4
 - **Depends on:** `GEN-15`, `GEN-16` · **Blocks:** —
 - **Objective:** Close the loop opened by `README.md`: "Where this plan and the idea disagree, this plan must be reconciled back to the idea."
-- **Scope / Deliverables:** a written reconciliation of `docs/plan/README.md` against `docs/idea/readme.md` and the five `docs/idea/procesador-*.md` files, listing every divergence and its resolution; the confirmation that the deliverable names in the code still match the idea's §"Naming"; confirmation that the consolidation naming drift is closed the way `README.md` §9.5 records it — canonical `consolidate_page_result` / `consolidate_document_result`, with `consolidate_page` / `consolidate_document` accepted as aliases of the same seam, not as a second implementation; and the **residual-risk record of `README.md` §9.7** as a resolved decision rather than a non-issue: with no test touching an engine, a hand-written engine double can drift from the real engine's shape, so a shape change on a branch the double does not model could break translation in production while the suite stays green — the trade-off is named, not presented as covered.
+- **Scope / Deliverables:** a written reconciliation of `docs/plan/README.md` against `docs/idea/readme.md` and the five `docs/idea/procesador-*.md` files, listing every divergence and its resolution; the confirmation that the deliverable names in the code still match the idea's §"Naming"; confirmation that the consolidation naming drift is closed the way `README.md` §9.5 records it — canonical `consolidate_page_result` / `consolidate_document_result`, with `consolidate_page` / `consolidate_document` accepted as aliases of the same seam, not as a second implementation; and the **residual-risk record of `README.md` §9.7** as a resolved decision rather than a non-issue: with no test touching an engine, a hand-written engine double can drift from the real engine's shape, so a shape change on a branch the double does not model could break translation in production while the suite stays green — the trade-off is named, not presented as covered; and every Phase 1 scope trim of `docs/feedback/trim-poc-scope.md` is on the list, since each one is a deliberate divergence from the idea's primitive or state lists.
 - **Out of bounds:** Editing any artifact (this issue *reports* drift, it does not rewrite the plan).
 - **Evidence / DoD:** the divergence list is empty or every entry cites a resolution; the naming drift is either resolved in code or recorded as an accepted alias.
 - **Tags:** —
@@ -641,14 +641,14 @@ Chain from the skeleton to the Phase 4 exit. Effort is the task's own S/M/L; tas
 | 4 | `GEN-06` round-trip tests | M | Phase 0 exit; proves the contracts are usable | — |
 | 5 | `PDF-01` → `PDF-02` | S → M | The PDF seam is the first input of the flow and the Poppler frontier | `IMG-01`…`IMG-02`, `OCR-01`…`OCR-02`, `LLM-01`…`LLM-02` |
 | 6 | `PDF-09` → `PDF-10` | M → M | Pages and `PDFResult` are the orchestrator's first input | `IMG-12`, `OCR-11`, `LLM-06` |
-| 7 | `LLM-12` `execute_llm_graph` | **L** | Highest-risk item: routing, dependencies, parallel branches, subgraph lifecycle | `IMG-09`…`IMG-12`, `OCR-10`…`OCR-11` |
+| 7 | `LLM-12` `execute_llm_graph` | **L** | The inference chain the whole stage rides on: node order, node reuse, completion detection (the dynamic machinery is deferred — `docs/feedback/trim-poc-scope.md`) | `IMG-09`…`IMG-12`, `OCR-10`…`OCR-11` |
 | 8 | `ORC-01` → `ORC-02` | M → S | Orchestrator contracts then `processing_key`, the root of every reuse decision | `GEN-03`, `GEN-04` finish here |
 | 9 | `ORC-07` → `ORC-08` | M → M | Reuse decision and reuse validation gate all later integration | `ORC-09` |
 | 10 | `ORC-11` `process_pages` / `process_page` | **L** | The documental flow runs through here | `ORC-10` |
 | 11 | `ORC-12` `select_source` | M | Integration cannot start before source selection exists | `ORC-13` (after `GEN-07`) |
 | 12 | `ORC-13` `build_llm_input` | M | Last link before the LLM contract | `ORC-14` |
 | 13 | `GEN-07` → `GEN-08` → `GEN-09` | M → M → M | Cross-processor seams validated in order | `ORC-15` |
-| 14 | `ORC-15` resume/stop/recovery | **L** | Second-highest risk: interrupted `RUNNING` recovery and resume correctness | `ORC-16` |
+| 14 | `ORC-15` resume/recovery | **L** | Second-highest risk: interrupted `RUNNING` recovery and resume correctness | `ORC-16` |
 | 15 | `GEN-10` end-to-end | **L** | Phase 3 exit; the first proof of the whole programme | — |
 | 16 | `GEN-11` idempotency | **L** | Depends on `ORC-02`/`ORC-08`/`LLM-05` all being correct | `GEN-12`, `GEN-13` |
 | 17 | `GEN-14` atomic persistence | M | Blocks the mutation suite | `GEN-13` |

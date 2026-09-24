@@ -131,17 +131,16 @@ partial artifact is ever visible as valid.
 
 ```mermaid
 flowchart TD
-    R[OCRRequest] --> V1[validate_ocr_request]
-    V1 --> V2[validate_ocr_input]
-    V2 --> N[normalize options -> NormalizedOCROptions]
-    N --> C[configure_ocr]
-    C --> P[Docling primitives: run]
-    P --> E[extract_structured_content -> OCRDocument]
+    R[OCRRequest] --> V1[validate_ocr_input]
+    V1 --> N[normalize_docling_options -> NormalizedOCROptions]
+    N --> C[configure_image_pipeline]
+    C --> P[convert_image_with_docling]
+    P --> E[extract_docling_* -> OCRDocument]
     E --> T[build text.txt]
     E --> M[build document.md]
     E --> J[build document.json]
-    E --> TB[process tables -> tables/]
-    T --> A[analyze_ocr_result -> OCMetrics]
+    E --> TB[process_tables -> tables/]
+    T --> A[analyze_ocr_result -> OCRMetrics]
     M --> A
     J --> A
     TB --> A
@@ -152,29 +151,32 @@ flowchart TD
 
 ### 3.4 Primitives
 
-Thin, low-McCabe functions that are the **only** place that knows Docling; the rest of the
-module works on the engine-independent `OCRDocument`.
+Thin functions that are the **only** place that knows Docling; the rest of the module works
+on the engine-independent `OCRDocument`. The list below is the processor's whole surface — a
+name that is not here does not exist, so no predicate layer, no second export path and no
+second measurement can appear later without a plan revision.
 
-- **Pipeline/config:** `load_docling_pipeline`, `configure_image_pipeline`, `enable_ocr`,
-  `enable_table_detection`, `enable_layout_analysis`, `normalize_docling_options`,
-  `should_enable_ocr`, `should_enable_layout`, `should_enable_tables`,
-  `should_enable_reading_order`.
-- **Execution:** `convert_image_with_docling`.
+- **Pipeline/config:** `load_docling_pipeline`, `configure_image_pipeline`,
+  `normalize_docling_options`. Enablement is a decision, not an engine call: the option
+  flags are turned into the pipeline configuration inline, so no `enable_*` /
+  `should_enable_*` predicate exists for each of the six flags.
+- **Execution:** `convert_image_with_docling` — the engine call, and the injection point of
+  the double.
 - **Extraction:** `extract_docling_text`, `extract_docling_markdown`, `extract_docling_tables`,
-  `extract_docling_blocks`, `extract_docling_layout`, `extract_docling_metadata`.
-- **Export:** `export_docling_text`, `export_docling_markdown`, `export_docling_json`,
-  `export_docling_tables`.
-- **Text:** `count_ocr_characters`, `count_ocr_words`, `clean_ocr_text`, `normalize_ocr_text`,
-  `is_ocr_empty`.
-- **Markdown:** `normalize_markdown`, `merge_ocr_blocks`, `preserve_reading_order`.
-- **Tables:** `count_tables`, `normalize_table`, `table_to_markdown`, `table_to_json`.
-- **Layout:** `count_blocks`, `calculate_ocr_text_density`, `normalize_bbox`, `normalize_layout`.
-- **Metadata:** `build_ocr_metadata`, `merge_ocr_metadata`, `get_engine_version`,
-  `get_processor_version`.
-- **Validation:** `validate_ocr_request`, `validate_ocr_input`, `validate_ocr_result`,
-  `validate_output_artifacts`.
-- **Files:** `create_ocr_directory`, `build_ocr_output_paths`, `ensure_directory`,
-  `write_text_atomic`, `write_json_atomic`, `read_json`.
+  `extract_docling_blocks`, `extract_docling_layout` — these are what turn Docling's native
+  structures into the engine-independent `OCRDocument`; nothing downstream sees the engine.
+- **Text/Markdown:** `normalize_ocr_text`, `normalize_markdown`, `merge_ocr_blocks`,
+  `preserve_reading_order` — one normalizer per representation, not two.
+- **Tables:** `normalize_table`, `table_to_markdown`.
+- **Layout:** `normalize_bbox`, `normalize_layout`.
+- **Metadata:** `build_ocr_metadata`, `get_engine_version`.
+- **Validation:** `validate_ocr_input`, `validate_ocr_result`, `validate_output_artifacts`.
+- **Files:** `ensure_directory`, `write_text_atomic`, `write_json_atomic`.
+
+`OCRMetrics` (`OCR-08`) is the single place that counts characters, words, blocks, tables and
+paragraphs — hence no `count_*` helper; `OCR-06` is the single producer of `text.txt`,
+`document.md` and `document.json` — hence no `export_docling_*` path. Fifty-three names for
+one conversion is the wrapper-for-its-own-sake the PoC posture forbids.
 
 Entry points: `process_ocr_image(request) -> OCRResult` (the main function), and an optional
 thin `process_ocr_from_page(...)` wrapper that only builds an `OCRRequest` and delegates to
@@ -245,8 +247,8 @@ result is the contract:
 | ID | Task | Effort | Depends on |
 |---|---|---|---|
 | OCR-01 | Skeleton sub-package `src/docflow/ocr/` + contract dataclasses (`OCRRequest`, `OCRResult`, `NormalizedOCROptions`, `OCRMetrics`, `OCRMetadata`, `OCRValidation`, `OCRError`, `ArtifactPaths`) with type hints and no silent defaults. | S | — |
-| OCR-02 | Docling primitives skeleton in `ocr/primitives/`; pin `docling` in `pyproject.toml`; record `engine`/`engine_version`. | S | OCR-01 |
-| OCR-03 | Pipeline/config primitives: `load_docling_pipeline`, `configure_image_pipeline`, `enable_*`, `normalize_docling_options`. | M | OCR-02 |
+| OCR-02 | Docling seam in `ocr/primitives/` (`load_docling_pipeline`, `configure_image_pipeline`, `normalize_docling_options`, `convert_image_with_docling`, `get_engine_version`); pin `docling` in `pyproject.toml`; record `engine`/`engine_version`. | S | OCR-01 |
+| OCR-03 | Pipeline configuration: `load_docling_pipeline` + `configure_image_pipeline`, with the option flags folded into the pipeline configuration inline (no `enable_*` / `should_enable_*` predicate layer). | M | OCR-02 |
 | OCR-04 | Execution + extraction primitives: `convert_image_with_docling`, `extract_docling_*`, building the engine-independent `OCRDocument`. | M | OCR-03 |
 | OCR-05 | Deterministic normalization: block ordering, `normalize_bbox`, `normalize_layout`, `preserve_reading_order`. | M | OCR-04 |
 | OCR-06 | Output builders: `build text.txt`, `build document.md`, `build document.json` (versioned schema). | M | OCR-05 |
@@ -398,6 +400,7 @@ Every failure path is classified explicitly, because the bucket decides the test
 - Every invariant test passes **and** has been mutation-falsified (mutation applied → test
   fails → mutation reverted → test green), with both observations reported.
 - All artifacts written atomically and only inside the `ocr/` namespace.
+- The surface is exactly the one in §3.4: no `enable_*` / `should_enable_*` predicate layer, no `export_docling_*` path beside the builders of `OCR-06`, no `count_*` helper beside `OCRMetrics`.
 - `engine` + `engine_version` recorded in `metadata.json`.
 - Every shortcut tagged inline with `# TODO: [MVP]` or `# TODO: [RELEASE]`.
 - The four QA gates pass:
@@ -419,7 +422,7 @@ pylint src tests                          # fixme disabled; the rest clean
 | Silent empty/partial extraction | Empty result reported as correct | Mandatory structural validation with `EMPTY`/`LOW_CONTENT` statuses; blank-image fixture test. |
 | Interrupted publish leaves corrupt artifacts | Downstream reads invalid files | Atomic `.tmp/` → validate → rename; invariant test on failure paths. |
 | Large images / many tables (2 MB item, memory) | Slow or memory-heavy runs | PoC on small fixture; tag resource caps with `# TODO: [RELEASE]`. |
-| Over-engineering (generic abstraction layers) | PoC bloat, slow delivery | Thin primitives, single entry point, happy path only, `# TODO` markers for deferred complexity. |
+| Over-engineering (generic abstraction layers) | PoC bloat, slow delivery | Thin primitives with a closed list (§3.4): a name that is not there does not exist — one seam, one measurement (`OCRMetrics`), one producer per artifact (`OCR-06`), single entry point, `# TODO` markers for deferred complexity. |
 
 ## 9. Out of scope & resolved decisions
 
@@ -448,4 +451,12 @@ pylint src tests                          # fixme disabled; the rest clean
 5. `process_ocr_from_page` wrapper — **RESOLVED:** deferred to Phase 3 integration; Phase 1
    ships only `process_ocr_image`.
 6. Physical layout — **RESOLVED:** sub-package `docflow.ocr` (path `src/docflow/ocr/`) with
-   `primitives/` / `utils/` / `helpers/`, per the idea's §"Estructura del proyecto".
+   `primitives/` / `utils/` / `helpers/`, per the idea's §"Estructura del proyecto";
+   `utils/` and `helpers/` are reserved and stay empty in Phase 1, since a symbol belongs
+   there only when it has more than one caller.
+7. **Primitive surface — RESOLVED for PoC:** only the names listed in §3.4 are built. The
+   enablement predicates, the second export path and the `count_*` helpers are dropped rather
+   than tagged, because each one duplicates a decision (`configure_image_pipeline`), a
+   producer (`OCR-06`) or a measurement (`OCRMetrics`) that already exists. The list in
+   `docs/idea/procesador-ocr.md` names more primitives; that divergence is deliberate and is
+   recorded for `GEN-17`.

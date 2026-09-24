@@ -46,8 +46,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | ORC-12 | `select_source` + `select_extraction_strategy` | M | 3 — Execution path | ORC-11 | `NATIVE_TEXT` / `OCR_TEXT` / `IMAGE` (+ combinations); `TEXT_ONLY` / `OCR_ONLY` / `VLM_ONLY` / `TEXT_PLUS_VLM` / `OCR_PLUS_VLM` | this file §ORC-12 | NOT_STARTED |
 | ORC-13 | `build_llm_input` | M | 3 — Execution path | ORC-12 | `LLMInput` (task, document, images[], schema, options) | this file §ORC-13 | NOT_STARTED |
 | ORC-14 | Processor invocation helpers | M | 3 — Execution path | ORC-03, ORC-07, ORC-08 | `run_image_processing`, `run_ocr`, `run_llm` | this file §ORC-14 | NOT_STARTED |
-| ORC-15 | `request_stop` / `resume_document` / `RUNNING` recovery | L | 4 — Resilience | ORC-03, ORC-09 | `request_stop`, `resume_document`, `RUNNING → READY` recovery | this file §ORC-15 | NOT_STARTED |
-| ORC-16 | `handle_processor_error` | M | 4 — Resilience | ORC-11 | error records, `REVIEW_REQUIRED` / fallback decisions | this file §ORC-16 | NOT_STARTED |
+| ORC-15 | `resume_document` / `RUNNING` recovery (`request_stop` deferred) | L | 4 — Resilience | ORC-03, ORC-09 | `resume_document`, `RUNNING → READY` recovery | this file §ORC-15 | NOT_STARTED |
+| ORC-16 | `handle_processor_error` | M | 4 — Resilience | ORC-11 | error records, the two PoC outcomes (`retry processor` / `REVIEW_REQUIRED`) | this file §ORC-16 | NOT_STARTED |
 | ORC-17 | `consolidate_page_result` / `consolidate_document_result` | M | 5 — Consolidation & QA | ORC-11, ORC-13 | ordered pages, preserved results, `execution_summary` | this file §ORC-17 | NOT_STARTED |
 | ORC-18 | Decision + error tracing records | S | 5 — Consolidation & QA | ORC-04 | `register_decision`, `register_error`, `append_workflow_trace` | this file §ORC-18 | NOT_STARTED |
 | ORC-19 | Four QA gates + happy path + invariant tests | L | 5 — Consolidation & QA | all above | QA gate output, mutation-falsified invariant tests | this file §ORC-19 | NOT_STARTED |
@@ -64,7 +64,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** Phase 1 contracts
 - **Blocks:** ORC-02, ORC-03, ORC-04, ORC-05
 - **Objective:** Freeze the orchestrator's public and durable vocabulary: the request/result pair, the durable document and page state, the atomic stage unit, the execution policy and the stage-state enum.
-- **Scope / Deliverables:** `DocumentRequest` (`input_path`, `input_type`, `workflow`, `policies`, `execution`, `options`, `metadata`); `ExecutionPolicy` (`resume`, `reuse_successful`, `retry_failed`, `skip_stages[]`, `force_stages[]`, `stop_after_stage`, `start_from_stage`, `invalidate_downstream`, `dry_run`, `parallel_pages`); `DocumentResult` (`document_id`, `workflow_run_id`, `input`, `pages[]`, `status`, `execution_summary`, `decisions[]`, `errors[]`, `metadata`, `final_result`); `DocumentContext`; `PageContext` (`page_number`, `artifacts`, `results`, `stages`, `selected_source`, `extraction_strategy`, `decisions[]`, `errors[]`, `status`); `StageExecution` (`stage_id`, `stage`, `processor`, `processor_version`, `status`, `processing_key`, `input_artifacts[]`, `output_artifacts[]`, `options_hash`, `attempts`, `started_at`, `finished_at`, `skip_reason`, `force_reason`, `error`, `metadata`); stage states `NOT_STARTED`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`, `PARTIAL`, `SKIPPED`, `REUSED`, `INVALIDATED`, `PAUSED`, `CANCELLED`, `REVIEW_REQUIRED`.
+- **Scope / Deliverables:** `DocumentRequest` (`input_path`, `input_type`, `workflow`, `policies`, `execution`, `options`, `metadata`); `ExecutionPolicy` (`resume`, `reuse_successful`, `retry_failed`, `skip_stages[]`, `force_stages[]`, `stop_after_stage`, `start_from_stage`, `invalidate_downstream`, `dry_run`, `parallel_pages`); `DocumentResult` (`document_id`, `workflow_run_id`, `input`, `pages[]`, `status`, `execution_summary`, `decisions[]`, `errors[]`, `metadata`, `final_result`); `DocumentContext`; `PageContext` (`page_number`, `artifacts`, `results`, `stages`, `selected_source`, `extraction_strategy`, `decisions[]`, `errors[]`, `status`); `StageExecution` (`stage_id`, `stage`, `processor`, `processor_version`, `status`, `processing_key`, `input_artifacts[]`, `output_artifacts[]`, `options_hash`, `attempts`, `started_at`, `finished_at`, `skip_reason`, `force_reason`, `error`, `metadata`); stage states `NOT_STARTED`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`, `PARTIAL`, `SKIPPED`, `REUSED`, `INVALIDATED`, `PAUSED`, `REVIEW_REQUIRED` (`CANCELLED` is deliberately absent: with no per-processor cancel nothing could produce it).
 - **Out of bounds:** No processor logic, no I/O; no defaults on required fields; no domain noun (invoice, field, verdict, pipeline code) in the API; the stage-state enum must keep `SKIPPED` (deliberately not run) distinct from `REUSED` (a valid result already exists).
 - **Acceptance criteria:**
   - Given the contract module, when a required field is omitted, then construction fails (no silent default).
@@ -240,7 +240,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** ORC-11
 - **Blocks:** ORC-13
 - **Objective:** Choose the documentary source and the extraction strategy, and record the decision with its reason.
-- **Scope / Deliverables:** `select_source` among `NATIVE_TEXT`, `OCR_TEXT`, `IMAGE`, `NATIVE_TEXT + IMAGE`, `OCR_TEXT + IMAGE`; `select_extraction_strategy` among `TEXT_ONLY`, `OCR_ONLY`, `VLM_ONLY`, `TEXT_PLUS_VLM`, `OCR_PLUS_VLM`; decision reason (e.g. `native_text_empty`).
+- **Scope / Deliverables:** `select_source` among `NATIVE_TEXT`, `OCR_TEXT`, `IMAGE`, `NATIVE_TEXT + IMAGE`, `OCR_TEXT + IMAGE`; `select_extraction_strategy` among `TEXT_ONLY`, `OCR_ONLY`, `VLM_ONLY`, `TEXT_PLUS_VLM`, `OCR_PLUS_VLM`; decision reason (e.g. `native_text_empty`). The source matrix stays a literal table with no default fallback; only the cells the Phase 3 paths actually reach carry an asserted reason in the PoC, the rest carrying `# TODO: [MVP]` for their reason refinement.
 - **Out of bounds:** Never a processor decision — only the orchestrator selects the source; no content interpretation (it routes, it does not read); no comparison of native text against OCR output beyond the documented rules; no silent default source.
 - **Acceptance criteria:**
   - Given a page with native text present, when selection runs, then `NATIVE_TEXT` is chosen and the reason is recorded.
@@ -280,21 +280,21 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Counters-based tests per helper; review against the subplan "does NOT" list.
 - **Tags:** `# TODO: [MVP]` for retry policy on a whole processor.
 
-### ORC-15 — `request_stop`, `resume_document` and `RUNNING` recovery
+### ORC-15 — `resume_document` and `RUNNING` recovery
 
 - **Type:** Entry point
 - **Effort:** L
 - **Wave:** 4 — Resilience
 - **Depends on:** ORC-03, ORC-09
 - **Blocks:** —
-- **Objective:** Make a run stoppable without destroying it and resumable without repeating completed work, including recovery of a stage left `RUNNING`.
-- **Scope / Deliverables:** `request_stop` (set `stop_requested`, start no new stage, let the in-flight atomic stage finish, persist state, leave the document `PAUSED`); `resume_document` (load `DocumentContext`, validate artifacts, rebuild the plan, continue); the resume mapping `SUCCESS → REUSE`, `REUSED → REUSE`, `SKIPPED → keep SKIPPED`, `INVALIDATED → EXECUTE`, `FAILED → RETRY per policy`, `NOT_STARTED → EXECUTE`, `RUNNING → recover (→ READY, then per policy)`.
+- **Objective:** Make a stopped run resumable without repeating completed work, including recovery of a stage left `RUNNING`. The stop side is declarative: `ExecutionPolicy.stop_after_stage` is what leaves a document `PAUSED`.
+- **Scope / Deliverables:** `resume_document` (load `DocumentContext`, validate artifacts, rebuild the plan, continue); the resume mapping `SUCCESS → REUSE`, `REUSED → REUSE`, `SKIPPED → keep SKIPPED`, `INVALIDATED → EXECUTE`, `FAILED → RETRY per policy`, `NOT_STARTED → EXECUTE`, `RUNNING → recover (→ READY, then per policy)`. `request_stop` and its `stop_requested` field are deferred (`# TODO: [MVP]`): the PoC has no imperative stop, and a field nothing writes is worse than no field.
 - **Out of bounds:** No per-processor cancel in the PoC; no LLM-internal retries (they belong to `procesador-llm-call`); a `SUCCESS` stage must never be mapped to `EXECUTE`.
 - **Acceptance criteria:**
   - Given a prior run with `PDF`, `IMAGE`, `OCR` `SUCCESS` and `LLM` `NOT_STARTED` (document `PAUSED`), when `resume_document` runs with `reuse_successful` true, then `PDF`, `IMAGE`, `OCR` are `REUSED`, the LLM stage executes, and no fake processor counter for a completed stage increments.
   - Given a stage left `RUNNING` with no active worker, then it is recovered to `READY` and resolved per policy.
 - **Evidence / DoD:** Resume scenario test with fake call counters; the resume invariant (ORC-19, invariant 1).
-- **Tags:** `# TODO: [RELEASE]` for external-kill recovery and cross-process locking.
+- **Tags:** `# TODO: [MVP]` for `request_stop`; `# TODO: [RELEASE]` for external-kill recovery and cross-process locking.
 
 ### ORC-16 — `handle_processor_error`
 
@@ -304,7 +304,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** ORC-11
 - **Blocks:** —
 - **Objective:** Contain a failed stage: record it, decide according to policy and continue or pause, without propagating the failure as an untyped exception.
-- **Scope / Deliverables:** `handle_processor_error`, error records on the stage and the document, and the policy outcomes `retry processor` / `fallback` / `continue partial` / `stop page` / `pause document` / `REVIEW_REQUIRED`.
+- **Scope / Deliverables:** `handle_processor_error`, error records on the stage and the document, and the two outcomes the PoC implements: `retry processor` / `REVIEW_REQUIRED`. `fallback` / `continue partial` / `stop page` / `pause document` are deferred (`# TODO: [MVP]`) and are not advertised in the API.
 - **Out of bounds:** No processor internals, no LLM-internal retry handling; a failed stage is reported, never silently swallowed; richer fallbacks beyond `retry processor` and `REVIEW_REQUIRED` are deferred.
 - **Acceptance criteria:**
   - Given a page whose OCR processor returns a typed failure, when `handle_processor_error` runs, then the stage is `FAILED` or `REVIEW_REQUIRED`, an error record is written, and the document continues or pauses per policy.
@@ -410,7 +410,7 @@ flowchart LR
 | 1 — Foundation | ORC-01 → ORC-02 → ORC-03 → ORC-04; ORC-05 in parallel with ORC-02/03/04 | Phase 1 exit met: the four processor contracts exist as typed dataclasses with no defaults and import cleanly; fake processors available | Contracts, identities, durable state, atomic stage claims and input-type detection in place |
 | 2 — Decision core | ORC-06 → ORC-07 → ORC-08 → ORC-09 | Wave 1 green | Plan (incl. dry-run), resolve/reuse and downstream invalidation behave correctly |
 | 3 — Execution path | ORC-03 + ORC-05 + ORC-07 → ORC-10; ORC-03 + ORC-07 + ORC-08 → ORC-14; then ORC-10 + ORC-14 → ORC-11 → ORC-12 → ORC-13 | Wave 2 green | Document/page processing, processor invocation, source selection and LLM input composition work through the contracts |
-| 4 — Resilience | ORC-15 → ORC-16 | Wave 3 green | Stop/resume without re-execution and error containment with policy-driven outcomes |
+| 4 — Resilience | ORC-15 → ORC-16 | Wave 3 green | Resume without re-execution, `RUNNING` recovery, and error containment with the two PoC outcomes |
 | 5 — Consolidation & QA | ORC-17 → ORC-18 → ORC-19 | Wave 4 green | Consolidated `DocumentResult` with tracing; happy path and three invariant tests mutation-falsified; four gates clean |
 
 ## 6. Critical path
@@ -448,6 +448,7 @@ It is critical because the contracts (ORC-01) and identities (ORC-02) precede an
 - [ ] No silent stand-in (no empty string, `0`, `[]`, `None`-without-reason, no default model, engine or threshold); no aggregate confidence score in place of the per-field evidence.
 - [ ] No domain noun (invoice, field, verdict, pipeline code) in the orchestrator API; no processor logic implemented inside the orchestrator; no engine (Poppler, OpenCV, Docling, provider) touched from `workflow/`.
 - [ ] Resume reuses completed stages; force invalidates downstream dependents; a failed stage is reported, not propagated; dry-run builds a plan without executing.
+- [ ] The PoC vocabulary is the one `ORC-01` fixes: no `CANCELLED`, no `stop_requested`, and only the two error outcomes of `ORC-16`.
 - [ ] Artifacts published atomically; the orchestrator writes only its own state and never into another processor's namespace; every shortcut carries an inline `# TODO: [MVP]` or `# TODO: [RELEASE]` tag; output, identifiers, docstrings and comments in English.
 
 ## 10. Risks & mitigations (execution view)

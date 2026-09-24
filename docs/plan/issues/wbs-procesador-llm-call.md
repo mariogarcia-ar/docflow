@@ -22,7 +22,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Critical path | `LLM-01 → LLM-02 → LLM-03 → LLM-06 → LLM-07 → LLM-08` (single-call chain) and `LLM-01 → LLM-06 → LLM-10 → LLM-11 → LLM-12 → LLM-13` (graph chain); the binding path ends at LLM-13 |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
-**Scope.** Turn an already-defined `LLMInput` into a structured, validated, traceable `LLMResult`: template render, prompt build, `request_key`, provider call, parse, schema validation, retries, and — as a follow-up in the same phase — the internal inference subgraph (`classify → extract_a/extract_b → compare → validate → consolidate`) with per-node reuse, resume, stop, skip, force, comparison, consensus and consolidation. Providers live only in `llm/primitives/`; persistence lives only under `llm/`. No documental decision is taken here.
+**Scope.** Turn an already-defined `LLMInput` into a structured, validated, traceable `LLMResult`: template render, prompt build, `request_key`, provider call, parse, schema validation, retries, and — as a follow-up in the same phase — a **fixed linear inference chain** (`classify → extract_a → extract_b → compare → validate → consolidate`) with node reuse and per-field comparison. Providers live only in `llm/primitives/`; persistence lives only under `llm/`. No documental decision is taken here. The chain's dynamic machinery (node claims, parallel branches, `SKIP` / `FORCE` / `INVALIDATE`, graph stop, the per-node artifact tree, consensus scoring) is deferred to the MVP gate with `# TODO: [MVP]` inside `LLM-10`…`LLM-14`: those rows are re-scoped, never renumbered, so every range citation stays valid and effort stays as estimated.
 
 ## 2. Task issue index
 
@@ -37,11 +37,11 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | LLM-07 | Parse + schema validation | M | 2 — Single call | LLM-06 | `load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result` | this file §LLM-07 | NOT_STARTED |
 | LLM-08 | Retry + attempt history | M | 2 — Single call | LLM-07 | `retry_llm_request`, `should_retry`, `increment_attempt` | this file §LLM-08 | NOT_STARTED |
 | LLM-09 | Provider primitives: Ollama + OpenAI-compatible | L | 2 — Single call | LLM-02 | `generate_text`, `generate_multimodal`, `generate_structured`, `list_models`, `check_model_available`, `get_context_window` | this file §LLM-09 | NOT_STARTED |
-| LLM-10 | Node execution | M | 3 — Internal graph | LLM-06 | `process_llm_node`, node-state transitions, `claim_node` | this file §LLM-10 | NOT_STARTED |
-| LLM-11 | Graph persistence in `llm/` | L | 3 — Internal graph | LLM-01 | `llm/run_001/{state.json, graph.json, final_result.json}`, atomic writes, load/save `LLMGraphState` | this file §LLM-11 | NOT_STARTED |
-| LLM-12 | `execute_llm_graph` | L | 3 — Internal graph | LLM-10, LLM-11 | dependencies, routing, parallel branches, subgraph lifecycle | this file §LLM-12 | NOT_STARTED |
-| LLM-13 | Resume / stop / skip / force | L | 3 — Internal graph | LLM-12 | `resume_llm_graph`, `request_graph_stop`, `invalidate_downstream_nodes` | this file §LLM-13 | NOT_STARTED |
-| LLM-14 | Comparison / consensus / consolidate | M | 3 — Internal graph | LLM-12 | `compare_outputs`, `calculate_consensus` | this file §LLM-14 | NOT_STARTED |
+| LLM-10 | Node execution | M | 3 — Linear chain | LLM-06 | `process_llm_node`, node-state transitions (`claim_node` deferred) | this file §LLM-10 | NOT_STARTED |
+| LLM-11 | Graph persistence in `llm/` | L | 3 — Linear chain | LLM-01 | `llm/run_001/{state.json, final_result.json}`, atomic writes, load/save `LLMGraphState` | this file §LLM-11 | NOT_STARTED |
+| LLM-12 | `execute_llm_graph` | L | 3 — Linear chain | LLM-10, LLM-11 | fixed chain order, node reuse, completion detection | this file §LLM-12 | NOT_STARTED |
+| LLM-13 | Node reuse on restart | L | 3 — Linear chain | LLM-12 | resume over the saved chain state: `REUSED` nodes, pending nodes executed | this file §LLM-13 | NOT_STARTED |
+| LLM-14 | Per-field comparison + consolidation | M | 3 — Linear chain | LLM-12 | `compare_outputs` (`calculate_consensus` deferred) | this file §LLM-14 | NOT_STARTED |
 | LLM-15 | Usage, timing and context-window control | M | 2 — Single call | LLM-06 | `count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded` | this file §LLM-15 | NOT_STARTED |
 
 > The subplan records LLM-01, LLM-02 and LLM-03 as `S`; LLM-04 … LLM-08, LLM-10, LLM-14, LLM-15 as `M`; and LLM-09, LLM-11, LLM-12, LLM-13 as `L`.
@@ -196,81 +196,80 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 - **Type:** Primitive
 - **Effort:** M
-- **Wave:** 3 — Internal graph
+- **Wave:** 3 — Linear chain
 - **Depends on:** LLM-06
 - **Blocks:** LLM-12
-- **Objective:** Execute one graph node as an atomic unit with explicit state transitions and a single owner.
-- **Scope / Deliverables:** `process_llm_node`, node-state transitions, `claim_node` atomic `READY → RUNNING`; a failed node reported as a typed `FAILED` result with errors, never as an exception that corrupts the graph.
-- **Out of bounds:** No dependency resolution or routing (that is LLM-12); no resume/force semantics (that is LLM-13); no documental decision.
+- **Objective:** Execute one node of the fixed linear chain, reporting its state through the shared vocabulary and never letting a provider failure corrupt the chain state.
+- **Scope / Deliverables:** `process_llm_node`; node-state transitions (`READY` → `RUNNING` → `SUCCESS` / `FAILED`); a failed node reported as a typed `FAILED` result with errors.
+- **Out of bounds:** No dependency resolution or routing (that is LLM-12); no node claims, no multi-worker coordination and no resume/force semantics — `claim_node` lands with the deferred machinery (`# TODO: [MVP]`); no documental decision.
 - **Acceptance criteria:**
-  - Given a `READY` node, when `claim_node` is invoked twice, then only the first claim succeeds and the node becomes `RUNNING`.
+  - Given a node with a valid request, when `process_llm_node` runs, then its `LLMNodeResult.status` moves through `RUNNING` to `SUCCESS` and the chain state stays loadable.
   - Given a node whose provider call fails, then its `LLMNodeResult.status` is `FAILED` and the graph state remains loadable.
-- **Evidence / DoD:** Unit tests for the claim transition and the typed failure path.
-- **Tags:** `# TODO: [MVP]` for multi-worker claims.
+- **Evidence / DoD:** Unit tests for the transition sequence and the typed failure path.
+- **Tags:** `# TODO: [MVP]` for `claim_node` and multi-worker claims.
 
 ### LLM-11 — Graph persistence in the `llm/` namespace
 
 - **Type:** Primitive
 - **Effort:** L
-- **Wave:** 3 — Internal graph
+- **Wave:** 3 — Linear chain
 - **Depends on:** LLM-01
 - **Blocks:** LLM-12
-- **Objective:** Persist and reload the internal graph state and node artifacts atomically, entirely under `llm/`.
-- **Scope / Deliverables:** Load/save of `LLMGraphState`; atomic writes (`*.tmp` → validate → rename); the artifact tree `llm/run_001/{state.json, graph.json, classify/{result.json, metadata.json, attempts/}, extract_a/…, extract_b/…, compare/…, final_result.json}`.
-- **Out of bounds:** No writes outside `llm/`; `LLMGraphState` must never replace the orchestrator's `DocumentContext`; no DB or schema introduced in Phase 1.
+- **Objective:** Persist and reload the chain state atomically, entirely under `llm/`, with one file per concern.
+- **Scope / Deliverables:** Load/save of `LLMGraphState`; atomic writes (`*.tmp` → validate → rename); the two artifacts `llm/run_001/state.json` and `llm/run_001/final_result.json`; in-memory store first.
+- **Out of bounds:** No writes outside `llm/`; `LLMGraphState` must never replace the orchestrator's `DocumentContext`; no per-node artifact tree, no DB and no schema introduced in Phase 1 (`# TODO: [MVP]`).
 - **Acceptance criteria:**
-  - Given a saved graph state, when it is reloaded, then node states, node results, attempts and comparisons round-trip exactly.
+  - Given a saved chain state, when it is reloaded, then node states, node results, attempts and comparisons round-trip exactly.
   - Given an interrupted write, then no `.tmp` file and no partially written final artifact remains under `llm/`.
 - **Evidence / DoD:** Round-trip test plus failure-path test asserting the namespace contains no `.tmp` residue.
-- **Tags:** `# TODO: [MVP]` for a durable (file-backed) store.
+- **Tags:** `# TODO: [MVP]` for a durable (file-backed) store and for the per-node artifact tree.
 
 ### LLM-12 — `execute_llm_graph`
 
 - **Type:** Entry point
 - **Effort:** L
-- **Wave:** 3 — Internal graph
+- **Wave:** 3 — Linear chain
 - **Depends on:** LLM-10, LLM-11
 - **Blocks:** LLM-13, LLM-14
-- **Objective:** Run the declarative internal subgraph (`classify → extract_a/extract_b → compare → validate → consolidate`) with dependency resolution, routing, parallel branches and subgraph lifecycle, reusing valid node results.
-- **Scope / Deliverables:** `execute_llm_graph`; node resolution order (reuse → execute), branch handling for `extract_a` / `extract_b`, subgraph completion detection, and the final consolidation into `LLMResult`.
-- **Out of bounds:** No documental orchestration; no OCR/PDF/image re-run as a fallback; the graph shape stays data from `LLMInput.graph` (no hardcoded workflow) and `extract_a` / `extract_b` run sequentially in the PoC.
+- **Objective:** Run the fixed linear chain (`classify → extract_a → extract_b → compare → validate → consolidate`) in order, reusing valid node results and consolidating them into one `LLMResult`.
+- **Scope / Deliverables:** `execute_llm_graph`; node resolution order (reuse → execute), with `extract_a` / `extract_b` executed sequentially; completion detection; the final consolidation into `LLMResult`.
+- **Out of bounds:** No documental orchestration; no OCR/PDF/image re-run as a fallback; the chain shape stays data from `LLMInput.graph` (no hardcoded workflow); no routing beyond the declared order, no parallel branches, no subgraph lifecycle — all deferred (`# TODO: [MVP]`).
 - **Acceptance criteria:**
   - Given a graph descriptor with `classify → extract_a/extract_b → compare → validate → consolidate`, when `execute_llm_graph` runs on the fake provider, then every node is `SUCCESS` and the `LLMResult` carries the consolidated `final_result.json`.
   - Given a node already `SUCCESS` with a matching `request_key`, then the fake provider's call counter does not increase for it.
 - **Evidence / DoD:** Graph happy-path test plus the no-re-execution invariant (see §7).
-- **Tags:** `# TODO: [MVP]` sequential branches instead of true concurrency.
+- **Tags:** `# TODO: [MVP]` for parallel branches and subgraph lifecycle.
 
-### LLM-13 — Resume, stop, skip and force
+### LLM-13 — Node reuse on restart
 
 - **Type:** Entry point
 - **Effort:** L
-- **Wave:** 3 — Internal graph
+- **Wave:** 3 — Linear chain
 - **Depends on:** LLM-12
 - **Blocks:** —
-- **Objective:** Make a partially executed subgraph resumable without repeating valid, costly calls, and make force/stop/skip explicit per node.
-- **Scope / Deliverables:** `resume_llm_graph`, `request_graph_stop`, `invalidate_downstream_nodes`; per-node `EXECUTE` / `REUSE` / `SKIP` / `FORCE` / `RETRY` / `INVALIDATE`; a node `FORCE` never becomes a decision about OCR, PDF or images.
-- **Out of bounds:** No documental `stop`/`resume` (that is the orchestrator's `DocumentContext`); no cross-process locking beyond the atomic node claim; a forced node must invalidate all transitive dependents, not just itself.
+- **Objective:** Make a partially executed chain resumable without repeating valid, costly calls.
+- **Scope / Deliverables:** the resume path over the saved chain state: a `SUCCESS` node with a matching `request_key` is `REUSED` and only the pending nodes (including a previously `FAILED` one) run; node actions limited to `EXECUTE` / `REUSE` / `RETRY`.
+- **Out of bounds:** No documental `stop`/`resume` (that is the orchestrator's `DocumentContext`); no `request_graph_stop`, no `resume_llm_graph`, no per-node `SKIP` / `FORCE` / `INVALIDATE` and no `invalidate_downstream_nodes` — deferred to the MVP gate (`# TODO: [MVP]`); no cross-process locking.
 - **Acceptance criteria:**
-  - Given a partially executed graph where `classify` and `extract_a` are `SUCCESS` and `extract_b` is `FAILED`, when `resume_llm_graph` runs with the same `run_id` and inputs, then `classify` and `extract_a` are `REUSED` with no new provider calls and `extract_b`, `compare`, `validate`, `consolidate` are executed.
-  - Given a completed graph, when `force` is requested on `extract_b`, then `extract_b` re-executes and `compare`, `validate` and `consolidate` transition to `INVALIDATED` and re-run.
-- **Evidence / DoD:** Resume test using the fake provider's call counter plus the downstream-invalidation invariant (see §7).
-- **Tags:** —
+  - Given a partially executed chain where `classify` and `extract_a` are `SUCCESS` and `extract_b` is `FAILED`, when the chain is resumed with the same `run_id` and inputs, then `classify` and `extract_a` are `REUSED` with no new provider calls and `extract_b`, `compare`, `validate`, `consolidate` are executed.
+- **Evidence / DoD:** Resume test using the fake provider's call counter; the no-re-execution invariant (see §7).
+- **Tags:** `# TODO: [MVP]` for `request_graph_stop`, `SKIP` / `FORCE` / `INVALIDATE` and downstream invalidation.
 
-### LLM-14 — Comparison, consensus and consolidation
+### LLM-14 — Per-field comparison and consolidation
 
 - **Type:** Primitive
 - **Effort:** M
-- **Wave:** 3 — Internal graph
+- **Wave:** 3 — Linear chain
 - **Depends on:** LLM-12
 - **Blocks:** —
-- **Objective:** Compare the `extract_a` / `extract_b` outputs, compute consensus and consolidate a single result without collapsing evidence into an opaque score.
-- **Scope / Deliverables:** `compare_outputs`, `calculate_consensus`; `comparisons` populated as `ComparisonResult` in `LLMResult`.
-- **Out of bounds:** No aggregate confidence score substituted for the per-field comparison evidence; no documental verdict; disagreement must be reported as data, not resolved silently.
+- **Objective:** Compare the `extract_a` / `extract_b` outputs per field and consolidate a single result without collapsing evidence into an opaque score.
+- **Scope / Deliverables:** `compare_outputs`; `comparisons` populated as `ComparisonResult` in `LLMResult`.
+- **Out of bounds:** No aggregate confidence score, and no consensus scoring — `calculate_consensus` is deferred (`# TODO: [MVP]`); no documental verdict; disagreement must be reported as data, not resolved silently.
 - **Acceptance criteria:**
   - Given two differing node outputs, when `compare_outputs` runs, then the differences are enumerated per field in `ComparisonResult`.
-  - Given identical node outputs, then consensus is maximal and is still recorded as comparable per-field evidence.
+  - Given identical node outputs, then every field is reported as agreeing, still as per-field evidence.
 - **Evidence / DoD:** Unit tests over crafted node outputs (agreeing and disagreeing).
-- **Tags:** `# TODO: [MVP]` for the richer comparison policy.
+- **Tags:** `# TODO: [MVP]` for the richer comparison policy and consensus scoring.
 
 ### LLM-15 — Usage, timing and context-window control
 
@@ -306,8 +305,8 @@ flowchart LR
     LLM01 --> LLM11["LLM-11 Graph persistence"]
     LLM10 --> LLM12["LLM-12 execute_llm_graph"]
     LLM11 --> LLM12
-    LLM12 --> LLM13["LLM-13 Resume / stop / skip / force"]
-    LLM12 --> LLM14["LLM-14 Compare / consensus / consolidate"]
+    LLM12 --> LLM13["LLM-13 Node reuse on restart"]
+    LLM12 --> LLM14["LLM-14 Per-field comparison"]
     LLM06 --> LLM15["LLM-15 Usage, timing, context window"]
 ```
 
@@ -317,13 +316,13 @@ flowchart LR
 |---|---|---|---|
 | 1 — Contracts & primitives | LLM-01 → LLM-02 → LLM-03, LLM-04, LLM-05 | Phase 0 exit met; subplan §7 DoR satisfied | Contracts frozen, provider seam typed, deterministic fake provider and committed template/schema fixtures in place |
 | 2 — Single call | LLM-06 → LLM-07 → LLM-08; LLM-09 in parallel after LLM-02; LLM-15 in parallel after LLM-06 | Wave 1 green | One call round-trips `LLMInput → LLMResult` with schema validation, attempt history and token/context control; provider primitives implemented |
-| 3 — Internal graph | LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12 | Wave 2 green | Subgraph executes, persists, resumes, forces with downstream invalidation, compares and consolidates |
+| 3 — Linear chain | LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12 | Wave 2 green | The fixed chain executes, persists two files, resumes without re-calling a `REUSED` node and compares per field |
 
 Each wave ends with the four QA gates green and its happy-path / invariant tests passing.
 
 ## 6. Critical path
 
-`LLM-01 → LLM-02 → LLM-03 → LLM-06 → LLM-07 → LLM-08` (the single-call spine, closing the Phase 1 exit criterion), extended by `LLM-06 → LLM-10 → LLM-11 → LLM-12 → LLM-13` (the internal-subgraph spine, the longest chain in this subplan).
+`LLM-01 → LLM-02 → LLM-03 → LLM-06 → LLM-07 → LLM-08` (the single-call spine, closing the Phase 1 exit criterion), extended by `LLM-06 → LLM-10 → LLM-11 → LLM-12 → LLM-13` (the chain spine, the longest chain in this subplan).
 
 It is critical because the contracts (LLM-01) and the provider seam (LLM-02) precede any call; the fake provider plus fixtures (LLM-03) are the only way the happy path can be proven without a real model; the single-call entry point (LLM-06) gates both the validation/retry spine and the entire graph branch; and the graph spine (LLM-10 → LLM-11 → LLM-12 → LLM-13) is what closes the "valid work is never repeated" property of the processor. LLM-09 (Effort L) and LLM-15 are parallel branches that do not lengthen the chain but carry the largest implementation risk.
 
@@ -333,11 +332,11 @@ It is critical because the contracts (LLM-01) and the provider seam (LLM-02) pre
 |---|---|---|
 | Single call produces a validated result | LLM-04, LLM-05, LLM-06, LLM-07 | Happy-path test with the fake provider and committed fixtures |
 | Restart reuses valid nodes and re-runs only pending ones | LLM-05, LLM-10, LLM-11, LLM-12, LLM-13 | Resume test with the fake provider call counter; invariant 1 (no re-execution of a valid call) |
-| Forcing a node invalidates its downstream dependents | LLM-13 | Force scenario; invariant 3 (downstream invalidation) |
+| Forcing a node invalidates its downstream dependents — deferred with the chain's dynamic machinery (`# TODO: [MVP]`, subplan §9.6) | LLM-13 | Not claimed in Phase 1; the documental equivalent is `ORC-09` / `ORC-19` invariant 2 |
 | A retryable invalid response is retried and prior attempts are kept | LLM-07, LLM-08 | Scripted-fake retry test (both attempts present, ids differ, `request_key` unchanged); invariant 2 (`request_key` determinism and independence from run identity) |
 | Invariant 1 — no re-execution of a valid call (mutation: `is_node_reusable` always false / drop the `SUCCESS` check) | LLM-05, LLM-13 | Must fail under mutation, then restore green |
 | Invariant 2 — `request_key` determinism (mutation: add `run_id` / nonce to the hash) | LLM-05 | Must fail under mutation, then restore green |
-| Invariant 3 — downstream invalidation on force (mutation: remove `invalidate_downstream_nodes` from the force path) | LLM-13 | Must fail under mutation, then restore green |
+| Invariant 3 — downstream invalidation on force — deferred with the chain's dynamic machinery (`# TODO: [MVP]`) | LLM-13 | Lands with the deferred machinery; not part of the Phase 1 DoD |
 | Provider conformance (Ollama / OpenAI-compatible swap) | LLM-02, LLM-09 | Interface-conformance test over the interface only — never a live provider (`README.md` §9.7); typed `MODEL_UNAVAILABLE` on a missing model |
 
 ## 8. Definition of Ready (per task)
@@ -345,7 +344,8 @@ It is critical because the contracts (LLM-01) and the provider seam (LLM-02) pre
 - The task appears as a row in `subplan-procesador-llm-call.md` §4 with the same ID, title, effort and dependencies.
 - `LLMInput`, `LLMResult`, `LLMNodeResult` and `LLMGraphState` field lists are fixed per the subplan §3, and the request/reuse rule (`request_key` + `SUCCESS` + valid persisted result → `REUSE`) is written down and agreed.
 - A fake provider and at least one template + schema fixture are committed before LLM-06 starts.
-- The subgraph shape (`classify → extract_a/extract_b → compare → validate → consolidate`) and the two-level separation from the orchestrator are agreed with the orchestrator owner.
+- The chain shape (`classify → extract_a → extract_b → compare → validate → consolidate`), the fixed sequential order and the two-level separation from the orchestrator are agreed with the orchestrator owner.
+- The deferred machinery is named, not implied: `claim_node`, parallel branches, `SKIP` / `FORCE` / `INVALIDATE`, `request_graph_stop`, `resume_llm_graph`, `invalidate_downstream_nodes`, the per-node artifact tree and `calculate_consensus` are tagged `# TODO: [MVP]` in `LLM-10`…`LLM-14` before any of those tasks starts.
 - The provider choice (Ollama first; vLLM/API interchangeable) and the persistence approach (in-memory + JSON under `llm/`) are recorded; all decisions in subplan §9 are resolved.
 - No open question blocks the happy path; no domain noun is introduced into the processor API.
 
@@ -364,7 +364,7 @@ It is critical because the contracts (LLM-01) and the provider seam (LLM-02) pre
 | Risk (subplan §8) | Task affected | Mitigation owned by |
 |---|---|---|
 | Repeating expensive LLM calls on restart | LLM-05, LLM-13 | LLM-05 (`request_key` + reuse rule) + LLM-13 (resume path) + invariant 1 |
-| Race condition: two workers run the same node | LLM-10 | LLM-10 (atomic `claim_node` `READY → RUNNING`; one owner per `run_id`) |
+| Race condition: two workers run the same node | LLM-10 | Not reachable in Phase 1: the chain runs sequentially under a single owner; `claim_node` `READY → RUNNING` and one owner per `run_id` land with the deferred machinery (`# TODO: [MVP]`) |
 | Silent invalid output reported as correct | LLM-07, LLM-08 | LLM-07 (mandatory structural/schema validation) + LLM-08 (typed `FAILED`, never swallowed) |
 | Provider/model drift (Ollama, vLLM, hosted API) | LLM-02, LLM-05, LLM-09 | LLM-05 (`provider` + `model` + `model_version` in `request_key`) + LLM-15 (usage/timing per attempt) |
 | Context overflow / truncated prompt | LLM-15 | LLM-15 (explicit `count_tokens` / `truncate_to_token_limit` with metadata, never silent truncation) |
@@ -377,3 +377,4 @@ It is critical because the contracts (LLM-01) and the provider seam (LLM-02) pre
 - Real GPU-competition policy and production retry queues (`# TODO: [RELEASE]`).
 - Domain-specific extraction rules; prompts and schemas are data assets, not code.
 - Observability/telemetry beyond per-attempt `usage` / `timing` records.
+- The inference subgraph's dynamic machinery: `claim_node` and multi-worker claims, parallel branches, per-node `SKIP` / `FORCE` / `INVALIDATE`, `request_graph_stop`, `resume_llm_graph`, `invalidate_downstream_nodes`, the per-node artifact tree and `calculate_consensus` — deferred to the MVP gate and tagged `# TODO: [MVP]` in `LLM-10`…`LLM-14`.

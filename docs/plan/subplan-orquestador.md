@@ -82,7 +82,6 @@ stages[]
 decisions[]
 errors[]
 status
-stop_requested
 final_result
 ```
 
@@ -121,7 +120,7 @@ error
 metadata
 ```
 
-**Stage states:** `NOT_STARTED`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`, `PARTIAL`, `SKIPPED`, `REUSED`, `INVALIDATED`, `PAUSED`, `CANCELLED`, `REVIEW_REQUIRED`. The distinction matters: `SKIPPED` = deliberately not run; `REUSED` = a valid result already exists.
+**Stage states:** `NOT_STARTED`, `READY`, `RUNNING`, `SUCCESS`, `FAILED`, `PARTIAL`, `SKIPPED`, `REUSED`, `INVALIDATED`, `PAUSED`, `REVIEW_REQUIRED`. The distinction matters: `SKIPPED` = deliberately not run; `REUSED` = a valid result already exists. `CANCELLED` is not in the PoC set: with no per-processor cancel (§9.5) nothing could ever produce it, and a state nothing produces is a promise with no owner.
 
 ### 3.2 Document workflow
 
@@ -165,11 +164,16 @@ AND output artifact hashes are valid
 
 Physical file existence alone never implies reuse: `ocr/document.json` on disk is not a reason to reuse unless its `processing_key` matches and its artifacts validate.
 
+The rule is stated once, here, and `procesador-llm-call` repeats the same three lines at node
+level (`subplan-procesador-llm-call.md` §3) instead of sharing a helper. The difference is the
+artifact validator — hashes at stage level, schema-and-artifact at node level — and a shared
+abstraction over a three-line comparison would couple the two levels for nothing.
+
 ### 3.5 skip / force / stop / resume semantics
 
 - **Skip** — explicit and persistent; the stage is recorded `SKIPPED` with a `skip_reason` (`explicit_skip` / `skipped_by_policy`). A reused result is never recorded as a skip.
 - **Force** — executes the stage even if a valid result exists, and **invalidates downstream dependents**. Force levels: `force_document`, `force_page`, `force_stage`.
-- **Stop** — sets `stop_requested = true`, does not start new stages, lets the in-flight atomic stage finish, persists state, and leaves the document `PAUSED`. Stop never destroys the workflow; it leaves it resumable.
+- **Stop** — the PoC stops by *declaration*: `ExecutionPolicy.stop_after_stage` lets the named stage finish, starts no new one, persists state and leaves the document `PAUSED`. Stop never destroys the workflow; it leaves it resumable. A mid-run `request_stop` (same guarantee, driven from outside) is deferred to the MVP gate (`# TODO: [MVP]`) together with `stop_requested`, its only writer — a field nothing writes is worse than no field.
 - **Resume** — loads `DocumentContext`, inspects stages, validates artifacts, rebuilds the plan, and continues from where it stopped, mapping prior states to new actions.
 
 Example state table after `force OCR`:
@@ -199,11 +203,11 @@ With `dry_run = true` the orchestrator loads context, inspects artifacts, comput
 
 ### 3.7 Source selection stage
 
-`select_source()` chooses among `NATIVE_TEXT`, `OCR_TEXT`, `IMAGE`, `NATIVE_TEXT + IMAGE`, `OCR_TEXT + IMAGE`, and the decision is recorded with a `reason` (e.g. `native_text_empty`). `select_extraction_strategy()` then chooses `TEXT_ONLY`, `OCR_ONLY`, `VLM_ONLY`, `TEXT_PLUS_VLM`, `OCR_PLUS_VLM`. Both are orchestrator decisions, never processor decisions; `build_llm_input()` turns them into an `LLMInput` the LLM processor executes.
+`select_source()` chooses among `NATIVE_TEXT`, `OCR_TEXT`, `IMAGE`, `NATIVE_TEXT + IMAGE`, `OCR_TEXT + IMAGE`, and the decision is recorded with a `reason` (e.g. `native_text_empty`). `select_extraction_strategy()` then chooses `TEXT_ONLY`, `OCR_ONLY`, `VLM_ONLY`, `TEXT_PLUS_VLM`, `OCR_PLUS_VLM`. Both are orchestrator decisions, never processor decisions; `build_llm_input()` turns them into an `LLMInput` the LLM processor executes. The source matrix stays a literal table with no default fallback; only the cells the Phase 3 paths actually reach carry an asserted reason in the PoC, and the remaining cells carry `# TODO: [MVP]` for their reason refinement rather than a claim nobody tests.
 
 ### 3.8 Error-handling posture
 
-A failed stage is **reported, not propagated**: the orchestrator records the stage as `FAILED` / `PARTIAL` / `REVIEW_REQUIRED`, writes an error record, and continues or pauses according to policy (`retry processor` / `fallback` / `continue partial` / `stop page` / `pause document` / `review required`). LLM-internal retries belong to `procesador-llm-call`; orchestrator-level retries are of a whole processor, and the two levels never mix.
+A failed stage is **reported, not propagated**: the orchestrator records the stage as `FAILED` / `PARTIAL` / `REVIEW_REQUIRED`, writes an error record, and continues or pauses according to policy. The PoC implements two outcomes — `retry processor` and `REVIEW_REQUIRED` — and advertises only those two; the richer fallbacks (`fallback` / `continue partial` / `stop page` / `pause document`) are deferred to the MVP gate (`# TODO: [MVP]`). LLM-internal retries belong to `procesador-llm-call`; orchestrator-level retries are of a whole processor, and the two levels never mix.
 
 ## 4. Execution plan (PM)
 
@@ -225,8 +229,8 @@ A failed stage is **reported, not propagated**: the orchestrator records the sta
 | ORC-12 | `select_source` + `select_extraction_strategy` | M | ORC-11 |
 | ORC-13 | `build_llm_input` (task, document, images[], schema, options) | M | ORC-12 |
 | ORC-14 | Processor invocation helpers: `run_image_processing`, `run_ocr`, `run_llm` (call fakes behind contracts, register artifacts) | M | ORC-03, ORC-07, ORC-08 |
-| ORC-15 | `request_stop` / `resume_document` / recover interrupted `RUNNING` stage | L | ORC-03, ORC-09 |
-| ORC-16 | `handle_processor_error`, error records, `REVIEW_REQUIRED` / fallback decisions | M | ORC-11 |
+| ORC-15 | `resume_document` / recover interrupted `RUNNING` stage (`request_stop` deferred, `# TODO: [MVP]`) | L | ORC-03, ORC-09 |
+| ORC-16 | `handle_processor_error`, error records, the two PoC outcomes `retry processor` / `REVIEW_REQUIRED` (richer fallbacks deferred, `# TODO: [MVP]`) | M | ORC-11 |
 | ORC-17 | `consolidate_page_result` / `consolidate_document_result` (order pages, preserve results, build `execution_summary`) | M | ORC-11, ORC-13 |
 | ORC-18 | Decision + error tracing records (`register_decision`, `register_error`, `append_workflow_trace`) | S | ORC-04 |
 | ORC-19 | Four QA gates + happy-path test + mutation-falsified invariant tests (see §6) | L | all above |
@@ -236,7 +240,7 @@ A failed stage is **reported, not propagated**: the orchestrator records the sta
 1. **Wave 1 — Foundation:** ORC-01 → ORC-02 → ORC-03 → ORC-04; ORC-05 in parallel (its only predecessor is ORC-01) — contracts, identities, durable state, stage claims, input-type detection.
 2. **Wave 2 — Decision core:** ORC-06 → ORC-07 → ORC-08 → ORC-09 (plan, resolve/reuse, invalidation).
 3. **Wave 3 — Execution path:** ORC-03 + ORC-07 → ORC-10 → ORC-11 (document preparation, then per-page execution); ORC-14 completes before ORC-11 consumes it; then ORC-12 → ORC-13.
-4. **Wave 4 — Resilience:** ORC-15 → ORC-16 (stop/resume, error containment).
+4. **Wave 4 — Resilience:** ORC-15 → ORC-16 (resume and `RUNNING` recovery, error containment).
 5. **Wave 5 — Consolidation & QA:** ORC-17 → ORC-18 → ORC-19 (consolidate, trace, gates).
 
 ## 5. Acceptance criteria
@@ -352,12 +356,19 @@ pylint src tests
 3. **Parallelism now vs. later — RESOLVED.** `parallel_pages` is implemented sequentially
    but declared, tagged `# TODO: [MVP]`; true parallelism is deferred to Phase 4.
 4. **Fallback depth — RESOLVED.** PoC happy path keeps only `retry processor` and
-   `REVIEW_REQUIRED`; richer fallbacks (OCR fail → VLM-only) are deferred (`# TODO: [MVP]`).
+   `REVIEW_REQUIRED`; richer fallbacks (OCR fail → VLM-only) are deferred (`# TODO: [MVP]`),
+   and the API advertises only the two implemented outcomes.
 5. **Stop/claim coordination — RESOLVED.** A running stage finishes gracefully (no
    per-processor cancel in PoC); the interrupted `RUNNING → READY` recovery is handled on
-   resume. External kill is deferred.
+   resume. External kill is deferred, and so is a mid-run `request_stop`: the PoC stops
+   through `stop_after_stage`, so no `stop_requested` field exists that nothing writes.
 6. **Consolidation naming — RESOLVED.** The canonical names are the ones this subplan and
    ORC-17 use: `consolidate_page_result` / `consolidate_document_result`.
    `docs/plan/README.md` §5 names them `consolidate_page` / `consolidate_document`; those
    are accepted **aliases of the same seam**, not a second implementation, and `README.md`
    §5 has been reconciled to the canonical names.
+7. **Vocabulary — RESOLVED for PoC.** `CANCELLED` leaves the PoC stage-state set (nothing
+   could produce it), `stop_requested` leaves `DocumentContext` (its only writer,
+   `request_stop`, is deferred) and `handle_processor_error` advertises only the two
+   outcomes it implements. Widening any of the three is a plan revision, not a task-level
+   decision.

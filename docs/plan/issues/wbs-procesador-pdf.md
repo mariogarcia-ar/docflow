@@ -32,11 +32,11 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 |---|---|---|---|---|---|---|---|
 | PDF-01 | Contract types | S | 1 — Foundations | — | `PDFRequest`, `PDFResult`, `PDFPageResult`, `PDFPageMetrics`, `PDFError` | this file §PDF-01 | NOT_STARTED |
 | PDF-02 | Poppler primitives skeleton | M | 1 — Foundations | PDF-01 | `pdf/primitives/` | this file §PDF-02 | NOT_STARTED |
-| PDF-03 | Document primitives | M | 2 — Primitives | PDF-02 | `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | this file §PDF-03 | NOT_STARTED |
+| PDF-03 | Document inspection primitive | M | 2 — Primitives | PDF-02 | `inspect_pdf` (metadata + page count + per-page dimensions) | this file §PDF-03 | NOT_STARTED |
 | PDF-04 | Split/extract primitives | M | 2 — Primitives | PDF-02 | `extract_page`, `split_pdf`, `merge_pdfs` | this file §PDF-04 | NOT_STARTED |
 | PDF-05 | Render primitive | S | 2 — Primitives | PDF-02 | `render_page_to_image` | this file §PDF-05 | NOT_STARTED |
-| PDF-06 | Native text primitives | M | 2 — Primitives | PDF-02 | `extract_text_from_page`, `get_text_blocks` | this file §PDF-06 | NOT_STARTED |
-| PDF-07 | Embedded image primitives | M | 2 — Primitives | PDF-02 | `extract_images_from_page`, `get_image_blocks` | this file §PDF-07 | NOT_STARTED |
+| PDF-06 | Native text primitive | M | 2 — Primitives | PDF-02 | `extract_text_from_page` (text + blocks) | this file §PDF-06 | NOT_STARTED |
+| PDF-07 | Embedded image primitive | M | 2 — Primitives | PDF-02 | `extract_images_from_page` (files + records) | this file §PDF-07 | NOT_STARTED |
 | PDF-08 | Composition + classification | S | 2 — Primitives | PDF-02 | `analyze_pdf_page`, `classify_pdf_page` | this file §PDF-08 | NOT_STARTED |
 | PDF-09 | Page entry point | M | 3 — Composition | PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 | `process_pdf_page`, `page_001/metadata.json` | this file §PDF-09 | NOT_STARTED |
 | PDF-10 | Document entry point | M | 3 — Composition | PDF-03, PDF-09 | `process_pdf`, `metadata.json` | this file §PDF-10 | NOT_STARTED |
@@ -79,18 +79,18 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Import of `pdf/primitives/` succeeds; engine/version retrieval is exposed; the failure path is exercised through the double, never by probing whether the engine is installed; four QA gates green on the skeleton.
 - **Tags:** `# TODO: [MVP]` for real engine-availability probing; `# TODO: [RELEASE]` for engine licensing posture.
 
-### PDF-03 — Document primitives
+### PDF-03 — Document inspection primitive
 
 - **Type:** Primitive
 - **Effort:** M
 - **Wave:** 2 — Primitives
 - **Depends on:** PDF-02
 - **Blocks:** PDF-10
-- **Objective:** Inspect a PDF before any extraction: metadata, page count, per-page dimensions and a single `inspect_pdf` entry that summarises the document.
-- **Scope / Deliverables:** `get_pdf_metadata(pdf_path)`, `get_page_count(pdf_path)`, `get_page_dimensions(pdf_path, page_number)`, `inspect_pdf(pdf_path)` in `pdf/primitives/`.
+- **Objective:** Inspect a PDF before any extraction: metadata, page count and per-page dimensions from one call.
+- **Scope / Deliverables:** `inspect_pdf(pdf_path)` in `pdf/primitives/`, returning the document metadata, the page count and the per-page dimensions. `get_pdf_metadata`, `get_page_count` and `get_page_dimensions` are not built: one seam call cannot contradict itself.
 - **Out of bounds:** No page extraction, rendering or text extraction; no classification; no decision about what to do with the document.
 - **Acceptance criteria:**
-  - Given the seam reports three pages, when `get_page_count` runs, then it equals the number of pages `inspect_pdf` reports — both read the same seam, and neither reaches the engine.
+  - Given the seam reports three pages, when `inspect_pdf` runs, then the page count it returns equals the number of page dimensions it carries, and neither value reaches the engine twice.
   - Given the seam fails on `pdf_corrupt.pdf`, when `inspect_pdf` runs, then a typed `PDFError` is produced (`CORRUPTED_PDF`) and no exception escapes the contract.
 - **Evidence / DoD:** Unit test on the committed fixture with the subprocess doubled; typed error on the corrupt fixture.
 - **Tags:** `# TODO: [MVP]` for real encryption handling.
@@ -127,34 +127,34 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Evidence / DoD:** Fixture-based test asserting the artifact exists under `render/`, is published atomically and carries the requested `dpi` — never a claim about the renderer's fidelity (`README.md` §9.7).
 - **Tags:** —
 
-### PDF-06 — Native text primitives
+### PDF-06 — Native text primitive
 
 - **Type:** Primitive
 - **Effort:** M
 - **Wave:** 2 — Primitives
 - **Depends on:** PDF-02
 - **Blocks:** PDF-09
-- **Objective:** Extract the native text layer of a page both as plain text and as ordered text blocks.
-- **Scope / Deliverables:** `extract_text_from_page(pdf_path, page_number, layout=True)`, `get_text_blocks(pdf_path, page_number)` in `pdf/primitives/`; outputs `native_text/text.txt` and `native_text/blocks.json`.
+- **Objective:** Extract the native text layer of a page as plain text and as ordered text blocks, from one read.
+- **Scope / Deliverables:** `extract_text_from_page(pdf_path, page_number, layout=True)` in `pdf/primitives/`, returning the text and its ordered blocks; outputs `native_text/text.txt` and `native_text/blocks.json`. `get_text_blocks` is not built: a second read of the same layer is how the two artifacts start disagreeing.
 - **Out of bounds:** No OCR fallback when the text layer is empty (an empty result is data, not an error to fix); no source comparison; no interpretation of content.
 - **Acceptance criteria:**
-  - Given the doubled seam returns native text for a text-dominant page, when our extraction runs, then `text.txt` is non-empty and `blocks.json` deserialises to `TextBlock` records.
+  - Given the doubled seam returns native text for a text-dominant page, when our extraction runs, then `text.txt` is non-empty, `blocks.json` deserialises to `TextBlock` records, and both come from the same call.
   - Given a page whose native text is empty, then `text.txt` is empty and the processor reports it as data.
 - **Evidence / DoD:** Fixture-based test on text-dominant and image-dominant fixtures, subprocess doubled.
 - **Tags:** `# TODO: [MVP]` for layout-aware block reconstruction.
 
-### PDF-07 — Embedded image primitives
+### PDF-07 — Embedded image primitive
 
 - **Type:** Primitive
 - **Effort:** M
 - **Wave:** 2 — Primitives
 - **Depends on:** PDF-02
 - **Blocks:** PDF-09
-- **Objective:** Extract the images physically embedded in a page, with stable zero-padded identifiers and their placement.
-- **Scope / Deliverables:** `extract_images_from_page(pdf_path, page_number, output_dir)`, `get_image_blocks(pdf_path, page_number)` in `pdf/primitives/`; outputs `embedded_images/image_001.png` and `EmbeddedImage` records (`image_id`, `path`, `bbox`, `width`, `height`, `format`, `metadata`).
+- **Objective:** Extract the images physically embedded in a page, with stable zero-padded identifiers, their placement and their files from one call.
+- **Scope / Deliverables:** `extract_images_from_page(pdf_path, page_number, output_dir)` in `pdf/primitives/`, returning the written files and their `EmbeddedImage` records (`image_id`, `path`, `bbox`, `width`, `height`, `format`, `metadata`); outputs `embedded_images/image_001.png`. `get_image_blocks` is not built: the records and the files come from the same extraction.
 - **Out of bounds:** No image analysis or enhancement; no crop of rendered regions; a page with no embedded images is valid data, not a failure.
 - **Acceptance criteria:**
-  - Given the doubled seam returns embedded images, when extraction runs, then our code names them `image_001.png`, `image_002.png`, … in stable order with matching `EmbeddedImage` entries.
+  - Given the doubled seam returns embedded images, when extraction runs, then our code names them `image_001.png`, `image_002.png`, … in stable order, with one `EmbeddedImage` entry per file from the same call.
   - Given a page with no embedded images, then the list is empty and the page is not marked failed.
 - **Evidence / DoD:** Fixture-based test on `pdf_sample_mixed.pdf` / `pdf_sample_image.pdf`, subprocess doubled — the assertion is our naming and ordering, not the engine's image extraction.
 - **Tags:** `# TODO: [MVP]` for unusual colour-space or mask handling.
@@ -184,7 +184,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** PDF-04, PDF-05, PDF-06, PDF-07, PDF-08
 - **Blocks:** PDF-10, PDF-11, PDF-12
 - **Objective:** Compose the per-page pipeline into one `process_pdf_page` that returns a complete `PDFPageResult` with its own metadata, keeping valid artifacts when a single stage fails.
-- **Scope / Deliverables:** `process_pdf_page(...)` chaining `extract_page` → `render_page_to_image` → `extract_text_from_page` → `get_text_blocks` → `extract_images_from_page` → `analyze_pdf_page` → `classify_pdf_page`; per-page `metadata.json`; `page_NNN/` directory layout; `status = PARTIAL` when one stage fails while others succeed.
+- **Scope / Deliverables:** `process_pdf_page(...)` chaining `extract_page` → `render_page_to_image` → `extract_text_from_page` → `extract_images_from_page` → `analyze_pdf_page` → `classify_pdf_page`; per-page `metadata.json`; `page_NNN/` directory layout; `status = PARTIAL` when one stage fails while others succeed.
 - **Out of bounds:** No document-level consolidation; no workflow decision; no writes outside `source/`, `render/`, `native_text/`, `embedded_images/`, `metadata.json`; no OCR, image normalization or LLM.
 - **Acceptance criteria:**
   - Given a valid page, when `process_pdf_page` runs, then `page.pdf`, `page.png`, `native_text/text.txt`, `native_text/blocks.json` and `metadata.json` exist under `page_001/`.
@@ -286,7 +286,7 @@ Scenario: No test reaches Poppler
 ```mermaid
 flowchart LR
     PDF01["PDF-01 Contracts"] --> PDF02["PDF-02 Poppler seam"]
-    PDF02 --> PDF03["PDF-03 Document primitives"]
+    PDF02 --> PDF03["PDF-03 Document inspection"]
     PDF02 --> PDF04["PDF-04 Split / extract"]
     PDF02 --> PDF05["PDF-05 Render"]
     PDF02 --> PDF06["PDF-06 Native text"]
@@ -358,6 +358,7 @@ It is critical because nothing can be extracted before the contracts exist (PDF-
 - [ ] No silent stand-in (no empty string, `0`, `[]`, `None`-without-reason, no default engine/threshold) and no domain noun in the processor API.
 - [ ] No import of, or call to, another processor; Poppler reached only from `pdf/primitives/`; no workflow decision, OCR, LLM/VLM or source selection inside the module.
 - [ ] Artifacts published atomically; the input PDF is never modified; writes stay inside `source/`, `render/`, `native_text/`, `embedded_images/`, `metadata.json`.
+- [ ] The primitive surface is the one in the subplan §3: no second reader for an engine call already covered (`inspect_pdf`, `extract_text_from_page`, `extract_images_from_page`).
 - [ ] Every shortcut carries an inline `# TODO: [MVP]` or `# TODO: [RELEASE]` tag; output, identifiers, docstrings and comments in English.
 
 ## 10. Risks & mitigations (execution view)

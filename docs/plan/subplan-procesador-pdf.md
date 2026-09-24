@@ -118,9 +118,8 @@ flowchart TD
 
     subgraph PP["process_pdf_page()"]
         F1["extract_page()"] --> F2["render_page_to_image()"]
-        F2 --> F3["extract_text_from_page()"]
-        F3 --> F4["get_text_blocks()"]
-        F4 --> F5["extract_images_from_page()"]
+        F2 --> F3["extract_text_from_page() -> text + blocks"]
+        F3 --> F5["extract_images_from_page() -> files + records"]
         F5 --> F6["analyze_pdf_page()"]
         F6 --> F7["classify_pdf_page()"]
         F7 --> F8["validate_pdf_page_result()"]
@@ -128,14 +127,27 @@ flowchart TD
 ```
 
 ### Primitives (low-level, PDF-aware only)
-Document inspection: `get_pdf_metadata(pdf_path)`, `get_page_count(pdf_path)`, `get_page_dimensions(pdf_path, page_number)`, `inspect_pdf(pdf_path)`.
-Split/merge: `extract_page(pdf_path, page_number, output_path)`, `split_pdf(pdf_path, output_dir)`, `merge_pdfs(pdf_paths, output_path)` (generic utility).
-Render: `render_page_to_image(pdf_path, page_number, output_path, dpi=200)`.
-Native text: `extract_text_from_page(pdf_path, page_number, layout=True)`, `get_text_blocks(pdf_path, page_number)`.
-Embedded images: `extract_images_from_page(pdf_path, page_number, output_dir)`, `get_image_blocks(pdf_path, page_number)`.
-Composition: `analyze_pdf_page(page_data) -> PDFPageMetrics`, `classify_pdf_page(metrics) -> "TEXT" | "IMAGE" | "MIXED"`.
-Entry points: `process_pdf(request) -> PDFResult`, `process_pdf_page(...) -> PDFPageResult`.
-Validation: `validate_pdf_result(result)`, `validate_pdf_page_result(page_result)`.
+One reader per concern, so two functions can never report different things about the same
+page:
+
+- Document inspection: `inspect_pdf(pdf_path)` — one seam call returning the document
+  metadata, the page count and the per-page dimensions. The narrow readers
+  (`get_pdf_metadata`, `get_page_count`, `get_page_dimensions`) are folded into it rather
+  than kept beside it.
+- Split/merge: `extract_page(pdf_path, page_number, output_path)`,
+  `split_pdf(pdf_path, output_dir)`, `merge_pdfs(pdf_paths, output_path)` (`# TODO: [MVP]`:
+  generic utility, off the happy path).
+- Render: `render_page_to_image(pdf_path, page_number, output_path, dpi=200)`.
+- Native text: `extract_text_from_page(pdf_path, page_number, layout=True)` — returns the
+  text and its ordered blocks from the same read, so `text.txt` and `blocks.json` cannot
+  describe two different reads (`get_text_blocks` is not built).
+- Embedded images: `extract_images_from_page(pdf_path, page_number, output_dir)` — returns
+  the written files together with their `EmbeddedImage` records (`get_image_blocks` is not
+  built).
+- Composition: `analyze_pdf_page(page_data) -> PDFPageMetrics`,
+  `classify_pdf_page(metrics) -> "TEXT" | "IMAGE" | "MIXED"`.
+- Entry points: `process_pdf(request) -> PDFResult`, `process_pdf_page(...) -> PDFPageResult`.
+- Validation: `validate_pdf_result(result)`, `validate_pdf_page_result(page_result)`.
 
 The primitives know PDF libraries; they do **not** know OpenCV, OCR, Docling, LLM or the workflow.
 
@@ -187,11 +199,11 @@ Typed results, not thrown exceptions, where a result is the contract. Failures a
 |---|---|---|---|
 | PDF-01 | Contract types: `PDFRequest`, `PDFResult`, `PDFPageResult`, `PDFPageMetrics`, `PDFError`, statuses | S | — |
 | PDF-02 | Poppler primitives skeleton in `pdf/primitives/` (encapsulation, no silent default) | M | PDF-01 |
-| PDF-03 | Document primitives: `get_pdf_metadata`, `get_page_count`, `get_page_dimensions`, `inspect_pdf` | M | PDF-02 |
+| PDF-03 | Document inspection primitive: `inspect_pdf` (metadata + page count + per-page dimensions from one call) | M | PDF-02 |
 | PDF-04 | Split/extract primitives: `extract_page`, `split_pdf`, `merge_pdfs` (`# TODO: [MVP]` — `merge_pdfs` is a generic utility, not on the happy path) | M | PDF-02 |
 | PDF-05 | Render primitive: `render_page_to_image` | S | PDF-02 |
-| PDF-06 | Native text primitives: `extract_text_from_page`, `get_text_blocks` | M | PDF-02 |
-| PDF-07 | Embedded image primitives: `extract_images_from_page`, `get_image_blocks` | M | PDF-02 |
+| PDF-06 | Native text primitive: `extract_text_from_page` (text + ordered blocks from one read) | M | PDF-02 |
+| PDF-07 | Embedded image primitive: `extract_images_from_page` (files + records from one call) | M | PDF-02 |
 | PDF-08 | Composition: `analyze_pdf_page`, `classify_pdf_page` (explicit named thresholds) | S | PDF-02 |
 | PDF-09 | Page entry point: `process_pdf_page` + per-page metadata | M | PDF-04, PDF-05, PDF-06, PDF-07, PDF-08 |
 | PDF-10 | Document entry point: `process_pdf` + consolidation + `PDFResult` | M | PDF-03, PDF-09 |
@@ -261,7 +273,7 @@ matching the ownership namespace exactly (no files under `image/`, `ocr/`, `llm/
 ### Invariant tests (must-fail rule)
 Each invariant test must FAIL when the invariant is broken — proven by mutating the source, observing the failure, then restoring green.
 
-1. **Page completeness.** Every input page yields exactly one `PDFPageResult` and one `page_NNN/` directory, and `PDFResult.metadata.page_count == len(PDFResult.pages) == get_page_count(pdf_path)`.
+1. **Page completeness.** Every input page yields exactly one `PDFPageResult` and one `page_NNN/` directory, and `PDFResult.metadata.page_count == len(PDFResult.pages) == inspect_pdf(pdf_path)` page count.
    *Mutation that breaks it:* in `process_pdf`, iterate `range(page_count - 1)` (drop the last page) or return `pages[:1]`. The test fails on the count/coverage mismatch.
 2. **Immutable input.** The SHA-256 of the input PDF is identical before and after `process_pdf`.
    *Mutation that breaks it:* make `extract_page` write its output to `request.pdf_path` (overwriting the source) instead of `page_001/source/page.pdf`. The before/after hash comparison fails.
@@ -307,6 +319,7 @@ covered the same way once `PDF-11` fixes where the check sits.
 - No domain noun (invoice, field, verdict, pipeline code) in the processor API; all identifiers/docstrings/comments in English.
 - Artifacts are published atomically (`.tmp` → validate → rename); the input PDF is never modified.
 - Metadata records `processor`, `processor_version`, `engine`, `engine_version`; options are normalized; page order preserved.
+- The primitive surface is the one in §3: no second reader for an engine call already covered (`inspect_pdf`, `extract_text_from_page`, `extract_images_from_page`).
 - Every shortcut carries an explicit `# TODO: [MVP]` or `# TODO: [RELEASE]` tag.
 - Each invariant test has been proven to fail under its stated mutation, then restored green.
 - The four QA gates pass:
@@ -349,7 +362,14 @@ pylint src tests
 3. **Render defaults — RESOLVED:** `dpi = 200`, PNG as the only render format for Phase 1.
 4. **`merge_pdfs` scope — RESOLVED:** defer to a later phase (not on the happy path).
 5. **Layout — RESOLVED:** sub-package `pdf/` with `primitives/`, `utils/`, `helpers/`,
-   matching the idea's §"Estructura del proyecto".
+   matching the idea's §"Estructura del proyecto"; `utils/` and `helpers/` are reserved and
+   stay empty in Phase 1, since a symbol belongs there only when it has more than one caller.
 6. **Naming mapping — RESOLVED:** code and modules use the English names the idea itself
    uses (`docflow.pdf`, `process_pdf`, `process_pdf_page`); the Spanish
    `procesador-pdf` remains only as the title of the idea document.
+7. **Primitive surface — RESOLVED for PoC:** one reader per concern. `get_pdf_metadata`,
+   `get_page_count`, `get_page_dimensions`, `get_text_blocks` and `get_image_blocks` are not
+   built: `inspect_pdf`, `extract_text_from_page` and `extract_images_from_page` already
+   return what they returned, and two paths to the same engine call is how a page count starts
+   disagreeing with itself. `docs/idea/procesador-pdf.md` names more primitives; the
+   divergence is deliberate and recorded for `GEN-17`.

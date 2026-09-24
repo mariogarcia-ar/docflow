@@ -114,18 +114,20 @@ All persistence lives under the processor-owned namespace **`llm/`**, e.g.:
 ```text
 llm/
 └── run_001/
-    ├── state.json
-    ├── graph.json
-    ├── classify/{result.json, metadata.json, attempts/}
-    ├── extract_a/{...}
-    ├── extract_b/{...}
-    ├── compare/{...}
+    ├── state.json            # the graph state, one file
     └── final_result.json
 ```
 
 Outputs are published atomically: write to `*.tmp`, validate, then rename to the final
 name. `LLMGraphState` is internal to this module and never replaces the orchestrator's
 `DocumentContext` / `PageContext` / `StageExecution`.
+
+The per-node artifact tree (`classify/{result.json, metadata.json, attempts/}`, …) is
+deferred with the rest of the dynamic machinery (§9.6): Phase 1 keeps the state in memory
+first and persists the two files above, so a run is inspectable without inventing a
+directory schema nothing reads yet. `LLMGraphState` keeps the fields that machinery needs
+(`current_nodes`, `stop_requested`, per-node `INVALIDATE`); each deferred field is named in
+§9.6 rather than left silently empty.
 
 ### Internal flow (including the inference subgraph)
 
@@ -152,12 +154,11 @@ flowchart TB
     REUSE --> NEXT
     OK --> PERSIST["persist atomically (llm/)"]
     FAIL --> PERSIST
-    PERSIST --> NEXT["resolve next nodes / routing / parallel"]
-    NEXT --> GRAPH{"subgraph complete?"}
+    PERSIST --> NEXT["resolve the next node in the chain"]
+    NEXT --> GRAPH{"chain complete?"}
     GRAPH -->|no| RESOLVE
-    GRAPH -->|yes| COMPARE["compare outputs"]
-    COMPARE --> CONSENSUS["calculate consensus"]
-    CONSENSUS --> CONSOL["consolidate"]
+    GRAPH -->|yes| COMPARE["compare outputs per field"]
+    COMPARE --> CONSOL["consolidate"]
     CONSOL --> OUT["LLMResult"]
 
     subgraph SG["Internal inference subgraph"]
@@ -176,11 +177,13 @@ flowchart TB
 | Level | Owner | Decides |
 |---|---|---|
 | Documental stage | `procesador-orquestador` | whether the LLM stage runs at all: `EXECUTE` / `REUSE` / `SKIP` / `FORCE` / `INVALIDATE` |
-| Inference subgraph | `procesador-llm-call` | how the stage's internals run: `classify → extract_a/extract_b → compare → validate → consolidate`, per-node `EXECUTE` / `REUSE` / `SKIP` / `FORCE` / `RETRY` / `INVALIDATE` |
+| Inference subgraph | `procesador-llm-call` | how the stage's internals run: `classify → extract_a/extract_b → compare → validate → consolidate`, per-node `EXECUTE` / `REUSE` / `RETRY` |
 
 The orchestrator owns the LLM stage as a whole; this processor owns only what happens
 inside that stage. The interface is `LLMInput → LLMResult` and remains explicit: a node
-`FORCE` never becomes a decision about OCR, PDF or images.
+action never becomes a decision about OCR, PDF or images. The other node actions
+(`SKIP` / `FORCE` / `INVALIDATE`) belong to the deferred machinery of §9.6 — Phase 1 ships
+the three the linear chain needs.
 
 ### request_key formula
 
@@ -214,9 +217,15 @@ AND the persisted result is valid (schema + artifact present)
 ```
 
 A node is re-executed only when there is no result, the result is invalid, inputs changed,
-the prompt changed, the schema changed, the model changed, the options changed, the node
-was invalidated downstream, or an explicit `FORCE` was requested. In every other case:
-`REUSE`.
+the prompt changed, the schema changed, the model changed or the options changed. In every
+other case: `REUSE`. The two remaining reasons — downstream invalidation and an explicit
+`FORCE` — arrive with the deferred machinery of §9.6, not before it.
+
+The rule is deliberately the same three lines as the orchestrator's reuse rule
+(`subplan-orquestador.md` §3.4) instead of a shared abstraction: at stage level the artifact
+validator is a hash check, at node level it is a schema-and-artifact check, and a helper
+that unified the two would couple the documental level to the inference level for the sake
+of a comparison. Three lines twice is cheaper than that coupling.
 
 ### Provider encapsulation
 
@@ -257,18 +266,18 @@ graph; a retry always preserves prior attempts (`LLMAttempt` history). Documenta
 | LLM-07 | Parse + schema validation (`load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result`) | M | LLM-06 |
 | LLM-08 | Retry + attempt history (`retry_llm_request`, `should_retry`, `increment_attempt`) | M | LLM-07 |
 | LLM-09 | Provider primitives: Ollama local + OpenAI-compatible (`# TODO: [MVP]` real transport) | L | LLM-02 |
-| LLM-10 | Node execution: `process_llm_node`, node-state transitions, `claim_node` atomic `READY→RUNNING` | M | LLM-06 |
-| LLM-11 | Graph persistence in `llm/` namespace, atomic writes, load/save of `LLMGraphState` | L | LLM-01 |
-| LLM-12 | `execute_llm_graph`: dependencies, routing, parallel branches, subgraph lifecycle | L | LLM-10, LLM-11 |
-| LLM-13 | Resume / stop / skip / force: `resume_llm_graph`, `request_graph_stop`, `invalidate_downstream_nodes` | L | LLM-12 |
-| LLM-14 | Comparison / consensus / consolidate: `compare_outputs`, `calculate_consensus` | M | LLM-12 |
+| LLM-10 | Node execution: `process_llm_node` + node-state transitions, one node at a time (`claim_node` and multi-worker claims deferred, `# TODO: [MVP]`) | M | LLM-06 |
+| LLM-11 | Graph persistence in `llm/`: one `state.json` + `final_result.json`, atomic writes, load/save of `LLMGraphState` (per-node artifact tree deferred, `# TODO: [MVP]`) | L | LLM-01 |
+| LLM-12 | `execute_llm_graph` over the fixed linear chain: node order, node reuse, completion detection (routing, parallel branches, subgraph lifecycle deferred, `# TODO: [MVP]`) | L | LLM-10, LLM-11 |
+| LLM-13 | Node reuse on restart: a `SUCCESS` node with a matching `request_key` is reused and only the pending nodes run (`request_graph_stop`, `SKIP` / `FORCE` / `INVALIDATE`, `invalidate_downstream_nodes` deferred, `# TODO: [MVP]`) | L | LLM-12 |
+| LLM-14 | Per-field comparison and consolidation: `compare_outputs` (`calculate_consensus` deferred, `# TODO: [MVP]`) | M | LLM-12 |
 | LLM-15 | Usage, timing and context-window control (`count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded`) | M | LLM-06 |
 
 ### Waves
 
 - **Wave 1 (contracts & primitives):** LLM-01 → LLM-02 → LLM-03; LLM-04 and LLM-05 depend only on LLM-01 and run in parallel with the provider seam (LLM-02/LLM-03).
 - **Wave 2 (single call):** LLM-06 → LLM-07 → LLM-08; LLM-09 in parallel after LLM-02; LLM-15 also starts here (its only predecessor is LLM-06).
-- **Wave 3 (internal graph):** LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12. LLM-15 is completed in Wave 2 by its declared dependency.
+- **Wave 3 (linear inference chain):** LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12. LLM-15 is completed in Wave 2 by its declared dependency. The chain is fixed and sequential; the dynamic machinery is deferred (§9.6).
 
 Each wave ends with the four QA gates green and its happy-path/invariant tests passing.
 
@@ -282,17 +291,11 @@ Scenario: Single call produces a validated result
     a non-empty request_key, and one attempt recorded with usage and timing
 
 Scenario: Restart reuses valid nodes and re-runs only pending ones
-  Given a partially-executed graph state where classify and extract_a are SUCCESS
+  Given a partially-executed chain state where classify and extract_a are SUCCESS
     and extract_b is FAILED
-  When resume_llm_graph is invoked with the same run_id and inputs
+  When the chain is resumed with the same run_id and inputs
   Then classify and extract_a are marked REUSED without new provider calls,
     and extract_b, compare, validate, consolidate are EXECUTED
-
-Scenario: Forcing a node invalidates its downstream dependents
-  Given a completed graph where all nodes are SUCCESS
-  When force is requested on extract_b
-  Then extract_b is re-executed and compare, validate and consolidate
-    transition to INVALIDATED and re-run
 
 Scenario: A retryable invalid response is retried and prior attempts are kept
   Given the fake provider returns invalid JSON on attempt 1 and valid JSON on attempt 2
@@ -300,6 +303,10 @@ Scenario: A retryable invalid response is retried and prior attempts are kept
   Then the result is SUCCESS, the attempt history contains both attempts,
     and the attempt ids differ while the request_key stays identical
 ```
+
+Node-level `FORCE` / `SKIP` / `STOP` and the downstream invalidation they imply are deferred
+with the machinery of §9.6; the documental level keeps its own force semantics, which do not
+depend on this processor (`ORC-09`).
 
 ## 6. Test plan
 
@@ -325,12 +332,14 @@ reports `status == "SUCCESS"`, `schema_valid == true`, non-empty `usage` and `ti
    *Mutation that breaks it:* add `run_id` (or a nonce/timestamp) to the hash input — the
    test then gets different keys for two calls that differ only in `run_id`.
 
-3. **Downstream invalidation on force.**
+3. **Downstream invalidation on force — deferred with §9.6 (`# TODO: [MVP]`).**
    *Invariant:* forcing an upstream node invalidates all its transitive dependents
    (`extract_b → compare → validate → consolidate`).
    *Mutation that breaks it:* remove the `invalidate_downstream_nodes` call from the force
    path — after forcing `extract_b`, `compare`/`validate`/`consolidate` remain `SUCCESS` and
    the test fails.
+   Kept here, numbered, so the citations that already point at invariant 3 stay resolvable.
+   The documental-level equivalent is live (`ORC-09`, `ORC-19` invariant 2).
 
 ### Fixtures needed
 
@@ -366,12 +375,14 @@ mistake; this line exists so nobody tries.
 
 ### Definition of Done
 
-- `docflow.llm` implements the single call and the internal subgraph with providers
-  reached only through `llm/primitives/`; no import of another processor; no domain noun in any API.
+- `docflow.llm` implements the single call and the fixed linear inference chain, with
+  providers reached only through `llm/primitives/`; no import of another processor; no domain
+  noun in any API. The deferred machinery is absent, not stubbed.
 - Every shortcut carries an explicit `# TODO: [MVP]` (real provider transport, real
   persistence) or `# TODO: [RELEASE]` (telemetry, HA, caching).
-- The happy-path test and the three invariant tests in §6 pass, and each invariant test has
-  been proven to fail under its documented mutation, then restored green.
+- The happy-path test and invariants 1 and 2 in §6 pass, and each has been proven to fail
+  under its documented mutation, then restored green. Invariant 3 lands with the deferred
+  machinery (§9.6) and is not claimed here.
 - Artifacts are persisted atomically (`*.tmp` → validate → rename) under `llm/`.
 - The four QA gates all pass:
 
@@ -387,7 +398,7 @@ pylint src tests
 | Risk | Impact | Mitigation |
 |---|---|---|
 | Repeating expensive LLM calls on restart | Cost, latency | `request_key` + reuse rule; invariant test 1 proves no re-call; persisted `SUCCESS` artifacts |
-| Race condition: two workers run the same node | Double cost, conflicting results | Atomic `claim_node` `READY→RUNNING` transition; only one owner per `run_id` |
+| Race condition: two workers run the same node | Double cost, conflicting results | Phase 1 runs the chain sequentially under a single owner, so the race cannot arise; `claim_node` `READY→RUNNING` lands with the deferred machinery (§9.6, `# TODO: [MVP]`) |
 | Silent invalid output reported as correct | Wrong result marked valid | Mandatory structural/schema validation; failed nodes reported as typed `FAILED`, never swallowed |
 | Provider/model drift (Ollama, vLLM, hosted API) | Silent output differences | Provider + model + model_version in `request_key`; usage/timing recorded per attempt |
 | Context overflow / truncated prompt | Degraded extraction | Explicit `count_tokens` / `truncate_to_token_limit` with metadata, never silent truncation |
@@ -403,6 +414,12 @@ pylint src tests
 - Real GPU-competition policy and production retry queues (`# TODO: [RELEASE]`).
 - Domain-specific extraction rules; prompts and schemas are data assets, not code.
 - Observability/telemetry beyond per-attempt `usage`/`timing` records.
+- The inference subgraph's dynamic machinery: `claim_node` and multi-worker claims, parallel
+  branches, per-node `SKIP` / `FORCE` / `INVALIDATE`, `request_graph_stop`,
+  `resume_llm_graph`, `invalidate_downstream_nodes`, the per-node artifact tree and
+  `calculate_consensus`. Phase 1 executes a fixed linear chain with node reuse; the rest is
+  deferred to the MVP gate, tagged `# TODO: [MVP]` in `LLM-10`…`LLM-14` (`# TODO: [RELEASE]`
+  where the item is production hardening rather than workflow).
 
 ### Resolved decisions
 
@@ -418,3 +435,12 @@ pylint src tests
    (`# TODO: [MVP]`); no schema/DB introduced in Phase 1.
 5. **`model_version` source — RESOLVED:** from the provider's `get_model_info` when
    available, else `LLMInput.metadata`; it is part of `request_key` either way.
+6. **Subgraph machinery — RESOLVED for PoC:** Phase 1 executes the inference graph as a
+   **fixed linear chain** (`classify → extract_a → extract_b → compare → validate →
+   consolidate`) with node reuse by `request_key`. The dynamic machinery — `claim_node`,
+   parallel branches, per-node `SKIP` / `FORCE` / `INVALIDATE`, `request_graph_stop`,
+   `resume_llm_graph`, `invalidate_downstream_nodes`, the per-node artifact tree and
+   `calculate_consensus` — is deferred to the MVP gate and tagged `# TODO: [MVP]` inside the
+   tasks that carried it (`LLM-10`…`LLM-14`). The rows are re-scoped, never renumbered: no ID
+   changes and every range citation stays valid. Effort is left as estimated; a re-estimation
+   is a separate pass.
