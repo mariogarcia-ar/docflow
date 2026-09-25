@@ -3,17 +3,22 @@
 Proves the Phase 0 exit for this contract: ``PDFRequest → PDFResult`` round-trips an
 in-memory fake end to end *before* any real engine exists. The fake reads nothing and
 writes nothing; it replaces ``process_pdf`` so the contract itself is what is under test.
+
+The failure vocabulary is guarded here too: it is the list the subplan fixes, and the
+primitive layer's error mapping is written against it.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import get_args
 
 import pytest
 
 from docflow.pdf import (
     EmbeddedImage,
     PDFContext,
+    PDFErrorType,
     PDFMetadata,
     PDFPageMetadata,
     PDFPageMetrics,
@@ -153,3 +158,26 @@ def test_a_result_without_a_page_is_not_produced_by_the_fake(tmp_path: Path) -> 
 
     assert len(result.pages) == result.metadata.page_count
     assert result.pages
+
+
+def test_the_failure_kinds_are_exactly_the_documented_ten() -> None:
+    """``PDF-01``: the failed-run vocabulary, and nothing else.
+
+    The expected list is restated here on purpose: deriving it from ``PDFErrorType`` would
+    make the assertion tautological, and the restatement is what lets the test fail when a
+    kind drifts away from the subplan. That restatement is also why the lines resemble the
+    source literal, so ``duplicate-code`` does not apply to this function.
+    """
+    # pylint: disable=duplicate-code
+    assert get_args(PDFErrorType) == (
+        "INVALID_INPUT",
+        "UNSUPPORTED_PDF",
+        "ENCRYPTED_PDF",
+        "CORRUPTED_PDF",
+        "PAGE_EXTRACTION_ERROR",
+        "RENDER_ERROR",
+        "TEXT_EXTRACTION_ERROR",
+        "IMAGE_EXTRACTION_ERROR",
+        "IO_ERROR",
+        "INTERNAL_ERROR",
+    )

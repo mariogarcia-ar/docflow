@@ -29,7 +29,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.factories import build_document_request, build_pdf_request
+from tests.factories import (
+    build_document_request,
+    build_image_request,
+    build_llm_input,
+    build_ocr_request,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -250,18 +255,32 @@ def test_no_contract_field_carries_an_undocumented_default() -> None:
 
 
 def test_a_stub_raises_instead_of_returning_a_placeholder() -> None:
-    """A caller can never mistake a Phase 0 stub for a processed document."""
+    """A caller can never mistake a stub for a processed document.
+
+    The processors implemented in Phase 1 leave this list as they land: ``pdf`` did, so the
+    check now covers the entry points that are still Phase 0 stubs.
+    """
     workflow_module = importlib.import_module("docflow.workflow")
-    pdf_module = importlib.import_module("docflow.pdf")
+    image_module = importlib.import_module("docflow.image")
+    ocr_module = importlib.import_module("docflow.ocr")
+    llm_module = importlib.import_module("docflow.llm")
 
     document_request = build_document_request(Path("."))
-    pdf_request = build_pdf_request(Path("."))
+    image_request = build_image_request(Path("."))
+    ocr_request = build_ocr_request(Path("."))
+    llm_input = build_llm_input()
 
     with pytest.raises(NotImplementedError):
         workflow_module.process_document(document_request)
 
     with pytest.raises(NotImplementedError):
-        pdf_module.process_pdf_page(pdf_request, 1, Path("page_001"))
+        image_module.process_image(image_request)
+
+    with pytest.raises(NotImplementedError):
+        ocr_module.process_ocr_image(ocr_request)
+
+    with pytest.raises(NotImplementedError):
+        llm_module.process_llm_request(llm_input)
 
 
 def test_a_processor_reports_a_state_without_importing_the_orchestrator() -> None:

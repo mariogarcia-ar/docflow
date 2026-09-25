@@ -35,18 +35,20 @@ PDFPageValidationState = Literal[
 # Descriptive only: it describes what the page natively contains. It never routes.
 PDFPageClassification = Literal["TEXT", "IMAGE", "MIXED"]
 
-# Typed failure classification (`PDF-03`, `PDF-11`): never an exception across the
-# contract, never a silent substitute.
+# Typed failure classification, exactly as `subplan-procesador-pdf.md` §3.7 fixes it:
+# never an exception across the contract, never a silent substitute. The engine-signal →
+# name mapping lives in `docflow.pdf.primitives`, which is the only place that reads an
+# exit code. A missing file, a page outside the document and a page-range fault are all
+# decided before or beside the engine and land on `INVALID_INPUT` / `PAGE_EXTRACTION_ERROR`.
 PDFErrorType = Literal[
-    "MISSING_FILE",
+    "INVALID_INPUT",
+    "UNSUPPORTED_PDF",
     "ENCRYPTED_PDF",
     "CORRUPTED_PDF",
-    "UNSUPPORTED_PDF",
-    "PAGE_OUT_OF_RANGE",
+    "PAGE_EXTRACTION_ERROR",
     "RENDER_ERROR",
     "TEXT_EXTRACTION_ERROR",
     "IMAGE_EXTRACTION_ERROR",
-    "WRITE_ERROR",
     "IO_ERROR",
     "INTERNAL_ERROR",
 ]
@@ -55,6 +57,9 @@ PDFErrorType = Literal[
 @dataclass(frozen=True)
 class PDFOptions:
     """Requested capabilities; the processor runs exactly what is requested.
+
+    TODO: [MVP] the combinations are not cross-validated: `layout` without `extract_text`,
+    say, is accepted and simply has no effect.
 
     Attributes:
         extract_pages: Produce a self-contained one-page PDF per page.
@@ -192,7 +197,8 @@ class PDFPageValidation:
 
     Attributes:
         status: Validation state.
-        errors: Failures found while validating.
+        errors: Failures found while validating, including the processing failure that
+            explains a missing artifact: a partial page reports why through here.
         missing_artifacts: Artifacts the validation expected and did not find.
     """
 
@@ -209,7 +215,9 @@ class PDFPageMetadata:
         processor: Processor name.
         processor_version: Processor version.
         engine: Named engine; never a silent substitute.
-        engine_version: Engine version.
+        engine_version: Engine version, or ``None`` when no engine call was reached
+            (a pre-engine failure, e.g. an unreadable input). ``None`` states that the
+            version is unknown; it is never a placeholder standing in for a real one.
         context: Correlation metadata echoed from the request.
         timing: Wall-clock durations by stage.
     """
@@ -217,7 +225,7 @@ class PDFPageMetadata:
     processor: str
     processor_version: str
     engine: str
-    engine_version: str
+    engine_version: str | None
     context: PDFContext
     timing: dict[str, float]
 
@@ -278,8 +286,10 @@ class PDFMetadata:
         processor: Processor name.
         processor_version: Processor version.
         engine: Named engine.
-        engine_version: Engine version.
-        page_count: Pages the engine reported for the document.
+        engine_version: Engine version, or ``None`` when no engine call was reached
+            (a pre-engine failure); never a placeholder.
+        page_count: Pages the engine reported for the document, or ``0`` when inspection
+            never ran, which is the count of pages actually produced.
         context: Correlation metadata echoed from the request.
         timing: Wall-clock durations by stage.
     """
@@ -287,7 +297,7 @@ class PDFMetadata:
     processor: str
     processor_version: str
     engine: str
-    engine_version: str
+    engine_version: str | None
     page_count: int
     context: PDFContext
     timing: dict[str, float]
