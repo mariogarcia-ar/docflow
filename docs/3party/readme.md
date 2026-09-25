@@ -259,7 +259,13 @@ utility page, and each page now carries the same question in its own §K.
       the Xpdf exit codes `0 / 1 / 2 / 3 / 99` are common to the man pages of all these
       binaries, and the `pdf2image` precedent (treat `b"Syntax Error"` in stderr as fatal)
       supplies the stderr half. The mapping table lives in `poppler.md` §G; which failures are
-      pre-engine (`validate_pdf`) rather than injected is recorded there too.
+      pre-engine (`validate_pdf`) rather than injected is recorded there too. **Refined
+      2026-09-25:** exit 99 also carries a *range* fault (`Wrong page range given`), which is
+      `PAGE_OUT_OF_RANGE` — the code alone cannot decide the type, only code + stderr can.
+- [x] `poppler`: which binary renders a page — **answered**: `pdftoppm`, with
+      `-png -r <dpi> -f <n> -l <n> -singlefile`; `pdftocairo` is reached only when a format needs
+      it or a transparent background is wanted. Verified against the installed 25.02.0
+      (`poppler.md` §D, §K); the decision itself lands in `PDF-05`.
 - [x] `poppler`: how `engine_version` is read and normalized — **answered**: `<bin> -v` on
       each binary, two lines, take the token after `version` (`poppler.md` §B).
 - [x] `docling`: the reading path behind `get_engine_version` (`OCR-02`) — **answered**:
@@ -268,11 +274,9 @@ utility page, and each page now carries the same question in its own §K.
 - [x] `ollama`: which endpoint answers `check_model_available` and `get_context_window` —
       **answered**: `GET /api/tags` (membership, and a SHA256 digest per model) and
       `POST /api/show` (`parameters`, incl. `num_ctx`) — `ollama.md` §D.
-- [ ] `poppler`: which binary renders a page — `pdftoppm` or `pdftocairo`? `PDF-05` defines
-      `render_page_to_image` but the subplan names only `pdftotext` / `pdfimages` /
-      `pdfseparate` as the encapsulated binaries. Both candidates are documented in
-      `poppler.md` §D; the choice is still `TBD`.
 - [ ] `poppler`: the GPL licence posture and whether the PoC ships the binary at all.
+      **Release gate** — the PoC calls the binary and redistributes nothing, so the constraint
+      lands only if that changes; the variant is read from the upstream `COPYING` then.
 - [ ] `opencv` / `pillow`: which wheel to pin (`opencv-python` vs `-headless`) and which of
       the closed primitive list requires OpenCV only — `opencv.md` §K names the four with no
       Pillow equivalent, but the swap is not attempted.
