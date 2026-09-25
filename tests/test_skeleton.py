@@ -31,7 +31,6 @@ import pytest
 
 from tests.factories import (
     build_document_request,
-    build_image_request,
     build_llm_input,
     build_ocr_request,
 )
@@ -257,24 +256,19 @@ def test_no_contract_field_carries_an_undocumented_default() -> None:
 def test_a_stub_raises_instead_of_returning_a_placeholder() -> None:
     """A caller can never mistake a stub for a processed document.
 
-    The processors implemented in Phase 1 leave this list as they land: ``pdf`` did, so the
-    check now covers the entry points that are still Phase 0 stubs.
+    The processors implemented in Phase 1 leave this list as they land: ``pdf`` did, then
+    ``image``, so the check now covers the entry points that are still Phase 0 stubs.
     """
     workflow_module = importlib.import_module("docflow.workflow")
-    image_module = importlib.import_module("docflow.image")
     ocr_module = importlib.import_module("docflow.ocr")
     llm_module = importlib.import_module("docflow.llm")
 
     document_request = build_document_request(Path("."))
-    image_request = build_image_request(Path("."))
     ocr_request = build_ocr_request(Path("."))
     llm_input = build_llm_input()
 
     with pytest.raises(NotImplementedError):
         workflow_module.process_document(document_request)
-
-    with pytest.raises(NotImplementedError):
-        image_module.process_image(image_request)
 
     with pytest.raises(NotImplementedError):
         ocr_module.process_ocr_image(ocr_request)
@@ -308,12 +302,14 @@ def test_a_processor_reports_a_state_without_importing_the_orchestrator() -> Non
     assert completed.returncode == 0, completed.stderr
 
 
-def test_importing_one_processor_does_not_import_another() -> None:
+@pytest.mark.parametrize("processor", ["docflow.pdf", "docflow.image"])
+def test_importing_one_processor_does_not_import_another(processor: str) -> None:
     """No processor imports another processor: only the orchestrator composes them."""
+    others = [name for name in SUB_PACKAGES if name != processor]
     code = (
         "import sys\n"
-        "import docflow.pdf, docflow.ocr\n"
-        "for other in ('docflow.image', 'docflow.llm', 'docflow.workflow'):\n"
+        f"import {processor}\n"
+        f"for other in {others!r}:\n"
         "    assert other not in sys.modules, f'{other} was imported'\n"
     )
 

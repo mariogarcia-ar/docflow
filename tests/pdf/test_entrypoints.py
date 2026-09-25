@@ -6,7 +6,6 @@ about our loop, our naming, our ordering and our error mapping.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import tomllib
 from collections.abc import Callable, Mapping
@@ -30,6 +29,7 @@ from tests.pdf.samples import (
     mixed_document,
     text_document,
 )
+from tests.support import files_under, sha256_of
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 PAGE_DIRECTORIES = ("page_001", "page_002", "page_003")
@@ -40,20 +40,6 @@ PAGE_ARTIFACTS = (
     "native_text/blocks.json",
     "metadata.json",
 )
-
-
-def sha256_of(path: Path) -> str:
-    """Return the digest of a file, so a test can prove it was not rewritten."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def files_under(directory: Path) -> set[str]:
-    """Return every file below ``directory``, as paths relative to it."""
-    return {
-        path.relative_to(directory).as_posix()
-        for path in directory.rglob("*")
-        if path.is_file()
-    }
 
 
 def test_the_happy_path_processes_every_page_and_publishes_its_namespace(

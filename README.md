@@ -20,28 +20,35 @@ Three properties are non-negotiable, and most of the rules below exist to protec
 
 ---
 
-## Status: Phase 1 — the PDF processor is implemented
+## Status: Phase 1 — the PDF and image processors are implemented
 
-Contracts, the stage-state vocabulary, the three identities and the tooling exist, and
-**`docflow.pdf` is complete** (`PDF-01`…`PDF-14`): it turns a `PDFRequest` into a
-`PDFResult` with one self-contained unit per page, publishes the artifact tree atomically,
-and runs its whole suite on an in-memory Poppler double — no engine is installed or reached.
+Contracts, the stage-state vocabulary, the three identities and the tooling exist, and two of
+the four processors are complete:
 
-The other three processors are still typed signatures whose bodies raise:
+- **`docflow.pdf`** (`PDF-01`…`PDF-14`) turns a `PDFRequest` into a `PDFResult` with one
+  self-contained unit per page and a per-page artifact tree, published atomically;
+- **`docflow.image`** (`IMG-01`…`IMG-15`) turns an `ImageRequest` into an `ImageResult` with a
+  `normalized.png` plus independent `ocr_ready.png` / `vlm_ready.png` variants, a measured
+  `metadata.json` and a typed failure instead of a partial artifact.
+
+Both run their whole suites on in-memory engine doubles — no engine is installed, imported or
+reached.
+
+The other two processors are still typed signatures whose bodies raise:
 
 ```python
->>> import docflow.image as image
->>> image.process_image(request)
-NotImplementedError: process_image is implemented in Phase 1 by IMG-12
+>>> import docflow.ocr as ocr
+>>> ocr.process_ocr_image(request)
+NotImplementedError: process_ocr_image is implemented in Phase 1 by OCR-13
 ```
 
-That is deliberate. A stub that raised is honest; a stub that returned an empty `ImageResult`
+That is deliberate. A stub that raised is honest; a stub that returned an empty `OCRResult`
 would be a silent stand-in, which this project forbids at every stage.
 
 | Phase | What | Owner |
 |---|---|---|
 | **0 — contracts & skeleton** | ✅ **done** | `GEN-01`…`GEN-06` |
-| 1 — processors, independently | ✅ `pdf` (`PDF-01`…`PDF-14`) · `image`, `ocr`, `llm` | `IMG-01`…`IMG-14`, `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
+| 1 — processors, independently | ✅ `pdf` (`PDF-01`…`PDF-14`) · `image` (`IMG-01`…`IMG-15`) · `ocr`, `llm` | `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` || 5 — lab tools | one operator CLI per processor | `GEN-21`, `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` |
@@ -51,8 +58,8 @@ would be a silent stand-in, which this project forbids at every stage.
 
 - **Python ≥ 3.11** (the shared vocabulary uses `enum.StrEnum`). Verified on 3.13.9.
 - No engine is required to run anything in this repository. Poppler is the PDF processor's
-  engine in production, reachable only from `pdf/primitives/`, and the suite drives it through
-  an in-memory double instead of installing it.
+  engine in production and OpenCV the image processor's, each reachable only from its own
+  `primitives/`, and both suites drive an in-memory double instead of installing one.
 
 ## Setup
 
@@ -197,8 +204,34 @@ define them, and there is a test that enforces it.
 
 ## What works today
 
-The stage-state vocabulary and the three identities are the shared seam; `docflow.pdf` is the
-first processor implemented end to end against it.
+The stage-state vocabulary and the three identities are the shared seam; `docflow.pdf` and
+`docflow.image` are implemented end to end against it.
+
+### The image processor
+
+Analyses one image, measures its quality, normalizes it and prepares the two representations
+later stages may request. OpenCV is reached only from `image/primitives/`, and it is reached
+through one seam — the module attribute `docflow.image.primitives.cv2`, which the tests patch:
+
+```python
+from docflow.image import ImageRequest
+from docflow.image.entrypoints import process_image
+
+result = process_image(request)  # ImageRequest → ImageResult, one per image
+result.status  # 'success' | 'failed'
+result.classification  # 'TEXT_IMAGE' | 'VISUAL_IMAGE' | 'MIXED_IMAGE' | 'LOW_QUALITY'
+```
+
+* `request.output_dir` *is* the `image/` namespace: `normalized.png`, the requested variants and
+  `metadata.json`. Nothing is written outside it, and an input is never written to.
+* **OCR and VLM are never assumed equal.** `prepare_image_for_ocr` produces a single-channel,
+  binarized representation; `prepare_image_for_vlm` keeps colour and layout. Each pipeline
+  records the transformations it applied, per variant, in `metadata.json`.
+* **Absence is stated, never faked.** A decode that fails has no geometry, no readings and no
+  classification, so those fields are `None` — never a `0`, a default engine or a default
+  classification standing in for an answer nobody observed.
+* The engine's two silent habits are the seam's job: `imread` returning `None` becomes a typed
+  `DECODE_ERROR`, and `imwrite` returning `False` becomes `WRITE_ERROR`.
 
 ### The PDF processor
 
@@ -294,7 +327,7 @@ All four must pass before any task is `done`. Config lives entirely in `pyprojec
 not add a second `setup.cfg`, `tox.ini` or `pylintrc`.
 
 ```bash
-pytest                     # 143 passed
+pytest                     # 228 passed
 ruff check .               # linter, includes import order
 ruff format --check .      # formatter — this owns line length, not E501
 pylint src tests           # 10.00/10
@@ -302,11 +335,11 @@ pylint src tests           # 10.00/10
 
 The whole suite runs with **no engine installed and no engine reached**: Poppler, OpenCV,
 Docling and the provider SDKs are touched only in production, and every processor's tests
-drive an in-memory double injected at the engine call. The PDF processor's evidence for that
-is reproducible — with the binaries off the `PATH`, the suite is still green:
+drive an in-memory double injected at the engine call. The evidence is reproducible — with the
+binaries off the `PATH` (which is the PDF processor's engine gone), the suite is still green:
 
 ```bash
-env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q   # 143 passed
+env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q   # 228 passed
 ```
 
 Two of those carry an intentional carve-out, each with its reason recorded in
@@ -344,6 +377,14 @@ And the Phase 1 PDF invariants, in the four-field shape `docs/plan/README.md` §
 | Immutable input — the input PDF's SHA-256 is unchanged (`test_the_input_document_is_never_modified`) | `extract_page`: publish to `pdf_path` instead of `output_path` (`src/docflow/pdf/primitives/__init__.py`) | `pytest tests/pdf/test_entrypoints.py::test_the_input_document_is_never_modified` → 1 failed: `E AssertionError: assert '890131db9f9c…' == '3cf04b080451…'` | builder re-run reproduces the fixture byte for byte (`3cf04b0804518207…`), then `pytest tests/pdf` → 79 passed |
 | Classification vocabulary & purity — three literals, from the metrics alone (`test_the_vocabulary_is_closed_and_depends_on_the_metrics_alone`) | (a) `classify_pdf_page` returns `"OCR"`; (b) the signature grows a `force_text` flag (`src/docflow/pdf/primitives/composition.py`) | (a) 1 failed: `E assert ['IMAGE', 'IM…', 'OCR', 'IMAGE'] == ['IMAGE', 'IM…', 'MIXED', 'IMAGE']`; (b) 1 failed: `E assert ['metrics', 'force_text'] == ['metrics']` | `pytest tests/pdf` → 79 passed after each restore |
 | No silent failure — a stage that cannot publish is reported (`test_a_page_metadata_that_cannot_be_published_is_reported`) | `_build_page_result`: hand the validation record `list(failures)` instead of the live list, dropping the metadata publication failure (`src/docflow/pdf/entrypoints.py`) | `pytest tests/pdf/test_entrypoints.py::test_a_page_metadata_that_cannot_be_published_is_reported` → 1 failed: `E AssertionError: assert 'success' == 'partial'` — the page claimed success while its `metadata.json` was never published | `pytest tests/pdf` → 80 passed |
+
+And the Phase 1 image invariants, same four-field shape (`IMG-13`):
+
+| Invariant | Mutation | Observed failure | Restored green |
+|---|---|---|---|
+| Immutable input — the source image's SHA-256 and mtime are unchanged (`tests/image/test_entrypoints.py::test_the_input_image_is_never_modified`) | `_prepare_representations`: send the normalized pipeline to `request.image_path` instead of `request.output_dir / name` (`src/docflow/image/entrypoints.py`) | `pytest tests/image/test_entrypoints.py::test_the_input_image_is_never_modified` → 1 failed: `E AssertionError: assert 'ef0a84c550e6…' == 'd0023a05f4f0…'` — the run had overwritten its own input | `git checkout -- src/docflow/image/entrypoints.py tests/fixtures/image/color_layout.png`, then `pytest tests/image` → 91 passed; re-running `python tests/fixtures/image/build_samples.py` reproduced `d0023a05f4f0…` byte for byte |
+| OCR variant ≠ VLM variant — two files, two pipelines, two recorded transformation lists (`tests/image/test_entrypoints.py::test_the_ocr_and_vlm_variants_are_never_one_artifact`) | `_prepare_representations`: pass `OCR_READY_NAME` as the VLM pipeline's destination (`src/docflow/image/entrypoints.py`) | `pytest tests/image/test_entrypoints.py::test_the_ocr_and_vlm_variants_are_never_one_artifact` → 1 failed: `E AssertionError: assert 'ocr_ready.png' == 'vlm_ready.png'` — one artifact stood in for both representations | `git checkout -- src/docflow/image/entrypoints.py`, then `pytest tests/image/test_entrypoints.py` → 19 passed |
+| Namespace ownership — every artifact, `metadata.json` included, resolves under `image/` (`tests/image/test_entrypoints.py::test_every_artifact_the_result_declares_lives_under_the_image_namespace`) | `_publish_metadata`: publish to `request.output_dir.parent / METADATA_NAME` (`src/docflow/image/entrypoints.py`) | `pytest tests/image/test_entrypoints.py::test_every_artifact_the_result_declares_lives_under_the_image_namespace` → 1 failed: `E AssertionError: assert {…normalized.png, ocr_ready.png, vlm_ready.png} == {…, metadata.json}` | `git checkout -- src/docflow/image/entrypoints.py`, then `pytest -q` → 228 passed |
 
 **Never a silent stand-in.** No empty string, no `0`, no `[]`, no `None`-without-reason, and no
 default engine or threshold used in place of a real answer.

@@ -147,3 +147,158 @@ and `tests/fakes/engines/fake_poppler.py` for a double that models the engine's 
 rather than our types. The three follow-ups tagged in code — the per-page re-inspection, the
 processor-local `processing_key`, and the double's re-check on a pin bump — are the first
 things Phase 2 and the Release gate will want.
+
+---
+
+## 2026-09-25 — Phase 1 · `procesador-image` (`IMG-01` … `IMG-15`)
+
+**Delivered.**
+
+| File | What it is |
+|---|---|
+| `src/docflow/image/contracts.py` | the request/result vocabulary, with the "absence is stated" typing described below |
+| `src/docflow/image/primitives/__init__.py` | the OpenCV seam: the only module that reaches the engine, plus the whole primitive surface (load/store, convert, enhance, quality, orientation, text regions) and the two preparation pipelines |
+| `src/docflow/image/primitives/composition.py` | `ImageFileFacts`, every named threshold, the deterministic region naming and the descriptive classification |
+| `src/docflow/image/primitives/errors.py` | the typed failure a primitive raises and the entry points convert |
+| `src/docflow/image/primitives/publication.py` | atomic publication: `.tmp` → validate → rename, with cleanup on failure |
+| `src/docflow/image/primitives/validation.py` | `validate_image_input` fail-fast and the structural result validation |
+| `src/docflow/image/entrypoints.py` | `process_image` and `process_image_from_page`, the representation table, the artifact namespace, `metadata.json` |
+| `tests/fixtures/image/{color_layout,skewed_text,embedded_logo,corrupt}.png` | the committed samples, built deterministically by `build_samples.py` (standard library only) |
+| `tests/fakes/engines/fake_opencv.py` | the in-memory OpenCV double, native-shaped and injected at the seam |
+| `tests/image/**` | one test module per source module, the happy path, the three invariants, the failure paths |
+| `tests/support.py` | the two filesystem assertions the pdf and image suites both need, extracted instead of copied |
+
+`utils/` and `helpers/` stay empty, as resolved decision 3 of the subplan requires.
+
+**Tasks.** All fifteen are done, in the subplan's waves:
+
+| Wave | Tasks | Status |
+|---|---|---|
+| 1 — Contracts & seam | `IMG-01`, `IMG-02`, `IMG-03` | done |
+| 2 — Analysis | `IMG-04`, `IMG-05`, `IMG-06`, `IMG-15` | done |
+| 3 — Outputs | `IMG-07`, `IMG-08`, `IMG-09`, `IMG-10` | done |
+| 4 — Publish | `IMG-11`, `IMG-12` | done |
+| 5 — Verify | `IMG-13`, `IMG-14` | done |
+
+`sharpen_image` (`IMG-05`) and `compress_image` (`IMG-05`) are implemented and tested but composed
+nowhere: no option asks for them and both variants are lossless PNG, so each carries a
+`# TODO: [MVP]`, exactly as `merge_pdfs` does in `pdf`.
+
+**Gate evidence.**
+
+```
+pytest                     228 passed
+ruff check .               All checks passed!
+ruff format --check .      84 files already formatted
+pylint src tests           10.00/10
+```
+
+The phase exit is owned by `IMG-14`, and it includes the no-engine rule. With the Poppler
+binaries off the `PATH` the whole suite is still green, and the image suite loads no engine at
+all: importing the seam must succeed with OpenCV absent, which
+`tests/test_skeleton.py::test_importing_the_primitive_seams_pulls_in_no_engine` measures in a
+clean interpreter.
+
+```
+env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q    228 passed
+```
+
+Acceptance scenario 5 of the subplan ("no test reaches OpenCV") measured directly — the whole
+image suite, in one process, and the engine never even imported:
+
+```
+python -c "import sys, pytest; pytest.main(['tests/image','-q']); print('cv2' in sys.modules)"
+91 passed
+False
+```
+
+The mechanism that makes that structural rather than lucky: `tests/image/conftest.py` installs
+the double in an **autouse** fixture, so a test that forgot to ask for it cannot reach the
+library on the machine.
+
+**Invariant evidence.** The three invariants of subplan §6 were mutation-falsified this session —
+immutable input, OCR variant ≠ VLM variant, namespace ownership. Each was mutated, observed red,
+restored with `git checkout --`, and observed green. **The canonical four-field records live in
+the root `README.md`** (the table under "Rules that will bite you"), where `GEN-16` audits them.
+One of them paid a dividend: the immutable-input mutation overwrote the committed
+`color_layout.png`, and re-running `build_samples.py` reproduced `d0023a05f4f0…` byte for byte,
+which is the fixture builder's determinism proven rather than asserted.
+
+**Decisions taken in code.**
+
+1. **Absence is stated, never faked — five contract fields widened to `X | None`.**
+   `ImageSourceRef.width`/`height`/`size`, `ImageMetadata.engine_version`,
+   `ImageMetadata.input_metrics`/`output_metrics` and `ImageResult.metrics`/`classification`.
+   A run can fail before anything is measured (absent file, unsupported container, refused
+   decode), and in that case there is no geometry, no version, no reading and no classification:
+   a `0`, a default engine or a default classification would read as an answer nobody observed,
+   which the no-silent-stand-in rule forbids. This is the same decision `pdf` took for
+   `engine_version`, applied to every field that can be unmeasured. No field gained a default, so
+   `None` is always passed deliberately.
+2. **`detect_orientation` is relative to the page frame.** A decoded array carries no rotation
+   metadata, so the only signal the pixels hold is "the ink's box contradicts the page's aspect",
+   which is what it reports (0 or 90). Both normal cases — portrait text on a portrait page,
+   landscape text on a landscape page — report 0 and no correction is applied.
+   `# TODO: [MVP]`: the authoritative source is the container's own tag (JPEG EXIF, a PDF page's
+   `/Rotate`), which the PDF processor or a container reader has to supply.
+3. **A region's ink share is measured on the raw mask, not the closed one.** The closing exists to
+   join a glyph into a blob, so it fills the gaps by construction: a reading taken from the closed
+   mask reports a filled box for every region and carries no information.
+4. **Each pipeline returns what it produced, its transformations and its own measurements**
+   (`PreparedImage`). That is how a variant's readings reach `metadata.json` without a second
+   execution of the pipeline, and it is why the per-variant transformation lists are recorded
+   independently.
+5. **`metadata.json` is not an entry in `result.artifacts`.** Every entry there is an image and
+   `ImageArtifactKind` has no kind for a JSON record; a kind invented for it would be a
+   mislabelled artifact. Its publication is still attempted and still recorded: a failure to
+   write it fails the run.
+6. **The double decodes the container's geometry and synthesizes the pixel values.** The width and
+   height come from the file's own header; the values are a banded grey pattern whose phase comes
+   from the file's first bytes. That is what a double is, and it is documented in the module.
+   `corrupt.png` is handled the way the engine handles it: `imread` answers `None`, and the seam
+   types that as `DECODE_ERROR`. The subplan §6 failure-fixture row says "the double raises
+   `DECODE_ERROR`"; the subplan's own §3 native-shape rule (the fake returns what the engine
+   returns, never our translated type) is the stronger one and the one the code follows.
+7. **The fixtures are small on purpose** (160×120). The double produces pixels per-pixel in
+   Python, so the sample size sets the suite's runtime, not the fidelity of anything; the same
+   trade `pdf` made when it wrote three synthetic pages.
+8. **`tests/support.py` is new, and `tests/pdf/test_entrypoints.py` now imports from it.** Pylint
+   found the digest/list helpers copied between the two suites; the fix was to remove the
+   duplication rather than suppress the finding. Two *source* modules may not share it, which is
+   why the sibling duplication in `docflow.image.primitives.publication` and
+   `docflow.image.entrypoints` is suppressed inline with that reason instead.
+9. **Suppressions, each inline and each with its reason.** `duplicate-code` in
+   `image/primitives/publication.py` and `image/entrypoints.py` (a processor may not import
+   another processor's internals, so the short rule is written twice on purpose);
+   `too-many-lines` in `image/primitives/__init__.py` (the frozen patch path and the static
+   convention check both read that one module, so a call moved into a sibling would escape both);
+   `invalid-name`/`redefined-builtin` in `tests/fakes/engines/fake_opencv.py` (the double mirrors
+   the engine's own names — `cvtColor`, `clipLimit`, `type` are keywords of the interface it
+   stands in for).
+10. **The engine is pinned in `pyproject.toml`** as `opencv-python-headless>=5.0,<6`: the
+    server-side wheel, because nothing here opens a window. The version actually used is stamped
+    into every artifact's metadata; the wheel question the dossier left open is settled there.
+11. **The thresholds in `composition.py` are PoC values, named and tagged `# TODO: [MVP]`.** They
+    were fixed now, as resolved decision 4 of the subplan requires, and chosen so that a clean
+    text-like page is not reported as `LOW_QUALITY`; they are revisited against the corpus at the
+    MVP gate.
+
+**Left stale (owner).** No pre-existing file under `docs/plan/` or `docs/idea/` was edited. The
+root `README.md` was updated (it is the developer quickstart, not a plan artifact), and
+`pyproject.toml` gained the pin. These now disagree with the code and need their owner:
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/plan/issues/wbs-procesador-image.md` | header and §2 still say `NOT_STARTED` for all fifteen tasks; flipping it is a plan revision, not a code edit | plan owner |
+| `docs/3party/opencv.md` §B | says "the pin is `TBD` (`dependencies = []` until `IMG-02`)"; the pin landed as `opencv-python-headless` | dossier owner |
+| `docs/3party/opencv.md` §D | still tabulates `crop_region`'s neighbours without noting that the subplan defers `crop_region` and `image/regions/`; §K's "which primitives have no Phase 1 caller" is now answered (`sharpen_image`, `compress_image`) | dossier owner |
+| `docs/plan/subplan-procesador-image.md` §6 | the failure-fixture row says the double "raises `DECODE_ERROR`"; the code follows the subplan's own native-shape rule, so the engine's silent `None` is what is doubled | plan owner |
+| `tests/fixtures/manifest.json` | does not know `tests/fixtures/image/` or its four files, and still has no builder in the tree to re-run | fixture owner |
+| `README.md`, phase table | the Phase 5 row still lists `IMG-15` as a lab tool; `docs/feedback/no-tests-on-third-parties.md` repurposed it as the engine double (also true of `PDF-14`, already flagged) | plan owner |
+
+**Next.** Phase 1 continues with `ocr` (`OCR-01`…`OCR-13`), then `llm`. `image` adds two things to
+the worked example: the engine is a **library**, so the seam resolves it with
+`importlib.import_module` at call time and the double is a namespace of methods rather than a
+subprocess runner; and a processor's failure posture has to cover "nothing was measured", which
+is why its contract fields for measurements are optional and its failed result is a typed error
+with every unmeasured field at `None`.

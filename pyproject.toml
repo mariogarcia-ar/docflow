@@ -11,9 +11,14 @@ name = "docflow"
 version = "0.0.0"
 description = "Modular document-processing pipeline: pdf, image, ocr and llm processors under one orchestrator."
 requires-python = ">=3.11"
-# Engine pins land in Phase 1, each inside its own processor's primitives/ (PDF-02,
-# IMG-02, OCR-02, LLM-02/LLM-09).
-dependencies = []
+dependencies = [
+    # The image processor's engine (`IMG-02`), a real pip dependency, unlike Poppler (a system
+    # package) and the provider SDKs (external services). `headless` is the server-side wheel:
+    # this pipeline decodes and prepares images and never opens a window. The pin is a range
+    # because the engine is the swappable half of `image/primitives/`; the version actually used
+    # is recorded in every artifact's metadata.
+    "opencv-python-headless>=5.0,<6",
+]
 
 [project.optional-dependencies]
 dev = [

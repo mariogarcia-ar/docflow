@@ -5,6 +5,14 @@ processing logic; OpenCV is reached exclusively from :mod:`docflow.image.primiti
 
 ``context`` is correlation and tracing data. It is never read as workflow state — this
 processor never decides whether OCR or a VLM should run next.
+
+**Absence is stated, never faked.** A run can fail before anything is measured — an absent
+file, a format this processor does not read, a decode the engine refused. Every field that
+would then hold a measurement (``ImageSourceRef.width``/``height``,
+``ImageMetadata.engine_version``, ``ImageMetadata.input_metrics``/``output_metrics``,
+``ImageResult.metrics``/``classification``) is typed ``X | None`` and says ``None`` in that
+case: a ``0``, an empty ref or a default classification would read as an answer nobody
+observed. No such field carries a default, so ``None`` is always passed deliberately.
 """
 
 from __future__ import annotations
@@ -104,17 +112,20 @@ class ImageSourceRef:
 
     Attributes:
         path: Where the source image is.
-        width: Width in pixels.
-        height: Height in pixels.
-        format: Image format as reported by the engine.
-        size: Size in bytes.
+        width: Width in pixels, or ``None`` when the engine never decoded the file.
+            ``None`` means "not measured": a failed decode has no geometry, and zero
+            would read as a measured answer.
+        height: Height in pixels, or ``None`` for the same reason as ``width``.
+        format: Image format as reported by the engine, or from the file itself when the
+            decode never happened.
+        size: Size in bytes, or ``None`` when the file could not be read at all.
     """
 
     path: Path
-    width: int
-    height: int
+    width: int | None
+    height: int | None
     format: str
-    size: int
+    size: int | None
 
 
 @dataclass(frozen=True)
@@ -265,11 +276,14 @@ class ImageMetadata:
         processor: Processor name.
         processor_version: Processor version.
         engine: Named engine, recorded explicitly.
-        engine_version: Engine version.
+        engine_version: Engine version as the engine reports it, or ``None`` when no
+            engine call was reached — a failed input is reported before the version is
+            read, and a placeholder version would claim a provenance nobody observed.
         libraries: Versions of the libraries actually used.
         options: The options that were requested.
-        input_metrics: Metrics of the source image.
-        output_metrics: Metrics of the normalized image.
+        input_metrics: Metrics of the source image, or ``None`` when nothing was measured.
+        output_metrics: Metrics of the normalized image, or ``None`` when nothing was
+            produced.
         timing: Wall-clock durations by stage.
         context: Correlation metadata echoed from the request.
     """
@@ -277,11 +291,11 @@ class ImageMetadata:
     processor: str
     processor_version: str
     engine: str
-    engine_version: str
+    engine_version: str | None
     libraries: dict[str, str]
     options: ImageOptions
-    input_metrics: ImageMetrics
-    output_metrics: ImageMetrics
+    input_metrics: ImageMetrics | None
+    output_metrics: ImageMetrics | None
     timing: dict[str, float]
     context: ImageContext
 
@@ -295,8 +309,9 @@ class ImageResult:
         normalized: The general normalized representation, or ``None`` when not
             requested.
         variants: Purpose-specific variants.
-        metrics: Metrics of the source image.
-        classification: Descriptive classification. Never a routing decision.
+        metrics: Metrics of the source image, or ``None`` when nothing was measured.
+        classification: Descriptive classification, or ``None`` when nothing was
+            classified. Never a routing decision.
         transformations: Every transformation actually applied, in order.
         validation: Structural validation of the result.
         artifacts: Every file this processor published.
@@ -308,8 +323,8 @@ class ImageResult:
     source: ImageSourceRef
     normalized: ArtifactRef | None
     variants: ImageVariants
-    metrics: ImageMetrics
-    classification: ImageClassification
+    metrics: ImageMetrics | None
+    classification: ImageClassification | None
     transformations: list[str]
     validation: ImageValidation
     artifacts: list[ArtifactRef]
