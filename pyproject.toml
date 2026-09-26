@@ -24,6 +24,11 @@ dependencies = [
     # re-check of `tests/fakes/engines/fake_docling.py` against the engine's shapes. The whole
     # test suite runs without it installed: no test imports or invokes Docling.
     "docling>=2.126,<3",
+    # The LLM provider seam's HTTP client (`LLM-09`). It is imported inside the call that needs
+    # it and never at module import time, so the suite still runs with no client installed and
+    # the "no engine loaded" guard still holds. Its version is recorded nowhere because it is
+    # ours, not the provider's — what lands in a request key is the *model's* version.
+    "httpx>=0.28,<1",
 ]
 
 [project.optional-dependencies]

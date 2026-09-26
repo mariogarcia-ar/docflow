@@ -466,3 +466,157 @@ decorative. The follow-ups tagged in code are the first things Phase 2 and the R
 want: `process_ocr_from_page` composed nowhere, the PoC threshold in `composition.py`, spanned
 cells in `_table_grid`, the processor-local `processing_key` (`ORC-02`), publication `fsync`
 (`RELEASE`), and the double's re-check on a pin bump.
+
+---
+
+## 2026-09-26 — Phase 1 · `procesador-llm-call` (`LLM-01` … `LLM-15`)
+
+**Delivered.**
+
+| File | What it is |
+|---|---|
+| `src/docflow/llm/contracts.py` | the request/result vocabulary, plus the two Phase-1 additions described in decision 1 |
+| `src/docflow/llm/primitives/__init__.py` | the provider seam: the only module in the tree that reaches a provider, with the seven primitives, the two transports (Ollama and the OpenAI-compatible dialect) and the response translation |
+| `src/docflow/llm/primitives/errors.py` | the typed failure a primitive raises, and the retryability of every kind |
+| `src/docflow/llm/primitives/composition.py` | engine-independent logic: template render, prompt build, `request_key`, JSON parsing, per-field comparison, token estimation, the descriptor→plan compiler and the reuse rule |
+| `src/docflow/llm/primitives/validation.py` | the request check, the asset loaders, the enforced JSON-Schema subset and the result self-check |
+| `src/docflow/llm/primitives/publication.py` | atomic publication: `.tmp` → validate → rename, with cleanup on failure |
+| `src/docflow/llm/primitives/persistence.py` | the two-artifact round trip: `state.json` and `final_result.json` |
+| `src/docflow/llm/entrypoints.py` | `process_llm_request`, `process_llm_node`, `retry_llm_request`, `execute_llm_graph` and `model_query_for` |
+| `tests/fixtures/llm/template/simple_extract.md`, `tests/fixtures/llm/schema/simple.schema.json` | the two committed assets, used verbatim by the happy path |
+| `tests/fakes/engines/fake_provider.py` | the **scripted** in-memory provider, native-shaped for both dialects, with a call counter |
+| `tests/llm/primitives/http_stub.py` + `conftest.py` | the stub HTTP client the seam's payload shapes and error mapping are proven against, and the fixture that installs it |
+| `tests/llm/**` | one test module per source module, the happy path, the two invariants, the failure paths |
+
+`utils/` and `helpers/` stay empty, as the subplan's resolved decisions require.
+
+**Tasks.** All fifteen are done, in the subplan's waves:
+
+| Wave | Tasks | Status |
+|---|---|---|
+| 1 — Contracts & primitives | `LLM-01`, `LLM-02`, `LLM-03`, `LLM-04`, `LLM-05` | done |
+| 2 — Single call | `LLM-06` … `LLM-09`, `LLM-15` | done |
+| 3 — Linear chain | `LLM-10` … `LLM-14` | done |
+
+`check_model_available` (`LLM-09`) is implemented and unit-tested but composed nowhere: a run
+learns that a model is missing from the provider's own 404, which is the same answer without a
+second call. It carries that note in its docstring rather than a `# TODO`, because the primitive
+is complete — it is simply not on the inference path.
+
+**Gate evidence.**
+
+```
+pytest                     511 passed
+ruff check .               All checks passed!
+ruff format --check .      119 files already formatted
+pylint src tests           10.00/10
+```
+
+The phase exit includes the no-engine and no-provider rule; with the Poppler binaries off the
+`PATH`, the whole suite is still green and no client library is loaded:
+
+```
+env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q    511 passed
+```
+
+**Invariant evidence.** Two invariants were mutation-falsified this session — no re-execution of
+a valid call on restart, and `request_key` determinism and independence from run identity. Each
+was mutated, observed red, restored (verified with `git diff` against the staged file), and
+observed green, in the four-field shape `docs/plan/README.md` §7 fixes. **The canonical records
+live in the root `README.md`** (the table under "Rules that will bite you"), because that is where
+`GEN-16` audits them. Invariant 3 (downstream invalidation on force) is deferred with the chain's
+dynamic machinery (§9.6) and is not claimed.
+
+**Decisions taken in code.**
+
+1. **The nine failure kinds are in the contract, and the attempt carries the typed one.**
+   `LLMErrorType` and `LLMError` were added to `contracts.py`; `LLMAttempt.error` is an `LLMError`
+   rather than a bare message; `LLMResult` and `LLMNodeResult` gained `errors`. The subplan §3
+   states the nine kinds and their retryability but its §3.1 field lists carry no error record, so
+   this is a Phase-1 addition in the `OCRResult.error` and `PDFPageValidation.errors` tradition —
+   recorded rather than silent. `validation_errors` keeps its own meaning: *why the answer did not
+   satisfy the schema*, which is a different question from what went wrong.
+2. **`LLMAttempt.raw_response` is `str | None`.** An attempt that ended before the provider
+   answered has no raw response, and an empty string would read as an answer that was empty.
+3. **The retry layer has one owner: this processor.** The dossier's §K defect 6 (an SDK
+   `max_retries` default of 2 beside `LLM-08`'s own attempts, with no stated owner) is settled in
+   code: the seam does not configure a client-level retry, and `options["max_attempts"]` — default
+   two attempts, recorded in `normalized_options` and therefore in the key — is the only policy.
+   A retry keeps every prior attempt, and a non-retryable kind never buys another paid call.
+4. **`get_context_window` answers `None` for the OpenAI-compatible dialect** (dossier §K defect 7:
+   it is unimplementable for a hosted provider). `None` means *unknown*, and
+   `is_context_limit_exceeded` treats unknown as "not an overflow" — an unmeasured ceiling is not
+   evidence, and claiming one would refuse a call that would have worked.
+5. **An LLM run makes exactly one provider call per inference.** `get_model_info` and
+   `get_context_window` are implemented and reachable through `process_llm_request`'s companion
+   `model_query_for`, but a run does not probe them: a probe that failed would have to be either
+   swallowed or turned into a failure of a call that could have succeeded. `model_version` comes
+   from `metadata["model_version"]` (subplan §9 decision 5's fallback) and the window from
+   `options["context_window"]`. Tagged `# TODO: [MVP]` to probe once per model and cache it.
+6. **Three inputs the contract cannot carry live in `metadata`, with no defaults.** `output_dir`
+   names the run's `llm/` namespace, `assets_dir` the template/schema root, `run_id` the identity a
+   resume pins. A request that states none of them is a typed `DEPENDENCY_ERROR`, and a run with no
+   namespace writes nothing rather than to a guessed place. Reconciling this with the orchestrator
+   is `ORC-02`'s.
+7. **`DEPENDENCY_ERROR` owns "an input this run declared does not resolve"**, because the nine
+   kinds have no `INVALID_INPUT`: an unnamed provider, a missing template or schema asset, an
+   unreadable image and a descriptor that cannot be executed all land there, and the seam's mapping
+   table says so in one place.
+8. **A descriptor key the processor does not model is refused by name.** Routing, parallel
+   branches and per-node `SKIP` / `FORCE` / `INVALIDATE` are deferred (§9.6), so a node carrying
+   `when` fails with `DEPENDENCY_ERROR` naming the key instead of being executed as if it were a
+   plain node — a graph that silently ran every node would be a different graph from the declared
+   one. The same reasoning refuses a schema keyword the validator does not enforce (`SCHEMA_ERROR`)
+   rather than validating under a rule it never applied.
+9. **The schema subset is stated, and other keywords are refused.** `type`, `required`,
+   `properties`, `additionalProperties`, `items` and `enum` are enforced, `title`/`description`/
+   `default` are annotations, and everything else is reported by name. No JSON-Schema library is
+   added for the PoC; `# TODO: [MVP]` names the replacement.
+10. **The rendered prompt is the one that is hashed, and the identity is absent from the key.**
+    `calculate_request_key` has no parameter for `run_id`, `graph_id`, `node_id` or `attempt_id` —
+    that is *how* the formula excludes them — and the credential is dropped from
+    `normalized_options` before anything is hashed or written, because a key is persisted in
+    `final_result.json`.
+11. **Node reuse and the run's outcome are two different fields.** On a resumed chain the *action*
+    is `REUSED` (in `LLMGraphState.node_states` and the result's `node_actions`) while the node's
+    own `LLMNodeResult.status` stays `SUCCESS`: "we did not have to pay" and "the answer was good"
+    are different statements, which is the distinction `StageState` exists for.
+12. **A node whose planning fails carries an empty `request_key`.** The frozen field is a `str` and
+    there is no key to mint, so `""` states *no key was minted* — and `validate_cached_result`
+    refuses to reuse it, which is the only property that matters. Documented on the entry point.
+13. **`composition.py` carries an inline `too-many-lines` suppression.** The module is the
+    engine-independent half of the processor and its functions share one vocabulary and one
+    another's inputs (the rendered prompt is what the key hashes; the parsed answer is what the
+    comparison reads); splitting it would separate a rule from the value it applies to. The
+    suppression carries its reason, as the project's rule requires, and `pylint src tests` is
+    10.00/10 with it.
+14. **`httpx` is a declared dependency.** The transport is real code, so the client it needs is in
+    `pyproject.toml`; it is imported *inside* the call that needs it, so the suite still runs with
+    no client installed and the "no engine loaded" guard still holds.
+15. **One pre-existing Pylint finding was closed on the way.** `tests/ocr/primitives/test_publication.py`
+    had a `NotJson` helper class that Pylint rates `too-few-public-methods` (0/2) with no
+    suppression, so the four-gate run was not clean before this session either. It now carries an
+    inline suppression with its reason, the way `fake_docling.py` does for the same shape.
+
+**Left stale (owner).** No pre-existing file under `docs/plan/` or `docs/idea/` was edited. The
+root `README.md` was updated (developer quickstart, not a plan artifact) and `pyproject.toml`
+gained a dependency. These now disagree with the code and need their owner:
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/plan/issues/wbs-procesador-llm-call.md` | header and §2 still say `NOT_STARTED` for all fifteen tasks; flipping it is a plan revision, not a code edit | plan owner |
+| `docs/plan/subplan-procesador-llm-call.md` §3.1 | the field lists carry no error record; `LLMError`, `LLMErrorType`, `LLMAttempt.error` and the `errors` field on both results exist in the code (decision 1) | plan owner |
+| `docs/plan/subplan-procesador-llm-call.md` §9.5 | says `model_version` comes from `get_model_info` "when available"; the run does not probe it (decision 5), and the plan never says where the output directory or the asset root come from (decision 6) | plan owner |
+| `docs/3party/provider-sdk.md` | the transport question (HTTP client vs SDK), the timeout owner (`options["timeout"]`, default 30 s) and the retry-layer question are answered in code but not written back; the pin is `httpx>=0.28,<1`, not the provider SDK | dossier owner |
+| `docs/3party/ollama.md`, `docs/3party/vllm.md` | the two request/response shapes the transports were written against are not recorded there; `num_ctx` is read from `/api/show`'s `parameters` string, and no OpenAI-compatible endpoint states a window | dossier owner |
+| `tests/fixtures/manifest.json` | still knows none of `pdf/`, `image/`, `ocr/` or `llm/`, and has no builder in the tree to re-run | fixture owner |
+| `README.md`, phase table | the Phase 5 row still lists `LLM-16` as a lab tool; the engine-double convention repurposed `PDF-14`, `IMG-15` and `OCR-14`, and `LLM-03` was always a double rather than a CLI | plan owner |
+
+**Next.** Phase 1 is complete; Phase 2 (the orchestrator, `ORC-01`…`ORC-19`) starts against
+`docs/plan/subplan-orquestador.md`. The first reconciliations it owns: the processor-local
+`processing_key` computed inside all four processors, the `LLMInput` inputs that currently ride in
+`metadata` (decision 6) and the two-level reuse rule the LLM subplan §3 says must stay two rules.
+The follow-ups tagged in code are its first candidates: the per-node artifact tree and
+`claim_node` / *parallel branches* / per-node `SKIP`–`FORCE`–`INVALIDATE` / `calculate_consensus`
+(`# TODO: [MVP]`), the provider inventory probe (decision 5), a real JSON-Schema engine
+(decision 9), publication `fsync` (`# TODO: [RELEASE]`) and the double's re-check on a pin bump.

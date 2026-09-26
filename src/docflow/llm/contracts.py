@@ -30,6 +30,38 @@ LLMNodeState = StageState
 # Validation verdicts of one inference result.
 LLMValidationState = Literal["VALID", "INVALID", "RETRYABLE"]
 
+# Typed failure classification, exactly as `subplan-procesador-llm-call.md` §3 ("Error-handling
+# posture") lists it. Every failure carries one of these kinds — never a free-text reason — and
+# the retryability of each kind is fixed in `docflow.llm.primitives.errors`.
+LLMErrorType = Literal[
+    "PROVIDER_ERROR",
+    "TIMEOUT",
+    "MODEL_UNAVAILABLE",
+    "CONTEXT_OVERFLOW",
+    "INVALID_RESPONSE",
+    "INVALID_JSON",
+    "SCHEMA_ERROR",
+    "DEPENDENCY_ERROR",
+    "INTERNAL_ERROR",
+]
+
+
+@dataclass(frozen=True)
+class LLMError:
+    """One classified failure, ready to be recorded in an attempt, a node or a run.
+
+    Attributes:
+        type: Which of the documented kinds failed.
+        message: Human-readable description; never a substitute for the typed kind.
+        recoverable: Whether the run can continue without what failed.
+        metadata: Diagnostic context, e.g. the provider's own message.
+    """
+
+    type: LLMErrorType
+    message: str
+    recoverable: bool
+    metadata: dict[str, Any]
+
 
 @dataclass(frozen=True)
 class Usage:
@@ -98,12 +130,13 @@ class LLMAttempt:
         provider: Provider name.
         model: Model name.
         request_metadata: What was sent, minus secrets.
-        raw_response: The provider's raw response.
+        raw_response: The provider's raw response, or ``None`` when the attempt ended before
+            the provider answered — an empty string would read as an answer that was empty.
         parsed_response: The parsed response, or ``None`` when parsing failed.
         validation: The validation verdict for this attempt.
         usage: Token accounting.
         timing: Durations.
-        error: The failure that ended the attempt, or ``None`` if it succeeded.
+        error: The typed failure that ended the attempt, or ``None`` if it succeeded.
         status: Outcome of the attempt.
     """
 
@@ -113,12 +146,12 @@ class LLMAttempt:
     provider: str
     model: str
     request_metadata: dict[str, Any]
-    raw_response: str
+    raw_response: str | None
     parsed_response: Any
     validation: LLMValidationState
     usage: Usage
     timing: Timing
-    error: str | None
+    error: LLMError | None
     status: LLMStatus
 
 
@@ -165,9 +198,12 @@ class LLMNodeResult:
         request_key: The request identity this node ran under; the reuse key at node
             level.
         status: Outcome of the node, from the shared stage-state vocabulary.
-        result: The node's parsed result.
+        result: The node's parsed result, or ``None`` when the node never produced one.
         attempts: Every attempt made, in order.
-        validation: The node's validation record.
+        validation: The node's validation verdict — its :data:`LLMValidationState` and
+            whether a further attempt was allowed.
+        errors: The typed failures the node recorded; a failed node is reported here and
+            never propagated as an exception that would corrupt the chain state.
         usage: Accumulated token accounting.
         timing: Accumulated durations.
         metadata: Additional node metadata.
@@ -179,6 +215,7 @@ class LLMNodeResult:
     result: Any
     attempts: list[LLMAttempt]
     validation: dict[str, Any]
+    errors: list[LLMError]
     usage: Usage
     timing: Timing
     metadata: dict[str, Any]
@@ -198,7 +235,9 @@ class LLMResult:
         raw_response: The provider's raw response for a single call, or ``None``.
         parsed_response: The parsed response for a single call.
         schema_valid: Whether the response satisfied the schema.
-        validation_errors: Why it did not, when it did not.
+        validation_errors: Why the response did not satisfy the schema, when it did not.
+        errors: The typed failures the run recorded, whatever their kind; the schema verdict
+            above is a separate question from what went wrong.
         attempts: Every attempt made for a single call, in order.
         comparisons: Output comparisons by comparison identifier.
         usage: Accumulated token accounting.
@@ -217,6 +256,7 @@ class LLMResult:
     parsed_response: Any
     schema_valid: bool
     validation_errors: list[str]
+    errors: list[LLMError]
     attempts: list[LLMAttempt]
     comparisons: dict[str, ComparisonResult]
     usage: Usage

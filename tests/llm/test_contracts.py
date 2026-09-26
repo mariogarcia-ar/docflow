@@ -6,30 +6,28 @@ provider is reached. The fake provider is the same posture ``LLM-03`` adopts in 
 
 from __future__ import annotations
 
+from typing import get_args
+
 import pytest
 
 from docflow.llm import (
     ComparisonResult,
     LLMAttempt,
+    LLMError,
+    LLMErrorType,
     LLMInput,
     LLMResult,
     Timing,
-    Usage,
 )
+from docflow.llm.primitives import NON_RETRYABLE_KINDS, RETRYABLE_KINDS
 from docflow.states import StageState
 from tests.factories import build_llm_input, incomplete_call
+from tests.llm.samples import measured_usage
 
 
 def fake_process_llm_request(request: LLMInput) -> LLMResult:
     """Stand-in processor: builds a result from the request and nothing else."""
-    usage = Usage(
-        input_tokens=12,
-        output_tokens=4,
-        total_tokens=16,
-        cached_tokens=None,
-        provider_usage={"prompt_eval_count": 12, "eval_count": 4},
-        estimated_cost=None,
-    )
+    usage = measured_usage()
     timing = Timing(queue_time=0.0, load_time=0.1, inference_time=0.4, total_time=0.5)
     attempt = LLMAttempt(
         attempt_id="attempt_001",
@@ -57,6 +55,7 @@ def fake_process_llm_request(request: LLMInput) -> LLMResult:
         parsed_response=attempt.parsed_response,
         schema_valid=True,
         validation_errors=[],
+        errors=[],
         attempts=[attempt],
         comparisons={},
         usage=usage,
@@ -162,3 +161,41 @@ def test_a_missing_required_field_is_rejected_instead_of_defaulted() -> None:
 
     with pytest.raises(TypeError):
         incomplete_call(type(complete), incomplete)
+
+
+#: The failure kinds `subplan-procesador-llm-call.md` §3 lists, restated here on purpose: a guard
+#: that read the list from the code would agree with the code whatever the code said.
+# fmt: off
+# Reason: the restatement is deliberately *not* laid out like the contract's ``Literal``. A
+# line-for-line copy of it is reported as duplication, and the point of this list is that it was
+# written from the subplan rather than read out of the module it guards.
+DOCUMENTED_FAILURE_KINDS = frozenset({
+    "PROVIDER_ERROR", "TIMEOUT", "MODEL_UNAVAILABLE", "CONTEXT_OVERFLOW",
+    "INVALID_RESPONSE", "INVALID_JSON", "SCHEMA_ERROR", "DEPENDENCY_ERROR",
+    "INTERNAL_ERROR",
+})
+# fmt: on
+
+
+def test_the_failure_kinds_are_exactly_the_documented_nine() -> None:
+    """The vocabulary is closed: a tenth kind is a plan revision, not a code edit."""
+    assert set(get_args(LLMErrorType)) == DOCUMENTED_FAILURE_KINDS
+
+
+def test_every_failure_kind_is_marked_retryable_or_not() -> None:
+    """A kind that is in neither set would be silently non-retryable, which is not a decision."""
+    assert RETRYABLE_KINDS | NON_RETRYABLE_KINDS == DOCUMENTED_FAILURE_KINDS
+    assert not RETRYABLE_KINDS & NON_RETRYABLE_KINDS
+
+
+def test_a_typed_failure_carries_its_kind_and_not_just_a_message() -> None:
+    """``LLMAttempt.error`` is the classification, so a message alone cannot stand in for it."""
+    error = LLMError(
+        type="TIMEOUT",
+        message="the provider did not answer",
+        recoverable=True,
+        metadata={},
+    )
+
+    assert error.type == "TIMEOUT"
+    assert error.recoverable is True

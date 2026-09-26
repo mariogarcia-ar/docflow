@@ -70,6 +70,8 @@ def test_a_refused_rename_leaves_neither_a_tmp_file_nor_a_final_artifact(
 def test_a_payload_that_is_not_representable_is_an_export_error(tmp_path: Path) -> None:
     """A value JSON cannot hold is a representation we could not produce, not a crash."""
 
+    # pylint: disable=too-few-public-methods
+    # Reason: the object exists to be unrepresentable, and it does nothing else.
     class NotJson:
         """A value that cannot be represented as JSON."""
 

@@ -25,6 +25,8 @@ from __future__ import annotations
 from docflow.llm.contracts import (
     ComparisonResult,
     LLMAttempt,
+    LLMError,
+    LLMErrorType,
     LLMGraphState,
     LLMInput,
     LLMNodeResult,
@@ -35,11 +37,19 @@ from docflow.llm.contracts import (
     Timing,
     Usage,
 )
-from docflow.llm.entrypoints import process_llm_node, process_llm_request
+from docflow.llm.entrypoints import (
+    execute_llm_graph,
+    model_query_for,
+    process_llm_node,
+    process_llm_request,
+    retry_llm_request,
+)
 
 __all__ = [
     "ComparisonResult",
     "LLMAttempt",
+    "LLMError",
+    "LLMErrorType",
     "LLMGraphState",
     "LLMInput",
     "LLMNodeResult",
@@ -49,6 +59,9 @@ __all__ = [
     "LLMValidationState",
     "Timing",
     "Usage",
+    "execute_llm_graph",
+    "model_query_for",
     "process_llm_node",
     "process_llm_request",
+    "retry_llm_request",
 ]

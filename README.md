@@ -20,10 +20,10 @@ Three properties are non-negotiable, and most of the rules below exist to protec
 
 ---
 
-## Status: Phase 1 — the PDF, image and OCR processors are implemented
+## Status: Phase 1 complete — all four processors are implemented
 
-Contracts, the stage-state vocabulary, the three identities and the tooling exist, and three of
-the four processors are complete:
+Contracts, the stage-state vocabulary, the three identities and the tooling exist, and all four
+processors are complete:
 
 - **`docflow.pdf`** (`PDF-01`…`PDF-14`) turns a `PDFRequest` into a `PDFResult` with one
   self-contained unit per page and a per-page artifact tree, published atomically;
@@ -32,26 +32,30 @@ the four processors are complete:
   `metadata.json` and a typed failure instead of a partial artifact;
 - **`docflow.ocr`** (`OCR-01`…`OCR-14`) turns an `OCRRequest` into an `OCRResult` with
   `text.txt`, `document.md`, a versioned `document.json`, `tables/table_NNN.md`, a measured
-  `metadata.json` and a descriptive extraction status, published atomically.
+  `metadata.json` and a descriptive extraction status, published atomically;
+- **`docflow.llm`** (`LLM-01`…`LLM-15`) turns an `LLMInput` into an `LLMResult` — one inference,
+  or the fixed linear inference chain — with schema validation, retries that keep every attempt,
+  `state.json` + `final_result.json` under the run's namespace, node reuse on restart and per-field
+  comparisons.
 
-All three run their whole suites on in-memory engine doubles — no engine is installed, imported
-or reached.
+All four run their whole suites on in-memory doubles — no engine is installed, imported or
+reached, and no provider is contacted.
 
-The last processor is a typed signature whose body raises:
+What is left is the orchestrator, whose typed signature still raises:
 
 ```python
->>> import docflow.llm as llm
->>> llm.process_llm_request(llm_input)
-NotImplementedError: process_llm_request is implemented in Phase 1 by LLM-06
+>>> import docflow.workflow as workflow
+>>> workflow.process_document(document_request)
+NotImplementedError: process_document is implemented in Phase 2 by ORC-11 and ORC-17
 ```
 
-That is deliberate. A stub that raised is honest; a stub that returned an empty `LLMResult`
+That is deliberate. A stub that raised is honest; a stub that returned an empty `DocumentResult`
 would be a silent stand-in, which this project forbids at every stage.
 
 | Phase | What | Owner |
 |---|---|---|
 | **0 — contracts & skeleton** | ✅ **done** | `GEN-01`…`GEN-06` |
-| 1 — processors, independently | ✅ `pdf` (`PDF-01`…`PDF-14`) · `image` (`IMG-01`…`IMG-15`) · `ocr` (`OCR-01`…`OCR-14`) · `llm` | `LLM-01`…`LLM-15` |
+| 1 — processors, independently | ✅ `pdf` (`PDF-01`…`PDF-14`) · `image` (`IMG-01`…`IMG-15`) · `ocr` (`OCR-01`…`OCR-14`) · `llm` (`LLM-01`…`LLM-15`) | `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` || 5 — lab tools | one operator CLI per processor | `GEN-21`, `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` |
@@ -60,9 +64,10 @@ would be a silent stand-in, which this project forbids at every stage.
 ## Requirements
 
 - **Python ≥ 3.11** (the shared vocabulary uses `enum.StrEnum`). Verified on 3.13.9.
-- No engine is required to run anything in this repository. Poppler is the PDF processor's engine
-  in production, OpenCV the image processor's and Docling the OCR processor's, each reachable only
-  from its own `primitives/`, and every suite drives an in-memory double instead of installing one.
+- No engine and no provider is required to run anything in this repository. Poppler is the PDF
+  processor's engine in production, OpenCV the image processor's, Docling the OCR processor's and
+  an HTTP provider (Ollama, vLLM or a hosted API) the LLM processor's — each reachable only from
+  its own `primitives/` — and every suite drives an in-memory double instead of installing one.
 
 ## Setup
 
@@ -207,8 +212,8 @@ define them, and there is a test that enforces it.
 
 ## What works today
 
-The stage-state vocabulary and the three identities are the shared seam; `docflow.pdf` and
-`docflow.image` are implemented end to end against it.
+The stage-state vocabulary and the three identities are the shared seam; all four processors are
+implemented end to end against it.
 
 ### The image processor
 
@@ -303,6 +308,46 @@ result.validation.status  # 'VALID' | 'EMPTY' | 'LOW_CONTENT' | 'INCOMPLETE' | '
 python tests/fixtures/ocr/build_samples.py   # regenerates the two committed fixtures
 ```
 
+### The LLM processor
+
+Prepares, executes, validates and persists one inference — or the fixed linear inference chain
+(`classify → extract_a → extract_b → compare → validate → consolidate`). Ollama, vLLM and any
+hosted OpenAI-compatible API are reached only from `llm/primitives/`, and only through seven
+primitives the tests replace:
+
+```python
+from docflow.llm import process_llm_request
+
+result = process_llm_request(llm_input)  # LLMInput → LLMResult, one call or one chain
+result.status  # 'SUCCESS' | 'FAILED'
+result.schema_valid  # was the answer what the schema asked for?
+result.metadata["request_key"]  # the identity a restart reuses instead of paying again
+```
+
+* **The prompt is the one that is hashed.** `calculate_request_key` is
+  `hash(provider + model + model_version + rendered_prompt + input_hashes + schema_hash +
+  normalized_options)`, and `run_id` / `graph_id` / `node_id` / `attempt_id` are deliberately
+  **not parameters of it** — a restart over unchanged inputs reproduces the key, which is what
+  makes reuse possible at all.
+* **A valid node is never paid for twice.** A node is reused when the key matches, the status is
+  `SUCCESS` and the persisted result is valid; the resumed chain below re-ran **four** nodes and
+  called the provider for none of the other two.
+* **Absence is stated.** `LLMAttempt.raw_response` is `None` when the attempt ended before the
+  provider answered, `model_version` is `None` when the caller stated none, and a context window
+  nobody stated is *unknown* rather than an overflow.
+* **Errors are classified, never swallowed.** Nine kinds, each marked retryable or not; a failed
+  attempt and a failed node are typed records inside the result, never exceptions across the
+  contract.
+* **One provider call per inference.** A run generates and does nothing else: `get_model_info`
+  and `get_context_window` are implemented and reachable through `model_query_for`, but a run
+  does not probe them, because a probe that failed would have to be swallowed or would fail a
+  call that could have worked.
+* **The output directory is stated, not guessed.** `LLMInput` carries none, so
+  `metadata["output_dir"]` names the `llm/` namespace — `state.json` and `final_result.json`,
+  published `.tmp` → rename — and a run given none writes nothing. The asset root
+  (`template/` + `schema/`) is stated the same way in `metadata["assets_dir"]`, with no default
+  either.
+
 ### The stage-state vocabulary
 
 Nine states, one closed set, `str`-serializable. `SKIPPED` and `REUSED` are distinct on
@@ -368,7 +413,7 @@ All four must pass before any task is `done`. Config lives entirely in `pyprojec
 not add a second `setup.cfg`, `tox.ini` or `pylintrc`.
 
 ```bash
-pytest                     # 339 passed
+pytest                     # 511 passed
 ruff check .               # linter, includes import order
 ruff format --check .      # formatter — this owns line length, not E501
 pylint src tests           # 10.00/10
@@ -380,7 +425,7 @@ an in-memory double injected at the engine call. The evidence is reproducible �
 binaries off the `PATH` (which is the PDF processor's engine gone), the suite is still green:
 
 ```bash
-env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q   # 339 passed
+env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q   # 511 passed
 ```
 
 Two of those carry an intentional carve-out, each with its reason recorded in
@@ -436,6 +481,16 @@ inverse edit rather than by `git checkout`, and the restore was re-measured:
 | Deterministic ordering — blocks are sorted into reading order and named after the sort (`tests/ocr/test_entrypoints.py::test_the_two_runs_of_the_same_input_produce_the_same_functional_content`) | `preserve_reading_order`: `merge_ocr_blocks(sorted(blocks, key=…))` → `merge_ocr_blocks(list(blocks))`, i.e. the engine's own iteration order (`src/docflow/ocr/primitives/composition.py`) | `pytest tests/ocr/test_entrypoints.py -q` → 3 failed: the invariant test with `E AssertionError: assert ['block_003', …, 'block_001'] == ['block_001', …, 'block_003']` — the adversarial double's order survived unsorted | inverse edit, then `pytest tests/ocr` → 116 passed |
 | No run-time stamps in functional content — `text.txt`, `document.md`, `document.json` and `tables/*` hold none (`tests/ocr/test_entrypoints.py::test_no_functional_artifact_carries_a_run_time_stamp`) | `process_ocr_image`: `structured = asdict(extraction.document)` → `{**asdict(…), "built_at": datetime.now().isoformat()}` (`src/docflow/ocr/entrypoints.py`) | `pytest tests/ocr/test_entrypoints.py -q` → 2 failed: the invariant test with `E AssertionError: PosixPath('…/ocr/document.json')` (the stamp was found in the file), and the determinism test because two runs then differ | inverse edit, then `pytest tests/ocr` → 117 passed |
 | Atomic publication — a failed publish leaves neither a `.tmp` file nor a final-named artifact (`tests/ocr/test_entrypoints.py::test_a_publication_that_fails_leaves_neither_a_tmp_file_nor_an_artifact`) | `_publish`: write straight to `destination` instead of the `.tmp` sibling followed by `os.replace` (`src/docflow/ocr/primitives/publication.py`) | `pytest tests/ocr -q` → 2 failed: the invariant test with `E AssertionError: assert 'success' == 'failed'` (nothing was refused, so the run claimed success), and the publication unit test | inverse edit, then `pytest -q` → 339 passed |
+
+And the Phase 1 LLM invariants, same four-field shape (`LLM-13`). The mutations were applied to
+files that were brand new in the same session, so each was restored by re-applying the exact
+inverse edit (verified with `git diff` showing no difference from the staged file) and the restore
+was re-measured:
+
+| Invariant | Mutation | Observed failure | Restored green |
+|---|---|---|---|
+| No re-execution of a valid call on restart — a `SUCCESS` node under a matching `request_key` is reused (`tests/llm/test_entrypoints.py::test_a_resumed_chain_reuses_every_valid_node_and_calls_the_provider_for_none`) | `is_node_reusable`: `return validate_cached_result(node_result) and node_result.request_key == request_key` → `return False` (`src/docflow/llm/primitives/composition.py`) | `pytest tests/llm/test_entrypoints.py -q -k "resumed_chain_reuses or interrupted_by_a_failed_node"` → 2 failed: the first with `E AssertionError: assert {'classify': 'EXECUTE', …} == {'classify': 'REUSE', …}`, and the second with `{'classify': 'EXECUTE'} != {'classify': 'REUSE'}`, `{'extract_a': 'EXECUTE'} != {'extract_a': 'REUSE'}` — the provider was called again for nodes that were already paid for | inverse edit, then `pytest tests/llm` → 180 passed |
+| `request_key` determinism and independence from run identity — two runs differing only in `run_id` and output directory share one key (`tests/llm/test_entrypoints.py::test_the_same_logical_request_keys_the_same_across_two_runs`) | the run identity put into the key material: `_plan_call`, `options=options` → `options={**options, "run_identity": str(request.metadata.get("run_id"))}` (`src/docflow/llm/entrypoints.py`) | `pytest tests/llm/test_entrypoints.py::test_the_same_logical_request_keys_the_same_across_two_runs -q` → 1 failed: `E AssertionError: assert '81757c69c3c2…a06a23e8' == 'e7ca86507fa7…3aa3959c'` — the two runs produced different keys, so nothing could ever be reused | inverse edit, then `pytest tests/llm/test_entrypoints.py::test_the_same_logical_request_keys_the_same_across_two_runs -q` → 1 passed |
 
 **Never a silent stand-in.** No empty string, no `0`, no `[]`, no `None`-without-reason, and no
 default engine or threshold used in place of a real answer.
@@ -572,23 +627,63 @@ OCR type names (`OCRContext` and `OCRDocument` are canonical; the subplan's `Con
     (`README.md` §9.7 of the plan), applied to the one other thing this processor reads off the
     engine.
 
+12. **The LLM failure vocabulary and the attempt record are Phase 1 additions.**
+    `subplan-procesador-llm-call.md` §3 states nine failure kinds and marks each retryable or not,
+    but its §3.1 field lists carry no error record. `LLMErrorType` (the nine kinds, guarded by a
+    test that restates them) and `LLMError` were therefore added to `contracts.py`, `LLMAttempt`
+    gained `error: LLMError | None` instead of a bare message, and both `LLMResult` and
+    `LLMNodeResult` gained `errors: list[LLMError]`. Nothing was *removed*: `validation_errors`
+    stays what it was — why the answer did not satisfy the schema — which is a different question
+    from what went wrong.
+
+13. **`LLMMetadata`'s three missing inputs live in `metadata`.** `LLMInput` has no output
+    directory, no asset root and no run identity, and none of the three may be guessed: the run
+    directory is `metadata["output_dir"]`, the template/schema root is `metadata["assets_dir"]`,
+    the run identity is `metadata["run_id"]` and the model version fallback is
+    `metadata["model_version"]`. A request that states none of them is reported as a
+    `DEPENDENCY_ERROR`, and a run with no output directory writes nothing — rather than to a
+    guessed place. Reconciling this with the orchestrator's own identity scheme is `ORC-02`'s.
+
+14. **An LLM run makes exactly one provider call per inference.** Subplan §9 decision 5 says
+    `model_version` comes from the provider's `get_model_info` "when available". A run does not
+    *probe* for it: the inventory primitives are implemented and reachable through
+    `docflow.llm.model_query_for`, but the version comes from `metadata["model_version"]` and the
+    context window from `options["context_window"]`, because a probe that failed would have to be
+    either swallowed or turned into a failure of a call that could have succeeded. Tagged
+    `# TODO: [MVP]` in the entry point.
+
+15. **`LLMAttempt.raw_response` is `str | None`.** An attempt that ended before the provider
+    answered has no raw response, and an empty string would read as an answer that was empty.
+    This is the `image`/`ocr` "absence is stated" decision applied to the attempt record, which
+    the subplan's §3.1 does not spell out.
+
 ---
 
 ## Next step
 
-Phase 1 continues with the one processor still to build, against its frozen contract: `llm`
-(`LLM-01`…`LLM-16`). It needs a green happy-path test proving `Request → Result` with real bytes
-from a small committed fixture, an in-memory engine double injected at its own `primitives/` seam,
-and no import of another processor. Unlike `pdf`, `image` and `ocr`, its fake is **scripted**
-rather than content-shaped (`LLM-03`): a model's answer is not deterministic for a fixed input,
-and `LLM-08` needs a scripted sequence — invalid JSON on attempt one, valid on attempt two.
+Phase 1 is complete: `pdf`, `image`, `ocr` and `llm` each run their own suite with no engine
+installed and no provider reached. Phase 2 (the orchestrator, `ORC-01`…`ORC-19`) starts next,
+against `docs/plan/subplan-orquestador.md`, with `docflow.workflow` as the only workflow-aware
+component.
 
-`pdf` and `image` are the worked examples for layout and tests, and `ocr` adds the translation
-case: an engine whose structures are rich, whose failure arrives twice (raised *and* returned) and
-whose double hands its items back in an adversarial order so a broken sort cannot pass. When `llm`
-lands, Phase 1's exit is complete and Phase 2 (the orchestrator) starts.
+What the orchestrator inherits, and what it must not re-invent:
 
-`pdf` is the worked example: `src/docflow/pdf/` for the layout, `tests/pdf/` for the test shape
-(one module per source module, the double wired in `conftest.py`, the invariants mutation-
-falsified), and `tests/fakes/engines/fake_poppler.py` for a double that models the engine's
-native surface rather than our types.
+- **The processors are callable and typed.** `process_pdf`, `process_image`, `process_ocr_image`
+  and `process_llm_request` each take one request and return one result;
+  `process_llm_node(node_config, state)` and `execute_llm_graph(request)` are the chain entry
+  points, and per-node artifacts are deferred to the MVP gate (`# TODO: [MVP]`).
+- **The identity work is half done.** `processing_key` is computed *inside* `pdf`, `image`, `ocr`
+  and `llm` from the documented formula, tagged `# TODO: [MVP]`, because every artifact
+  `metadata.json` must carry it while its owner `ORC-02` is Phase 2. That is the first
+  reconciliation.
+- **The reuse rule now exists twice, deliberately.** The orchestrator's is a hash check at stage
+  level; the LLM processor's is a schema-and-artifact check at node level. The subplan §3 says in
+  as many words why they must stay separate, and `LLMPrimitiveError` is *not* a vocabulary the
+  orchestrator should catch: it never crosses a contract.
+- **Four processors, four doubles, one convention.** `tests/fakes/engines/` holds the Poppler,
+  OpenCV, Docling and provider doubles; `fake_provider.py` is the only *scripted* one, and
+  `tests/fakes/engines/convention.py` checks the two seams that reach an engine namespace.
+
+`pdf` remains the worked example for layout and tests, `ocr` for translating a rich engine and
+for a double that hands its items back in an adversarial order, and `llm` adds two: a **scripted**
+fake, and a chain whose resume path is proven by a provider call counter that stays at zero.

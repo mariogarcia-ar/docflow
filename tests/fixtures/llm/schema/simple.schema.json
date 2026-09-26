@@ -1,0 +1,20 @@
+{
+  "title": "Simple extraction",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string"
+    },
+    "topics": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "page_count": {
+      "type": "integer"
+    }
+  },
+  "required": ["summary", "topics"],
+  "additionalProperties": false
+}
