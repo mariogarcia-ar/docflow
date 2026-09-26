@@ -20,35 +20,38 @@ Three properties are non-negotiable, and most of the rules below exist to protec
 
 ---
 
-## Status: Phase 1 — the PDF and image processors are implemented
+## Status: Phase 1 — the PDF, image and OCR processors are implemented
 
-Contracts, the stage-state vocabulary, the three identities and the tooling exist, and two of
+Contracts, the stage-state vocabulary, the three identities and the tooling exist, and three of
 the four processors are complete:
 
 - **`docflow.pdf`** (`PDF-01`…`PDF-14`) turns a `PDFRequest` into a `PDFResult` with one
   self-contained unit per page and a per-page artifact tree, published atomically;
 - **`docflow.image`** (`IMG-01`…`IMG-15`) turns an `ImageRequest` into an `ImageResult` with a
   `normalized.png` plus independent `ocr_ready.png` / `vlm_ready.png` variants, a measured
-  `metadata.json` and a typed failure instead of a partial artifact.
+  `metadata.json` and a typed failure instead of a partial artifact;
+- **`docflow.ocr`** (`OCR-01`…`OCR-14`) turns an `OCRRequest` into an `OCRResult` with
+  `text.txt`, `document.md`, a versioned `document.json`, `tables/table_NNN.md`, a measured
+  `metadata.json` and a descriptive extraction status, published atomically.
 
-Both run their whole suites on in-memory engine doubles — no engine is installed, imported or
-reached.
+All three run their whole suites on in-memory engine doubles — no engine is installed, imported
+or reached.
 
-The other two processors are still typed signatures whose bodies raise:
+The last processor is a typed signature whose body raises:
 
 ```python
->>> import docflow.ocr as ocr
->>> ocr.process_ocr_image(request)
-NotImplementedError: process_ocr_image is implemented in Phase 1 by OCR-13
+>>> import docflow.llm as llm
+>>> llm.process_llm_request(llm_input)
+NotImplementedError: process_llm_request is implemented in Phase 1 by LLM-06
 ```
 
-That is deliberate. A stub that raised is honest; a stub that returned an empty `OCRResult`
+That is deliberate. A stub that raised is honest; a stub that returned an empty `LLMResult`
 would be a silent stand-in, which this project forbids at every stage.
 
 | Phase | What | Owner |
 |---|---|---|
 | **0 — contracts & skeleton** | ✅ **done** | `GEN-01`…`GEN-06` |
-| 1 — processors, independently | ✅ `pdf` (`PDF-01`…`PDF-14`) · `image` (`IMG-01`…`IMG-15`) · `ocr`, `llm` | `OCR-01`…`OCR-13`, `LLM-01`…`LLM-15` |
+| 1 — processors, independently | ✅ `pdf` (`PDF-01`…`PDF-14`) · `image` (`IMG-01`…`IMG-15`) · `ocr` (`OCR-01`…`OCR-14`) · `llm` | `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` || 5 — lab tools | one operator CLI per processor | `GEN-21`, `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` |
@@ -57,9 +60,9 @@ would be a silent stand-in, which this project forbids at every stage.
 ## Requirements
 
 - **Python ≥ 3.11** (the shared vocabulary uses `enum.StrEnum`). Verified on 3.13.9.
-- No engine is required to run anything in this repository. Poppler is the PDF processor's
-  engine in production and OpenCV the image processor's, each reachable only from its own
-  `primitives/`, and both suites drive an in-memory double instead of installing one.
+- No engine is required to run anything in this repository. Poppler is the PDF processor's engine
+  in production, OpenCV the image processor's and Docling the OCR processor's, each reachable only
+  from its own `primitives/`, and every suite drives an in-memory double instead of installing one.
 
 ## Setup
 
@@ -262,6 +265,44 @@ orchestrator's job, not this processor's.
 * The input PDF is never written to; the reference copy under `source/` is the only copy the
   processor makes.
 
+### The OCR processor
+
+Reads one already-prepared image and returns its textual and structured content. Docling is the
+only OCR engine, reached only from `ocr/primitives/`, and it is reached through two seam names
+the tests patch — the engine call `docflow.ocr.primitives.convert_image_with_docling` and the
+engine namespace `docflow.ocr.primitives.docling`, which is where the version is read:
+
+```python
+from docflow.ocr import OCRRequest
+from docflow.ocr.entrypoints import process_ocr_image
+
+result = process_ocr_image(request)  # OCRRequest → OCRResult, one per image
+result.status  # 'success' | 'failed'
+result.validation.status  # 'VALID' | 'EMPTY' | 'LOW_CONTENT' | 'INCOMPLETE' | 'PARSE_ERROR' | 'ERROR'
+```
+
+* `request.output_dir` *is* the `ocr/` namespace: `text.txt`, `document.md`, a versioned
+  `document.json`, `tables/table_NNN.md` and `metadata.json`. Nothing is written outside it,
+  every artifact goes through `.tmp` → rename, and the input image is never written to.
+* **Structure is ours, the engine's is not.** Docling's document model is translated into an
+  engine-independent `OCRDocument` inside the seam; the blocks are then ordered top-to-bottom and
+  left-to-right (the engine's own sequence is the last tie-break), named `block_001`… in that
+  order, and merged so a run of body-text items becomes one paragraph.
+* **A partial conversion is not a failure.** Docling reports failure twice — by raising and by
+  returning a `failure` status — and both are typed: the returned `failure` becomes an
+  `OCR_ERROR` and the run stops, while `partial_success` is recorded, the artifacts stand and
+  the validation reports `INCOMPLETE`.
+* **The option flags decide what is claimed.** `tables: false` claims no table, `layout: false`
+  claims no box, `reading_order: false` keeps the engine's sequence instead of deriving one — and
+  the page size is always measured, because everything is measured against it.
+* **Absence is stated, never faked.** Every product field of `OCRResult` is `None` when the run
+  never got that far, while an *empty* extraction reports an empty `text` and `EMPTY` — the
+  difference between "never looked" and "looked and found nothing".
+
+```bash
+python tests/fixtures/ocr/build_samples.py   # regenerates the two committed fixtures
+```
+
 ### The stage-state vocabulary
 
 Nine states, one closed set, `str`-serializable. `SKIPPED` and `REUSED` are distinct on
@@ -327,19 +368,19 @@ All four must pass before any task is `done`. Config lives entirely in `pyprojec
 not add a second `setup.cfg`, `tox.ini` or `pylintrc`.
 
 ```bash
-pytest                     # 228 passed
+pytest                     # 339 passed
 ruff check .               # linter, includes import order
 ruff format --check .      # formatter — this owns line length, not E501
 pylint src tests           # 10.00/10
 ```
 
 The whole suite runs with **no engine installed and no engine reached**: Poppler, OpenCV,
-Docling and the provider SDKs are touched only in production, and every processor's tests
-drive an in-memory double injected at the engine call. The evidence is reproducible — with the
+Docling and the provider SDKs are touched only in production, and every processor's tests drive
+an in-memory double injected at the engine call. The evidence is reproducible — with the
 binaries off the `PATH` (which is the PDF processor's engine gone), the suite is still green:
 
 ```bash
-env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q   # 228 passed
+env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q   # 339 passed
 ```
 
 Two of those carry an intentional carve-out, each with its reason recorded in
@@ -386,9 +427,18 @@ And the Phase 1 image invariants, same four-field shape (`IMG-13`):
 | OCR variant ≠ VLM variant — two files, two pipelines, two recorded transformation lists (`tests/image/test_entrypoints.py::test_the_ocr_and_vlm_variants_are_never_one_artifact`) | `_prepare_representations`: pass `OCR_READY_NAME` as the VLM pipeline's destination (`src/docflow/image/entrypoints.py`) | `pytest tests/image/test_entrypoints.py::test_the_ocr_and_vlm_variants_are_never_one_artifact` → 1 failed: `E AssertionError: assert 'ocr_ready.png' == 'vlm_ready.png'` — one artifact stood in for both representations | `git checkout -- src/docflow/image/entrypoints.py`, then `pytest tests/image/test_entrypoints.py` → 19 passed |
 | Namespace ownership — every artifact, `metadata.json` included, resolves under `image/` (`tests/image/test_entrypoints.py::test_every_artifact_the_result_declares_lives_under_the_image_namespace`) | `_publish_metadata`: publish to `request.output_dir.parent / METADATA_NAME` (`src/docflow/image/entrypoints.py`) | `pytest tests/image/test_entrypoints.py::test_every_artifact_the_result_declares_lives_under_the_image_namespace` → 1 failed: `E AssertionError: assert {…normalized.png, ocr_ready.png, vlm_ready.png} == {…, metadata.json}` | `git checkout -- src/docflow/image/entrypoints.py`, then `pytest -q` → 228 passed |
 
+And the Phase 1 OCR invariants, same four-field shape (`OCR-13`). The mutations were applied to
+files that were brand new in the same session, so each was restored by re-applying the exact
+inverse edit rather than by `git checkout`, and the restore was re-measured:
+
+| Invariant | Mutation | Observed failure | Restored green |
+|---|---|---|---|
+| Deterministic ordering — blocks are sorted into reading order and named after the sort (`tests/ocr/test_entrypoints.py::test_the_two_runs_of_the_same_input_produce_the_same_functional_content`) | `preserve_reading_order`: `merge_ocr_blocks(sorted(blocks, key=…))` → `merge_ocr_blocks(list(blocks))`, i.e. the engine's own iteration order (`src/docflow/ocr/primitives/composition.py`) | `pytest tests/ocr/test_entrypoints.py -q` → 3 failed: the invariant test with `E AssertionError: assert ['block_003', …, 'block_001'] == ['block_001', …, 'block_003']` — the adversarial double's order survived unsorted | inverse edit, then `pytest tests/ocr` → 116 passed |
+| No run-time stamps in functional content — `text.txt`, `document.md`, `document.json` and `tables/*` hold none (`tests/ocr/test_entrypoints.py::test_no_functional_artifact_carries_a_run_time_stamp`) | `process_ocr_image`: `structured = asdict(extraction.document)` → `{**asdict(…), "built_at": datetime.now().isoformat()}` (`src/docflow/ocr/entrypoints.py`) | `pytest tests/ocr/test_entrypoints.py -q` → 2 failed: the invariant test with `E AssertionError: PosixPath('…/ocr/document.json')` (the stamp was found in the file), and the determinism test because two runs then differ | inverse edit, then `pytest tests/ocr` → 117 passed |
+| Atomic publication — a failed publish leaves neither a `.tmp` file nor a final-named artifact (`tests/ocr/test_entrypoints.py::test_a_publication_that_fails_leaves_neither_a_tmp_file_nor_an_artifact`) | `_publish`: write straight to `destination` instead of the `.tmp` sibling followed by `os.replace` (`src/docflow/ocr/primitives/publication.py`) | `pytest tests/ocr -q` → 2 failed: the invariant test with `E AssertionError: assert 'success' == 'failed'` (nothing was refused, so the run claimed success), and the publication unit test | inverse edit, then `pytest -q` → 339 passed |
+
 **Never a silent stand-in.** No empty string, no `0`, no `[]`, no `None`-without-reason, and no
 default engine or threshold used in place of a real answer.
-
 **No processor imports another processor.** The orchestrator is the only component that
 composes them, and only through contracts.
 
@@ -495,15 +545,48 @@ OCR type names (`OCRContext` and `OCRDocument` are canonical; the subplan's `Con
    operator CLIs. Left verbatim here rather than guessed at — the IDs of the replacement lab
    tools are a plan revision.
 
+9. **The OCR result states absence in its typing, not in empty values.**
+   `OCRResult`'s nine product fields — `text`, `markdown`, `structured_document`, `tables`,
+   `blocks`, `layout`, `reading_order`, `metrics`, `artifacts` — and `metadata` are `X | None`.
+   The rule the typing carries: `None` means *the run never produced it*, an empty value means
+   *produced and empty*. A blank page legitimately extracts empty text and reports `EMPTY`,
+   while a run that failed before the engine was reached has no text at all; without the
+   distinction, a `0` or an `""` would read as a measured answer. This is the `image` decision
+   (`IMG-01`) applied to the whole result, and the subplan's §3.1 field list does not carry it.
+
+10. **Two OCR primitives are named by the WBS but absent from the subplan's closed §3.4 list.**
+    `OCR-07` and `OCR-08` name `process_tables` and `analyze_ocr_result`, and assembling the
+    `OCRDocument` from the five `extract_docling_*` outputs needs a sixth name, `build_ocr_document`
+    — the §3.4 list stops at 25 entries (three pipeline/config, one engine call, five extractors,
+    four text/Markdown, two table, two layout, two metadata, three validation, three file). Nothing
+    was added beyond what those rows require: no `enable_*` / `should_enable_*` predicate, no second
+    export path beside the `OCR-06` builders and no `count_*` helper beside `OCRMetrics` exist. The
+    same pass added `conversion_failure`, which owns the half of Docling's failure surface that
+    *returns* a `failure` status instead of raising (dossier §K, defect 5) — without it a refused
+    conversion would read as a successful extraction of an empty page.
+
+11. **The OCR seam patches two names, not one.** The plan fixes the injection point as
+    `convert_image_with_docling`; the version also has to be readable with no engine installed, so
+    the double installs itself at `docflow.ocr.primitives.docling` as well and the seam reads
+    `__version__` from there. It is the same lazy-resolution rule the image seam follows for `cv2`
+    (`README.md` §9.7 of the plan), applied to the one other thing this processor reads off the
+    engine.
+
 ---
 
 ## Next step
 
-Phase 1 continues with the three processors still to build, independently and in parallel
-against the frozen contracts: `image` (`IMG-01`…`IMG-14`), `ocr` (`OCR-01`…`OCR-13`) and `llm`
-(`LLM-01`…`LLM-15`). Each needs a green happy-path test proving `Request → Result` with real
-bytes from a small committed fixture, an in-memory engine double injected at its own
-`primitives/` seam, and no import of another processor.
+Phase 1 continues with the one processor still to build, against its frozen contract: `llm`
+(`LLM-01`…`LLM-16`). It needs a green happy-path test proving `Request → Result` with real bytes
+from a small committed fixture, an in-memory engine double injected at its own `primitives/` seam,
+and no import of another processor. Unlike `pdf`, `image` and `ocr`, its fake is **scripted**
+rather than content-shaped (`LLM-03`): a model's answer is not deterministic for a fixed input,
+and `LLM-08` needs a scripted sequence — invalid JSON on attempt one, valid on attempt two.
+
+`pdf` and `image` are the worked examples for layout and tests, and `ocr` adds the translation
+case: an engine whose structures are rich, whose failure arrives twice (raised *and* returned) and
+whose double hands its items back in an adversarial order so a broken sort cannot pass. When `llm`
+lands, Phase 1's exit is complete and Phase 2 (the orchestrator) starts.
 
 `pdf` is the worked example: `src/docflow/pdf/` for the layout, `tests/pdf/` for the test shape
 (one module per source module, the double wired in `conftest.py`, the invariants mutation-

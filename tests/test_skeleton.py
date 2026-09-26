@@ -17,7 +17,6 @@ import from a clean interpreter, so that is what is measured.
 
 from __future__ import annotations
 
-import ast
 import importlib
 import json
 import os
@@ -32,8 +31,8 @@ import pytest
 from tests.factories import (
     build_document_request,
     build_llm_input,
-    build_ocr_request,
 )
+from tests.support import imported_modules
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -257,21 +256,17 @@ def test_a_stub_raises_instead_of_returning_a_placeholder() -> None:
     """A caller can never mistake a stub for a processed document.
 
     The processors implemented in Phase 1 leave this list as they land: ``pdf`` did, then
-    ``image``, so the check now covers the entry points that are still Phase 0 stubs.
+    ``image``, then ``ocr``, so the check now covers the entry points that are still Phase 0
+    stubs.
     """
     workflow_module = importlib.import_module("docflow.workflow")
-    ocr_module = importlib.import_module("docflow.ocr")
     llm_module = importlib.import_module("docflow.llm")
 
     document_request = build_document_request(Path("."))
-    ocr_request = build_ocr_request(Path("."))
     llm_input = build_llm_input()
 
     with pytest.raises(NotImplementedError):
         workflow_module.process_document(document_request)
-
-    with pytest.raises(NotImplementedError):
-        ocr_module.process_ocr_image(ocr_request)
 
     with pytest.raises(NotImplementedError):
         llm_module.process_llm_request(llm_input)
@@ -302,7 +297,7 @@ def test_a_processor_reports_a_state_without_importing_the_orchestrator() -> Non
     assert completed.returncode == 0, completed.stderr
 
 
-@pytest.mark.parametrize("processor", ["docflow.pdf", "docflow.image"])
+@pytest.mark.parametrize("processor", ["docflow.pdf", "docflow.image", "docflow.ocr"])
 def test_importing_one_processor_does_not_import_another(processor: str) -> None:
     """No processor imports another processor: only the orchestrator composes them."""
     others = [name for name in SUB_PACKAGES if name != processor]
@@ -335,18 +330,10 @@ def test_no_module_under_src_imports_the_test_tree() -> None:
     offenders: list[str] = []
 
     for path in sorted((REPO_ROOT / "src" / "docflow").rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                names = [node.module or ""]
-            else:
-                continue
-            for name in names:
-                if name.split(".")[0] == "tests":
-                    relative = path.relative_to(REPO_ROOT)
-                    offenders.append(f"{relative}:{node.lineno} imports {name}")
+        for line, name in imported_modules(path):
+            if name.split(".")[0] == "tests":
+                relative = path.relative_to(REPO_ROOT)
+                offenders.append(f"{relative}:{line} imports {name}")
 
     assert not offenders, (
         "production modules import the test tree, so a double can become a fallback: "

@@ -302,3 +302,167 @@ the worked example: the engine is a **library**, so the seam resolves it with
 subprocess runner; and a processor's failure posture has to cover "nothing was measured", which
 is why its contract fields for measurements are optional and its failed result is a typed error
 with every unmeasured field at `None`.
+
+---
+
+## 2026-09-25 — Phase 1 · `procesador-ocr` (`OCR-01` … `OCR-14`)
+
+**Delivered.**
+
+| File | What it is |
+|---|---|
+| `src/docflow/ocr/contracts.py` | the request/result vocabulary; the nine failure kinds stayed as `OCR-01` froze them, and the result's product fields are now optional (see decision 1) |
+| `src/docflow/ocr/primitives/__init__.py` | the Docling seam: the engine call (`convert_image_with_docling`), the five `extract_docling_*` translators, `conversion_failure`, the option/config pair, the two normalizers, `process_tables`, the metadata and document builders |
+| `src/docflow/ocr/primitives/composition.py` | engine-independent composition: `LayoutGeometry`, `ExtractedBlock`, `ExtractedTable`, `OrderedDocument`, the reading-order key, `normalize_bbox`, `normalize_layout`, `merge_ocr_blocks`, `preserve_reading_order`, `normalize_table`, `table_to_markdown`, `analyze_ocr_result` |
+| `src/docflow/ocr/primitives/errors.py` | the typed failure a primitive raises and the entry points convert — the only exception this processor throws |
+| `src/docflow/ocr/primitives/publication.py` | `ensure_directory`, `write_text_atomic`, `write_json_atomic`: `.tmp` → validate → rename, with cleanup on failure |
+| `src/docflow/ocr/primitives/validation.py` | `validate_ocr_input` fail-fast, `validate_output_artifacts`, `validate_ocr_result` and the state map |
+| `src/docflow/ocr/entrypoints.py` | `process_ocr_image` and the deferred `process_ocr_from_page`, the artifact namespace, the `metadata.json` payload |
+| `tests/fakes/engines/fake_docling.py` | the in-memory Docling double, native-shaped, adversarial-ordered, with the two failure knobs |
+| `tests/fixtures/ocr/ocr_prepared_text_and_table.png`, `ocr_blank.png` | the committed samples, built deterministically by `build_samples.py` (standard library only) |
+| `tests/ocr/**` | one test module per source module, mirroring `src/docflow/ocr/` |
+
+`utils/` and `helpers/` stay empty, as resolved decision 6 of the subplan requires.
+
+**Tasks.** All fourteen are done, in the subplan's waves:
+
+| Wave | Tasks | Status |
+|---|---|---|
+| 1 — Foundations | `OCR-01`, `OCR-02` | done |
+| 2 — Engine + extraction | `OCR-03`, `OCR-04`, `OCR-05`, `OCR-14` | done |
+| 3 — Outputs | `OCR-06`, `OCR-07`, `OCR-08`, `OCR-09` | done |
+| 4 — Publish + entry points | `OCR-10`, `OCR-11` | done |
+| 5 — Verification | `OCR-12`, `OCR-13` | done |
+
+`process_ocr_from_page` (`OCR-11`) is implemented and tested but composed nowhere: the subplan §9
+defers it to the Phase 3 integration, so it carries a `# TODO: [MVP]`, exactly as `merge_pdfs` and
+`sharpen_image` do in their processors.
+
+**Gate evidence.**
+
+```
+pytest                     339 passed          (117 of them in tests/ocr: 110 new + the 7 contract tests)
+ruff check .               All checks passed!
+ruff format --check .      99 files already formatted
+pylint src tests           10.00/10
+```
+
+The phase exit is owned by `OCR-13`, and it includes the no-engine rule. With the Poppler binaries
+off the `PATH` the whole suite is still green, and the OCR suite loads no engine at all — Docling is
+not even imported by the tests:
+
+```
+env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q    339 passed
+python -c "import sys, pytest; pytest.main(['tests/ocr','-q']); print('docling' in sys.modules)"
+117 passed
+False
+```
+
+**Invariant evidence.** The three invariants of subplan §6 were mutation-falsified this session —
+deterministic ordering, no run-time stamps in functional content, and atomic publication. Each was
+mutated, observed red, restored by re-applying the inverse edit (the files were new in this same
+session, so `git checkout --` had nothing to restore from), and observed green again. **The
+canonical four-field records live in the root `README.md`**, where `GEN-16` audits them.
+
+**Decisions taken in code.**
+
+1. **Absence is stated in the typing — ten `OCRResult` fields are `X | None`.** `text`, `markdown`,
+   `structured_document`, `tables`, `blocks`, `layout`, `reading_order`, `metrics`, `artifacts` and
+   `metadata` are all optional, and the module docstring states the rule they carry: ``None`` means
+   *this was never produced*, an empty value means *produced and empty*. A blank page legitimately
+   extracts the empty text; a run that failed before the engine was reached has no text at all. The
+   subplan §3.1 does not carry this, and it is the `image` decision applied to a whole result
+   rather than to the fields that happened to need it there.
+2. **`conversion_failure` owns the half of Docling's failure surface that does not raise.** The
+   dossier (§K, defect 5) recorded that Docling *returns* `ConversionResult(status=FAILURE,
+   errors=…)` as well as raising, and that neither the plan nor a double modelled it. A returned
+   `failure` is an unrecoverable `OCR_ERROR` and ends the run; `partial_success` is recorded as a
+   **recoverable** `OCR_ERROR` — the artifacts stand and the validation reports `INCOMPLETE`,
+   because the subplan calls a partial result data rather than an error; a status the seam does not
+   model is an `ENGINE_ERROR`, never a success.
+3. **The engine call is reached through the module, not through a name bound at import.** The
+   frozen injection point is the attribute `docflow.ocr.primitives.convert_image_with_docling`, so
+   `_convert` calls `primitives.convert_image_with_docling(...)`. Binding it in the entry point's
+   namespace made the patch a no-op — observed: the suite reached the real Docling and took 39.59 s
+   instead of 0.2 s — which is exactly the drift `README.md` §9.7 warns about, caught by writing
+   the double before the tests.
+4. **Two names are patched, one of them for the version.** `convert_image_with_docling` is the
+   engine call; `docflow.ocr.primitives.docling` is the engine namespace `get_engine_version` reads
+   `__version__` from. Without the second, recording a version would require the engine to be
+   installed, which the DoD forbids. It is the image seam's lazy-resolution rule applied to the one
+   other thing this processor reads off the engine.
+5. **A run's status is decided by lost artifacts, not by every recorded failure.** A partial
+   conversion records a failure and the run still succeeds with `INCOMPLETE`; an artifact that
+   could not be published fails the run. Collapsing the two would have made a partial result a
+   `failed` run, contradicting the subplan's "not an error".
+6. **Reading order is geometry, and the engine's own sequence is the last tie-break.** Sort by
+   (page, top, left, engine position); mint the identifiers *after* the sort, so a name and a
+   position never disagree; join a run of consecutive body-text items into one `paragraph`, with
+   the box measured as the union of the ones it joined. The double hands its items over in
+   adversarial order (caption, table, second line, first line, heading) precisely so a broken sort
+   is falsifiable — and it is: deleting the sort key turns three tests red.
+7. **The option flags decide what is *claimed*, not what the engine computed.** `tables: false`
+   claims no table even when one arrived; `layout: false` claims no box on any block or table;
+   `reading_order: false` keeps the engine's sequence instead of deriving one, so the paragraph
+   merge joins only what the engine placed next to each other and a paragraph can legitimately
+   arrive split. The page *size* is reported in every case, because `text_density` divides by it —
+   and a document with no page area is a `LAYOUT_ERROR` rather than a density of `0.0`, which would
+   be a measurement nobody took.
+8. **Validation reports on the result's own error list instead of copying it.** The entry point
+   shares one list between the stages and the validation, so a failure recorded *after*
+   `validate_ocr_result` ran — the `metadata.json` that could not be published — still reaches the
+   record. The synthesized "this artifact was not published" failures are appended idempotently, so
+   validating twice reports one gap twice rather than four times.
+9. **An empty artifact is publishable; a write that did not happen is not.** A blank page's
+   `text.txt` is zero bytes and that is the measurement, stated by `OCRMetrics.empty` and the
+   `EMPTY` status; the writer therefore checks that the write *happened* (the file exists after the
+   temporary write) rather than that it produced content. Conversely a filesystem that refuses the
+   rename, and a payload JSON cannot represent, are both typed (`IO_ERROR`, `EXPORT_ERROR`) instead
+   of escaping as an `OSError` or a `TypeError` through `_attempt`, which catches one type.
+10. **The double reads the page frame from the file and synthesizes the content.** Like
+    `fake_opencv`, it takes the geometry from the PNG's own header so the page it reports is the
+    page that was handed over, and it invents the *content* — which it says so in its docstring.
+    The fixtures are 240x120 stdlib-built PNGs for the same reason the image ones are small: the
+    suite's runtime, not the fidelity, is what the size buys.
+11. **`tests/support.py` gained `imported_modules(path)`, and `tests/ocr/samples.py` gained
+    `OPTION_VALUES` and `build_block`.** Pylint's `duplicate-code` found the same AST walk in
+    `test_skeleton.py` and the double's compliance test, and the same block/option literals in two
+    of this processor's own test modules; the fix was to remove the duplication rather than
+    suppress it. The cross-*processor* duplications are suppressed inline with their reason: a
+    processor may not import another processor's internals, and each suite proves the fixtures and
+    the wrapper it owns.
+12. **The engine is pinned in `pyproject.toml`** as `docling>=2.126,<3`: the version the seam was
+    written against. The version recorded in every artifact is the one Docling itself reports, and
+    a bump is a re-check of the double against the engine's shapes (`# TODO: [RELEASE]` on
+    `fake_docling.py`).
+13. **Three names exist beyond the subplan §3.4 list, and each is required by a row of the WBS.**
+    `process_tables` (`OCR-07`), `analyze_ocr_result` (`OCR-08`) and `build_ocr_document` (the
+    assembler of `OCR-04`'s document from the five extractors). `conversion_failure` is a fourth,
+    and it exists because decision 2 needs an owner. No predicate layer, no second export path and
+    no `count_*` helper were added, and a test asserts exactly that.
+
+**Left stale (owner).** No pre-existing file under `docs/plan/` or `docs/idea/` was edited. The
+root `README.md` was updated (it is the developer quickstart, not a plan artifact), and
+`pyproject.toml` gained the pin. These now disagree with the code and need their owner:
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/plan/issues/wbs-procesador-ocr.md` | header and §2 still say `NOT_STARTED` for all fourteen tasks; flipping it is a plan revision, not a code edit | plan owner |
+| `docs/plan/subplan-procesador-ocr.md` §3.4 | the closed list stops at 25 names; `process_tables`, `analyze_ocr_result`, `build_ocr_document` and `conversion_failure` are required by `OCR-04`, `OCR-07` and `OCR-08` and exist in the code | plan owner |
+| `docs/idea/procesador-ocr.md` | still names the 53-primitive surface; the divergence is deliberate (§9 decision 7) and is what `GEN-17` reconciles | plan owner |
+| `docs/3party/docling.md` §B | says the pin is `TBD`; it landed as `docling>=2.126,<3` | dossier owner |
+| `docs/3party/docling.md` §D, §K | the `generate_page_images` question is answered in code (`False`) and the returned-failure shape is now modelled, but neither is written back; the OCR *backend* question is still open in both places — the seam folds `ocr_language` in and leaves the backend at Docling's default, which is a choice the dossier should record | dossier owner |
+| `docs/plan/README.md` §9.7 | states the injection point as `convert_image_with_docling` only; the seam also patches the engine namespace for the version (decision 4) | plan owner |
+| `tests/fixtures/manifest.json` | still knows neither `pdf/`, `image/` nor `ocr/`, and has no builder in the tree to re-run | fixture owner |
+| `README.md`, phase table | the Phase 5 row still lists `OCR-14` as a lab tool; `docs/feedback/no-tests-on-third-parties.md` repurposed it as the engine double (also true of `PDF-14` and `IMG-15`) | plan owner |
+
+**Next.** Phase 1 closes with `llm` (`LLM-01`…`LLM-16`). It is the one processor whose fake is
+**scripted** rather than content-shaped (`LLM-03`): a model's answer is not deterministic for a
+fixed input, and `LLM-08` needs a scripted sequence — invalid JSON on attempt one, valid on attempt
+two. What `ocr` adds to the worked example: an engine whose structures are rich and must be
+translated, whose failure arrives twice (raised *and* returned, decision 2), and whose double hands
+its items back in an adversarial order so that the ordering invariant is falsifiable rather than
+decorative. The follow-ups tagged in code are the first things Phase 2 and the Release gate will
+want: `process_ocr_from_page` composed nowhere, the PoC threshold in `composition.py`, spanned
+cells in `_table_grid`, the processor-local `processing_key` (`ORC-02`), publication `fsync`
+(`RELEASE`), and the double's re-check on a pin bump.

@@ -14,7 +14,6 @@ import pytest
 
 from docflow.ocr import (
     ArtifactPaths,
-    BlockResult,
     LayoutResult,
     NormalizedOCROptions,
     OCRErrorType,
@@ -26,6 +25,7 @@ from docflow.ocr import (
     TableResult,
 )
 from tests.factories import build_ocr_options, build_ocr_request, incomplete_call
+from tests.ocr.samples import OPTION_VALUES, build_block
 
 
 def normalized_options(request: OCRRequest) -> NormalizedOCROptions:
@@ -44,19 +44,18 @@ def normalized_options(request: OCRRequest) -> NormalizedOCROptions:
 def fake_process_ocr_image(request: OCRRequest) -> OCRResult:
     """Stand-in processor: builds a result from the request and nothing else."""
     blocks = [
-        BlockResult(
-            block_id="block_001",
-            type="title",
-            text="A heading",
+        build_block(
+            "block_001",
+            "title",
+            "A heading",
             bbox=(0.0, 0.0, 100.0, 20.0),
             level=1,
         ),
-        BlockResult(
-            block_id="block_002",
-            type="paragraph",
-            text="A paragraph.",
+        build_block(
+            "block_002",
+            "paragraph",
+            "A paragraph.",
             bbox=(0.0, 30.0, 100.0, 60.0),
-            level=None,
         ),
     ]
     tables = [
@@ -162,11 +161,7 @@ def test_a_missing_required_option_is_rejected_instead_of_defaulted() -> None:
     """A missing option is not silently treated as false."""
     complete = build_ocr_options()
     incomplete = {
-        "ocr": True,
-        "layout": True,
-        "tables": True,
-        "reading_order": True,
-        "language": "en",
+        key: value for key, value in OPTION_VALUES.items() if key != "engine_options"
     }
 
     with pytest.raises(TypeError):

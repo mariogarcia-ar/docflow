@@ -18,6 +18,12 @@ dependencies = [
     # because the engine is the swappable half of `image/primitives/`; the version actually used
     # is recorded in every artifact's metadata.
     "opencv-python-headless>=5.0,<6",
+    # The OCR processor's engine (`OCR-02`) — the only OCR engine this project has, and never a
+    # user-selectable setting. The version recorded in every artifact's metadata is the one
+    # Docling itself reports; this pin is the range the seam was written against, and a bump is a
+    # re-check of `tests/fakes/engines/fake_docling.py` against the engine's shapes. The whole
+    # test suite runs without it installed: no test imports or invokes Docling.
+    "docling>=2.126,<3",
 ]
 
 [project.optional-dependencies]

@@ -8,7 +8,8 @@ Engine: Docling, the only OCR engine, reached only from :mod:`docflow.ocr.primit
 The engine is fixed and never exposed as a user-selectable option. The processor imports
 no other processor and decides nothing about what should happen next.
 
-Entry point: :func:`process_ocr_image`.
+Entry points: :func:`process_ocr_image`, and the thin :func:`process_ocr_from_page` wrapper that
+only builds a request and delegates (composed from Phase 3 on).
 
 Symbols are re-exported here, but only :mod:`docflow.ocr.primitives` may import them.
 """
@@ -35,7 +36,7 @@ from docflow.ocr.contracts import (
     OCRValidationState,
     TableResult,
 )
-from docflow.ocr.entrypoints import process_ocr_image
+from docflow.ocr.entrypoints import process_ocr_from_page, process_ocr_image
 
 __all__ = [
     "ArtifactPaths",
@@ -56,5 +57,6 @@ __all__ = [
     "OCRValidation",
     "OCRValidationState",
     "TableResult",
+    "process_ocr_from_page",
     "process_ocr_image",
 ]

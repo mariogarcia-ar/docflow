@@ -339,32 +339,42 @@ class OCRDocument:
 class OCRResult:
     """Output contract of the OCR processor, one per extraction.
 
+    **Absence is stated, never faked.** Every product field is ``None`` when the run did not get
+    far enough to produce it, and a run that produced the material reports it. The distinction the
+    typing carries: ``None`` means *this was never produced*, an empty value means *produced and
+    empty* — a blank image legitimately extracts the empty text, and a run that failed before the
+    engine was reached has no text at all. A ``0``, an empty string or a default that stood in for
+    an unmeasured value would read as an answer nobody observed.
+
     Attributes:
-        text: Plain text in logical reading order.
-        markdown: Structured Markdown.
-        structured_document: The serialized :class:`OCRDocument`.
-        tables: Detected tables in preserved order.
-        blocks: Deterministically ordered blocks.
-        layout: Normalized layout.
-        reading_order: Ordered block and table identifiers.
-        metrics: Content metrics.
-        artifacts: Paths to everything this processor published.
-        validation: Structural validation of the extraction.
-        metadata: Provenance of the extraction.
+        text: Plain text in logical reading order, or ``None`` when none was produced.
+        markdown: Structured Markdown, or ``None`` when none was produced.
+        structured_document: The serialized :class:`OCRDocument`, or ``None``.
+        tables: Detected tables in preserved order, or ``None`` when none were extracted.
+        blocks: Deterministically ordered blocks, or ``None`` when none were extracted.
+        layout: Normalized layout, or ``None`` when no geometry was read.
+        reading_order: Ordered block and table identifiers, or ``None``.
+        metrics: Content metrics, or ``None`` when nothing was measured.
+        artifacts: Paths to everything this processor published, or ``None`` when it published
+            nothing.
+        validation: Structural validation of the extraction. Always present: it is the record of
+            what happened, including a failure.
+        metadata: Provenance of the extraction, or ``None`` when the run produced no artifact to
+            describe.
         status: Outcome of the run.
         error: The typed failure when ``status`` is ``failed``.
     """
 
-    text: str
-    markdown: str
-    structured_document: dict[str, Any]
-    tables: list[TableResult]
-    blocks: list[BlockResult]
-    layout: LayoutResult
-    reading_order: list[str]
-    metrics: OCRMetrics
-    artifacts: ArtifactPaths
+    text: str | None
+    markdown: str | None
+    structured_document: dict[str, Any] | None
+    tables: list[TableResult] | None
+    blocks: list[BlockResult] | None
+    layout: LayoutResult | None
+    reading_order: list[str] | None
+    metrics: OCRMetrics | None
+    artifacts: ArtifactPaths | None
     validation: OCRValidation
-    metadata: OCRMetadata
+    metadata: OCRMetadata | None
     status: OCRStatus
     error: OCRError | None
