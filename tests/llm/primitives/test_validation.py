@@ -22,7 +22,8 @@ from docflow.llm.primitives.validation import (
     validate_schema,
 )
 from docflow.states import StageState
-from tests.llm.samples import ANSWER, ASSETS, build_input
+from tests.factories import build_llm_input
+from tests.llm.samples import ANSWER, ASSETS, build_input, build_result
 
 
 def test_a_request_that_names_no_provider_is_refused_by_name() -> None:
@@ -174,26 +175,14 @@ def test_an_enum_is_enforced_when_a_schema_states_one() -> None:
 
 def finished_result(**overrides: Any) -> LLMResult:
     """Return a consistent result, with any field overridden for the case under test."""
-    fields: dict[str, Any] = {
-        "run_id": "run-1",
-        "task": "extract_fields",
-        "provider": "ollama",
-        "model": "test-model",
-        "graph_id": None,
-        "node_results": {},
-        "raw_response": '{"summary": "s"}',
-        "parsed_response": {"summary": "s"},
-        "schema_valid": True,
-        "validation_errors": [],
-        "errors": [],
-        "attempts": [],
-        "comparisons": {},
-        "usage": Usage(None, None, None, None, {}, None),
-        "timing": Timing(None, None, None, 0.1),
-        "status": StageState.SUCCESS,
-        "metadata": {},
-    }
-    return LLMResult(**{**fields, **overrides})
+    return build_result(
+        build_llm_input(),
+        raw_response='{"summary": "s"}',
+        parsed_response={"summary": "s"},
+        usage=Usage(None, None, None, None, {}, None),
+        timing=Timing(None, None, None, 0.1),
+        **overrides,
+    )
 
 
 def test_a_success_that_recorded_no_attempt_is_a_contradiction() -> None:

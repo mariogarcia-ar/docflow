@@ -18,6 +18,7 @@ import from a clean interpreter, so that is what is measured.
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import os
 import subprocess
@@ -28,9 +29,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.factories import (
-    build_document_request,
-)
 from tests.support import imported_modules
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -251,19 +249,23 @@ def test_no_contract_field_carries_an_undocumented_default() -> None:
     )
 
 
-def test_a_stub_raises_instead_of_returning_a_placeholder() -> None:
-    """A caller can never mistake a stub for a processed document.
+def test_no_documented_entry_point_ships_a_stub() -> None:
+    """Every documented entry point is implemented in its own body.
 
-    The processors implemented in Phase 1 leave this list as they land: ``pdf`` did, then
-    ``image``, then ``ocr``, then ``llm``, so the check now covers the one entry point that is
-    still a Phase 0 stub — the orchestrator, whose phase has not started.
+    Until ``ORC-19`` this check was the opposite one: the orchestrator's ``process_document``
+    was the last Phase 0 stub, so the test asserted that it raised ``NotImplementedError``.
+    The stub is gone, and the guarantee is kept by inverting the check — a documented entry
+    point that still raises fails it — rather than by deleting it. Abstract methods of an
+    internal base class are deliberately out of scope: this is about the published surface.
     """
-    workflow_module = importlib.import_module("docflow.workflow")
+    offenders: list[str] = []
+    for package, names in ENTRY_POINTS.items():
+        module = importlib.import_module(package)
+        for name in names:
+            if "NotImplementedError" in inspect.getsource(getattr(module, name)):
+                offenders.append(f"{package}.{name}")
 
-    document_request = build_document_request(Path("."))
-
-    with pytest.raises(NotImplementedError):
-        workflow_module.process_document(document_request)
+    assert not offenders, f"these entry points are still stubs: {offenders}"
 
 
 def test_a_processor_reports_a_state_without_importing_the_orchestrator() -> None:

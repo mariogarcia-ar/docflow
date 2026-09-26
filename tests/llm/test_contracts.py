@@ -22,7 +22,7 @@ from docflow.llm import (
 from docflow.llm.primitives import NON_RETRYABLE_KINDS, RETRYABLE_KINDS
 from docflow.states import StageState
 from tests.factories import build_llm_input, incomplete_call
-from tests.llm.samples import measured_usage
+from tests.llm.samples import build_result, measured_usage
 
 
 def fake_process_llm_request(request: LLMInput) -> LLMResult:
@@ -44,23 +44,13 @@ def fake_process_llm_request(request: LLMInput) -> LLMResult:
         error=None,
         status="success",
     )
-    return LLMResult(
-        run_id="run-1",
-        task=request.task,
-        provider=request.provider,
-        model=request.model,
-        graph_id=None,
-        node_results={},
+    return build_result(
+        request,
         raw_response=attempt.raw_response,
         parsed_response=attempt.parsed_response,
-        schema_valid=True,
-        validation_errors=[],
-        errors=[],
         attempts=[attempt],
-        comparisons={},
         usage=usage,
         timing=timing,
-        status=StageState.SUCCESS,
         metadata={"document_id": "doc-1"},
     )
 

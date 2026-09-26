@@ -13,7 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
-from docflow.llm import LLMGraphState, LLMInput, Usage
+from docflow.llm import LLMGraphState, LLMInput, LLMResult, Timing, Usage
 from docflow.llm.primitives import default_inference_graph
 from docflow.states import StageState
 from tests.factories import build_llm_input
@@ -38,7 +38,6 @@ ANSWER: Final[dict[str, Any]] = {
 
 def measured_usage() -> Usage:
     """Return the usage record the committed fake reports, so two tests cannot spell it differently.
-
     It is what the fake's Ollama body reports (twelve prompt tokens, four generated), and it is
     shared because both the contract round trip and the persistence round trip need a usage record
     to travel through their own machinery.
@@ -51,6 +50,45 @@ def measured_usage() -> Usage:
         provider_usage={"prompt_eval_count": 12, "eval_count": 4},
         estimated_cost=None,
     )
+
+
+def build_result(request: LLMInput, **overrides: Any) -> LLMResult:
+    """Return an ``LLMResult`` for ``request``, with any field replaced.
+
+    The result has eighteen fields, and every test that needs one needs the same sixteen
+    defaults. They live here so the contract round trip and the orchestrator's fake cannot
+    spell the same result differently.
+
+    Args:
+        request: The request the result answers; its task, provider and model are echoed.
+        **overrides: Fields to replace, e.g. ``raw_response``, ``attempts``, ``status``.
+
+    Returns:
+        The result.
+    """
+    fields: dict[str, Any] = {
+        "run_id": "run-1",
+        "task": request.task,
+        "provider": request.provider,
+        "model": request.model,
+        "graph_id": None,
+        "node_results": {},
+        "raw_response": None,
+        "parsed_response": None,
+        "schema_valid": True,
+        "validation_errors": [],
+        "errors": [],
+        "attempts": [],
+        "comparisons": {},
+        "usage": measured_usage(),
+        "timing": Timing(
+            queue_time=None, load_time=None, inference_time=None, total_time=0.0
+        ),
+        "status": StageState.SUCCESS,
+        "metadata": {},
+    }
+    fields.update(overrides)
+    return LLMResult(**fields)
 
 
 #: The identity every sample request carries, so a test that varies one field varies only one.

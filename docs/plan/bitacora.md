@@ -620,3 +620,152 @@ The follow-ups tagged in code are its first candidates: the per-node artifact tr
 `claim_node` / *parallel branches* / per-node `SKIP`–`FORCE`–`INVALIDATE` / `calculate_consensus`
 (`# TODO: [MVP]`), the provider inventory probe (decision 5), a real JSON-Schema engine
 (decision 9), publication `fsync` (`# TODO: [RELEASE]`) and the double's re-check on a pin bump.
+
+---
+
+## 2026-09-26 — Phase 2 · `procesador-orquestador` (`ORC-01` … `ORC-19`)
+
+**Delivered.**
+
+| File | What it is |
+|---|---|
+| `src/docflow/workflow/contracts.py` | `ORC-01`: the request/result pair from Phase 0, plus `DocumentContext`, `PageContext`, `PageResult`, `StageExecution`, `StageResolution`, `PlannedStage`, `ExecutionPlan` and the five literals (`StageName`, `StageAction`, `SourceKind`, `ExtractionStrategy`, `ErrorOutcome`) |
+| `src/docflow/workflow/identity.py` | `ORC-02`: `input_hash`, `options_hash`, `processing_key`, `build_workflow_run_id`, and the normalizer that makes two spellings of one option set hash alike |
+| `src/docflow/workflow/context.py`, `persistence.py` | `ORC-03`: create / load / save `DocumentContext`, create / get `PageContext`, the payload that mirrors the context's own fields, and atomic `.tmp` → validate → rename |
+| `src/docflow/workflow/stages.py` | `ORC-04`: `create_stage`, `set_stage_status`, `claim_stage`, `release_stage`, `register_stage_outputs` |
+| `src/docflow/workflow/detection.py` | `ORC-05`: `detect_input_type` (PDF / IMAGE / UNSUPPORTED) |
+| `src/docflow/workflow/planning.py` | `ORC-06`: `build_execution_plan` and `apply_forces` |
+| `src/docflow/workflow/resolution.py` | `ORC-07`: `resolve_stage`, the fixed decision order |
+| `src/docflow/workflow/reuse.py` | `ORC-08`: `is_stage_reusable`, `validate_stage_outputs` |
+| `src/docflow/workflow/dependencies.py` | `ORC-09`: `STAGE_DEPENDENCIES`, `dependencies_of`, `downstream_of`, `invalidate_downstream` |
+| `src/docflow/workflow/preparation.py` | `ORC-10`: `prepare_document`, `prepare_pdf_document`, `prepare_image_document` |
+| `src/docflow/workflow/execution.py` | `ORC-11`: `process_pages`, `process_page_context`, `stop_boundary` |
+| `src/docflow/workflow/selection.py` | `ORC-12`: `select_source`, `select_extraction_strategy`, `ocr_skip_reason`, `readable`, the artifact key vocabulary |
+| `src/docflow/workflow/llm_input.py` | `ORC-13`: `build_llm_input` |
+| `src/docflow/workflow/invocation.py` | `ORC-14`: `run_pdf`, `run_image_processing`, `run_ocr`, `run_llm`, `result_succeeded`, `describe_failure` |
+| `src/docflow/workflow/resume.py` | `ORC-15`: `load_resumable_context`, `recover_running_stages` |
+| `src/docflow/workflow/errors.py` | `ORC-16`: `handle_processor_error`, `MAX_STAGE_ATTEMPTS` |
+| `src/docflow/workflow/consolidation.py` | `ORC-17`: `consolidate_page_result`, `build_document_result`, `execution_summary`, `workflow_decisions`, `workflow_errors`, `document_status` |
+| `src/docflow/workflow/tracing.py` | `ORC-18`: `register_decision`, `register_error`, `append_workflow_trace` |
+| `src/docflow/workflow/runner.py` | the shared stage lifecycle: resolve → record → claim → invoke → retry, used by both execution levels |
+| `src/docflow/workflow/configuration.py` | the one place the run's configuration is read, and the one place a missing key is refused by name |
+| `src/docflow/workflow/keys.py` | what each stage consumes, and the key that follows from it |
+| `src/docflow/workflow/entrypoints.py` | `ORC-19`: `process_document`, `process_page`, `resume_document` |
+| `tests/fakes/processors/__init__.py` | the four **contract-level** fakes: whole processors, installed at their public entry points, counting their calls and writing real artifacts |
+| `tests/workflow/**` | one module per task, 110 tests: the four acceptance scenarios, the three invariants, and a unit test per primitive |
+
+`tests/fakes/processors/` is a new sibling of `tests/fakes/engines/`, and the two levels are
+deliberately separate: the engine doubles replace an engine call *inside* a real processor, these
+replace a whole processor at its contract. `README.md` §9.7 is what says neither may stand in for
+the other.
+
+**Tasks.** All nineteen are done, in the subplan's waves:
+
+| Wave | Tasks | Status |
+|---|---|---|
+| 1 — Foundation | `ORC-01` … `ORC-05` | done |
+| 2 — Decision core | `ORC-06` … `ORC-09` | done |
+| 3 — Execution path | `ORC-10` … `ORC-14` | done |
+| 4 — Resilience | `ORC-15`, `ORC-16` | done |
+| 5 — Consolidation & QA | `ORC-17` … `ORC-19` | done |
+
+**Gate evidence.**
+
+```
+pytest                     613 passed
+ruff check .               All checks passed!
+ruff format --check .      161 files already formatted
+pylint src tests           10.00/10
+```
+
+`ORC-19` also owns the no-engine rule at this level. The whole suite, orchestrator included, is
+green with the Poppler binaries off the `PATH` — and the orchestrator reaches no engine at all: it
+calls the four processors through their **public entry points**, which is what the fakes replace.
+
+```
+env -i PATH=/usr/bin:/bin "$(which python)" -m pytest -q    613 passed
+command -v pdfinfo                                          not reachable
+```
+
+**Invariant evidence.** The three invariants of subplan §6 were mutation-falsified this session —
+resume reuses / force invalidates downstream / reuse needs a key match. Each was mutated, observed
+red, restored by re-applying the exact inverse edit (`git diff` on the file empty afterwards), and
+observed green. **The canonical four-field records live in the root `README.md`** (the table under
+"Rules that will bite you"), where `GEN-16` audits them; this entry points at them rather than
+copying them.
+
+**Decisions taken in code.**
+
+1. **Stage status stays the shared nine.** `StageExecution.status` and `PageContext.status` are
+   `docflow.states.StageState`; the two extra words the orchestrator needs — `PARTIAL` and
+   `REVIEW_REQUIRED` — are **document** statuses (`DocumentStatus`), so a stage that could not
+   fully succeed is `FAILED` while the document it belongs to says `REVIEW_REQUIRED`. That keeps
+   one closed vocabulary for stages instead of a second enum spelling the same nine words.
+2. **`PageContext.artifacts` gained two keys beyond §3.1's list**: `ocr_ready_image` and
+   `vlm_ready_image`. The image processor publishes three representations and the orchestrator has
+   to tell them apart; reusing `normalized_image` for the VLM variant would misname the artifact
+   the LLM stage consumes. `PAGE_ARTIFACT_KEYS` is derived from the contract's `PageArtifactKey`
+   literal with `typing.get_args`, so the vocabulary is written once.
+3. **A dry run returns a `DocumentResult` whose `final_result` is the plan and whose `status` is
+   `PAUSED`** — nothing ran, and the document is still resumable. Preparation also skips the PDF
+   stage under `dry_run`: knowing the page count would require running the very stage the run is
+   inspecting, so a fresh dry run plans the stages it can know about, and a resumed one plans
+   every page.
+4. **`is_stage_reusable` accepts `SUCCESS` *or* `REUSED`.** A run records a reused stage as
+   `REUSED` (that is what invariant 1 asserts), so the next resume must still see a valid result;
+   `SUCCESS`-only would make the second resume re-run everything.
+5. **The request configures all four stages, plus the two policy flags, or it is refused by
+   name.** `options["output_dir"|"pdf"|"image"|"ocr"|"llm"]` and `policies["allow_ocr"|"allow_vlm"]`
+   are read in `configuration.py`; a missing key raises `WorkflowConfigurationError`, which
+   `process_document` converts into a `FAILED` `DocumentResult` with a `CONFIGURATION_ERROR`
+   record. No default DPI, model, schema or engine is substituted anywhere.
+6. **A direct image input creates no PDF stage at all** — a decision records
+   `direct_image_input` — so nothing in the summary has to be read as "the PDF stage ran and
+   silently did nothing".
+7. **`execution_summary` is stage → `StageState` plus `reused`, `skipped` and `decisions`**, and
+   `DocumentResult.decisions` / `.errors` carry the page-level records too. "Every decision taken"
+   is what that field promises, and the acceptance criterion asks for both places.
+8. **`PageContext.results` is not serialized.** A resumed run re-derives what it needs from the
+   artifacts on disk and the decisions already recorded — which is exactly why the resume mapping
+   can be `SUCCESS → REUSE` without re-running the processor. Tagged `# TODO: [MVP]`.
+9. **The LLM stage registers no artifacts.** `LLMResult` exposes no artifact list, so its reuse
+   rests on status and key alone; tagged `# TODO: [MVP]` in `reuse.validate_stage_outputs` and
+   `invocation.run_llm` — the processor contract is what has to carry the paths.
+10. **`MAX_STAGE_ATTEMPTS = 2`**, a named PoC constant with its `# TODO: [MVP]` to become a
+    configuration key, following the `image` thresholds precedent.
+11. **`tests/test_skeleton.py`'s stub check was inverted, not deleted.** No *documented entry
+    point* may ship `raise NotImplementedError` any more; the abstract methods of the LLM
+    provider base class are deliberately out of scope, because the check is about the published
+    surface.
+12. **Pylint's `duplicate-code` was removed by extraction, not suppression** — with one
+    exception. `tests/workflow/samples.py` now builds each stage's options from that processor's
+    own sample builder, `decision_record` / `error_record` are produced by the production writers
+    (`register_decision` / `register_error`) rather than by a copy of their shape, and
+    `tests/llm/samples.py::build_result` is the single `LLMResult` builder (used by
+    `tests/llm/test_contracts.py`, `tests/llm/primitives/test_validation.py` and the orchestrator's
+    fake). The exception is `tests/fakes/processors/__init__.py`, which suppresses `duplicate-code`
+    inline with its reason: a test double may not import the production seam it stands beside,
+    because nothing under `src/` may import anything under `tests/`.
+
+**Left stale (owner).** No pre-existing file under `docs/plan/` or `docs/idea/` was edited; the
+root `README.md` gained the mutation records (it is the developer quickstart, not a plan artifact).
+These now disagree with the code and need their owner:
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/plan/issues/wbs-orquestador.md` | header and §2 still say `NOT_STARTED` for all nineteen tasks; flipping it is a plan revision, not a code edit | plan owner |
+| `docs/plan/subplan-orquestador.md` §3.1 | "Stage states" lists eleven members (`PARTIAL`, `REVIEW_REQUIRED` included), where `README.md` §9.6 closes the shared set at nine; the code keeps nine stage states and carries those two as document statuses (decision 1) | plan owner |
+| `docs/plan/subplan-orquestador.md` §3.1 | the `PageContext` artifact list does not mention `ocr_ready_image` / `vlm_ready_image` (decision 2) | plan owner |
+| `docs/plan/subplan-orquestador.md` §3.1, `DocumentRequest` | lists `input_path`, `input_type`, `workflow`, `policies`, `execution`, `options`, `metadata` and omits `document_id`, which Phase 0 froze on the request and the result | plan owner |
+| `docs/plan/README.md` §5 | the Phase 2 and Phase 3 exit criteria are met by this pass (`pytest` 613 green, invariants falsified); the phase tables still describe the work as pending | plan owner |
+| `tests/fixtures/manifest.json` | still knows none of `pdf/`, `image/`, `ocr/` or `llm/`, and has no builder in the tree to re-run (already flagged) | fixture owner |
+| `README.md`, phase table | the Phase 5 row still lists the lab tools the engine-double convention repurposed (already flagged) | plan owner |
+
+**Next.** Phase 2 and Phase 3 are closed for the orchestrator. Phase 4 (hardening) inherits the
+tagged follow-ups, and the most load-bearing of them is decision 9: the LLM processor's result
+should expose the paths it published, so its stage can be validated like the other three. The
+others are `parallel_pages` (the per-page state and `claim_stage` are already what a worker pool
+needs), `request_stop` and its `stop_requested` field, the durable cross-process store behind the
+same payload, and the processor-local `processing_key` the Phase 1 log flagged — which the
+orchestrator now owns outright (`ORC-02`), so the reconciliation is to have the four processors
+read it from `docflow.workflow.identity` instead of computing their own.
