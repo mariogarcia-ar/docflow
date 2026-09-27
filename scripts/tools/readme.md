@@ -46,7 +46,7 @@ five tools; `batch_pdf.py` and the shared layer that keeps it from duplicating `
 ```bash
 python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
 python scripts/tools/pdf.py --fixture pdf_sample_mixed.pdf render --page 1 --dpi 300
-python scripts/tools/batch_pdf.py tests/fixtures/pdf
+python scripts/tools/batch_pdf.py tests/fixtures/pdf     # inspect, over every PDF below the folder
 python scripts/tools/workflow.py --allow-ocr --no-allow-vlm \
     --pdf-dpi 150 --image-normalize --ocr \
     --task extract --provider ollama --model llama3.1 --template simple_extract \
@@ -58,8 +58,8 @@ python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0
 
 Every line above runs as written against the committed fixtures. The `render` line shows the two
 spellings at once — `--fixture` before the subcommand, `--page`/`--dpi` after it — and the batch
-line is the whole PDF corpus under `tests/fixtures/pdf/`, three inputs written and one reported as
-the corrupt file it is (exit `1`). The `plan` line carries a **complete** workflow request,
+line is `tests/fixtures/pdf`'s four PDFs, three written and one reported as the corrupt file it
+is (exit `1`). The `plan` line carries a **complete** workflow request,
 because the library refuses a missing option key by name; `plan` needs no `--dry-run`, since
 planning *is* the dry run. The `call` line is the honest failure the bench exists for: no model is
 served on this machine, so it prints a typed `MODEL_UNAVAILABLE` and exits `1`.
@@ -175,10 +175,33 @@ mirrored under `var/batch_pdf/<folder>/`. Both tools dispatch through `_pdf`, so
 payload and its flags live in exactly one place and the batch adds no behaviour of its own.
 
 ```bash
-python scripts/tools/batch_pdf.py unacarpeta                        # inspect; the header says so
-python scripts/tools/batch_pdf.py unacarpeta run --dpi 200 --extract-text
-python scripts/tools/batch_pdf.py --no-recursive --out var/x unacarpeta split
+python scripts/tools/batch_pdf.py tests/fixtures/pdf        # the four committed samples
+python scripts/tools/batch_pdf.py tests/fixtures            # the whole tree: 31 PDFs, eight folders
+python scripts/tools/batch_pdf.py tests/fixtures/chicos run --dpi 200 --extract-text
+python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matrix split
 ```
+
+The batch command is `pdf.py`'s command with a folder where the file was. The subcommand is
+optional — the run makes `inspect` when none is stated, and says so — and the flags after it are
+the ones `pdf.py` registered for it:
+
+```bash
+python scripts/tools/pdf.py inspect tests/fixtures/matrix/scan150.pdf   # one input
+python scripts/tools/batch_pdf.py tests/fixtures/matrix                 # every PDF below it
+python scripts/tools/pdf.py split tests/fixtures/matrix/scan150.pdf
+python scripts/tools/batch_pdf.py tests/fixtures/matrix split           # the stated command, per input
+```
+
+The mirror is the walk, folder for folder, plus one directory per input. The second command above,
+over `tests/fixtures`, lands like this:
+
+```text
+tests/fixtures/pdf/pdf_sample_text.pdf  ->  var/batch_pdf/fixtures/pdf/pdf_sample_text/result.json
+tests/fixtures/chicos/<uuid>.pdf        ->  var/batch_pdf/fixtures/chicos/<uuid>/result.json
+tests/fixtures/matrix/scan150.pdf       ->  var/batch_pdf/fixtures/matrix/scan150/result.json
+```
+
+With `--out var/x` the walked folder is not repeated: `var/x/scan150/…`.
 
 | Subcommand | What it does |
 |---|---|
@@ -189,16 +212,18 @@ python scripts/tools/batch_pdf.py --no-recursive --out var/x unacarpeta split
   root**, so a second run over the same tree does not pick up the pages the first one wrote.
 - **Every input gets its own directory**: `<root>/<the input's folder relative to the walked
   folder>/<the input's stem>/`, which is what keeps two PDFs in one folder from colliding.
-- **Every input gets a record**: the method's payload is written to `result.json` in that
+- **Every input that produced a payload gets a record**: it is written to `result.json` in that
   directory, beside whatever the method published. So `inspect` — which publishes no artifact at
   all (`pdf.py`'s report-only set) — still leaves something to read, which is the point of running
-  it over a corpus.
+  it over a corpus. A failed input has no payload and is reported, not filed: its typed record is
+  printed and counted, and its directory is never created.
 - **The command is stated, never guessed.** With no subcommand the run makes `inspect`, the one
   method that needs no further flag, and the header says `command: inspect (default, none
   stated)`.
 - **One bad file does not end the batch.** Each failure is printed as the library's typed record
   and counted, and the run keeps going: the exit code is `1` when any input failed, `0` when none
-  did, and `2` for a usage error.
+  did, and `2` for a usage error. `tests/fixtures/pdf` is that demonstration in one line — four
+  inputs, one of them the corrupt sample: `files: 4 · succeeded: 3 · failed: 1`, exit `1`.
 - **`--out DIR`** replaces `var/batch_pdf/<folder>/` entirely; the mirror is then `DIR/<relative
   folders>/<stem>/`. `--recursive`, `--out` and `--json` are the tool's global flags and belong
   before the subcommand, as everywhere else.

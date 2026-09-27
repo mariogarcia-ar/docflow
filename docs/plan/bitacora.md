@@ -1411,3 +1411,43 @@ over the deleted bullet. Owner: this pass's author, next pass.
 **Next.** That revision, before any further work on the bench: until it lands, `docs/plan/` and
 `scripts/tools/` disagree about the module set. The image processor's publication defect is still
 the one thing standing between the bench and an end-to-end run.
+
+---
+
+## 2026-09-27 — Phase 5 · the batch examples, on the real fixture folders
+
+**Delivered.** `scripts/tools/readme.md`'s `batch_pdf.py` section no longer runs on a placeholder
+folder. Its four examples name folders that exist in the tree — `tests/fixtures/pdf`, the whole
+`tests/fixtures`, `tests/fixtures/chicos`, `tests/fixtures/matrix` — and the observed mirror is
+shown for one of them, plus the rule that `--out` does not repeat the walked folder's name.
+
+**Hand run, one command per example, all four as printed.**
+
+```
+batch_pdf.py tests/fixtures/pdf        files: 4  · ok 3  · failed 1 (pdf_corrupt.pdf)   exit 1
+batch_pdf.py tests/fixtures            files: 31 · ok 30 · failed 1                     exit 1
+  → var/batch_pdf/fixtures/{casos,chicos,matrix,negativos,pdf,pdf_aptos_layout,
+    pdf_escaneados,pdf_large}/<stem>/result.json
+batch_pdf.py tests/fixtures/chicos run --dpi 200 --extract-text
+                                       files: 6  · ok 6  · failed 0                     exit 0  (0.38 s)
+  → each input's directory holds source/, page_001/, result.json
+batch_pdf.py --no-recursive --out var/x tests/fixtures/matrix split
+                                       files: 3  · ok 3  · failed 0                     exit 0
+  → var/x/{scan-hidden-layer,scan150,three-invoices}/result.json
+```
+
+**One wording the run corrected.** The section said "every input gets a record"; the run showed a
+failed input leaves no directory at all — there is no payload to file. It now says what happens:
+a payload is filed as `result.json`, a failure is printed as the library's typed record and
+counted, and no directory is created for it.
+
+**Gate evidence.**
+
+```
+pytest                     680 passed
+ruff check .               All checks passed!
+ruff format --check .      172 files already formatted
+pylint src tests           10.00/10
+```
+
+**Next.** Unchanged, and owed: the `SCR-11`/`SCR-12` plan revision named in the entry above.
