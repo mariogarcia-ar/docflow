@@ -992,3 +992,32 @@ read as a library rather than as five helpers.
 
 **Next.** Unchanged from the entry above: the image processor's publication defect is still the one
 thing standing between the bench and an end-to-end run.
+
+---
+
+## 2026-09-27 — Phase 5 · bench readme (`scripts/tools/readme.md`)
+
+**Delivered.** The bench is documented where a person starts reading it, not only in the plan.
+
+| File | What it is |
+|---|---|
+| `scripts/tools/readme.md` | what the bench is for (and why a bench rather than a test); the layout; invocation by path with no console script; `--help`; **where flags go** (global before the subcommand, subcommand flags after, the positional input on the subcommand); the common flags; the fixture roots and the `var/tools/<tool>/<stem>-<hash8>/` output root; the exit-code table; one subcommand → symbol table per tool; the three boundaries and the lab-bench exception, with `workflow.py`'s exclusion; how to work with no engine or no model; the gates' scope over `scripts/`; and the one known limitation |
+
+**Decisions taken in code.**
+
+1. **The readme is documentation, not a tool.** The *module* set of `scripts/tools/` is unchanged — `_cli.py` plus the five tools — so guard 1 still holds and the plan's layout is untouched. Only the guard's docstring was tightened, from "and nothing else" to **"and no other module"**, so the assertion (which globs `*.py`) and the prose agree about what the guard is about.
+2. **The known limitation is stated in the readme, with its owner.** `image.py normalize` / `ocr-ready` / `vlm-ready` and any image-preparing `workflow.py` run cannot publish with the real engine (the entry above records the defect and its owner). Documenting the gap is better than a readme that lists the subcommands as if they worked; the failure itself is a typed `WRITE_ERROR` and exit `1`, so nothing crashes.
+3. **The flag placement is documented explicitly** because the subplan's examples show `--fixture` before the subcommand and `--provider` after it, and that split is the first thing a new user trips over. The readme is now the place that says so, instead of the behaviour being inferred from a stack of `parser.error` calls.
+
+**Gate evidence.**
+
+```
+pytest                     653 passed
+ruff check .               All checks passed!
+ruff format --check .      170 files already formatted
+pylint src tests           10.00/10
+```
+
+**Left stale (owner).** None: the readme is new, it describes the committed tools, and it points at
+`subplan-scripts.md`, `wbs-scripts.md` and this log rather than restating a decision that could
+drift from them. Every claim in it was read off the code or the `SCR-07` hand run.

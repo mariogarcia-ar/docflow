@@ -133,7 +133,7 @@ def tool_paths() -> list[Path]:
 
 
 def test_the_tool_set_is_exactly_the_convention() -> None:
-    """``scripts/tools/`` holds ``_cli.py`` and the five tools, and nothing else."""
+    """``scripts/tools/`` holds ``_cli.py`` and the five tools, and no other module."""
     found = {path.name for path in tool_paths()}
 
     assert found == TOOL_FILES, f"the tool set drifted: {sorted(found)}"
