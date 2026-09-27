@@ -79,11 +79,11 @@ bootstrap()
 
 
 class FixtureNotFoundError(LookupError):
-    """A fixture name resolved to nothing, or to more than one file, under the fixture roots.
+    """A fixture name resolved to no usable file under the fixture roots.
 
-    The tool turns this into a usage error (exit ``2``): an input the caller named but that
-    does not exist — or that names two files at once — is the caller's mistake, not a typed
-    failure of the library.
+    The name resolves to nothing, to more than one file, or to a directory. All three are the
+    tool's usage error (exit ``2``) and none of them is a typed failure of the library: an
+    input the caller named but that cannot be read as a file is the caller's mistake.
     """
 
 
@@ -127,12 +127,14 @@ def output_root(tool: str, input_path: Path, *, out: str | Path | None = None) -
 
 
 def _search_fixture_roots(roots: tuple[Path, ...], name: str) -> list[Path]:
-    """Return every file named ``name`` anywhere beneath the fixture roots.
+    """Return every path named ``name`` anywhere beneath the fixture roots.
 
     The fallback :func:`resolve_fixture` uses when a name is neither a path nor a subdirectory
     spelling of one: the fixture tree nests its inputs by kind (``pdf/``, ``image/``, ...),
     so ``--fixture pdf_sample_mixed.pdf`` has to find one that lives one level down. The
     result is deduplicated and sorted, so "exactly one match" is a fact and not an ordering.
+    Directories are included: a name that turns out to be one is refused *as* a directory,
+    which says more than "not found" about a path the caller can see in the tree.
 
     Args:
         roots: The fixture roots to search, in the caller's order.
@@ -141,13 +143,21 @@ def _search_fixture_roots(roots: tuple[Path, ...], name: str) -> list[Path]:
     Returns:
         The matching absolute paths, sorted; empty when nothing matches.
     """
-    found = {
-        match.resolve()
-        for root in roots
-        for match in root.rglob(name)
-        if match.is_file()
-    }
+    found = {match.resolve() for root in roots for match in root.rglob(name)}
     return sorted(found)
+
+
+def _directory_refusal(name: str, path: Path) -> FixtureNotFoundError:
+    """Return the refusal for a name that names a directory rather than a file.
+
+    Args:
+        name: The name the caller gave.
+        path: The directory it resolved to.
+
+    Returns:
+        The error to raise. It names the directory, because "not found" would be false.
+    """
+    return FixtureNotFoundError(f"fixture {name!r} is a directory, not a file: {path}")
 
 
 def resolve_fixture(
@@ -161,7 +171,8 @@ def resolve_fixture(
     A **path** is taken as given; a **name with a subdirectory** — e.g. ``casos/<uuid>.txt``
     — is looked up under the committed fixture roots; and a **bare name** is searched for
     anywhere beneath them, so the nested fixture tree needs no spelling from the caller. A
-    bare name that matches more than one file is refused rather than guessed. The caller
+    bare name that matches more than one file is refused rather than guessed, and a name that
+    names a **directory** is refused as one instead of being reported missing. The caller
     prints the returned path, so a resolved fixture is never silent.
 
     Args:
@@ -173,11 +184,14 @@ def resolve_fixture(
         The resolved absolute path.
 
     Raises:
-        FixtureNotFoundError: When the name resolves to no existing file, or to more than one.
+        FixtureNotFoundError: When the name resolves to no file, to more than one, or to a
+            directory.
     """
     candidate = Path(name).expanduser()
     if candidate.is_file():
         return candidate.resolve()
+    if candidate.is_dir():
+        raise _directory_refusal(name, candidate.resolve())
 
     if fixtures_root is not None:
         roots: tuple[Path, ...] = (Path(fixtures_root).expanduser(),)
@@ -190,15 +204,20 @@ def resolve_fixture(
         resolved = root / name
         if resolved.is_file():
             return resolved.resolve()
+        if resolved.is_dir():
+            raise _directory_refusal(name, resolved.resolve())
 
     matches = _search_fixture_roots(roots, name)
-    if len(matches) == 1:
-        return matches[0]
-    if matches:
-        candidates = ", ".join(str(match) for match in matches)
+    files = [match for match in matches if match.is_file()]
+    if len(files) == 1:
+        return files[0]
+    if files:
+        candidates = ", ".join(str(match) for match in files)
         raise FixtureNotFoundError(
             f"fixture {name!r} is ambiguous under the fixture roots: {candidates}"
         )
+    if matches:
+        raise _directory_refusal(name, matches[0])
 
     searched = ", ".join(str(root) for root in roots)
     raise FixtureNotFoundError(f"fixture {name!r} was not found under {searched}")
@@ -319,7 +338,7 @@ def resolve_input(
         The resolved absolute input path.
     """
     name = args.fixture if args.fixture is not None else getattr(args, "input", None)
-    if name is None:
+    if name is None or not str(name).strip():
         parser.error("an input is required: pass a path or --fixture NAME")
     try:
         return resolve_fixture(name, fixtures_root=args.fixtures_root, text=text)

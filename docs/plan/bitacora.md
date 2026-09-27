@@ -1256,3 +1256,71 @@ pylint src tests           10.00/10
 
 **Next.** Unchanged: the image processor's publication defect is still the one thing standing
 between the bench and an end-to-end run.
+
+---
+
+## 2026-09-27 — Phase 5 · a directory where a file is expected
+
+**Question answered.** Passing a **directory** — `pdf.py inspect tests/fixtures/pdf`, or the bare
+name `pdf` — never reaches the library and never reaches an engine: `resolve_input` refuses it, and
+the process exits `2`, which is the documented usage-error code. What was wrong was *why* it said
+so. The message was `fixture 'tests/fixtures/pdf' was not found under …`, which is false twice over:
+the path the caller gave is right there, and the bare name `pdf` even names a directory *inside* one
+of the roots the message lists.
+
+**Delivered.**
+
+| File | Change |
+|---|---|
+| `scripts/tools/_cli.py` | a name that names a directory is refused **as one** — `fixture 'pdf' is a directory, not a file: /…/tests/fixtures/pdf` — for a path given outright and for a name looked up under a root; the nested-root fallback now keeps directories, so a name that is a directory deeper in the tree is refused the same way; an **empty or whitespace** name is refused as missing instead of being looked up as the working directory (`Path("")` is `.`) |
+| `tests/test_lab_tools.py` | a directory is refused as a directory (bare name and path), and an empty name is a usage error that names the missing input |
+| `scripts/tools/readme.md` | the fixture-roots paragraph states both refusals, and why a directory is not searched for a file |
+
+The four observed runs, before and after:
+
+```
+pdf.py inspect tests/fixtures/pdf    ->  exit 2  "fixture 'tests/fixtures/pdf' was not found under …"
+pdf.py inspect pdf                   ->  exit 2  "fixture 'pdf' was not found under …"
+pdf.py inspect src                   ->  exit 2  "fixture 'src' was not found under …"
+pdf.py inspect ""                    ->  exit 2  "fixture '' was not found under …"  (Path("") is ".")
+
+after:
+pdf.py inspect tests/fixtures/pdf    ->  exit 2  "… is a directory, not a file: /…/tests/fixtures/pdf"
+pdf.py inspect pdf                   ->  exit 2  "… is a directory, not a file: /…/tests/fixtures/pdf"
+pdf.py inspect src                   ->  exit 2  "… is a directory, not a file: /…/src"
+pdf.py inspect ""                    ->  exit 2  "an input is required: pass a path or --fixture NAME"
+pdf.py inspect …/pdf_sample_mixed.pdf ->  exit 0  (unchanged)
+```
+
+**Mutation evidence (Invariant / Mutation / Observed failure / Restored green).**
+
+```
+Invariant 1   a directory is refused as a directory, not reported missing
+Mutation      _cli._directory_refusal: return "was not found" instead of naming the directory
+Observed      test_resolve_fixture_refuses_a_directory[pdf]  FAILED
+              test_resolve_fixture_refuses_a_directory[/…/tests/fixtures/pdf]  FAILED  (3 failed)
+Restored      the inverse edit; 57 passed in tests/test_lab_tools.py
+Invariant 2   an empty name is a missing input, not a lookup of the working directory
+Mutation      _cli.resolve_input: drop the strip() check, keep `name is None`
+Observed      test_an_empty_input_name_is_a_usage_error  FAILED  (the same 3-failure run)
+Restored      the inverse edit; 57 passed
+```
+
+**Gate evidence.**
+
+```
+pytest                     670 passed
+ruff check .               All checks passed!
+ruff format --check .      170 files already formatted
+pylint src tests           10.00/10
+```
+
+**Left stale (owner).** Not established: what the *library* does when a directory reaches a
+contract, because the bench refuses one before any primitive is called, and the orchestrator builds
+its own `DocumentRequest` from a path it is handed. A processor-side answer would be a contract
+question, and `subplan-procesador-pdf.md` does not carry one; registered as unverified rather than
+asserted. `docs/plan/subplan-scripts.md` §3.3's exit-code paragraph ("`2` a usage error … an
+unresolvable input") already covers this case and needed no change.
+
+**Next.** Unchanged: the image processor's publication defect is still the one thing standing
+between the bench and an end-to-end run.

@@ -102,10 +102,13 @@ This matters, and it is the one thing that surprises people:
 ## Input and output
 
 **Fixture roots.** `tests/fixtures/` and `tests/fixtures-txt/` — the second one first for a text
-input (`llm.py`). A name that is a real path is taken as given. The **resolved absolute path** is
-printed in the run header, so a resolved fixture is never silent. `tests/fixtures-txt/` mirrors
-`tests/fixtures/` by UUID: `casos/<uuid>.pdf` sits next to `fixtures-txt/casos/<uuid>.txt`, the
-same case's extracted text. The tools do **not** diff the two — comparing is a reading.
+input (`llm.py`). A name that is a real path is taken as given. A **directory** is refused by name
+(`fixture 'pdf' is a directory, not a file: …`) and never searched for a file inside it — picking
+one would be a silent choice — and an empty name is refused as a missing input rather than looked up
+as the working directory. The **resolved absolute path** is printed in the run header, so a resolved
+fixture is never silent. `tests/fixtures-txt/` mirrors `tests/fixtures/` by UUID:
+`casos/<uuid>.pdf` sits next to `fixtures-txt/casos/<uuid>.txt`, the same case's extracted text.
+The tools do **not** diff the two — comparing is a reading.
 
 **Output root.** `var/tools/<tool>/<stem>-<hash8>/`, where `hash8` is the first eight characters
 of the input's SHA-256. The same input therefore lands in the same directory and two inputs never

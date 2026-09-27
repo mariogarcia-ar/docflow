@@ -350,6 +350,28 @@ def test_resolve_fixture_refuses_an_ambiguous_bare_name(tmp_path: Path) -> None:
     assert "outside" in message
 
 
+@pytest.mark.parametrize("name", ("pdf", str(FIXTURES / "pdf")))
+def test_resolve_fixture_refuses_a_directory(name: str) -> None:
+    """A directory is refused as a directory, never reported missing."""
+    with pytest.raises(_cli.FixtureNotFoundError) as refusal:
+        _cli.resolve_fixture(name)
+
+    message = str(refusal.value)
+    assert "is a directory, not a file" in message
+    assert str(FIXTURES / "pdf") in message
+
+
+def test_an_empty_input_name_is_a_usage_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An empty name is refused as missing, never looked up as the working directory."""
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("pdf").main(["inspect", ""])
+
+    assert exit_info.value.code == 2
+    assert "an input is required" in capsys.readouterr().err
+
+
 def test_resolve_fixture_refuses_an_unknown_name() -> None:
     """An unknown name is reported, never silently turned into a path."""
     with pytest.raises(_cli.FixtureNotFoundError):
