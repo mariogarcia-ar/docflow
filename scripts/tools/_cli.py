@@ -52,6 +52,11 @@ FAILURE_EXIT: Final[int] = 1
 #: ``partial_success``, ``PAUSED`` — produced a result, and a result is a success here.
 FAILED_STATUSES: Final[frozenset[str]] = frozenset({"failed", "FAILED"})
 
+#: Payload keys the run header already states. The human summary skips them — a reader who
+#: saw the header does not need the same path twice — while ``--json`` keeps them, because a
+#: body read on its own still has to name the file it describes.
+HEADER_STATED_KEYS: Final[frozenset[str]] = frozenset({"input"})
+
 #: What every tool's subcommand handler receives, and must return: an exit code.
 Handler = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], int]
 
@@ -471,7 +476,10 @@ def print_header(
     """Print the run header to stderr: what was resolved, and where output goes.
 
     stderr on purpose: the human summary or the ``--json`` payload on stdout stays clean,
-    while a resolved fixture and a derived identity are still never silent.
+    while a resolved fixture and a derived identity are still never silent. This is the one
+    place a run states its input, so :func:`print_result` does not repeat it — and it is
+    also the only statement of it when the run ends in a typed failure and no payload is
+    printed at all.
 
     Args:
         tool: The tool's name.
@@ -493,6 +501,10 @@ def print_header(
 def print_result(payload: Mapping[str, Any], *, as_json: bool) -> None:
     """Print a result, as the human summary or as the machine-readable payload.
 
+    The human summary omits the keys :data:`HEADER_STATED_KEYS` names, because
+    :func:`print_header` stated them on stderr a moment earlier. The ``--json`` payload keeps
+    them: a body read on its own has to name the file it describes.
+
     Args:
         payload: The payload, built from the result's own fields.
         as_json: Print canonical JSON instead of one ``key: value`` line per field.
@@ -501,6 +513,8 @@ def print_result(payload: Mapping[str, Any], *, as_json: bool) -> None:
         print(json.dumps(payload, indent=2, default=_json_default))
         return
     for key, value in payload.items():
+        if key in HEADER_STATED_KEYS:
+            continue
         print(f"{key}: {_human(value)}")
 
 

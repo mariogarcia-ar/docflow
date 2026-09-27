@@ -113,7 +113,11 @@ collide. Output is **never** written beside the input and never into `out/`; `/v
 `.gitignore`. `--out` replaces the root entirely.
 
 **stdout** carries the human summary, or the `--json` payload. The run header goes to **stderr**
-on purpose, so a `--json` body stays clean while the resolved input is still stated.
+on purpose, so a `--json` body stays clean while the resolved input is still stated. The header
+is the run's **one** statement of that input — it is also the only statement of it when the run
+ends in a typed failure and no payload is printed at all — so the human summary does not repeat
+it. The `--json` body keeps it, because a payload read on its own still has to name the file it
+describes.
 
 **The input is never modified.** That is a property the library tests guard and the hand run
 re-checks by hashing every fixture before and after.

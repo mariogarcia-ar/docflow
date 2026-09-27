@@ -1108,3 +1108,69 @@ for no behaviour. The readme and this entry carry the corrected form; whoever ne
 
 **Next.** Unchanged: the image processor's publication defect is still the one thing standing
 between the bench and an end-to-end run.
+
+---
+
+## 2026-09-27 — Phase 5 · `pdf.py inspect`, run as written
+
+**Delivered.** The bench's human output no longer states its input twice.
+
+| File | Change |
+|---|---|
+| `scripts/tools/_cli.py` | `HEADER_STATED_KEYS = {"input"}`: `print_result`'s human branch skips a key the run header already stated; the `--json` body keeps it |
+| `tests/test_lab_tools.py` | two tests over the inspect path: the human summary states the resolved input once (in the header, never on stdout), and the JSON body still names it |
+| `scripts/tools/readme.md` | the stderr-split paragraph now says the header is the run's *one* statement of its input, and why the two renderings differ |
+| `README.md` | the front page's lab-tools sketch loses `plan mi.pdf --dry-run` (unspellable: `--dry-run` is global, and `plan` already implies it) for a comment that says so |
+
+**What the run found.** `python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf`
+exits `0` and its payload is exactly `PDFDocumentInfo` — `page_count`, `page_dimensions`,
+`engine_metadata`, the three fields `pdf/primitives/composition.py` defines and the readme's row
+promises — so the handler was already conformant, and the *engine report* is the `pdfinfo`
+key/value dump, which is why "Encrypted: no" and "PDF version: 1.7" arrive inside it. What was
+wrong was the rendering: the run header states the resolved input (`input:  <path>`, stderr), and
+every primitive-driving payload stated it again (`input: <path>`, stdout, one space), so a terminal
+showed the same path twice with different alignment — an output that reads like the command ran
+twice. `render` is worse still: its payload's `output` is the published PNG while the header's
+`output` is the run root, two different facts under one word.
+
+**Fix.** The header is the run's one statement of its input. It is also the *only* statement of it
+when the run ends in a typed failure and no payload is printed at all, which is why the rule is
+"the human summary does not repeat it" rather than "the payload does not carry it": a `--json` body
+read on its own still has to name the file it describes, so it keeps the key.
+
+**Mutation evidence (Invariant / Mutation / Observed failure / Restored green).**
+
+```
+Invariant 1   the human summary does not repeat a key the header stated
+Mutation      _cli.print_result: stop skipping HEADER_STATED_KEYS in the human branch
+Observed      test_pdf_inspect_states_its_input_once  FAILED  (1 failed, 1 passed)
+Restored      the inverse edit; 2 passed with -k "states_its_input_once or keeps_the_input"
+Invariant 2   the --json body keeps the input the header states
+Mutation      _cli.print_result: drop HEADER_STATED_KEYS from the JSON branch too
+Observed      test_json_keeps_the_input_the_header_states  FAILED  KeyError: 'input'
+Restored      the inverse edit; 2 passed with the same -k
+```
+
+**Gate evidence.**
+
+```
+pytest                     657 passed
+ruff check .               All checks passed!
+ruff format --check .      170 files already formatted
+pylint src tests           10.00/10
+```
+
+**Left stale (owner).**
+
+- `_cli.identity_for`'s docstring says the document and run identities are "both printed in the run
+  header", and they are not: `print_header` prints `input`, `output` and whatever `header_extra`
+  adds (`llm.py`'s `assets_dir`). The flags are recorded in the request, which is what the readme
+  says and what the subplan freezes; the docstring overstates it. Also worth a decision: the four
+  primitive-driving subcommands accept `--document-id`/`--run-id` and can only ignore them, since
+  no request is built on those paths — a global flag that a subcommand silently drops is the
+  "dead flag" the subplan's §8 risk table names. Owner: bench owner.
+- The `output` collision above (run root vs published artifact) is left as found: renaming either
+  is a change to what a hand run prints, and no plan or readme text fixes the payload's key set.
+
+**Next.** Unchanged: the image processor's publication defect is still the one thing standing
+between the bench and an end-to-end run.

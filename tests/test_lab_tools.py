@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ast
 import importlib
+import json
 import re
 from pathlib import Path
 from types import SimpleNamespace
@@ -488,6 +489,39 @@ def test_pdf_inspect_prints_a_typed_failure_and_exits_one(
 
     assert code == 1
     assert "ERROR CORRUPTED_PDF" in capsys.readouterr().out
+
+
+def test_pdf_inspect_states_its_input_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The header states the resolved input; the human summary does not repeat it."""
+    double = FakePoppler((FakePage(lines=("A line of text.",)),))
+    monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", double.run)
+    fixture = FIXTURES / "pdf" / "pdf_sample_mixed.pdf"
+
+    code = tool_module("pdf").main(["--out", str(tmp_path), "inspect", str(fixture)])
+
+    assert code == 0
+    captured = capsys.readouterr()
+    assert captured.err.count(str(fixture)) == 1
+    assert str(fixture) not in captured.out
+    assert "page_count: 1" in captured.out
+
+
+def test_json_keeps_the_input_the_header_states(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A ``--json`` body read on its own still names the file it describes."""
+    double = FakePoppler((FakePage(lines=("A line of text.",)),))
+    monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", double.run)
+    fixture = FIXTURES / "pdf" / "pdf_sample_mixed.pdf"
+
+    code = tool_module("pdf").main(
+        ["--json", "--out", str(tmp_path), "inspect", str(fixture)]
+    )
+
+    assert code == 0
+    assert json.loads(capsys.readouterr().out)["input"] == str(fixture)
 
 
 # --- Glue: a primitive subcommand through the engine double --------------------------

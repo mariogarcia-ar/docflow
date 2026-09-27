@@ -123,7 +123,7 @@ convention is in [`docs/plan/README.md` §4.1](docs/plan/README.md) and the desi
 ```bash
 python scripts/tools/pdf.py split mi.pdf          # → var/tools/pdf/mi-<hash>/page_001/…
 python scripts/tools/pdf.py inspect mi.pdf
-python scripts/tools/workflow.py plan mi.pdf --dry-run
+python scripts/tools/workflow.py plan mi.pdf      # "--dry-run" is what "plan" means
 ```
 
 Input is an argument; output goes to `var/tools/<tool>/`, never beside the input and never
