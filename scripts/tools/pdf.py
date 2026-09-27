@@ -14,7 +14,7 @@ import argparse
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import _cli
 
@@ -22,6 +22,12 @@ from docflow import pdf as pdf_processor
 from docflow.pdf import PDFContext, PDFOptions, PDFRequest, primitives
 from docflow.pdf.primitives import composition
 from docflow.pdf.primitives.errors import PDFPrimitiveError
+
+#: Subcommands that publish no file: their report is the stdout summary, so the run header
+#: says so instead of naming an output root no run creates. The other five do write —
+#: ``classify`` among them, because measuring image dominance extracts the page's embedded
+#: images. Verified by the hand run in ``docs/plan/bitacora.md`` (2026-09-27).
+REPORT_ONLY: Final[tuple[str, ...]] = ("inspect", "text", "blocks")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -80,7 +86,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: ``0`` when the run produced a result, ``1`` when the library
         returned a typed failure.
     """
-    return _cli.run_tool("pdf", build_parser(), HANDLERS, argv)
+    return _cli.run_tool("pdf", build_parser(), HANDLERS, argv, report_only=REPORT_ONLY)
 
 
 def _page(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:

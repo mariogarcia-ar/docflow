@@ -14,13 +14,19 @@ import argparse
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import _cli
 
 from docflow import image as image_processor
 from docflow.image import ImageContext, ImageOptions, ImageRequest, primitives
 from docflow.image.primitives import ImagePrimitiveError, composition
+
+#: Subcommands that publish no file: their report is the stdout summary, so the run header
+#: says so instead of naming an output root no run creates. ``normalize``, ``ocr-ready``,
+#: ``vlm-ready`` and ``run`` do write. Verified by the hand run in
+#: ``docs/plan/bitacora.md`` (2026-09-27).
+REPORT_ONLY: Final[tuple[str, ...]] = ("info", "metrics", "classify")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -94,7 +100,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: ``0`` when the run produced a result, ``1`` when the library
         returned a typed failure.
     """
-    return _cli.run_tool("image", build_parser(), HANDLERS, argv)
+    return _cli.run_tool(
+        "image", build_parser(), HANDLERS, argv, report_only=REPORT_ONLY
+    )
 
 
 def _decoded(input_path: Path) -> tuple[Any, Any, Any]:

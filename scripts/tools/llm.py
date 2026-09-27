@@ -16,7 +16,7 @@ import argparse
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import _cli
 
@@ -26,6 +26,12 @@ from docflow.llm.contracts import Usage
 from docflow.llm.primitives import persistence
 from docflow.states import StageState
 from tests.fakes.engines.fake_provider import FakeProvider
+
+#: Subcommands that publish no file: their report is the stdout summary, so the run header
+#: says so instead of naming an output root no run creates. ``node`` builds its request with
+#: no output directory on purpose, so it publishes nothing even when it succeeds. Verified by
+#: the hand run in ``docs/plan/bitacora.md`` (2026-09-27).
+REPORT_ONLY: Final[tuple[str, ...]] = ("node", "status", "models", "tokens")
 
 #: The asset root the template and schema identifiers resolve against by default.
 DEFAULT_ASSETS_DIR = _cli.FIXTURES_ROOT / "llm"
@@ -130,6 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         argv,
         text=True,
         out_only=("status",),
+        report_only=REPORT_ONLY,
         header_extra=lambda args: {
             "assets_dir": str(Path(args.assets_dir).expanduser())
         },

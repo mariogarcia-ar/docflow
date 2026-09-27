@@ -251,6 +251,32 @@ def test_help_exits_zero(tool: str) -> None:
     assert exit_info.value.code == 0
 
 
+# --- Guard 7: what the header claims about publishing ---------------------------------
+
+
+#: The subcommands whose report is the stdout summary: they publish no file, so their run says so
+#: instead of naming an output root no run creates. Restated on purpose — which subcommands write
+#: is a property of the tools, not of the library, and the hand run that verified the sets is
+#: recorded in ``docs/plan/bitacora.md`` (2026-09-27). A subcommand that moves between the two
+#: sets, or is renamed, reddens this test.
+REPORT_ONLY: dict[str, tuple[str, ...]] = {
+    "pdf": ("inspect", "text", "blocks"),
+    "image": ("info", "metrics", "classify"),
+    "ocr": ("text", "md", "json", "tables", "blocks", "metrics"),
+    "llm": ("node", "status", "models", "tokens"),
+    "workflow": ("plan", "status", "context"),
+}
+
+
+@pytest.mark.parametrize("tool", TOOLS)
+def test_every_tool_declares_the_subcommands_that_publish_nothing(tool: str) -> None:
+    """Each tool declares its report-only subcommands, and names only documented ones."""
+    declared = tool_module(tool).REPORT_ONLY
+
+    assert declared == REPORT_ONLY[tool]
+    assert set(declared) <= set(DOCUMENTED_SUBCOMMANDS[tool])
+
+
 # --- SCR-01 unit tests: the shared plumbing -----------------------------------------
 
 
@@ -273,6 +299,24 @@ def test_output_root_honours_an_explicit_directory(tmp_path: Path) -> None:
     explicit = tmp_path / "elsewhere"
 
     assert _cli.output_root("pdf", source, out=explicit) == explicit.resolve()
+
+
+def test_the_header_states_when_a_run_publishes_nothing(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    """A subcommand that publishes no file says so instead of naming a run root."""
+    source = tmp_path / "in.pdf"
+    root = tmp_path / "out"
+
+    _cli.print_header("pdf", "inspect", source, root, publishes=False)
+
+    err = capsys.readouterr().err
+    assert "publishes no file" in err
+    assert str(root) not in err
+
+    _cli.print_header("pdf", "render", source, root)
+
+    assert f"output: {root}" in capsys.readouterr().err
 
 
 def test_resolve_fixture_reports_an_absolute_path() -> None:
@@ -522,6 +566,48 @@ def test_json_keeps_the_input_the_header_states(
 
     assert code == 0
     assert json.loads(capsys.readouterr().out)["input"] == str(fixture)
+
+
+def test_the_pdf_header_states_whether_the_subcommand_publishes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``inspect`` reports only, so its header names no run root; ``render`` names one."""
+    double = FakePoppler((FakePage(lines=("A line of text.",)),))
+    monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", double.run)
+    fixture = str(SAMPLE_PDF)
+
+    assert tool_module("pdf").main(["--out", str(tmp_path), "inspect", fixture]) == 0
+    assert "publishes no file" in capsys.readouterr().err
+
+    assert (
+        tool_module("pdf").main(
+            ["--out", str(tmp_path), "render", fixture, "--page", "1", "--dpi", "72"]
+        )
+        == 0
+    )
+    assert f"output: {tmp_path.resolve()}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("subcommand", "flags"),
+    (("inspect", ()), ("text", ("--page", "1")), ("blocks", ("--page", "1"))),
+)
+def test_a_report_only_pdf_subcommand_publishes_nothing(
+    subcommand: str,
+    flags: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """What the header claims, the filesystem confirms: nothing was published."""
+    double = FakePoppler((FakePage(lines=("A line of text.",)),))
+    monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", double.run)
+
+    code = tool_module("pdf").main(
+        ["--out", str(tmp_path), subcommand, str(SAMPLE_PDF), *flags]
+    )
+
+    assert code == 0
+    assert not list(tmp_path.rglob("*")), f"{subcommand} published a file"
 
 
 # --- Glue: a primitive subcommand through the engine double --------------------------

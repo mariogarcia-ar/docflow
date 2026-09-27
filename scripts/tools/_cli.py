@@ -427,6 +427,7 @@ def run_tool(
     *,
     text: bool = False,
     out_only: Collection[str] = (),
+    report_only: Collection[str] = (),
     header_extra: Callable[[argparse.Namespace], Mapping[str, Any]] | None = None,
     prepare: Callable[[argparse.Namespace], None] | None = None,
 ) -> int:
@@ -442,6 +443,8 @@ def run_tool(
         argv: The arguments, defaulting to ``sys.argv[1:]``.
         text: Prefer the text fixture root when resolving a bare fixture name.
         out_only: Subcommands that accept ``--out`` in place of an input.
+        report_only: Subcommands that publish no file, whose report is the stdout summary.
+            The header says so rather than naming a run root no run will create.
         header_extra: Further facts to state in the header, read from the arguments.
         prepare: A hook that runs after parsing and before the handler — the place a tool
             patches a seam in its own process.
@@ -459,7 +462,14 @@ def run_tool(
         input_path = resolve_input(args, parser, text=text)
         root = output_root(tool, input_path, out=args.out)
     extra = None if header_extra is None else header_extra(args)
-    print_header(tool, subcommand, input_path, root, extra=extra)
+    print_header(
+        tool,
+        subcommand,
+        input_path,
+        root,
+        extra=extra,
+        publishes=subcommand not in report_only,
+    )
     if prepare is not None:
         prepare(args)
     return handlers[subcommand](args, parser, input_path, root)
@@ -472,6 +482,7 @@ def print_header(
     output_root: Path,
     *,
     extra: Mapping[str, Any] | None = None,
+    publishes: bool = True,
 ) -> None:
     """Print the run header to stderr: what was resolved, and where output goes.
 
@@ -487,11 +498,16 @@ def print_header(
         input_path: The absolute, resolved input path.
         output_root: The absolute output directory.
         extra: Any further facts the tool wants stated, one line each.
+        publishes: Whether this subcommand writes anything under ``output_root``. A
+            subcommand whose report *is* the stdout summary writes nothing, and the header
+            says that instead of naming a directory no run creates.
     """
     lines = [
         f"== {tool}.py {subcommand} ==",
         f"input:  {input_path}",
-        f"output: {output_root}",
+        f"output: {output_root}"
+        if publishes
+        else "output: (none — this subcommand publishes no file)",
     ]
     for key, value in (extra or {}).items():
         lines.append(f"{key}: {value}")

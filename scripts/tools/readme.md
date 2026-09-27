@@ -93,7 +93,7 @@ This matters, and it is the one thing that surprises people:
 | `--fixture NAME` | Resolve a name under the fixture roots: a **bare** name is searched for at any depth (`pdf_sample_mixed.pdf` finds `tests/fixtures/pdf/…`), while a name with a subdirectory (e.g. `casos/<uuid>.txt`) is looked up directly. A bare name that matches two files is a usage error, never a guess |
 | `--fixtures-root DIR` | Replace both fixture roots for this run |
 | `--json` | Print the machine-readable payload instead of the human summary |
-| `--out DIR` | Replace the whole output root for this run |
+| `--out DIR` | Replace the whole output root for this run — for a subcommand that publishes nothing there is nothing to redirect |
 | `--document-id ID` | Correlation identity recorded in the request; defaults to the input's file name |
 | `--run-id ID` | Run identity recorded in the request; defaults to a tool-derived identity. On `llm.py` it also **pins** the run, which is what makes `resume` a resume |
 
@@ -111,6 +111,14 @@ same case's extracted text. The tools do **not** diff the two — comparing is a
 of the input's SHA-256. The same input therefore lands in the same directory and two inputs never
 collide. Output is **never** written beside the input and never into `out/`; `/var/` is in
 `.gitignore`. `--out` replaces the root entirely.
+
+Only a subcommand that **publishes** creates that directory. When the report *is* the stdout
+summary — `pdf.py inspect`, `ocr.py text`, `workflow.py plan` and their peers, nineteen of the
+thirty-eight subcommands — the run writes no file at all, and its header states
+`output: (none — this subcommand publishes no file)` instead of naming a directory no run creates.
+That line is declared per tool (`REPORT_ONLY`) and checked twice: the glue test drives the
+report-only subcommands and asserts the filesystem stayed empty, and `tests/test_lab_tools.py`
+pins the declaration so a subcommand cannot move between the two sets unnoticed.
 
 **stdout** carries the human summary, or the `--json` payload. The run header goes to **stderr**
 on purpose, so a `--json` body stays clean while the resolved input is still stated. The header

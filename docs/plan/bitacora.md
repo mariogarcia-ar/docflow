@@ -1174,3 +1174,85 @@ pylint src tests           10.00/10
 
 **Next.** Unchanged: the image processor's publication defect is still the one thing standing
 between the bench and an end-to-end run.
+
+---
+
+## 2026-09-27 — Phase 5 · what the run header claims about output
+
+**Delivered.** The header no longer names an output root for a subcommand that publishes no file.
+
+| File | Change |
+|---|---|
+| `scripts/tools/_cli.py` | `print_header(..., publishes=)`; a report-only run prints `output: (none — this subcommand publishes no file)`. `run_tool` takes `report_only=` and passes `publishes=subcommand not in report_only` |
+| the five tools | a `REPORT_ONLY` tuple declares which subcommands report on stdout and write nothing |
+| `tests/test_lab_tools.py` | Guard 7 pins each tool's declaration; a glue test drives the three report-only `pdf.py` subcommands and asserts the filesystem stayed empty; a `_cli` unit test and a `pdf.py` glue test tie `publishes` to the line actually printed |
+| `scripts/tools/readme.md` | "Output root" now says that only a publishing subcommand creates the directory, and that nineteen of the thirty-eight do not |
+
+**Why.** `pdf.py inspect` printed `output: /…/var/tools/pdf/pdf_sample_mixed-9ed17407`, and no run
+creates that directory: `inspect`, `text` and `blocks` report on stdout and publish nothing — and so
+do sixteen more subcommands across the other four tools, nineteen of the thirty-eight. The line
+promised a file the run never writes, which is the statement this project forbids everywhere else
+("absence is stated, never faked"). What the header states now is its own truth: this is the run
+root, or there is none.
+
+**The sets, and how they were established.** Read off each handler's calls, then confirmed by hand
+where the engines allow it:
+
+```
+pdf       inspect, text, blocks     files published after each: 0, 0, 0
+          classify, images, split, render do write — classify because measuring image dominance
+          extracts the page's embedded images
+image     info, metrics, classify   read and measure only; the preparation pipelines and the
+                                    contract write
+ocr       text, md, json, tables, blocks, metrics    only ``run`` publishes its document
+llm       node, status, models, tokens   node builds its request with no output directory on
+                                         purpose; the inference subcommands persist state
+workflow  plan, status, context     plan is a dry run and invokes no processor; the other five
+                                    write through process_document
+```
+
+The header line itself was run once per tool: `image.py info`, `ocr.py text`, `llm.py tokens` and
+`workflow.py plan` print `(none — …)`, `pdf.py render` prints the root; `workflow.py plan` from an
+empty `var/` left no directory at all.
+
+**Mutation evidence (Invariant / Mutation / Observed failure / Restored green).**
+
+```
+Invariant 1   what the run frame reports is what the header states
+Mutation      _cli.run_tool: pass publishes=True instead of consulting report_only
+Observed      test_the_pdf_header_states_whether_the_subcommand_publishes  FAILED  (2 failed)
+Restored      the inverse edit; 10 passed with -k "publishes or declares"
+Invariant 2   the declared sets are the ones the tools actually have
+Mutation      pdf.py: REPORT_ONLY gains "classify" (which does publish)
+Observed      test_every_tool_declares_the_subcommands_that_publish_nothing[pdf]  FAILED
+Restored      the inverse edit; green with the same -k
+Invariant 3   a subcommand the header calls report-only writes nothing
+Mutation      pdf.py: _cmd_inspect writes report.json under the run root
+Observed      test_a_report_only_pdf_subcommand_publishes_nothing[inspect-flags0]  FAILED
+Restored      the inverse edit; 54 passed in tests/test_lab_tools.py
+```
+
+**Gate evidence.**
+
+```
+pytest                     667 passed
+ruff check .               All checks passed!
+ruff format --check .      170 files already formatted
+pylint src tests           10.00/10
+```
+
+**Left stale (owner).**
+
+- `--out` on a report-only subcommand is accepted and has nothing to redirect. The header and the
+  readme now say so, but the flag is still not refused: refusing it would be a usage error the
+  subplan does not list, so it stays a stated inert flag rather than an invented refusal.
+- `pdf.py classify` publishes the page's embedded images as a side effect of measuring image
+  dominance — `extract_images_from_page` publishes what it extracts — so a subcommand documented as
+  "the `TEXT`/`IMAGE`/`MIXED` verdict" leaves files. Registered, not changed: suppressing that would
+  mean a tool deleting what a primitive published, which is behaviour the library does not have.
+- The `output` collision from the entry above (run root vs published artifact) is unchanged; with
+  `output:` absent from a report-only header it is now visible only on a publishing subcommand,
+  where `render` prints the root and then the PNG.
+
+**Next.** Unchanged: the image processor's publication defect is still the one thing standing
+between the bench and an end-to-end run.

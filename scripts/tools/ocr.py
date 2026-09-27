@@ -14,7 +14,7 @@ import argparse
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import _cli
 
@@ -22,6 +22,18 @@ from docflow import ocr as ocr_processor
 from docflow.ocr import OCRContext, OCROptions, OCRRequest, primitives
 from docflow.ocr.primitives import composition
 from docflow.ocr.primitives.errors import OCRPrimitiveError
+
+#: Subcommands that publish no file: their report is the stdout summary, so the run header
+#: says so instead of naming an output root no run creates. Only ``run`` publishes its
+#: document. Verified by the hand run in ``docs/plan/bitacora.md`` (2026-09-27).
+REPORT_ONLY: Final[tuple[str, ...]] = (
+    "text",
+    "md",
+    "json",
+    "tables",
+    "blocks",
+    "metrics",
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,7 +103,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: ``0`` when the run produced a result, ``1`` when the library
         returned a typed failure.
     """
-    return _cli.run_tool("ocr", build_parser(), HANDLERS, argv)
+    return _cli.run_tool("ocr", build_parser(), HANDLERS, argv, report_only=REPORT_ONLY)
 
 
 def _options(args: argparse.Namespace, parser: argparse.ArgumentParser) -> OCROptions:

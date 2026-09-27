@@ -16,7 +16,7 @@ import importlib
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import _cli
 
@@ -30,6 +30,11 @@ from docflow.workflow import (
     resume_document,
 )
 from tests.fakes.engines.fake_provider import FakeProvider
+
+#: Subcommands that publish no file: ``plan`` is a dry run that invokes no processor, and
+#: ``status`` and ``context`` only read what an earlier run left. Verified by the hand run in
+#: ``docs/plan/bitacora.md`` (2026-09-27).
+REPORT_ONLY: Final[tuple[str, ...]] = ("plan", "status", "context")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -145,6 +150,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         build_parser(),
         HANDLERS,
         argv,
+        report_only=REPORT_ONLY,
         prepare=lambda args: _install_fake_provider() if args.fake_llm else None,
     )
 
