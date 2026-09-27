@@ -36,11 +36,21 @@ SRC_ROOT = REPO_ROOT / "src" / "docflow"
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
 FIXTURES_TXT = REPO_ROOT / "tests" / "fixtures-txt"
 
-TOOLS = ("pdf", "image", "ocr", "llm", "workflow")
-TOOL_FILES = {"_cli.py", *(f"{tool}.py" for tool in TOOLS)}
+TOOLS = ("pdf", "batch_pdf", "image", "ocr", "llm", "workflow")
+TOOL_FILES = {"_cli.py", "_pdf.py", *(f"{tool}.py" for tool in TOOLS)}
 
 DOCUMENTED_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
     "pdf": (
+        "inspect",
+        "split",
+        "render",
+        "text",
+        "blocks",
+        "images",
+        "classify",
+        "run",
+    ),
+    "batch_pdf": (
         "inspect",
         "split",
         "render",
@@ -169,7 +179,7 @@ def test_no_module_under_src_imports_the_test_tree() -> None:
 # --- Guard 3: a tool calls, it never reimplements ------------------------------------
 
 
-@pytest.mark.parametrize("tool", ("_cli", *TOOLS))
+@pytest.mark.parametrize("tool", ("_cli", "_pdf", *TOOLS))
 def test_no_tool_names_an_engine_or_a_provider_sdk(tool: str) -> None:
     """A tool's source names no engine binary, engine module or provider SDK."""
     source = (TOOLS_DIR / f"{tool}.py").read_text(encoding="utf-8")
@@ -261,6 +271,7 @@ def test_help_exits_zero(tool: str) -> None:
 #: sets, or is renamed, reddens this test.
 REPORT_ONLY: dict[str, tuple[str, ...]] = {
     "pdf": ("inspect", "text", "blocks"),
+    "batch_pdf": (),
     "image": ("info", "metrics", "classify"),
     "ocr": ("text", "md", "json", "tables", "blocks", "metrics"),
     "llm": ("node", "status", "models", "tokens"),
@@ -275,6 +286,100 @@ def test_every_tool_declares_the_subcommands_that_publish_nothing(tool: str) -> 
 
     assert declared == REPORT_ONLY[tool]
     assert set(declared) <= set(DOCUMENTED_SUBCOMMANDS[tool])
+
+
+# --- The batch driver: a folder in, a mirrored tree out -------------------------------
+
+
+def build_corpus(tmp_path: Path, *relative_pdfs: str) -> Path:
+    """Write an empty PDF per relative path under ``<tmp>/corpus`` and return the folder."""
+    corpus = tmp_path / "corpus"
+    for relative in relative_pdfs:
+        target = corpus / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"%PDF-1.7\n")
+    return corpus
+
+
+def test_batch_pdf_mirrors_the_folder_it_walked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every PDF gets its own directory under ``--out``, mirroring the tree it came from."""
+    double = FakePoppler((FakePage(lines=("A line of text.",)),))
+    monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", double.run)
+    corpus = build_corpus(tmp_path, "sub1/a.pdf", "sub2/deeper/b.pdf", "notes.txt")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_pdf").main(["--out", str(out), str(corpus), "inspect"])
+
+    assert code == 0
+    records = sorted(out.rglob("result.json"))
+    assert [record.parent.relative_to(out).as_posix() for record in records] == [
+        "sub1/a",
+        "sub2/deeper/b",
+    ]
+    assert json.loads(records[0].read_text(encoding="utf-8"))["page_count"] == 1
+    printed = capsys.readouterr().out
+    assert "files: 2" in printed
+    assert "notes.txt" not in printed
+
+
+def test_batch_pdf_states_the_command_it_defaulted_to(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """With no subcommand the run says which one it made, and still publishes its records."""
+    double = FakePoppler((FakePage(lines=("A line of text.",)),))
+    monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", double.run)
+    corpus = build_corpus(tmp_path, "a.pdf")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_pdf").main(["--out", str(out), str(corpus)])
+
+    assert code == 0
+    assert "inspect (default, none stated)" in capsys.readouterr().err
+    assert (out / "a" / "result.json").is_file()
+
+
+def test_batch_pdf_counts_every_failure_and_exits_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A corpus has bad files: the run reports each one instead of stopping at the first."""
+    double = FakePoppler((), failures={"pdfinfo": (1, "Syntax Error")})
+    monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", double.run)
+    corpus = build_corpus(tmp_path, "a.pdf", "sub/b.pdf")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_pdf").main(["--out", str(out), str(corpus), "inspect"])
+
+    assert code == 1
+    printed = capsys.readouterr().out
+    assert printed.count("ERROR CORRUPTED_PDF") == 2
+    assert "failed: 2" in printed
+    assert not list(out.rglob("result.json"))
+
+
+def test_batch_pdf_refuses_a_folder_that_is_not_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A file where a folder belongs is a usage error, named as one."""
+    not_a_folder = tmp_path / "corpus.txt"
+    not_a_folder.write_text("not a folder", encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("batch_pdf").main([str(not_a_folder)])
+
+    assert exit_info.value.code == 2
+    assert "is not a folder" in capsys.readouterr().err
+
+
+def test_write_payload_creates_the_directories_it_writes_through(
+    tmp_path: Path,
+) -> None:
+    """The file half of the payload printer writes canonical JSON, parents and all."""
+    written = _cli.write_payload(tmp_path / "a" / "b" / "result.json", {"n": 1})
+
+    assert json.loads(written.read_text(encoding="utf-8")) == {"n": 1}
+    assert written.read_text(encoding="utf-8").endswith("\n")
 
 
 # --- SCR-01 unit tests: the shared plumbing -----------------------------------------

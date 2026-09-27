@@ -41,6 +41,10 @@ FIXTURES_TXT_ROOT: Final[Path] = REPO_ROOT / "tests" / "fixtures-txt"
 #: The default output root of every tool: ``var/tools/<tool>/`` (``/var/`` is ignored).
 TOOLS_OUTPUT_ROOT: Final[Path] = REPO_ROOT / "var" / "tools"
 
+#: The default output root of the batch driver, which mirrors a folder tree rather than keying a
+#: run by one input's digest: ``var/batch_pdf/<folder>/…``.
+BATCH_OUTPUT_ROOT: Final[Path] = REPO_ROOT / "var" / "batch_pdf"
+
 #: How many characters of the input's SHA-256 name a run directory. Enough to tell two
 #: inputs apart, short enough to read; the same input always lands in the same directory.
 HASH_PREFIX_LENGTH: Final[int] = 8
@@ -282,7 +286,12 @@ def _add_common_arguments(
 
 
 def build_parser(
-    prog: str, description: str, *, identity: bool = False
+    prog: str,
+    description: str,
+    *,
+    identity: bool = False,
+    subcommand_required: bool = True,
+    positional: tuple[str, str] | None = None,
 ) -> tuple[argparse.ArgumentParser, Any]:
     """Build a tool's parser: the shared arguments plus its subcommand group.
 
@@ -290,6 +299,12 @@ def build_parser(
         prog: The program name, as ``--help`` prints it.
         description: The one-line description, as ``--help`` prints it.
         identity: Also add ``--document-id`` and ``--run-id``.
+        subcommand_required: Whether a subcommand has to be stated. A tool whose own command
+            is a sensible default turns this off and states the command it ran in its header.
+        positional: A positional of the tool's own, as ``(name, help)``, added *before* the
+            subcommands: a tool whose input is a folder rather than a file takes it once, so
+            it cannot live on a subcommand. ``argparse`` fills positionals in declaration
+            order, which is why this is not the tool's own ``add_argument``.
 
     Returns:
         The parser, and the subcommand group to register subcommands on. The group is typed
@@ -297,14 +312,16 @@ def build_parser(
     """
     parser = argparse.ArgumentParser(prog=prog, description=description)
     _add_common_arguments(parser, identity=identity)
+    if positional is not None:
+        parser.add_argument(positional[0], help=positional[1])
     subparsers = parser.add_subparsers(
-        dest="subcommand", required=True, metavar="SUBCOMMAND"
+        dest="subcommand", required=subcommand_required, metavar="SUBCOMMAND"
     )
     return parser, subparsers
 
 
 def add_subcommand(
-    subparsers: Any, name: str, help_text: str
+    subparsers: Any, name: str, help_text: str, *, input_argument: bool = True
 ) -> argparse.ArgumentParser:
     """Register one subcommand, with the positional input it shares with its siblings.
 
@@ -312,12 +329,15 @@ def add_subcommand(
         subparsers: The group :func:`build_parser` returned.
         name: The subcommand's name, exactly as the runbook spells it.
         help_text: The one-line help, as ``--help`` prints it.
+        input_argument: Whether the subcommand takes the input positional. A tool whose input
+            is a folder the run walks turns this off: one folder, many files.
 
     Returns:
         The subcommand's parser, for the flags that are its own.
     """
     subparser = subparsers.add_parser(name, help=help_text)
-    _add_input_argument(subparser)
+    if input_argument:
+        _add_input_argument(subparser)
     return subparser
 
 
@@ -593,6 +613,26 @@ def report_result(result: Any, payload: Mapping[str, Any], *, as_json: bool) -> 
     """
     print_result(payload, as_json=as_json)
     return exit_code_for(result)
+
+
+def write_payload(path: Path, payload: Mapping[str, Any]) -> Path:
+    """Write a payload beside the artifacts it describes, as canonical JSON.
+
+    The file half of :func:`print_result`: a tool that runs over a folder keeps one record per
+    input there, where the artifacts of that input landed.
+
+    Args:
+        path: The file to write; its parents are created.
+        payload: The payload, built from the result's own fields.
+
+    Returns:
+        The path written.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, indent=2, default=_json_default) + "\n", encoding="utf-8"
+    )
+    return path
 
 
 def optional_path(path: Path | None) -> str | None:

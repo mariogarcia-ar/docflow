@@ -21,20 +21,23 @@ recorded as a gate.
 | File | What it is |
 |---|---|
 | `_cli.py` | the shared **library**: the run frame, fixture resolution, the output root, the printers, the exit-code mapping. Not a tool — it holds no contract and reaches no engine |
-| `pdf.py` | `SCR-02` — the PDF processor's primitives and its contract |
+| `_pdf.py` | the PDF bench's **command layer**: the eight methods, their payloads and their flags. Not a tool — `pdf.py` and `batch_pdf.py` both call it, so neither owns a second copy |
+| `pdf.py` | `SCR-02` — the PDF processor's primitives and its contract, one file per run |
+| `batch_pdf.py` | `SCR-12` — the same eight methods over every PDF below a folder, one record per input |
 | `image.py` | `SCR-03` — the image processor's pipelines and its contract |
 | `ocr.py` | `SCR-04` — the OCR processor's representations and its contract |
 | `llm.py` | `SCR-05` — one inference, the chain, the inventory and the scripted provider |
 | `workflow.py` | `SCR-06` — the orchestrator: plan, run, resume, force, skip, stop |
 
 A tool owns its subcommands, its flags and one handler per subcommand. Everything else — where a
-run writes, how an input resolves, the header, the printers, the exit code — comes from `_cli`.
-Adding a sixth tool for a sixth processor means writing its parser and its handlers, and nothing
-else.
+run writes, how an input resolves, the header, the printers, the exit code — comes from `_cli`,
+and the PDF bench's eight methods come from `_pdf`. Adding a tool for a sixth processor means
+writing its parser and its handlers, and nothing else.
 
-The set of **modules** here is fixed by [`docs/plan/subplan-scripts.md`](../../docs/plan/subplan-scripts.md)
-§3.1 and asserted by `tests/test_lab_tools.py` guard 1: `_cli.py` plus the five tools, and no
-other `.py` file. A sixth tool is a plan revision, not a surprise.
+The set of **modules** here is asserted by `tests/test_lab_tools.py` guard 1: `_cli.py`, `_pdf.py`
+and the six tools, and no other `.py` file. `subplan-scripts.md` §3.1 fixed it at `_cli.py` plus
+five tools; `batch_pdf.py` and the shared layer that keeps it from duplicating `pdf.py` are the
+`SCR-11`/`SCR-12` plan revision that followed, and a seventh tool is the next one, not a surprise.
 
 ---
 
@@ -43,6 +46,7 @@ other `.py` file. A sixth tool is a plan revision, not a surprise.
 ```bash
 python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
 python scripts/tools/pdf.py --fixture pdf_sample_mixed.pdf render --page 1 --dpi 300
+python scripts/tools/batch_pdf.py tests/fixtures/pdf
 python scripts/tools/workflow.py --allow-ocr --no-allow-vlm \
     --pdf-dpi 150 --image-normalize --ocr \
     --task extract --provider ollama --model llama3.1 --template simple_extract \
@@ -52,12 +56,13 @@ python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0
     --template simple_extract --schema simple
 ```
 
-Every line above runs as written against the committed fixtures. The second one shows the two
-spellings at once — `--fixture` before the subcommand, `--page`/`--dpi` after it — and the third
-carries a **complete** workflow request, because the library refuses a missing option key by
-name; `plan` needs no `--dry-run`, since planning *is* the dry run. The last line is the honest
-failure the bench exists for: no model is served on this machine, so it prints a typed
-`MODEL_UNAVAILABLE` and exits `1`.
+Every line above runs as written against the committed fixtures. The `render` line shows the two
+spellings at once — `--fixture` before the subcommand, `--page`/`--dpi` after it — and the batch
+line is the whole PDF corpus under `tests/fixtures/pdf/`, three inputs written and one reported as
+the corrupt file it is (exit `1`). The `plan` line carries a **complete** workflow request,
+because the library refuses a missing option key by name; `plan` needs no `--dry-run`, since
+planning *is* the dry run. The `call` line is the honest failure the bench exists for: no model is
+served on this machine, so it prints a typed `MODEL_UNAVAILABLE` and exits `1`.
 
 Each tool is invoked **by path**. No `pip install` is needed: the tools put the repository root
 and `src/` on `sys.path` themselves, which is what `_cli.bootstrap()` does.
@@ -162,6 +167,41 @@ printing a result is a tool's job, producing it is not.
 | `images` | `primitives.extract_images_from_page` | embedded images |
 | `classify` | `primitives.composition.analyze_pdf_page` + `classify_pdf_page` | the `TEXT`/`IMAGE`/`MIXED` verdict |
 | `run` | `process_pdf`, or `process_pdf_page` with `--page` | the contract; `--dpi` required |
+
+### `batch_pdf.py` — `SCR-12`
+
+`pdf.py` over a corpus: the same eight methods, run over every PDF under a folder, with the tree
+mirrored under `var/batch_pdf/<folder>/`. Both tools dispatch through `_pdf`, so a method, its
+payload and its flags live in exactly one place and the batch adds no behaviour of its own.
+
+```bash
+python scripts/tools/batch_pdf.py unacarpeta                        # inspect; the header says so
+python scripts/tools/batch_pdf.py unacarpeta run --dpi 200 --extract-text
+python scripts/tools/batch_pdf.py --no-recursive --out var/x unacarpeta split
+```
+
+| Subcommand | What it does |
+|---|---|
+| the eight of `pdf.py` | the same method, once per input, in the order the inputs were found |
+
+- **The folder is walked recursively by default** (`--no-recursive` for the top level only), and
+  only `.pdf` files are inputs, matched case-insensitively. The walk **skips the run's own output
+  root**, so a second run over the same tree does not pick up the pages the first one wrote.
+- **Every input gets its own directory**: `<root>/<the input's folder relative to the walked
+  folder>/<the input's stem>/`, which is what keeps two PDFs in one folder from colliding.
+- **Every input gets a record**: the method's payload is written to `result.json` in that
+  directory, beside whatever the method published. So `inspect` — which publishes no artifact at
+  all (`pdf.py`'s report-only set) — still leaves something to read, which is the point of running
+  it over a corpus.
+- **The command is stated, never guessed.** With no subcommand the run makes `inspect`, the one
+  method that needs no further flag, and the header says `command: inspect (default, none
+  stated)`.
+- **One bad file does not end the batch.** Each failure is printed as the library's typed record
+  and counted, and the run keeps going: the exit code is `1` when any input failed, `0` when none
+  did, and `2` for a usage error.
+- **`--out DIR`** replaces `var/batch_pdf/<folder>/` entirely; the mirror is then `DIR/<relative
+  folders>/<stem>/`. `--recursive`, `--out` and `--json` are the tool's global flags and belong
+  before the subcommand, as everywhere else.
 
 ### `image.py` — `SCR-03`
 

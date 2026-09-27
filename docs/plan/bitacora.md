@@ -1324,3 +1324,90 @@ unresolvable input") already covers this case and needed no change.
 
 **Next.** Unchanged: the image processor's publication defect is still the one thing standing
 between the bench and an end-to-end run.
+
+---
+
+## 2026-09-27 — Phase 5 · the PDF bench over a folder (`SCR-11`, `SCR-12`)
+
+**Requested.** A batch driver, `scripts/tools/batch_pdf.py`, that takes a folder, walks it
+recursively and mirrors it under `var/` (`unacarpeta/sub1/a.pdf` → `var/batch_pdf/unacarpeta/sub1/…`),
+plus a refactor so the batch reuses the PDF tool's methods instead of copying them.
+
+**Delivered.**
+
+| File | Change |
+|---|---|
+| `scripts/tools/_pdf.py` | **new**, `SCR-11`: the eight PDF methods, their payloads, their flag registration (`build_subcommands`) and the refusals for `--page`/`--dpi`. Not a tool — no `main`, no printing, no catch: a method returns a payload and raises the processor's typed failure |
+| `scripts/tools/batch_pdf.py` | **new**, `SCR-12`: walks a folder, runs one command per PDF through `_pdf`, mirrors the tree under `var/batch_pdf/<folder>/` (or `--out`), writes each input's payload to `result.json` in that input's own directory, prints one line per input and a summary, and exits `1` if any input failed |
+| `scripts/tools/pdf.py` | now a CLI over `_pdf`: parser, one handler factory, `main`. Its eight methods, their payload builders and `_run_options` moved, unchanged, into `_pdf` — the 57 lab-tool tests (including every pdf glue test) passed before and after, which is the evidence the move changed no behaviour |
+| `scripts/tools/_cli.py` | four small additions the two callers needed: `BATCH_OUTPUT_ROOT` (`var/batch_pdf/…`), `write_payload` (the file half of `print_result`), `build_parser(positional=, subcommand_required=)` and `add_subcommand(input_argument=)` |
+| `tests/test_lab_tools.py` | guard 1's set, guard 3 over `_pdf` too, `DOCUMENTED_SUBCOMMANDS["batch_pdf"]`, `REPORT_ONLY["batch_pdf"] = ()`, and five new tests: the mirrored tree, the stated default, the failure count, the folder refusal, `write_payload` |
+| `scripts/tools/readme.md` | the layout table, the invocation block, and a `batch_pdf.py` section: the mirror, the record per input, the default command, the exit codes |
+
+**Two things the request could not have as stated, and what was done instead.**
+
+1. **`scripts/tools/pdf/library.py` cannot exist.** A package and a module of the same name in one
+   directory are resolved to the *package*: `import pdf` beside `pdf/` returns `pdf/__init__.py`
+   (verified: `import pdf -> /private/tmp/shadow/pdf/__init__.py`, `is_package: True`), which would
+   break `tool_module("pdf")` and every tool's `import pdf`. The shared layer is therefore
+   `scripts/tools/_pdf.py` — the leading underscore the subplan's own naming convention reserves
+   for "a module that is not a tool".
+2. **The command is the caller's, not the tool's.** `batch_pdf.py` runs the subcommand stated, with
+   the flags `_pdf` registered for it; with none stated it runs `inspect` — the one method that
+   needs no further flag — and the run header says `command: inspect (default, none stated)` rather
+   than leaving the choice silent. So `batch_pdf.py unacarpeta` is a complete command, and
+   `batch_pdf.py unacarpeta run --dpi 200 --extract-text` is the contract over the same tree.
+
+**Hand run** (the shape the request described, then the readme's own line):
+
+```
+mkdir -p /tmp/unacarpeta/sub{1,2}
+cp …/pdf_sample_text.pdf  /tmp/unacarpeta/sub1/
+cp …/pdf_sample_mixed.pdf /tmp/unacarpeta/sub2/ ; cp …/pdf_corrupt.pdf /tmp/unacarpeta/sub2/
+python scripts/tools/batch_pdf.py /tmp/unacarpeta
+  == batch_pdf.py inspect ==  input /private/tmp/unacarpeta  output …/var/batch_pdf/unacarpeta
+  command: inspect (default, none stated)
+  pdf_sample_text.pdf:  ok     -> …/unacarpeta/sub1/pdf_sample_text
+  pdf_corrupt.pdf:      FAILED -> …/unacarpeta/sub2/pdf_corrupt   ERROR CORRUPTED_PDF: …
+  pdf_sample_mixed.pdf: ok     -> …/unacarpeta/sub2/pdf_sample_mixed
+  files: 3 · succeeded: 2 · failed: 1                                          exit 1
+var/batch_pdf/unacarpeta/sub1/pdf_sample_text/result.json
+var/batch_pdf/unacarpeta/sub2/pdf_sample_mixed/result.json
+
+python scripts/tools/batch_pdf.py tests/fixtures/pdf
+  files: 4 · succeeded: 3 · failed: 1   (pdf_corrupt.pdf)                      exit 1
+var/batch_pdf/pdf/{pdf_sample_image,pdf_sample_mixed,pdf_sample_text}/result.json
+```
+
+**Mutation evidence (Invariant / Mutation / Observed failure / Restored green).**
+
+```
+Invariant   a batch does not stop at the first bad file
+Mutation    batch_pdf.main: break out of the loop when a record carries an error
+Observed    test_batch_pdf_counts_every_failure_and_exits_one  FAILED  (1 failed, 66 deselected;
+            one `ERROR CORRUPTED_PDF` instead of two)
+Restored    the inverse edit; 680 passed
+```
+
+**Gate evidence.**
+
+```
+pytest                     680 passed
+ruff check .               All checks passed!
+ruff format --check .      172 files already formatted
+pylint src tests           10.00/10
+```
+
+**Owed — the plan revision (`SCR-11`, `SCR-12`).** The code is in and gated; the frozen artifacts
+still describe six modules and list batch runs as out of scope, so this is a plan revision and not
+done yet. `subplan-scripts.md` §3.1 (the module set), §3.4 (the batch row and the shared layer),
+§4 (the `SCR-11`/`SCR-12` rows, waves and critical path), §6 (guard 1's set) and §9 (**the
+"batch corpus runs over `documentos/` and mirrored output trees" bullet is the decision this pass
+reverses**); `issues/wbs-scripts.md` §1/§2/§3 (two issues, the ID range, the Depends/Blocks edges —
+the subplan and its WBS move in one pass); `docs/plan/README.md` §4.1 and root `README.md`'s tool
+table for the citation; and a `docs/feedback/` note that declares the reversal and is the winner
+over the deleted bullet. Owner: this pass's author, next pass.
+
+**Next.** That revision, before any further work on the bench: until it lands, `docs/plan/` and
+`scripts/tools/` disagree about the module set. The image processor's publication defect is still
+the one thing standing between the bench and an end-to-end run.
