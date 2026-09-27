@@ -7,17 +7,30 @@ the module that consumes it.
 
 Nothing here reaches an engine: the provider double is the one the LLM processor's own suite
 ships, installed at ``docflow.llm.primitives``.
+
+This module also puts ``scripts/tools/`` on ``sys.path``, once. A tool is written to be
+invoked by path — ``python scripts/tools/pdf.py`` — where the interpreter already does that,
+and its ``import _cli`` is a plain import because of it. A test imports the same module as
+``scripts.tools.pdf``, so the directory has to be reachable for that import to resolve.
 """
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from docflow.llm import primitives as llm_primitives
 from tests.fakes.engines.fake_provider import FakeProvider
+
+#: Where the lab tools live; the tools import their shared library by its bare name.
+TOOLS_DIR = Path(__file__).resolve().parents[1] / "scripts" / "tools"
+
+if str(TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOLS_DIR))
 
 
 @pytest.fixture

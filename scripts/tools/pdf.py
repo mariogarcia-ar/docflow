@@ -1,43 +1,27 @@
 """Lab tool for the PDF processor (``SCR-02``).
 
-A thin caller: it parses arguments, builds a real contract object and calls either one of
-its own processor's primitives or the ``process_pdf`` / ``process_pdf_page`` entry points.
-It adds no transformation, no validation and no default — a missing ``--dpi`` is a usage
-error, never a substituted resolution.
+A thin caller: its parser, its flags and one handler per subcommand are all it owns. The
+frame around them — where the run writes, how the input resolves, the header, the printers
+and the exit code — lives in :mod:`scripts.tools._cli`.
 
-The tool is invoked by path, so the repository root and the ``src/`` layout are put on
-``sys.path`` before the library is imported. That bootstrap is bench plumbing: it adds no
-behaviour and reaches no engine.
+The tool adds no transformation, no validation and no default: a missing ``--dpi`` is a
+usage error, never a substituted resolution.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-_TOOLS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _TOOLS_DIR.parents[1]
-for _entry in (str(_REPO_ROOT), str(_REPO_ROOT / "src"), str(_TOOLS_DIR)):
-    if _entry not in sys.path:
-        sys.path.insert(0, _entry)
+import _cli
 
-import _cli  # noqa: E402  # reason: imported after the path bootstrap above
-
-from docflow import pdf as pdf_processor  # noqa: E402
-from docflow.pdf import (  # noqa: E402
-    PDFContext,
-    PDFOptions,
-    PDFRequest,
-    primitives,
-)
-from docflow.pdf.primitives import composition  # noqa: E402
-from docflow.pdf.primitives.errors import PDFPrimitiveError  # noqa: E402
-
-Handler = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], int]
+from docflow import pdf as pdf_processor
+from docflow.pdf import PDFContext, PDFOptions, PDFRequest, primitives
+from docflow.pdf.primitives import composition
+from docflow.pdf.primitives.errors import PDFPrimitiveError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,24 +30,17 @@ def build_parser() -> argparse.ArgumentParser:
     Returns:
         The parser, with every documented subcommand registered.
     """
-    parser = argparse.ArgumentParser(
-        prog="pdf.py",
-        description="Lab bench for the PDF processor: one primitive, or the contract.",
+    parser, subparsers = _cli.build_parser(
+        "pdf.py",
+        "Lab bench for the PDF processor: one primitive, or the contract.",
+        identity=True,
     )
-    _cli.add_common_arguments(parser, identity=True)
-    subparsers = parser.add_subparsers(
-        dest="subcommand", required=True, metavar="SUBCOMMAND"
+    _cli.add_subcommand(
+        subparsers, "inspect", "Page count, per-page geometry and encryption."
     )
+    _cli.add_subcommand(subparsers, "split", "One self-contained PDF per page.")
 
-    inspect = subparsers.add_parser(
-        "inspect", help="Page count, per-page geometry and encryption."
-    )
-    _cli.add_input_argument(inspect)
-    split = subparsers.add_parser("split", help="One self-contained PDF per page.")
-    _cli.add_input_argument(split)
-
-    render = subparsers.add_parser("render", help="Render one page to PNG.")
-    _cli.add_input_argument(render)
+    render = _cli.add_subcommand(subparsers, "render", "Render one page to PNG.")
     render.add_argument("--page", type=int, help="Page index, 1-based.")
     render.add_argument("--dpi", type=int, help="Render resolution; never defaulted.")
 
@@ -73,12 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
         ("images", "The page's embedded images."),
         ("classify", "The page's descriptive TEXT/IMAGE/MIXED classification."),
     ):
-        scoped = subparsers.add_parser(name, help=help_text)
-        _cli.add_input_argument(scoped)
+        scoped = _cli.add_subcommand(subparsers, name, help_text)
         scoped.add_argument("--page", type=int, help="Page index, 1-based.")
 
-    run = subparsers.add_parser("run", help="Run the PDF contract.")
-    _cli.add_input_argument(run)
+    run = _cli.add_subcommand(subparsers, "run", "Run the PDF contract.")
     run.add_argument("--page", type=int, help="Run one page instead of the document.")
     run.add_argument("--dpi", type=int, help="Render resolution; never defaulted.")
     run.add_argument(
@@ -105,26 +80,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: ``0`` when the run produced a result, ``1`` when the library
         returned a typed failure.
     """
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    input_path = _cli.resolve_input(args, parser)
-    root = _cli.output_root("pdf", input_path, out=args.out)
-    _cli.print_header("pdf", args.subcommand, input_path, root)
-    return HANDLERS[args.subcommand](args, parser, input_path, root)
+    return _cli.run_tool("pdf", build_parser(), HANDLERS, argv)
 
 
 def _page(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     """Return ``--page``, refusing to guess one."""
-    if args.page is None:
-        parser.error(f"{args.subcommand} requires --page; no page number is defaulted")
-    return int(args.page)
+    return int(
+        _cli.required(args, parser, "page", "--page", why="no page number is defaulted")
+    )
 
 
 def _dpi(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     """Return ``--dpi``, refusing to substitute a resolution."""
-    if args.dpi is None:
-        parser.error(f"{args.subcommand} requires --dpi; no resolution is defaulted")
-    return int(args.dpi)
+    return int(
+        _cli.required(args, parser, "dpi", "--dpi", why="no resolution is defaulted")
+    )
 
 
 def _cmd_inspect(
@@ -332,9 +302,9 @@ def _page_payload(result: Any) -> dict[str, Any]:
         "status": str(result.status),
         "page_number": result.page_number,
         "classification": result.classification,
-        "page_pdf": _optional_path(result.page_pdf),
-        "page_image": _optional_path(result.page_image),
-        "native_text": _optional_path(result.native_text),
+        "page_pdf": _cli.optional_path(result.page_pdf),
+        "page_image": _cli.optional_path(result.page_image),
+        "native_text": _cli.optional_path(result.native_text),
         "text_blocks": [asdict(block) for block in result.text_blocks],
         "embedded_images": [
             {
@@ -366,8 +336,8 @@ def _document_payload(result: Any) -> dict[str, Any]:
                 "page_number": page.page_number,
                 "status": str(page.status),
                 "classification": page.classification,
-                "page_image": _optional_path(page.page_image),
-                "native_text": _optional_path(page.native_text),
+                "page_image": _cli.optional_path(page.page_image),
+                "native_text": _cli.optional_path(page.native_text),
                 "errors": [asdict(error) for error in page.validation.errors],
             }
             for page in result.pages
@@ -375,11 +345,6 @@ def _document_payload(result: Any) -> dict[str, Any]:
         "artifacts": [str(path) for path in result.artifacts],
         "errors": [asdict(error) for error in result.errors],
     }
-
-
-def _optional_path(path: Path | None) -> str | None:
-    """Render an optional artifact path as text, or ``None``."""
-    return None if path is None else str(path)
 
 
 def _cmd_run(
@@ -398,17 +363,17 @@ def _cmd_run(
     )
     if args.page is not None:
         page = int(args.page)
-        result = pdf_processor.process_pdf_page(
+        page_result = pdf_processor.process_pdf_page(
             request, page, root / f"page_{page:03d}"
         )
-        _cli.print_result(_page_payload(result), as_json=args.json)
-    else:
-        result = pdf_processor.process_pdf(request)
-        _cli.print_result(_document_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+        return _cli.report_result(
+            page_result, _page_payload(page_result), as_json=args.json
+        )
+    result = pdf_processor.process_pdf(request)
+    return _cli.report_result(result, _document_payload(result), as_json=args.json)
 
 
-HANDLERS: dict[str, Handler] = {
+HANDLERS: dict[str, _cli.Handler] = {
     "inspect": _cmd_inspect,
     "split": _cmd_split,
     "render": _cmd_render,

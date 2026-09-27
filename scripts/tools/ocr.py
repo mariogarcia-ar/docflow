@@ -1,42 +1,27 @@
 """Lab tool for the OCR processor (``SCR-04``).
 
-A thin caller: it parses arguments, builds a real contract object and calls either one of
-its own processor's primitives or the ``process_ocr_image`` entry point. There is no
-``--engine`` flag: the engine is fixed and never presented as a selectable option.
+A thin caller: its parser, its flags and one handler per subcommand are all it owns. The
+frame around them — where the run writes, how the input resolves, the header, the printers
+and the exit code — lives in :mod:`scripts.tools._cli`.
 
-The tool is invoked by path, so the repository root and the ``src/`` layout are put on
-``sys.path`` before the library is imported. That bootstrap is bench plumbing: it adds no
-behaviour and reaches no engine.
+There is no ``--engine`` flag: the engine is fixed and never presented as a selectable
+option.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-_TOOLS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _TOOLS_DIR.parents[1]
-for _entry in (str(_REPO_ROOT), str(_REPO_ROOT / "src"), str(_TOOLS_DIR)):
-    if _entry not in sys.path:
-        sys.path.insert(0, _entry)
+import _cli
 
-import _cli  # noqa: E402  # reason: imported after the path bootstrap above
-
-from docflow import ocr as ocr_processor  # noqa: E402
-from docflow.ocr import (  # noqa: E402
-    OCRContext,
-    OCROptions,
-    OCRRequest,
-    primitives,
-)
-from docflow.ocr.primitives import composition  # noqa: E402
-from docflow.ocr.primitives.errors import OCRPrimitiveError  # noqa: E402
-
-Handler = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], int]
+from docflow import ocr as ocr_processor
+from docflow.ocr import OCRContext, OCROptions, OCRRequest, primitives
+from docflow.ocr.primitives import composition
+from docflow.ocr.primitives.errors import OCRPrimitiveError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,13 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
     Returns:
         The parser, with every documented subcommand registered.
     """
-    parser = argparse.ArgumentParser(
-        prog="ocr.py",
-        description="Lab bench for the OCR processor: one representation, or the contract.",
-    )
-    _cli.add_common_arguments(parser, identity=True)
-    subparsers = parser.add_subparsers(
-        dest="subcommand", required=True, metavar="SUBCOMMAND"
+    parser, subparsers = _cli.build_parser(
+        "ocr.py",
+        "Lab bench for the OCR processor: one representation, or the contract.",
+        identity=True,
     )
 
     for name, help_text in (
@@ -62,12 +44,10 @@ def build_parser() -> argparse.ArgumentParser:
         ("blocks", "Ordered blocks, in reading order."),
         ("metrics", "Content metrics, over the built document."),
     ):
-        scoped = subparsers.add_parser(name, help=help_text)
-        _cli.add_input_argument(scoped)
+        scoped = _cli.add_subcommand(subparsers, name, help_text)
         _add_ocr_options(scoped)
 
-    run = subparsers.add_parser("run", help="Run the OCR contract.")
-    _cli.add_input_argument(run)
+    run = _cli.add_subcommand(subparsers, "run", "Run the OCR contract.")
     _add_ocr_options(run)
     run.add_argument(
         "--page", type=int, default=1, help="Logical page number, 1-based."
@@ -111,29 +91,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: ``0`` when the run produced a result, ``1`` when the library
         returned a typed failure.
     """
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    input_path = _cli.resolve_input(args, parser)
-    root = _cli.output_root("ocr", input_path, out=args.out)
-    _cli.print_header("ocr", args.subcommand, input_path, root)
-    return HANDLERS[args.subcommand](args, parser, input_path, root)
+    return _cli.run_tool("ocr", build_parser(), HANDLERS, argv)
 
 
 def _options(args: argparse.Namespace, parser: argparse.ArgumentParser) -> OCROptions:
     """Build the OCR options the flags describe."""
-    engine_options: dict[str, Any] = {}
-    for item in args.engine_option or []:
-        key, separator, value = item.partition("=")
-        if not separator or not key:
-            parser.error(f"--engine-option expects KEY=VALUE, got {item!r}")
-        engine_options[key] = value
     return OCROptions(
         ocr=bool(args.ocr),
         layout=bool(args.layout),
         tables=bool(args.tables),
         reading_order=bool(args.reading_order),
         language=args.language,
-        engine_options=engine_options,
+        engine_options=_cli.key_values(
+            args.engine_option, parser, flag="--engine-option"
+        ),
     )
 
 
@@ -335,7 +306,8 @@ def _cmd_run(
         context=context,
     )
     result = ocr_processor.process_ocr_image(request)
-    _cli.print_result(
+    return _cli.report_result(
+        result,
         {
             "status": str(result.status),
             "document_id": context.document_id,
@@ -355,10 +327,9 @@ def _cmd_run(
         },
         as_json=args.json,
     )
-    return _cli.exit_code_for(result)
 
 
-HANDLERS: dict[str, Handler] = {
+HANDLERS: dict[str, _cli.Handler] = {
     "run": _cmd_run,
     "text": _cmd_text,
     "md": _cmd_md,

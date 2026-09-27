@@ -1,13 +1,19 @@
-"""Shared plumbing for the lab tools under ``scripts/tools/`` (``SCR-01``).
+"""Shared library for the lab tools under ``scripts/tools/`` (``SCR-01``).
 
 This module is **not** a tool: it holds no contract, reaches no engine and imports nothing
-from ``docflow``. It is the plumbing five callers would otherwise copy five times — the
-output root, fixture resolution, the run header, the two printers and the exit-code mapping
-— and nothing more. Nothing under ``src/docflow/`` may import it; the dependency runs one
-way (``scripts/`` → ``src/``), and the guard test asserts it rather than trusting it.
+from ``docflow``. Everything the five tools would otherwise copy five times lives here —
+where a run writes, how a fixture name resolves, how a request's identity is derived, how a
+parser is built and dispatched, how ``KEY=VALUE`` flags are read, and how a result and a
+typed failure are printed and turned into an exit code.
 
-The module is deliberately free of any processor vocabulary: it never names a PDF, an image,
-an OCR or an LLM type, so a sixth tool for a sixth processor would need no change here.
+A tool supplies only what is its own: its subcommands, its flags and one handler per
+subcommand. The library supplies the frame around them, so a tool's ``main`` is a single
+call to :func:`run_tool` and its parser is a list of :func:`add_subcommand` calls.
+
+Nothing under ``src/docflow/`` may import it; the dependency runs one way (``scripts/`` →
+``src/``), and the guard test asserts it rather than trusting it. The module is deliberately
+free of any processor vocabulary: it never names a PDF, an image, an OCR or an LLM type, so a
+sixth tool for a sixth processor would need no change here.
 """
 
 from __future__ import annotations
@@ -17,12 +23,16 @@ import dataclasses
 import hashlib
 import json
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
 #: Repository root, derived from this file's own location (``scripts/tools/_cli.py``).
 REPO_ROOT: Final[Path] = Path(__file__).resolve().parents[2]
+
+#: The directory the tools live in. A tool invoked by path already has it on ``sys.path``;
+#: a test that imports one as ``scripts.tools.<name>`` puts it there itself.
+TOOLS_DIR: Final[Path] = REPO_ROOT / "scripts" / "tools"
 
 #: The two committed fixture roots a bare fixture name is resolved against.
 FIXTURES_ROOT: Final[Path] = REPO_ROOT / "tests" / "fixtures"
@@ -41,6 +51,26 @@ FAILURE_EXIT: Final[int] = 1
 #: Statuses that mean the run failed. Everything else — ``success``, ``partial``,
 #: ``partial_success``, ``PAUSED`` — produced a result, and a result is a success here.
 FAILED_STATUSES: Final[frozenset[str]] = frozenset({"failed", "FAILED"})
+
+#: What every tool's subcommand handler receives, and must return: an exit code.
+Handler = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], int]
+
+
+def bootstrap() -> None:
+    """Put the repository root and ``src/`` on ``sys.path``.
+
+    A tool is invoked by path from a checkout that is not necessarily installed
+    (``python scripts/tools/pdf.py``), so the library it is about to import has to be
+    reachable. The call below runs when this module is imported, which is what makes a
+    tool's ``import docflow`` work with no ``pip install``. It adds paths only, never
+    behaviour, and it is idempotent.
+    """
+    for entry in (REPO_ROOT / "src", REPO_ROOT):
+        if str(entry) not in sys.path:
+            sys.path.insert(0, str(entry))
+
+
+bootstrap()
 
 
 class FixtureNotFoundError(LookupError):
@@ -133,8 +163,8 @@ def resolve_fixture(
     raise FixtureNotFoundError(f"fixture {name!r} was not found under {searched}")
 
 
-def add_input_argument(subparser: argparse.ArgumentParser) -> None:
-    """Add the positional input to a subparser.
+def _add_input_argument(subparser: argparse.ArgumentParser) -> None:
+    """Add the positional input to a subcommand's parser.
 
     The positional belongs to the subcommand (``pdf.py inspect <input>``), while
     ``--fixture`` is a global option (``pdf.py --fixture <name> inspect``): both spellings
@@ -150,7 +180,7 @@ def add_input_argument(subparser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_common_arguments(
+def _add_common_arguments(
     parser: argparse.ArgumentParser, *, identity: bool = False
 ) -> None:
     """Add the arguments every tool shares.
@@ -191,6 +221,46 @@ def add_common_arguments(
         )
 
 
+def build_parser(
+    prog: str, description: str, *, identity: bool = False
+) -> tuple[argparse.ArgumentParser, Any]:
+    """Build a tool's parser: the shared arguments plus its subcommand group.
+
+    Args:
+        prog: The program name, as ``--help`` prints it.
+        description: The one-line description, as ``--help`` prints it.
+        identity: Also add ``--document-id`` and ``--run-id``.
+
+    Returns:
+        The parser, and the subcommand group to register subcommands on. The group is typed
+        loosely because ``argparse`` exposes no public type for a subparser action.
+    """
+    parser = argparse.ArgumentParser(prog=prog, description=description)
+    _add_common_arguments(parser, identity=identity)
+    subparsers = parser.add_subparsers(
+        dest="subcommand", required=True, metavar="SUBCOMMAND"
+    )
+    return parser, subparsers
+
+
+def add_subcommand(
+    subparsers: Any, name: str, help_text: str
+) -> argparse.ArgumentParser:
+    """Register one subcommand, with the positional input it shares with its siblings.
+
+    Args:
+        subparsers: The group :func:`build_parser` returned.
+        name: The subcommand's name, exactly as the runbook spells it.
+        help_text: The one-line help, as ``--help`` prints it.
+
+    Returns:
+        The subcommand's parser, for the flags that are its own.
+    """
+    subparser = subparsers.add_parser(name, help=help_text)
+    _add_input_argument(subparser)
+    return subparser
+
+
 def resolve_input(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
@@ -215,6 +285,62 @@ def resolve_input(
     except FixtureNotFoundError as missing:
         parser.error(str(missing))
         raise  # unreachable: parser.error exits; kept so the return type is honest
+
+
+def required(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    name: str,
+    flag: str,
+    *,
+    why: str = "no default is substituted",
+) -> Any:
+    """Return a value the subcommand cannot run without, refusing a missing one by name.
+
+    The check is deliberately a post-parse test rather than ``required=True`` on the
+    argument: an argument-level requirement hides an injected ``default=`` behind exactly
+    the same behaviour, so a guard could not tell the two apart. Here a default makes the
+    run proceed, which is what makes the "no default model" guard falsifiable.
+
+    Args:
+        args: The parsed arguments.
+        parser: The parser to report the usage error through.
+        name: The argument's destination, e.g. ``"model"``.
+        flag: The flag as the caller spelled it, for the message.
+        why: The reason no value is invented for it.
+
+    Returns:
+        The value the caller stated.
+    """
+    value = getattr(args, name, None)
+    if value is None:
+        parser.error(f"{args.subcommand} requires {flag}; {why}")
+    return value
+
+
+def key_values(
+    items: Sequence[str] | None,
+    parser: argparse.ArgumentParser,
+    *,
+    flag: str,
+) -> dict[str, Any]:
+    """Turn repeated ``KEY=VALUE`` flags into a mapping, refusing a malformed one.
+
+    Args:
+        items: The repeated flag's values, or ``None`` when the flag was never given.
+        parser: The parser to report the usage error through.
+        flag: The flag as the caller spelled it, for the message.
+
+    Returns:
+        The values, in the order the caller gave them.
+    """
+    values: dict[str, Any] = {}
+    for item in items or []:
+        key, separator, value = item.partition("=")
+        if not separator or not key:
+            parser.error(f"{flag} expects KEY=VALUE, got {item!r}")
+        values[key] = value
+    return values
 
 
 def identity_for(
@@ -250,6 +376,52 @@ def run_id_for(tool: str, input_path: Path) -> str:
     """
     prefix = file_digest(input_path)[:HASH_PREFIX_LENGTH]
     return f"tool-{tool}-{prefix}"
+
+
+def run_tool(
+    tool: str,
+    parser: argparse.ArgumentParser,
+    handlers: Mapping[str, Handler],
+    argv: Sequence[str] | None = None,
+    *,
+    text: bool = False,
+    out_only: Collection[str] = (),
+    header_extra: Callable[[argparse.Namespace], Mapping[str, Any]] | None = None,
+    prepare: Callable[[argparse.Namespace], None] | None = None,
+) -> int:
+    """Run one tool: parse, resolve the run, print the header and dispatch.
+
+    The whole frame a tool shares with its siblings lives here. Everything specific to a
+    tool — its subcommands, its flags and its handlers — arrives as an argument.
+
+    Args:
+        tool: The tool's name; it names the output root and the run identity.
+        parser: The tool's parser, built with :func:`build_parser`.
+        handlers: One handler per documented subcommand.
+        argv: The arguments, defaulting to ``sys.argv[1:]``.
+        text: Prefer the text fixture root when resolving a bare fixture name.
+        out_only: Subcommands that accept ``--out`` in place of an input.
+        header_extra: Further facts to state in the header, read from the arguments.
+        prepare: A hook that runs after parsing and before the handler — the place a tool
+            patches a seam in its own process.
+
+    Returns:
+        The handler's exit code: ``0`` when the run produced a result, ``1`` when the
+        library returned a typed failure.
+    """
+    args = parser.parse_args(argv)
+    subcommand = args.subcommand
+    if subcommand in out_only and args.out:
+        root = Path(args.out).expanduser().resolve()
+        input_path = Path(getattr(args, "input", None) or root).resolve()
+    else:
+        input_path = resolve_input(args, parser, text=text)
+        root = output_root(tool, input_path, out=args.out)
+    extra = None if header_extra is None else header_extra(args)
+    print_header(tool, subcommand, input_path, root, extra=extra)
+    if prepare is not None:
+        prepare(args)
+    return handlers[subcommand](args, parser, input_path, root)
 
 
 def print_header(
@@ -321,6 +493,26 @@ def print_error(records: Sequence[Any]) -> int:
         if details:
             print(f"  {json.dumps(details, default=_json_default)}")
     return FAILURE_EXIT
+
+
+def report_result(result: Any, payload: Mapping[str, Any], *, as_json: bool) -> int:
+    """Print a result's payload and return the exit code its own status maps to.
+
+    Args:
+        result: The library's result, whose ``status`` decides the exit code.
+        payload: The payload, built from that result's own fields.
+        as_json: Print the payload as JSON instead of the human summary.
+
+    Returns:
+        ``0`` when the run produced a result, ``1`` when it failed.
+    """
+    print_result(payload, as_json=as_json)
+    return exit_code_for(result)
+
+
+def optional_path(path: Path | None) -> str | None:
+    """Render an optional artifact path as text, or ``None`` when none was produced."""
+    return None if path is None else str(path)
 
 
 def exit_code_for(result: Any) -> int:

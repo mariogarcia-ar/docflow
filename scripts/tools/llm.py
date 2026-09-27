@@ -1,48 +1,31 @@
 """Lab tool for the LLM processor (``SCR-05``).
 
-A thin caller: it parses arguments, builds a real ``LLMInput`` and calls one of
-``process_llm_request`` / ``process_llm_node`` or one of its own processor's inventory and
-token primitives. ``--provider`` and ``--model`` are required on every inference
-subcommand: a default model is exactly the silent stand-in this project forbids.
+A thin caller: its parser, its flags and one handler per subcommand are all it owns. The
+frame around them — where the run writes, how the input resolves, the header, the printers
+and the exit code — lives in :mod:`scripts.tools._cli`.
 
-The ``fake`` subcommand installs the committed scripted provider at the provider seam and
-then demonstrates the graph and its resume path twice — with no model reached and no token
-spent.
-
-The tool is invoked by path, so the repository root and the ``src/`` layout are put on
-``sys.path`` before the library is imported. That bootstrap is bench plumbing: it adds no
-behaviour and reaches no engine.
+``--provider`` and ``--model`` are required on every inference subcommand: a default model
+is exactly the silent stand-in this project forbids. The ``fake`` subcommand installs the
+committed scripted provider at the provider seam and then demonstrates the chain and its
+resume path twice — with no model reached and no token spent.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-_TOOLS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _TOOLS_DIR.parents[1]
-for _entry in (str(_REPO_ROOT), str(_REPO_ROOT / "src"), str(_TOOLS_DIR)):
-    if _entry not in sys.path:
-        sys.path.insert(0, _entry)
+import _cli
 
-import _cli  # noqa: E402  # reason: imported after the path bootstrap above
-
-from docflow import llm as llm_processor  # noqa: E402
-from docflow.llm import (  # noqa: E402
-    LLMGraphState,
-    LLMInput,
-    primitives,
-)
-from docflow.llm.contracts import Usage  # noqa: E402
-from docflow.llm.primitives import persistence  # noqa: E402
-from docflow.states import StageState  # noqa: E402
-from tests.fakes.engines.fake_provider import FakeProvider  # noqa: E402
-
-Handler = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], int]
+from docflow import llm as llm_processor
+from docflow.llm import LLMGraphState, LLMInput, primitives
+from docflow.llm.contracts import Usage
+from docflow.llm.primitives import persistence
+from docflow.states import StageState
+from tests.fakes.engines.fake_provider import FakeProvider
 
 #: The asset root the template and schema identifiers resolve against by default.
 DEFAULT_ASSETS_DIR = _cli.FIXTURES_ROOT / "llm"
@@ -54,53 +37,43 @@ def build_parser() -> argparse.ArgumentParser:
     Returns:
         The parser, with every documented subcommand registered.
     """
-    parser = argparse.ArgumentParser(
-        prog="llm.py",
-        description="Lab bench for the LLM processor: one inference, or the inventory.",
+    parser, subparsers = _cli.build_parser(
+        "llm.py",
+        "Lab bench for the LLM processor: one inference, or the inventory.",
+        identity=True,
     )
-    _cli.add_common_arguments(parser, identity=True)
     parser.add_argument(
         "--assets-dir",
         default=str(DEFAULT_ASSETS_DIR),
         help="Template and schema root; printed with every run.",
-    )
-    subparsers = parser.add_subparsers(
-        dest="subcommand", required=True, metavar="SUBCOMMAND"
     )
 
     for name, help_text in (
         ("call", "One inference."),
         ("graph", "The linear inference chain."),
     ):
-        scoped = subparsers.add_parser(name, help=help_text)
-        _cli.add_input_argument(scoped)
-        _add_inference_arguments(scoped)
+        _add_inference_arguments(_cli.add_subcommand(subparsers, name, help_text))
 
-    node = subparsers.add_parser("node", help="One node of the inference graph.")
-    _cli.add_input_argument(node)
+    node = _cli.add_subcommand(subparsers, "node", "One node of the inference graph.")
     _add_inference_arguments(node)
     node.add_argument("--node", default="node", help="Node identifier.")
 
-    resume = subparsers.add_parser("resume", help="Re-run the chain under a pinned id.")
-    _cli.add_input_argument(resume)
-    _add_inference_arguments(resume)
+    _add_inference_arguments(
+        _cli.add_subcommand(subparsers, "resume", "Re-run the chain under a pinned id.")
+    )
 
     for name, help_text in (
         ("models", "The provider's model inventory; no generation."),
         ("tokens", "An offline token count, and the context window."),
     ):
-        scoped = subparsers.add_parser(name, help=help_text)
-        _cli.add_input_argument(scoped)
-        _add_model_arguments(scoped)
+        _add_model_arguments(_cli.add_subcommand(subparsers, name, help_text))
 
-    status = subparsers.add_parser("status", help="Read the durable chain state.")
-    _cli.add_input_argument(status)
-
-    fake = subparsers.add_parser(
-        "fake", help="Demonstrate the chain with the scripted provider."
+    _cli.add_subcommand(subparsers, "status", "Read the durable chain state.")
+    _add_inference_arguments(
+        _cli.add_subcommand(
+            subparsers, "fake", "Demonstrate the chain with the scripted provider."
+        )
     )
-    _cli.add_input_argument(fake)
-    _add_inference_arguments(fake)
     return parser
 
 
@@ -150,45 +123,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: ``0`` when the run produced a result, ``1`` when the library
         returned a typed failure.
     """
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if args.subcommand == "status" and args.out:
-        root = Path(args.out).expanduser().resolve()
-        input_path = Path(getattr(args, "input", None) or root).resolve()
-    else:
-        input_path = _cli.resolve_input(args, parser, text=True)
-        root = _cli.output_root("llm", input_path, out=args.out)
-    _cli.print_header(
+    return _cli.run_tool(
         "llm",
-        args.subcommand,
-        input_path,
-        root,
-        extra={"assets_dir": str(Path(args.assets_dir).expanduser())},
+        build_parser(),
+        HANDLERS,
+        argv,
+        text=True,
+        out_only=("status",),
+        header_extra=lambda args: {
+            "assets_dir": str(Path(args.assets_dir).expanduser())
+        },
     )
-    return HANDLERS[args.subcommand](args, parser, input_path, root)
-
-
-def _require(
-    args: argparse.Namespace,
-    parser: argparse.ArgumentParser,
-    name: str,
-    flag: str,
-) -> None:
-    """Refuse a missing flag by name; no default is substituted for it."""
-    if getattr(args, name, None) is None:
-        parser.error(f"{args.subcommand} requires {flag}; no default is substituted")
 
 
 def _options(
     args: argparse.Namespace, parser: argparse.ArgumentParser
 ) -> dict[str, Any]:
     """Build the decoding options from the caller's flags."""
-    options: dict[str, Any] = {}
-    for item in args.option or []:
-        key, separator, value = item.partition("=")
-        if not separator or not key:
-            parser.error(f"--option expects KEY=VALUE, got {item!r}")
-        options[key] = value
+    options = _cli.key_values(args.option, parser, flag="--option")
     if args.context_window is not None:
         options["context_window"] = int(args.context_window)
     return options
@@ -225,10 +177,10 @@ def _request(
     graph: dict[str, Any] | None = None,
 ) -> LLMInput:
     """Build the inference request the flags describe."""
-    _require(args, parser, "provider", "--provider")
-    _require(args, parser, "model", "--model")
-    _require(args, parser, "task", "--task")
-    _require(args, parser, "template", "--template")
+    _cli.required(args, parser, "provider", "--provider")
+    _cli.required(args, parser, "model", "--model")
+    _cli.required(args, parser, "task", "--task")
+    _cli.required(args, parser, "template", "--template")
     return LLMInput(
         task=str(args.task),
         provider=str(args.provider),
@@ -280,8 +232,7 @@ def _cmd_call(
     """Run one inference."""
     request = _request(args, parser, input_path, root)
     result = llm_processor.process_llm_request(request)
-    _cli.print_result(_result_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _result_payload(result), as_json=args.json)
 
 
 def _cmd_graph(
@@ -295,8 +246,7 @@ def _cmd_graph(
         args, parser, input_path, root, graph=primitives.default_inference_graph()
     )
     result = llm_processor.process_llm_request(request)
-    _cli.print_result(_result_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _result_payload(result), as_json=args.json)
 
 
 def _cmd_resume(
@@ -306,13 +256,12 @@ def _cmd_resume(
     root: Path,
 ) -> int:
     """Re-invoke the chain under a pinned run identity; re-invocation is the resume."""
-    _require(args, parser, "run_id", "--run-id")
+    _cli.required(args, parser, "run_id", "--run-id")
     request = _request(
         args, parser, input_path, root, graph=primitives.default_inference_graph()
     )
     result = llm_processor.process_llm_request(request)
-    _cli.print_result(_result_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _result_payload(result), as_json=args.json)
 
 
 def _fresh_state(run_id: str) -> LLMGraphState:
@@ -362,7 +311,8 @@ def _cmd_node(
         },
         _fresh_state(run_id),
     )
-    _cli.print_result(
+    return _cli.report_result(
+        node_result,
         {
             "node_id": node_result.node_id,
             "status": str(node_result.status),
@@ -372,13 +322,12 @@ def _cmd_node(
         },
         as_json=args.json,
     )
-    return _cli.exit_code_for(node_result)
 
 
 def _query(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Any:
     """Build the model query the inventory and token commands ask."""
-    _require(args, parser, "provider", "--provider")
-    _require(args, parser, "model", "--model")
+    _cli.required(args, parser, "provider", "--provider")
+    _cli.required(args, parser, "model", "--model")
     options = _options(args, parser)
     return primitives.ModelQuery(
         provider=str(args.provider),
@@ -487,7 +436,7 @@ def _cmd_fake(
     root: Path,
 ) -> int:
     """Demonstrate the chain and its resume path with no model and no spent token."""
-    _require(args, parser, "run_id", "--run-id")
+    _cli.required(args, parser, "run_id", "--run-id")
     _install_fake()
     first = llm_processor.process_llm_request(
         _request(
@@ -500,7 +449,8 @@ def _cmd_fake(
         )
     )
     state = primitives.load_graph_state(root)
-    _cli.print_result(
+    return _cli.report_result(
+        second,
         {
             "input": str(input_path),
             "run_id": str(args.run_id),
@@ -510,10 +460,9 @@ def _cmd_fake(
         },
         as_json=args.json,
     )
-    return _cli.exit_code_for(second)
 
 
-HANDLERS: dict[str, Handler] = {
+HANDLERS: dict[str, _cli.Handler] = {
     "call": _cmd_call,
     "node": _cmd_node,
     "graph": _cmd_graph,

@@ -1,34 +1,26 @@
 """Lab tool for the orchestrator (``SCR-06``).
 
-A thin caller: it parses arguments, builds a complete ``DocumentRequest`` and calls
-``process_document`` / ``resume_document``. It is bound by the orchestrator's own frontier:
-it reaches the four processors only through their public contracts and never imports a
-``primitives/`` module — so it composes nothing and decides nothing the library does not.
+A thin caller: its parser, its flags and one handler per subcommand are all it owns. The
+frame around them — where the run writes, how the input resolves, the header, the printers
+and the exit code — lives in :mod:`scripts.tools._cli`.
 
-The tool is invoked by path, so the repository root and the ``src/`` layout are put on
-``sys.path`` before the library is imported. That bootstrap is bench plumbing: it adds no
-behaviour and reaches no engine.
+It is bound by the orchestrator's own frontier: it reaches the four processors only through
+their public contracts and never imports a ``primitives/`` module — so it composes nothing
+and decides nothing the library does not.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
-import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
 
-_TOOLS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _TOOLS_DIR.parents[1]
-for _entry in (str(_REPO_ROOT), str(_REPO_ROOT / "src"), str(_TOOLS_DIR)):
-    if _entry not in sys.path:
-        sys.path.insert(0, _entry)
+import _cli
 
-import _cli  # noqa: E402  # reason: imported after the path bootstrap above
-
-from docflow.workflow import (  # noqa: E402  # noqa: E402
+from docflow.workflow import (
     DocumentRequest,
     ExecutionPolicy,
     configuration,
@@ -37,9 +29,7 @@ from docflow.workflow import (  # noqa: E402  # noqa: E402
     resume,
     resume_document,
 )
-from tests.fakes.engines.fake_provider import FakeProvider  # noqa: E402
-
-Handler = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], int]
+from tests.fakes.engines.fake_provider import FakeProvider
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,11 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
     Returns:
         The parser, with every documented subcommand registered.
     """
-    parser = argparse.ArgumentParser(
-        prog="workflow.py",
-        description="Lab bench for the orchestrator: plan, run, resume, inspect.",
+    parser, subparsers = _cli.build_parser(
+        "workflow.py",
+        "Lab bench for the orchestrator: plan, run, resume, inspect.",
     )
-    _cli.add_common_arguments(parser)
     parser.add_argument(
         "--fake-llm",
         action="store_true",
@@ -122,9 +111,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-from", help="Start at this stage.")
     parser.add_argument("--dry-run", action="store_true", help="Plan without running.")
 
-    subparsers = parser.add_subparsers(
-        dest="subcommand", required=True, metavar="SUBCOMMAND"
-    )
     for name, help_text in (
         ("run", "Run the whole documental workflow."),
         ("plan", "Build the execution plan; invoke no processor."),
@@ -132,19 +118,14 @@ def build_parser() -> argparse.ArgumentParser:
         ("context", "Read the durable document context."),
         ("resume", "Continue a previous run without repeating completed work."),
     ):
-        scoped = subparsers.add_parser(name, help=help_text)
-        _cli.add_input_argument(scoped)
+        _cli.add_subcommand(subparsers, name, help_text)
     for name, help_text in (
         ("force", "Run the given stages even though a valid result exists."),
         ("skip", "Leave the given stages unrun."),
     ):
-        scoped = subparsers.add_parser(name, help=help_text)
-        _cli.add_input_argument(scoped)
-        scoped.add_argument(
-            "--stages", required=False, help="Comma-separated stage names."
-        )
-    stop = subparsers.add_parser("stop", help="Stop once a stage finishes.")
-    _cli.add_input_argument(stop)
+        scoped = _cli.add_subcommand(subparsers, name, help_text)
+        scoped.add_argument("--stages", help="Comma-separated stage names.")
+    stop = _cli.add_subcommand(subparsers, "stop", "Stop once a stage finishes.")
     stop.add_argument("--after", help="Stage to stop after.")
     return parser
 
@@ -159,14 +140,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: ``0`` when the run produced a result, ``1`` when the library
         returned a typed failure or refused the configuration by name.
     """
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    input_path = _cli.resolve_input(args, parser)
-    root = _cli.output_root("workflow", input_path, out=args.out)
-    _cli.print_header("workflow", args.subcommand, input_path, root)
-    if args.fake_llm:
-        _install_fake_provider()
-    return HANDLERS[args.subcommand](args, parser, input_path, root)
+    return _cli.run_tool(
+        "workflow",
+        build_parser(),
+        HANDLERS,
+        argv,
+        prepare=lambda args: _install_fake_provider() if args.fake_llm else None,
+    )
 
 
 def _install_fake_provider() -> None:
@@ -181,19 +161,6 @@ def _install_fake_provider() -> None:
     fake = FakeProvider()
     for name in llm_primitives.PRIMITIVE_NAMES:
         setattr(llm_primitives, name, getattr(fake, name))
-
-
-def _key_values(
-    items: Sequence[str] | None, parser: argparse.ArgumentParser
-) -> dict[str, Any]:
-    """Turn repeated ``KEY=VALUE`` flags into a mapping, refusing a malformed one."""
-    options: dict[str, Any] = {}
-    for item in items or []:
-        key, separator, value = item.partition("=")
-        if not separator or not key:
-            parser.error(f"expected KEY=VALUE, got {item!r}")
-        options[key] = value
-    return options
 
 
 def _pdf_options(
@@ -256,7 +223,9 @@ def _ocr_options(
         "tables": bool(args.ocr_tables),
         "reading_order": bool(args.ocr_reading_order),
         "language": args.ocr_language,
-        "engine_options": _key_values(args.ocr_engine_option, parser),
+        "engine_options": _cli.key_values(
+            args.ocr_engine_option, parser, flag="--ocr-engine-option"
+        ),
     }
 
 
@@ -280,7 +249,7 @@ def _llm_options(
     return {
         **{key: str(value) for key, value in names.items()},
         "schema": args.schema,
-        "options": _key_values(args.llm_option, parser),
+        "options": _cli.key_values(args.llm_option, parser, flag="--llm-option"),
     }
 
 
@@ -390,8 +359,7 @@ def _cmd_run(
 ) -> int:
     """Run the whole documental workflow."""
     result = process_document(_request(args, parser, input_path, root))
-    _cli.print_result(_result_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _result_payload(result), as_json=args.json)
 
 
 def _cmd_plan(
@@ -402,8 +370,7 @@ def _cmd_plan(
 ) -> int:
     """Build the execution plan without invoking any processor."""
     result = process_document(_request(args, parser, input_path, root))
-    _cli.print_result(_result_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _result_payload(result), as_json=args.json)
 
 
 def _cmd_resume(
@@ -414,8 +381,7 @@ def _cmd_resume(
 ) -> int:
     """Continue a previous run without repeating completed work."""
     result = resume_document(_request(args, parser, input_path, root))
-    _cli.print_result(_result_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _result_payload(result), as_json=args.json)
 
 
 def _cmd_status(
@@ -461,8 +427,7 @@ def _cmd_force(
 ) -> int:
     """Run the given stages even though valid results exist."""
     result = process_document(_request(args, parser, input_path, root))
-    _cli.print_result(_result_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _result_payload(result), as_json=args.json)
 
 
 def _cmd_skip(
@@ -473,8 +438,7 @@ def _cmd_skip(
 ) -> int:
     """Leave the given stages unrun."""
     result = process_document(_request(args, parser, input_path, root))
-    _cli.print_result(_result_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _result_payload(result), as_json=args.json)
 
 
 def _cmd_stop(
@@ -487,11 +451,10 @@ def _cmd_stop(
     if args.after is None:
         parser.error("stop requires --after; no stop boundary is defaulted")
     result = process_document(_request(args, parser, input_path, root))
-    _cli.print_result(_result_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _result_payload(result), as_json=args.json)
 
 
-HANDLERS: Mapping[str, Handler] = {
+HANDLERS: Mapping[str, _cli.Handler] = {
     "run": _cmd_run,
     "plan": _cmd_plan,
     "status": _cmd_status,

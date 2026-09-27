@@ -1,45 +1,26 @@
 """Lab tool for the image processor (``SCR-03``).
 
-A thin caller: it parses arguments, builds a real contract object and calls either one of
-its own processor's primitives or the ``process_image`` / ``process_image_from_page`` entry
-points. It adds no transformation, no threshold and no default — the two preparation
-variants are two distinct pipelines, and the tool never aliases one to the other.
+A thin caller: its parser, its flags and one handler per subcommand are all it owns. The
+frame around them — where the run writes, how the input resolves, the header, the printers
+and the exit code — lives in :mod:`scripts.tools._cli`.
 
-The tool is invoked by path, so the repository root and the ``src/`` layout are put on
-``sys.path`` before the library is imported. That bootstrap is bench plumbing: it adds no
-behaviour and reaches no engine.
+The tool adds no transformation, no threshold and no default: the two preparation variants
+are two distinct pipelines, and the tool never aliases one to the other.
 """
 
 from __future__ import annotations
 
 import argparse
-import sys
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-_TOOLS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _TOOLS_DIR.parents[1]
-for _entry in (str(_REPO_ROOT), str(_REPO_ROOT / "src"), str(_TOOLS_DIR)):
-    if _entry not in sys.path:
-        sys.path.insert(0, _entry)
+import _cli
 
-import _cli  # noqa: E402  # reason: imported after the path bootstrap above
-
-from docflow import image as image_processor  # noqa: E402
-from docflow.image import (  # noqa: E402
-    ImageContext,
-    ImageOptions,
-    ImageRequest,
-    primitives,
-)
-from docflow.image.primitives import (  # noqa: E402
-    ImagePrimitiveError,
-    composition,
-)
-
-Handler = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], int]
+from docflow import image as image_processor
+from docflow.image import ImageContext, ImageOptions, ImageRequest, primitives
+from docflow.image.primitives import ImagePrimitiveError, composition
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -48,13 +29,10 @@ def build_parser() -> argparse.ArgumentParser:
     Returns:
         The parser, with every documented subcommand registered.
     """
-    parser = argparse.ArgumentParser(
-        prog="image.py",
-        description="Lab bench for the image processor: one pipeline, or the contract.",
-    )
-    _cli.add_common_arguments(parser, identity=True)
-    subparsers = parser.add_subparsers(
-        dest="subcommand", required=True, metavar="SUBCOMMAND"
+    parser, subparsers = _cli.build_parser(
+        "image.py",
+        "Lab bench for the image processor: one pipeline, or the contract.",
+        identity=True,
     )
 
     for name, help_text in (
@@ -62,27 +40,17 @@ def build_parser() -> argparse.ArgumentParser:
         ("metrics", "The technical analysis: quality, orientation, skew, regions."),
         ("classify", "The image's descriptive classification."),
     ):
-        scoped = subparsers.add_parser(name, help=help_text)
-        _cli.add_input_argument(scoped)
+        _cli.add_subcommand(subparsers, name, help_text)
 
     for name, help_text in (
         ("normalize", "Produce normalized.png."),
         ("ocr-ready", "Produce ocr_ready.png through its own pipeline."),
         ("vlm-ready", "Produce vlm_ready.png through its own pipeline."),
     ):
-        pipeline = subparsers.add_parser(name, help=help_text)
-        _cli.add_input_argument(pipeline)
-        pipeline.add_argument(
-            "--correct-orientation",
-            action="store_true",
-            help="Apply the detected orientation correction.",
-        )
-        pipeline.add_argument(
-            "--deskew", action="store_true", help="Apply the detected skew correction."
-        )
+        pipeline = _cli.add_subcommand(subparsers, name, help_text)
+        _add_corrections(pipeline)
 
-    run = subparsers.add_parser("run", help="Run the image contract.")
-    _cli.add_input_argument(run)
+    run = _cli.add_subcommand(subparsers, "run", "Run the image contract.")
     run.add_argument(
         "--from-page", action="store_true", help="Use the page-level wrapper."
     )
@@ -100,15 +68,20 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--prepare-for-vlm", action="store_true", help="Produce the VLM variant."
     )
-    run.add_argument(
+    _add_corrections(run)
+    return parser
+
+
+def _add_corrections(subparser: argparse.ArgumentParser) -> None:
+    """Add the two frame corrections a preparation subcommand may ask for."""
+    subparser.add_argument(
         "--correct-orientation",
         action="store_true",
         help="Apply the detected orientation correction.",
     )
-    run.add_argument(
+    subparser.add_argument(
         "--deskew", action="store_true", help="Apply the detected skew correction."
     )
-    return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -121,12 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: ``0`` when the run produced a result, ``1`` when the library
         returned a typed failure.
     """
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    input_path = _cli.resolve_input(args, parser)
-    root = _cli.output_root("image", input_path, out=args.out)
-    _cli.print_header("image", args.subcommand, input_path, root)
-    return HANDLERS[args.subcommand](args, parser, input_path, root)
+    return _cli.run_tool("image", build_parser(), HANDLERS, argv)
 
 
 def _decoded(input_path: Path) -> tuple[Any, Any, Any]:
@@ -391,11 +359,10 @@ def _cmd_run(
                 ),
             )
         )
-    _cli.print_result(_run_payload(result), as_json=args.json)
-    return _cli.exit_code_for(result)
+    return _cli.report_result(result, _run_payload(result), as_json=args.json)
 
 
-HANDLERS: dict[str, Handler] = {
+HANDLERS: dict[str, _cli.Handler] = {
     "info": _cmd_info,
     "metrics": _cmd_metrics,
     "normalize": _cmd_normalize,

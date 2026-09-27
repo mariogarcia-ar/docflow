@@ -931,3 +931,64 @@ defect above (the one finding that blocks a working bench from end to end), the 
 exposes — `fake_opencv.imwrite` accepts the `.tmp` name the real engine rejects — and, after that,
 the `GEN-17` re-read of the four doubles on the next engine pin bump. Nothing else in the tools is
 waiting on a plan decision.
+
+---
+
+## 2026-09-27 — Phase 5 · lab tools (`scripts/tools/`) refactor — one shared library
+
+**Delivered.** The five tools carried the same frame five times. It now lives once, in
+`_cli.py`, which becomes the bench's **common library**; each tool is what is actually its own —
+its subcommands, its flags and its handlers.
+
+| File | What changed |
+|---|---|
+| `scripts/tools/_cli.py` | grew from five helpers into the library: `bootstrap()`, `build_parser()`, `add_subcommand()`, `run_tool()`, `required()`, `key_values()`, `optional_path()`, `report_result()` and the `Handler` alias, beside the existing `output_root` / `resolve_fixture` / `resolve_input` / `identity_for` / `print_header` / `print_result` / `print_error` / `exit_code_for` |
+| `scripts/tools/pdf.py` | lost its `sys.path` prelude, its `Handler` alias, its `main()` frame, its `--page`/`--dpi` refusals, its `_optional_path` and its `print + exit code` tails |
+| `scripts/tools/image.py` | the same, plus the two repeated correction flags folded into one `_add_corrections` |
+| `scripts/tools/ocr.py` | the same, plus its hand-rolled `KEY=VALUE` reader |
+| `scripts/tools/llm.py` | the same, plus its `--provider`/`--model` check and its `status`-reads-`--out` special case, now the dispatcher's `out_only` |
+| `scripts/tools/workflow.py` | the same, plus its `KEY=VALUE` reader and its `--fake-llm` install, now the dispatcher's `prepare` hook |
+| `tests/conftest.py` | puts `scripts/tools/` on `sys.path` once, so `import _cli` resolves when a test imports a tool as `scripts.tools.<name>` |
+
+```
+git diff --numstat   (against 9a23dd5, the commit that landed the tools)
+scripts/tools/_cli.py    +204 -12        the library growing
+scripts/tools/pdf.py      +41 -76  ┐
+scripts/tools/image.py    +29 -62  │
+scripts/tools/ocr.py      +24 -53  ├─ −185 lines of frame removed from the five tools
+scripts/tools/llm.py      +57 -108 │
+scripts/tools/workflow.py +36 -73  ┘
+tests/conftest.py         +13  -0        the one path line the tests need
+```
+
+**Decisions taken in code.**
+
+1. **The library is still `_cli.py`, not a new package.** `subplan-scripts.md` §3.1 fixes the layout as `_cli.py` plus the five tools and `SCR-08`'s guard 1 asserts exactly that set, so a `scripts/tools/_lib/` package would be a plan revision with no behaviour to show for it. "A library for the common tasks" is a property of `_cli.py`, which is why it keeps the name the plan froze.
+2. **`_cli` bootstraps `sys.path` at import; the tools carry no prelude.** The library inserts the repository root and `src/`, so a tool's `import docflow` works with no `pip install`. The tools' own directory is a *test-side* concern: a tool invoked by path already has it on `sys.path`, and only a test imports one as a module, so `tests/conftest.py` adds it once.
+3. **`build_parser`/`add_subcommand` are the parser surface; the argument helpers went private.** A tool no longer sees `add_common_arguments`/`add_input_argument` — it registers subcommands and adds the flags that are its own.
+4. **The `--provider`/`--model` check stayed a post-parse `required()` call.** Making it `required=True` at the argument level would hide an injected `default=` behind identical behaviour and make the "no default model" invariant unfalsifiable.
+5. **`run_tool` grew exactly two hooks, each for one real case.** `out_only=("status",)` for the LLM tool, which reads a run directory with `--out` alone; `prepare=` for the workflow tool, whose `--fake-llm` patches the provider seam before the handler runs. Nothing else was generalised speculatively.
+
+**Gate evidence.**
+
+```
+pytest                     653 passed
+ruff check .               All checks passed!
+ruff format --check .      169 files already formatted
+pylint src tests           10.00/10
+```
+
+No test changed except the three lines `tests/conftest.py` gained; the six structural guards and
+every glue test are the same assertions as before. The hand run was re-smoked by hand after the
+refactor — `pdf.py inspect`, `image.py info`, `ocr.py text`, `llm.py --out … status`,
+`workflow.py plan`, `workflow.py --fake-llm plan` and `llm.py call` without `--model` (usage
+error, exit 2) — and each behaves as the `SCR-07` entry records.
+
+**Left stale (owner).** `docs/plan/README.md` §4.1 and `subplan-scripts.md` §3.1 describe
+`_cli.py` as "shared plumbing — not a tool; holds no contract and reaches no engine". That is
+still exactly true of it, and the layout, the tool set and the guard are unchanged, so no artifact
+needs editing and no plan revision is owed: the entry above is the record that the module is now
+read as a library rather than as five helpers.
+
+**Next.** Unchanged from the entry above: the image processor's publication defect is still the one
+thing standing between the bench and an end-to-end run.
