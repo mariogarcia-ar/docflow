@@ -283,6 +283,28 @@ def test_resolve_fixture_reports_an_absolute_path() -> None:
     assert resolved.is_relative_to(_cli.FIXTURES_ROOT)
 
 
+def test_resolve_fixture_finds_a_bare_name_in_a_nested_root() -> None:
+    """A bare name needs no subdirectory spelling: the fixture tree is searched for it."""
+    resolved = _cli.resolve_fixture("pdf_sample_mixed.pdf")
+
+    assert resolved == (FIXTURES / "pdf" / "pdf_sample_mixed.pdf").resolve()
+
+
+def test_resolve_fixture_refuses_an_ambiguous_bare_name(tmp_path: Path) -> None:
+    """A bare name that names two files is reported with both, never guessed."""
+    for directory in ("inside", "outside"):
+        (tmp_path / directory).mkdir()
+        (tmp_path / directory / "same.pdf").write_bytes(b"%PDF-1.7\n")
+
+    with pytest.raises(_cli.FixtureNotFoundError) as ambiguous:
+        _cli.resolve_fixture("same.pdf", fixtures_root=tmp_path)
+
+    message = str(ambiguous.value)
+    assert "ambiguous" in message
+    assert "inside" in message
+    assert "outside" in message
+
+
 def test_resolve_fixture_refuses_an_unknown_name() -> None:
     """An unknown name is reported, never silently turned into a path."""
     with pytest.raises(_cli.FixtureNotFoundError):

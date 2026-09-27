@@ -42,12 +42,22 @@ other `.py` file. A sixth tool is a plan revision, not a surprise.
 
 ```bash
 python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
-python scripts/tools/pdf.py --fixture pdf_sample_mixed.pdf render --page 2 --dpi 300
-python scripts/tools/workflow.py plan tests/fixtures/pdf/pdf_sample_text.pdf --dry-run
-python scripts/tools/llm.py --fixture casos/<uuid>.txt \
+python scripts/tools/pdf.py --fixture pdf_sample_mixed.pdf render --page 1 --dpi 300
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm \
+    --pdf-dpi 150 --image-normalize --ocr \
+    --task extract --provider ollama --model llama3.1 --template simple_extract \
+    plan tests/fixtures/pdf/pdf_sample_text.pdf
+python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     call --provider ollama --model llama3.1 --task extract \
     --template simple_extract --schema simple
 ```
+
+Every line above runs as written against the committed fixtures. The second one shows the two
+spellings at once — `--fixture` before the subcommand, `--page`/`--dpi` after it — and the third
+carries a **complete** workflow request, because the library refuses a missing option key by
+name; `plan` needs no `--dry-run`, since planning *is* the dry run. The last line is the honest
+failure the bench exists for: no model is served on this machine, so it prints a typed
+`MODEL_UNAVAILABLE` and exits `1`.
 
 Each tool is invoked **by path**. No `pip install` is needed: the tools put the repository root
 and `src/` on `sys.path` themselves, which is what `_cli.bootstrap()` does.
@@ -64,9 +74,14 @@ python scripts/tools/ocr.py run --help
 This matters, and it is the one thing that surprises people:
 
 - **Global flags go before the subcommand.** `--fixture`, `--fixtures-root`, `--json`, `--out`,
-  and (on every tool but `workflow.py`) `--document-id` / `--run-id`.
+  and (on every tool but `workflow.py`) `--document-id` / `--run-id`. On `workflow.py` the same
+  holds for every flag that describes the request or the run: `--pdf-*`, `--image-*`, `--ocr` and
+  `--ocr-*`, `--task`/`--provider`/`--model`/`--template`/`--schema`, the policy switches
+  (`--allow-ocr`, `--allow-vlm`), the execution switches (`--reuse`, `--retry-failed`,
+  `--start-from`, `--parallel-pages`, `--dry-run`) and `--fake-llm`.
 - **Subcommand flags go after it.** `--page`, `--dpi`, `--provider`, `--model`, `--task`,
-  `--template`, `--schema`, `--context-window`, `--option`, and each tool's own.
+  `--template`, `--schema`, `--context-window`, `--option`, and each tool's own — on
+  `workflow.py` that is `--stages` (`force`, `skip`) and `--after` (`stop`).
 - **The input positional belongs to the subcommand**: `pdf.py inspect <input>`, while
   `--fixture <name>` is the global spelling of the same thing. Either works; if both are given,
   `--fixture` wins.
@@ -75,7 +90,7 @@ This matters, and it is the one thing that surprises people:
 
 | Flag | Meaning |
 |---|---|
-| `--fixture NAME` | Resolve a bare fixture name (or a name with a subdirectory, e.g. `casos/<uuid>.txt`) under the fixture roots |
+| `--fixture NAME` | Resolve a name under the fixture roots: a **bare** name is searched for at any depth (`pdf_sample_mixed.pdf` finds `tests/fixtures/pdf/…`), while a name with a subdirectory (e.g. `casos/<uuid>.txt`) is looked up directly. A bare name that matches two files is a usage error, never a guess |
 | `--fixtures-root DIR` | Replace both fixture roots for this run |
 | `--json` | Print the machine-readable payload instead of the human summary |
 | `--out DIR` | Replace the whole output root for this run |
@@ -194,7 +209,7 @@ their public contracts and **imports no `docflow.*.primitives` module**.
 | Subcommand | Calls | Notes |
 |---|---|---|
 | `run` | `process_document` | the whole documental workflow |
-| `plan` | `process_document` with `dry_run` | returns the `ExecutionPlan`; invokes no processor |
+| `plan` | `process_document` with `dry_run` | returns the `ExecutionPlan`; invokes no processor, and needs no `--dry-run` (planning *is* the dry run) |
 | `status` | `resume.load_resumable_context` | per-stage states of the last run |
 | `context` | `persistence.read_json` on `configuration.state_path` | the durable `document_context.json` |
 | `resume` | `resume_document` | `resume=True`, `reuse_successful=True` |

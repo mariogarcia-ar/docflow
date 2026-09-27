@@ -74,10 +74,11 @@ bootstrap()
 
 
 class FixtureNotFoundError(LookupError):
-    """A fixture name resolved to nothing under any of the fixture roots.
+    """A fixture name resolved to nothing, or to more than one file, under the fixture roots.
 
     The tool turns this into a usage error (exit ``2``): an input the caller named but that
-    does not exist is the caller's mistake, not a typed failure of the library.
+    does not exist — or that names two files at once — is the caller's mistake, not a typed
+    failure of the library.
     """
 
 
@@ -120,6 +121,30 @@ def output_root(tool: str, input_path: Path, *, out: str | Path | None = None) -
     return TOOLS_OUTPUT_ROOT / tool / f"{input_path.stem}-{prefix}"
 
 
+def _search_fixture_roots(roots: tuple[Path, ...], name: str) -> list[Path]:
+    """Return every file named ``name`` anywhere beneath the fixture roots.
+
+    The fallback :func:`resolve_fixture` uses when a name is neither a path nor a subdirectory
+    spelling of one: the fixture tree nests its inputs by kind (``pdf/``, ``image/``, ...),
+    so ``--fixture pdf_sample_mixed.pdf`` has to find one that lives one level down. The
+    result is deduplicated and sorted, so "exactly one match" is a fact and not an ordering.
+
+    Args:
+        roots: The fixture roots to search, in the caller's order.
+        name: The file name to look for, at any depth.
+
+    Returns:
+        The matching absolute paths, sorted; empty when nothing matches.
+    """
+    found = {
+        match.resolve()
+        for root in roots
+        for match in root.rglob(name)
+        if match.is_file()
+    }
+    return sorted(found)
+
+
 def resolve_fixture(
     name: str,
     *,
@@ -128,9 +153,11 @@ def resolve_fixture(
 ) -> Path:
     """Resolve a fixture name, or a path, to an absolute path that exists.
 
-    A **path** is taken as given; a **bare name** — optionally with a subdirectory, e.g.
-    ``casos/<uuid>.txt`` — is searched under the committed fixture roots. The caller prints
-    the returned path, so a resolved fixture is never silent.
+    A **path** is taken as given; a **name with a subdirectory** — e.g. ``casos/<uuid>.txt``
+    — is looked up under the committed fixture roots; and a **bare name** is searched for
+    anywhere beneath them, so the nested fixture tree needs no spelling from the caller. A
+    bare name that matches more than one file is refused rather than guessed. The caller
+    prints the returned path, so a resolved fixture is never silent.
 
     Args:
         name: A path, or a name relative to a fixture root.
@@ -141,7 +168,7 @@ def resolve_fixture(
         The resolved absolute path.
 
     Raises:
-        FixtureNotFoundError: When the name resolves to no existing file.
+        FixtureNotFoundError: When the name resolves to no existing file, or to more than one.
     """
     candidate = Path(name).expanduser()
     if candidate.is_file():
@@ -158,6 +185,15 @@ def resolve_fixture(
         resolved = root / name
         if resolved.is_file():
             return resolved.resolve()
+
+    matches = _search_fixture_roots(roots, name)
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        candidates = ", ".join(str(match) for match in matches)
+        raise FixtureNotFoundError(
+            f"fixture {name!r} is ambiguous under the fixture roots: {candidates}"
+        )
 
     searched = ", ".join(str(root) for root in roots)
     raise FixtureNotFoundError(f"fixture {name!r} was not found under {searched}")

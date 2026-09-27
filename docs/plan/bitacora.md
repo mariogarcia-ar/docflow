@@ -1021,3 +1021,90 @@ pylint src tests           10.00/10
 **Left stale (owner).** None: the readme is new, it describes the committed tools, and it points at
 `subplan-scripts.md`, `wbs-scripts.md` and this log rather than restating a decision that could
 drift from them. Every claim in it was read off the code or the `SCR-07` hand run.
+
+---
+
+## 2026-09-27 — Phase 5 · the readme's examples, run as written
+
+**Delivered.** The bench readme's examples now run: the two that did not were fixed at their cause,
+not by rewording.
+
+| File | Change |
+|---|---|
+| `scripts/tools/_cli.py` | `resolve_fixture` gained its documented bare-name rule: after a path and a `<root>/<name>` spelling both miss, the roots are searched for a file of that name at any depth; exactly one match resolves, two are refused by name instead of guessed |
+| `tests/test_lab_tools.py` | two tests: a bare name resolves to the nested fixture the plan's scenario names, and an ambiguous bare name is reported with both candidates |
+| `scripts/tools/readme.md` | the invocation block runs as printed; `--fixture`'s row states the depth rule; "where flags go" now names `workflow.py`'s global flags, `--dry-run` and `--fake-llm` included, and its subcommand-only `--stages`/`--after` |
+
+**What the run found.** Three defects, two of them the readme's and one the code's:
+
+1. **`--fixture pdf_sample_mixed.pdf` did not resolve.** The resolver only tried `<root>/<name>`, so
+   a bare name whose file lives one level down (`tests/fixtures/pdf/`) was a usage error, exit `2`.
+   This is a **code defect**: `subplan-scripts.md` decision 5 freezes "`--fixture` resolves a bare
+   name", and §5's scenario is literally *Given `--fixture pdf_sample_mixed.pdf` … Then the run
+   header prints the resolved absolute path under "tests/fixtures/"*. A bare name that matches two
+   files (`a6d79e19-….png` is committed under both `casos/` and `chicos/`) is refused with both
+   paths printed — the tree has real collisions, so "search" without that rule would be a guess.
+2. **`render --page 2` cannot exist.** `pdf_sample_mixed.pdf` is the one-page mixed sample
+   (`tests/fixtures/pdf/build_samples.py`: "one page with both a text layer and an embedded image").
+   The library already behaved correctly — typed `PAGE_EXTRACTION_ERROR`, exit `1`, no traceback —
+   so the example, not the tool, was wrong; it now renders page 1 at the same 300 dpi.
+3. **`workflow.py plan <input> --dry-run` was unspellable.** `--dry-run` is a **global** flag (root
+   parser), so after the subcommand argparse exits `2`; and `plan` already implies it
+   (`dry_run=args.subcommand == "plan" or bool(args.dry_run)`), so the flag was redundant as well as
+   misplaced. The same sketch carried no request options, so even a correctly placed `--dry-run`
+   would have met the library's own refusal — `options["pdf"|"image"|"ocr"|"llm"]` and both policy
+   keys are required, refused by name. The example is now a **complete** request with no `--dry-run`.
+
+The fourth example's `casos/<uuid>.txt` placeholder is now the committed UUID the plan's own §3.3
+line uses, so the block is copy-pasteable.
+
+**Hand run, all four examples as the readme now prints them.**
+
+```
+python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
+  page_count: 1 · exit 0
+python scripts/tools/pdf.py --fixture pdf_sample_mixed.pdf render --page 1 --dpi 300
+  input: …/tests/fixtures/pdf/pdf_sample_mixed.pdf · output: …/page_001_300dpi.png · exit 0
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm --pdf-dpi 150 --image-normalize \
+    --ocr --task extract --provider ollama --model llama3.1 --template simple_extract \
+    plan tests/fixtures/pdf/pdf_sample_text.pdf
+  status: PAUSED · decision dry_run "planned_stages": 1 · no processor invoked · exit 0
+python scripts/tools/llm.py --fixture casos/66cd35e9-….txt call --provider ollama \
+    --model llama3.1 --task extract --template simple_extract --schema simple
+  status: FAILED · MODEL_UNAVAILABLE ollama does not offer the model 'llama3.1' {"status": 404}
+  exit 1 — the documented failure, no model is served here
+python scripts/tools/ocr.py --help                              exit 0
+python scripts/tools/ocr.py run --help                          exit 0
+python scripts/tools/pdf.py --json inspect …/pdf_sample_mixed.pdf
+  stdout parses as JSON; the run header sits on stderr   exit 0
+```
+
+**Mutation evidence (Invariant / Mutation / Observed failure / Restored green).**
+
+```
+Invariant     a bare fixture name resolves to the one file of that name under a root
+Mutation      _cli.resolve_fixture: replace the root search with an empty list
+Observed      test_resolve_fixture_finds_a_bare_name_in_a_nested_root  FAILED
+              test_resolve_fixture_refuses_an_ambiguous_bare_name      FAILED
+              (2 failed, 2 passed with -k resolve_fixture — the ambiguity case falls back to
+              "not found", so the assertion on the message is what carries it)
+Restored      the inverse edit; 4 passed with -k resolve_fixture
+```
+
+**Gate evidence.**
+
+```
+pytest                     655 passed
+ruff check .               All checks passed!
+ruff format --check .      170 files already formatted
+pylint src tests           10.00/10
+```
+
+**Left stale (owner).** `subplan-scripts.md` §3.3 keeps both bad example lines (`--page 2` on the
+one-page mixed sample, and `--dry-run` after `plan`). The frozen artifact is **not** edited: a
+copied example is not a decision, and changing one is a plan revision (subplan + WBS in one pass)
+for no behaviour. The readme and this entry carry the corrected form; whoever next revises
+`subplan-scripts.md` should lift it from there. Owner: bench owner.
+
+**Next.** Unchanged: the image processor's publication defect is still the one thing standing
+between the bench and an end-to-end run.
