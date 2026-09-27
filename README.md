@@ -153,8 +153,8 @@ is: it reaches the four processors only through their public contracts.
 | `llm.py` | `SCR-05` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 
-None of these exist yet: each is built after its processor's own acceptance evidence is
-green. Two design notes worth knowing before they are written — `ocr.py` has **no** `--engine`
+All five now exist under `scripts/tools/`, each built after its processor's own acceptance
+evidence went green. Two design notes worth knowing — `ocr.py` has **no** `--engine`
 flag, because Docling is fixed and never user-selectable; and `llm.py` requires `--provider`
 and `--model` on every inference subcommand, because a default model is exactly the silent
 stand-in this project forbids. Its `fake` subcommand is first-class, not a hidden test flag:
@@ -511,6 +511,17 @@ was re-measured:
 | Resume reuses, never re-runs, a completed stage (`tests/workflow/test_entrypoints.py::test_resume_does_not_re_run_completed_stages`) | `resolve_stage`'s reuse branch returns the action `"EXECUTE"` instead of `"REUSE"` (`src/docflow/workflow/resolution.py`) | `pytest tests/workflow/test_entrypoints.py::test_resume_does_not_re_run_completed_stages -q` → 1 failed: `E AssertionError: assert <StageState.SUCCESS: 'SUCCESS'> is <StageState.REUSED: 'REUSED'>` — the resumed run paid for a stage that was already done | inverse edit (`git diff` empty), then `pytest tests/workflow/test_entrypoints.py` → 15 passed |
 | Force invalidates its downstream dependents (`tests/workflow/test_entrypoints.py::test_forcing_a_stage_invalidates_its_downstream_dependents`) | `apply_forces`: `invalidated.extend(invalidate_downstream(…))` → `invalidated.extend(())` (`src/docflow/workflow/planning.py`) | `pytest tests/workflow/test_entrypoints.py::test_forcing_a_stage_invalidates_its_downstream_dependents -q` → 1 failed: `E assert []` — forcing OCR left the LLM stage holding its stale result and no `INVALIDATED` decision was recorded | inverse edit, then `pytest tests/workflow/test_entrypoints.py` → 15 passed |
 | Reuse needs a `processing_key` match, not mere file existence (`tests/workflow/test_entrypoints.py::test_reuse_requires_a_processing_key_match_not_mere_file_existence`) | `is_stage_reusable`: `return stage.status in _REUSABLE_STATES and stage.processing_key == current_processing_key and validate_stage_outputs(stage)` → `return validate_stage_outputs(stage)` (`src/docflow/workflow/reuse.py`) | `pytest tests/workflow/test_entrypoints.py::test_reuse_requires_a_processing_key_match_not_mere_file_existence -q` → 1 failed: `E assert 0 == (0 + 1)` — with the artifacts still on disk, a changed image option reused the old result | inverse edit, then `pytest tests/workflow/test_entrypoints.py` → 15 passed |
+
+And the Phase 5 lab-tool invariants, same four-field shape (`SCR-08`). The mutations were applied
+to files that were brand new in the same session, so each was restored by re-applying the exact
+inverse edit, and the restore was re-measured:
+
+| Invariant | Mutation | Observed failure | Restored green |
+|---|---|---|---|
+| A tool adds no behaviour — it calls a processor, it never reimplements one (`tests/test_lab_tools.py::test_no_tool_names_an_engine_or_a_provider_sdk[pdf]`) | `pdf.py`'s `_cmd_render` shelled out to the engine's own binary with `subprocess.run(["pdftoppm", …])` instead of calling `render_page_to_image` (`scripts/tools/pdf.py`) | `pytest "tests/test_lab_tools.py::test_no_tool_names_an_engine_or_a_provider_sdk[pdf]" -q` → 1 failed: `E AssertionError: pdf.py names an engine or an SDK: ['pdftoppm', 'subprocess']` | inverse edit, then `pytest tests/test_lab_tools.py` → 40 passed |
+| The library never imports a tool (`tests/test_lab_tools.py::test_no_module_under_src_mentions_the_tools_or_their_output`) | `import scripts.tools._cli` added to `src/docflow/pdf/entrypoints.py` | `pytest tests/test_lab_tools.py::test_no_module_under_src_mentions_the_tools_or_their_output -q` → 1 failed: `E AssertionError: a source module reached for the bench: ['src/docflow/pdf/entrypoints.py']` | inverse edit, then `pytest tests/test_lab_tools.py` → 40 passed |
+| `workflow.py` carries the orchestrator's frontier — it reaches no `primitives/` module (`tests/test_lab_tools.py::test_workflow_tool_imports_no_primitives_module`) | `from docflow.ocr.primitives import convert_image_with_docling` added to `scripts/tools/workflow.py` | `pytest tests/test_lab_tools.py::test_workflow_tool_imports_no_primitives_module -q` → 1 failed: `E AssertionError: workflow.py reached a processor's internals: ['line 41: docflow.ocr.primitives']` | inverse edit, then `pytest tests/test_lab_tools.py` → 40 passed |
+| No default model — a default is the silent stand-in the project forbids (`tests/test_lab_tools.py::test_llm_call_without_a_model_is_a_usage_error`) | `llm.py`'s `--model` given `default="llama3.1"` (`scripts/tools/llm.py`) | `pytest tests/test_lab_tools.py::test_llm_call_without_a_model_is_a_usage_error -q` → 1 failed: `Failed: DID NOT RAISE SystemExit`, with the captured run showing `model: llama3.1` — the request was built from a model nobody stated | inverse edit, then `pytest tests/test_lab_tools.py` → 40 passed |
 
 **Never a silent stand-in.** No empty string, no `0`, no `[]`, no `None`-without-reason, and no
 default engine or threshold used in place of a real answer.

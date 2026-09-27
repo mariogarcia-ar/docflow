@@ -769,3 +769,165 @@ needs), `request_stop` and its `stop_requested` field, the durable cross-process
 same payload, and the processor-local `processing_key` the Phase 1 log flagged — which the
 orchestrator now owns outright (`ORC-02`), so the reconciliation is to have the four processors
 read it from `docflow.workflow.identity` instead of computing their own.
+
+---
+
+## 2026-09-27 — Phase 5 · lab tools (`SCR-01` … `SCR-10`)
+
+**Delivered.** `scripts/` is a real bench now: shared plumbing plus five thin operator CLIs,
+each invoked by path and each a caller, never a component.
+
+| File | What it is |
+|---|---|
+| `scripts/tools/_cli.py` | the shared plumbing: `output_root`, `resolve_fixture`, `resolve_input`, `identity_for`, `print_header`, `print_result`, `print_error`, `exit_code_for`. Imports no contract and no engine; nothing under `src/` imports it |
+| `scripts/tools/pdf.py` | `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` — its own processor's primitives plus the contract |
+| `scripts/tools/image.py` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run` |
+| `scripts/tools/ocr.py` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics` — no `--engine` flag |
+| `scripts/tools/llm.py` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` — `--provider`/`--model` required on every inference subcommand |
+| `scripts/tools/workflow.py` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` plus `--fake-llm`; imports no `docflow.*.primitives` module |
+| `tests/test_lab_tools.py` | six structural guards, the parser/`--help` surface, the `_cli` unit tests, and one glue test per `run` path over the doubles the processors already ship |
+| `tests/conftest.py` | the scripted-provider fixture, moved out of the test module so Pylint's `redefined-outer-name` has nothing to report |
+
+**Tasks.** All ten are done, in the subplan's waves:
+
+| Wave | Tasks | Status |
+|---|---|---|
+| 1 — Bench plumbing | `SCR-01` | done |
+| 2 — Five tools | `SCR-02`, `SCR-03`, `SCR-04`, `SCR-05`, `SCR-06` | done |
+| 3 — Verify | `SCR-07`, `SCR-08` | done |
+| 4 — Close | `SCR-09`, `SCR-10` | done |
+
+**Gate evidence.**
+
+```
+pytest                     653 passed
+ruff check .               All checks passed!
+ruff format --check .      169 files already formatted
+pylint src tests           10.00/10
+```
+
+`653` is the Phase 2 exit's `613` plus the forty tests this pass added. The two Ruff gates read
+the whole tree, so `scripts/tools/` is inside them; `pylint src tests` does not reach it, which is
+decision 10 of the subplan and is stated rather than widened.
+
+**Invariant evidence.** Four invariants were mutation-falsified this session — a tool adds no
+behaviour, the library never imports a tool, `workflow.py` carries the orchestrator's frontier,
+and no default model. Each was mutated, observed red, restored by the inverse edit, and observed
+green, in the four-field shape `docs/plan/README.md` §7 fixes. **The canonical records live in the
+root `README.md`** (the table `GEN-16` audits); this entry points at them and does not restate
+them.
+
+**Hand run (`SCR-07`), with the engines that are actually on this bench.** Poppler 25.02.0,
+`opencv-python-headless` 5.0.0 and Docling 2.126.0 are installed; no model is served locally.
+
+```
+python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
+  page_count: 1 · page_dimensions: [[612.0, 792.0]]                          exit 0
+python scripts/tools/pdf.py classify tests/fixtures/pdf/pdf_sample_mixed.pdf --page 1
+  metrics: {characters: 35, words: 6, text_blocks: 1, images: 1, text_coverage: 0.0047,
+            image_coverage: 0.0, largest_image_coverage: 0.0} · classification: TEXT   exit 0
+python scripts/tools/pdf.py render tests/fixtures/pdf/pdf_sample_text.pdf --page 1 --dpi 150
+  output: var/tools/pdf/pdf_sample_text-3cf04b08/page_001_150dpi.png           exit 0
+python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_corrupt.pdf
+  ERROR CORRUPTED_PDF: pdfinfo reported a syntax error
+    {"exit_code": 1, "stderr": "Syntax Error: Couldn't find trailer dictionary …"}   exit 1
+
+python scripts/tools/image.py info    tests/fixtures/image/skewed_text.png
+  160x120, 3 channels, format png, size 417, resolution null                  exit 0
+python scripts/tools/image.py metrics tests/fixtures/image/skewed_text.png
+  quality {blur 8957.81, sharpness 122.06, contrast 83.17, brightness 204.09, noise 0.77},
+  orientation 0, skew -86.58, text_regions 5, text_coverage 0.427               exit 0
+python scripts/tools/image.py classify tests/fixtures/image/skewed_text.png
+  classification: TEXT_IMAGE                                                  exit 0
+python scripts/tools/image.py metrics tests/fixtures/image/corrupt.png
+  ERROR DECODE_ERROR: the engine could not decode …/corrupt.png               exit 1
+python scripts/tools/image.py ocr-ready tests/fixtures/image/skewed_text.png --deskew
+  ERROR WRITE_ERROR: the engine could not encode …/ocr_ready.png
+    {"engine_error": "cv2.error … could not find a writer for the specified extension"}   exit 1
+
+python scripts/tools/ocr.py run tests/fixtures/ocr/ocr_prepared_text_and_table.png \
+    --layout --tables --reading-order
+  text "" · markdown "<!-- image -->" ×4 · tables 0 · blocks 0 · metrics.empty true
+  validation EMPTY · artifacts text/document.md/document.json/tables/metadata   exit 0
+python scripts/tools/ocr.py text tests/fixtures/ocr/ocr_blank.png
+  text: ""                                                                    exit 0
+
+python scripts/tools/llm.py --fixture casos/66cd35e9-….txt tokens \
+    --provider ollama --model llama3.1 --context-window 4096
+  tokens: 624 · context_window: 4096 · window_source: caller                    exit 0
+python scripts/tools/llm.py --fixture casos/66cd35e9-….txt tokens \
+    --provider ollama --model llama3.1
+  ERROR MODEL_UNAVAILABLE: ollama does not offer the model 'llama3.1' {"status": 404}  exit 1
+python scripts/tools/llm.py --fixture casos/66cd35e9-….txt --out var/tools/llm/lab-fake \
+    --run-id lab-fake-run fake --provider ollama --model llama3.1 \
+    --task extract --template simple_extract --schema simple
+  first : {classify: EXECUTE, extract_a: EXECUTE, …, consolidate: EXECUTE}
+  second: {classify: REUSE,   extract_a: REUSE,   …, consolidate: REUSE}        exit 0
+python scripts/tools/llm.py --out var/tools/llm/lab-fake status
+  run_dir …/lab-fake · state graph default_inference · final_result status SUCCESS
+  node states {classify: REUSED, …, consolidate: REUSED}                        exit 0
+
+python scripts/tools/workflow.py <globals> plan tests/fixtures/pdf/pdf_sample_text.pdf
+  status: PAUSED · plan [PDF EXECUTE no_valid_result] · no processor invoked     exit 0
+python scripts/tools/workflow.py <globals> stop tests/fixtures/pdf/pdf_sample_text.pdf --after PDF
+  status: PAUSED · PDF SUCCESS (3 pages) · IMAGE/OCR/LLM NOT_STARTED            exit 0
+python scripts/tools/workflow.py <no --pdf options> run tests/fixtures/pdf/pdf_sample_text.pdf
+  status: FAILED · errors [{"stage":"DOCUMENT","type":"CONFIGURATION_ERROR",
+    "message":"the PDF stage requires options['pdf']; no default is substituted"}] exit 1
+```
+
+Inputs untouched across the whole run: the nine fixture SHA-256s recorded before and after are
+identical (e.g. `3cf04b0804518207…` for `pdf_sample_text.pdf`, `ca59523f4d49d3e0…` for
+`skewed_text.png`, `c06a828f76fa3535…` for the `casos/` text). Output landed under
+`var/tools/<tool>/<stem>-<hash8>/`; `git status --short` shows only the intended source, test and
+docs changes, and `git check-ignore -v var/tools/pdf` answers `.gitignore:15:/var/`.
+
+**Decisions taken in code.**
+
+1. **Global flags before the subcommand, subcommand flags after it.** `--fixture`, `--fixtures-root`, `--json`, `--out`, `--document-id`, `--run-id` belong to the tool; `--page`, `--dpi`, `--provider`, `--model`, `--template`, `--schema`, `--context-window`, `--option` belong to the subcommand. That is the two spellings the runbook quotes (`pdf.py inspect <path>` and `pdf.py --fixture <name> render --page 2 --dpi 300`), and the positional therefore sits on the subparser while `--fixture` sits on the root.
+2. **The provider/model requirement is an explicit check, not `required=True`.** `_require()` calls `parser.error` after parsing, so injecting a `default=` is *observable*: invariant 4 mutates exactly that and the test goes red. `required=True` would have made the mutation a no-op and the invariant unfalsifiable.
+3. **The tools put the repository on `sys.path` themselves.** They are invoked by path and this checkout is not installed, so each tool inserts the repo root, `src/` and its own directory before importing the library (`# noqa: E402`, with the reason on the line). It is plumbing, not a seam: no contract, no engine.
+4. **`image.py info` decodes.** The subplan §3.4 note says "no pixels decoded", but the symbols the same row names — `get_image_metadata` and `get_image_dimensions` — both take a decoded array. The map wins over the note; the deviation is registered below.
+5. **`workflow.py --fake-llm` reaches the seam dynamically.** It installs the scripted provider with `importlib.import_module("docflow.llm.primitives")`, never a static import, so guard 4 holds while the patch still lands on the provider's own seam — below the orchestrator's frontier.
+6. **The OCR tool composes its own processor's primitives.** `text`/`md` call one translator over one conversion; `json`/`tables`/`blocks`/`metrics` assemble the document the way §3.4's rows name. That is bench plumbing over the exception §3.2 grants (`ocr.py` may drive its own `primitives/`), and it transforms nothing itself.
+7. **One library fix, forced by the bench.** `image/primitives/_write_image` now catches the engine's own exception and types it as `WRITE_ERROR`; before, it escaped the contract as a raw traceback. A failure the seam can name must never reach the operator as a crash.
+
+**Found by the bench (the point of the exercise).**
+
+| Finding | Evidence | Owner |
+|---|---|---|
+| **The image processor cannot publish any image artifact with its real engine.** `publish_artifact` writes through `normalized.png.tmp`, and the engine infers its encoder from the extension, so `imwrite` refuses it. Every one of `normalize`, `ocr-ready`, `vlm-ready` and any document run that prepares an image fails | `ERROR WRITE_ERROR … could not find a writer for the specified extension in function 'imwrite_'` | `IMG-*` — a processor fix plus the test update it needs. **Not fixed here**: the temp name is frozen by `tests/image/primitives/test_publication.py` ("normalized.png.tmp") and modelled by `tests/fakes/engines/fake_opencv.py`, so the fix is a processor change, and this subplan's §7 puts it out of scope for `SCR-07` |
+| The engine's OCR backend logs INFO lines to **stdout**, so they interleave with a tool's payload (and would sit beside a `--json` body) | `[INFO] … [RapidOCR] base.py:23: Using engine_name: onnxruntime` before the payload | `OCR-*` |
+| With default options the committed 240×120 OCR fixtures extract as `EMPTY`; a blank page is data, so the run reports `success` + `EMPTY` rather than a failure | `text "" · metrics.empty true · validation EMPTY` | observation, no owner |
+| Poppler reports no placement for an embedded image, so `classify` cannot measure image dominance: `images: 1` still yields `classification: TEXT` | `image_coverage 0.0` with `images 1` | already tagged `# TODO: [MVP]` in `pdf/primitives/composition.py` |
+| No model is served on this bench, so `llm call`/`graph`/`resume`/`models`/`tokens`-without-a-window return a typed `MODEL_UNAVAILABLE`; the scripted `fake` path is what demonstrates the chain and its resume | `ERROR MODEL_UNAVAILABLE … {"status": 404}` | observation, no owner |
+
+**Left stale (owner).** No pre-existing plan artifact was edited. These now disagree with the code:
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/plan/issues/wbs-scripts.md` | header and §2 still say `NOT_STARTED` for all ten tasks; flipping it is a plan revision, not a code edit | plan owner |
+| `docs/plan/README.md` §5 | the Phase 5 exit criterion is met by this pass; the phase text still reads as pending | plan owner |
+| `docs/plan/subplan-scripts.md` §3.4 | the `image.py info` row's "no pixels decoded" note (decision 4), and the `ocr.py` representation rows read as if one primitive were enough where the run must first convert | plan owner |
+| `.github/copilot-instructions.md` | `SCR-10` pointed the layout and the "two entry points" bullet at `scripts/tools/`; its Project Identity still cites `docs/artifacts/` (`prd.md`, `sad.md`, `wbs.md`, `kernel-cli.md`, `traceability.md`), which no longer exists | plan owner |
+| `tests/fixtures/manifest.json` | still knows none of `pdf/`, `image/`, `ocr/` or `llm/` (already flagged) | fixture owner |
+| `docs/plan/bitacora.md` (this file, earlier entries) | four historical rows describe the README's Phase 5 row as borrowing `PDF-14`/`IMG-15`/`OCR-14`/`LLM-16`; the planning pass has since reconciled the README, so the rows are history rather than live claims — the `SCR-10` sweep is expected to hit them and nothing else | plan owner |
+| `docs/plan/README.md` §4.1 versus `subplan-scripts.md` §3.1 | §4.1 lists `context` last in `workflow.py`'s subcommands while §3.1 and the root README put it after `resume`; cosmetic, the set is identical | plan owner |
+
+**`SCR-10` sweep, as run.** The six borrowed ids must not appear near "lab tool"/"scripts/tools"
+outside the historical bitácora rows above:
+
+```
+grep -rniE 'lab tool|scripts/tools' docs/plan docs/idea .github README.md \
+  | grep -E 'GEN-21|PDF-14|IMG-15|OCR-14|LLM-16|ORC-20'
+docs/plan/bitacora.md:142,297,457,613   ← the four historical rows, nothing else
+grep -n 'SCR-' docs/plan/issues/wbs-general.md
+28:  | 5 | Lab tools, one operator CLI per processor | — | `SCR-01`…`SCR-10` … |
+634: - **Issues:** `SCR-01`…`SCR-10` (delegated to `wbs-scripts.md` …)
+```
+
+**Next.** Phase 5 is closed; the programme's remaining work is the image processor's publication
+defect above (the one finding that blocks a working bench from end to end), the double drift it
+exposes — `fake_opencv.imwrite` accepts the `.tmp` name the real engine rejects — and, after that,
+the `GEN-17` re-read of the four doubles on the next engine pin bump. Nothing else in the tools is
+waiting on a plan decision.

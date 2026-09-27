@@ -365,7 +365,18 @@ def _write_image(pixels: Any, destination: Path, parameters: list[int]) -> Path:
     def write(temporary: Path) -> None:
         """Encode the pixels at the temporary path the publication hands us."""
         engine = _engine()
-        if not engine.imwrite(str(temporary), pixels, parameters):
+        try:
+            stored = engine.imwrite(str(temporary), pixels, parameters)
+        except engine.error as exc:
+            # The engine raises instead of returning ``False`` when it cannot decide an
+            # encoder from the path. Left uncaught it escaped the contract as a traceback,
+            # which is what the lab bench (`SCR-07`) found: a failure the seam must type.
+            raise typed_failure(
+                "WRITE_ERROR",
+                f"the engine could not encode {destination}",
+                metadata={"destination": str(destination), "engine_error": str(exc)},
+            ) from exc
+        if not stored:
             raise typed_failure(
                 "WRITE_ERROR",
                 f"the engine could not encode {destination}",
