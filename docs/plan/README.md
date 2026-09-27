@@ -22,6 +22,7 @@ DoR-DoD / Risks / Out of scope & resolved decisions):
 | [`subplan-procesador-ocr.md`](subplan-procesador-ocr.md) | `procesador-ocr` | 1 |
 | [`subplan-procesador-llm-call.md`](subplan-procesador-llm-call.md) | `procesador-llm-call` | 1 |
 | [`subplan-orquestador.md`](subplan-orquestador.md) | `procesador-orquestador` | 2 |
+| [`subplan-scripts.md`](subplan-scripts.md) | lab tools (`scripts/tools/`) — outside the library | 5 |
 
 ---
 
@@ -208,6 +209,53 @@ LLM   → llm/
 
 Inputs are immutable; outputs are published atomically (`.tmp` → validate → `rename`).
 
+### 4.1 Lab tools (`scripts/tools/`) — outside the library
+
+`scripts/` is the **lab bench**. It is not the library, not a package, and not a deliverable
+of any phase that builds `src/docflow/`. It holds one thin operator CLI per processor plus the
+orchestrator, and one shared plumbing module:
+
+```text
+scripts/tools/
+├── _cli.py         shared plumbing — not a tool; holds no contract and reaches no engine
+├── pdf.py          pdf      → inspect, split, render, text, blocks, images, classify, run
+├── image.py        image    → info, metrics, normalize, ocr-ready, vlm-ready, classify, run
+├── ocr.py          ocr      → run, text, md, json, tables, blocks, metrics
+├── llm.py          llm      → call, node, graph, resume, status, models, tokens, fake
+└── workflow.py     workflow → run, plan, status, resume, force, skip, stop, context
+```
+
+Three boundaries hold, and the guard test asserts them rather than promising them:
+
+- **Calls, never reimplements.** A tool calls the library's entry point; printing a result is
+  a tool's job, producing it is not.
+- **The library never imports a tool.** Nothing under `src/docflow/` references `scripts/` or
+  `var/`; deleting `scripts/` leaves the library and its tests untouched.
+- **No new seam.** A tool adds no contract, no options type and no behaviour the library
+  lacks — and no default engine, provider, model or threshold. A missing operation is a gap
+  in the processor, fixed there.
+
+One deliberate exception: `pdf.py`, `image.py` and `ocr.py` may drive one named primitive of
+**their own** processor's `primitives/` — that is what a bench is for. `workflow.py` is
+excluded and reaches the four processors only through their public contracts, exactly as the
+orchestrator is required to.
+
+- **Invocation:** `python scripts/tools/<tool>.py <subcommand> <input> [flags]`. A tool is not
+  packaged and no console script is registered.
+- **Output:** `var/tools/<tool>/<stem>-<hash8>/` by default, `--out` to override. Never beside
+  the input and never into `out/`; `/var/` is in `.gitignore`.
+- **Input fixtures:** `tests/fixtures/` and `tests/fixtures-txt/`; `--fixture <name>` resolves
+  a bare name and the resolved path is printed, so nothing resolves silently.
+- **Exit codes:** `0` success; `1` a typed failure the library returned, printed and never a
+  traceback; `2` a usage error.
+- **Gate scope:** `scripts/` is covered by `ruff check .` and `ruff format --check .`. The
+  fourth gate's scope is `src tests`, so `pylint` does **not** cover the tools: a tool is a
+  disposable caller, and widening the gate is a plan revision, not a silent config change.
+
+The full design — the subcommand→symbol map, the fixture map, the invariants and the resolved
+decisions — is [`subplan-scripts.md`](subplan-scripts.md), and its task-level decomposition is
+[`issues/wbs-scripts.md`](issues/wbs-scripts.md).
+
 ---
 
 ## 5. Implementation phases
@@ -347,6 +395,28 @@ image → OCR → LLM) produces a `DocumentResult`; four QA gates pass.
 
 ---
 
+### Phase 5 — Lab tools, one operator CLI per processor
+
+**Entry:** Phases 1–3 exit met — the four processors and the orchestrator have their
+acceptance evidence green. A tool is never built ahead of the processor it exposes: a tool
+whose library half is a stub would have to invent the behaviour it was meant to show.
+
+**Deliverables**
+
+- `scripts/tools/{pdf,image,ocr,llm,workflow}.py` plus the shared `scripts/tools/_cli.py`,
+  with exactly the subcommands §4.1 and [`subplan-scripts.md`](subplan-scripts.md) §3.4 fix,
+  output under `var/tools/<tool>/`, and inputs resolved from `tests/fixtures/` and
+  `tests/fixtures-txt/`.
+- The structural guard test that holds the three boundaries of §4.1 — including the
+  orchestrator's own frontier on `workflow.py` — with its invariants mutation-falsified.
+- The hand run over the fixture roots, recorded in the execution log as an observation: a
+  run that fails because an engine is absent is a fact to record, not a gate to weaken.
+
+**Exit:** every tool's documented subcommand parses and calls the symbol its subplan §3.4
+names; the guards are green and mutation-falsified; the four QA gates pass.
+
+---
+
 ## 6. Task dependency map (summary)
 
 ```mermaid
@@ -355,18 +425,21 @@ flowchart LR
     P1 --> P2[Phase 2 orchestrator]
     P2 --> P3[Phase 3 integration]
     P3 --> P4[Phase 4 hardening]
+    P4 --> P5[Phase 5 lab tools]
 ```
 
-| Phase | Modules (`src/docflow/`) |
+| Phase | Modules |
 |---|---|
 | 0 | skeleton of all five sub-packages + contracts |
 | 1 | `pdf/`, `image/`, `ocr/`, `llm/` (independent, parallel) |
 | 2 | `workflow/` (orchestrator) |
 | 3 | `workflow/` source selection + end-to-end result |
 | 4 | all — hardening |
+| 5 | `scripts/tools/` — lab tools, outside the library (§4.1, `SCR-01`…`SCR-10`) |
 
 Within Phase 1 the four processors are independent and parallel; the orchestrator (Phase
-2) depends on all of them only through their contracts, not their internals.
+2) depends on all of them only through their contracts, not their internals. Phase 5 depends
+on Phases 1–3 the same way: the tools call entry points, and they add no library module.
 
 ---
 
@@ -386,6 +459,10 @@ installed**: no test invokes, imports or asserts Poppler, OpenCV, Docling, Ollam
 provider SDK. The engines are reached only from a processor's own `primitives/`, and only in
 production; tests exercise our code through the in-memory engine doubles of §9.7. There is
 no marker and no second tier — `pytest` is the gate.
+
+The two Ruff gates read the whole tree, so the lab tools of §4.1 are covered by them.
+`pylint`'s scope stays `src tests` on purpose: a tool is a disposable caller outside the
+library, and widening the gate is a plan revision rather than a config edit.
 
 ### Rules carried into implementation
 

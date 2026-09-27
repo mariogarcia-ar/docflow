@@ -58,7 +58,9 @@ would be a silent stand-in, which this project forbids at every stage.
 | 1 — processors, independently | ✅ `pdf` (`PDF-01`…`PDF-14`) · `image` (`IMG-01`…`IMG-15`) · `ocr` (`OCR-01`…`OCR-14`) · `llm` (`LLM-01`…`LLM-15`) | `LLM-01`…`LLM-15` |
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
-| 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` || 5 — lab tools | one operator CLI per processor | `GEN-21`, `PDF-14`, `IMG-15`, `OCR-14`, `LLM-16`, `ORC-20` |
+| 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
+| 5 — lab tools | one operator CLI per processor | `SCR-01`…`SCR-10` |
+
 ---
 
 ## Requirements
@@ -115,7 +117,8 @@ swappable without touching a contract.
 ## Lab tools (`scripts/tools/`)
 
 Each processor's subplan ends with a thin command-line tool for exercising it by hand. The
-convention is in [`docs/plan/README.md` §4.1](docs/plan/README.md); the short version:
+convention is in [`docs/plan/README.md` §4.1](docs/plan/README.md) and the design is
+[`docs/plan/subplan-scripts.md`](docs/plan/subplan-scripts.md); the short version:
 
 ```bash
 python scripts/tools/pdf.py split mi.pdf          # → var/tools/pdf/mi-<hash>/page_001/…
@@ -126,7 +129,8 @@ python scripts/tools/workflow.py plan mi.pdf --dry-run
 Input is an argument; output goes to `var/tools/<tool>/`, never beside the input and never
 into `out/`. Override with `--out`.
 
-**A tool is a caller, not a component.** Three boundaries hold, and `GEN-21` asserts them:
+**A tool is a caller, not a component.** Three boundaries hold, and the guard test
+(`SCR-08`) asserts them, so the CI gate that runs `pytest` enforces them too:
 
 - **Calls, never reimplements.** `split` calls `split_pdf`; it does not shell out to
   `pdfseparate`. Printing a result is a tool's job; producing it is not.
@@ -143,11 +147,11 @@ is: it reaches the four processors only through their public contracts.
 
 | Tool | Task | Exposes |
 |---|---|---|
-| `pdf.py` | `PDF-14` | `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` |
-| `image.py` | `IMG-15` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run`, `crop` |
-| `ocr.py` | `OCR-14` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics`, `diff` |
-| `llm.py` | `LLM-16` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
-| `workflow.py` | `ORC-20` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
+| `pdf.py` | `SCR-02` | `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` |
+| `image.py` | `SCR-03` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run` |
+| `ocr.py` | `SCR-04` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics` |
+| `llm.py` | `SCR-05` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
+| `workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 
 None of these exist yet: each is built after its processor's own acceptance evidence is
 green. Two design notes worth knowing before they are written — `ocr.py` has **no** `--engine`
@@ -156,6 +160,11 @@ and `--model` on every inference subcommand, because a default model is exactly 
 stand-in this project forbids. Its `fake` subcommand is first-class, not a hidden test flag:
 the deterministic fake provider is what makes the graph and resume paths demonstrable without
 a model or a spent token.
+
+Two subcommands that were drafted here are **dropped**: `image.py crop` has no `crop_region`
+to call (`subplan-procesador-image.md` §9.6 defers it) and `ocr.py diff` would compare two
+extractions inside the tool, which is a second implementation of the thing under test. A tool
+adds no behaviour the library lacks, so neither can exist until the library does.
 
 ---
 
@@ -605,11 +614,11 @@ OCR type names (`OCRContext` and `OCRDocument` are canonical; the subplan's `Con
    them byte for byte. `tests/fixtures/manifest.json` predates them and is now stale — it has
    no builder in the tree to re-run, so it needs its owner rather than a hand edit.
 
-8. **The README's phase table still lists three of the engine doubles as lab tools.**
-   `docs/feedback/no-tests-on-third-parties.md` repurposed `PDF-14`, `IMG-15` and `OCR-14` as
-   the in-memory doubles of `pdf`, `image` and `ocr`; the Phase 5 row above still names them as
-   operator CLIs. Left verbatim here rather than guessed at — the IDs of the replacement lab
-   tools are a plan revision.
+8. **The Phase 5 lab tools now have their own ID range — resolved.** `docs/feedback/no-tests-on-third-parties.md`
+   repurposed `PDF-14`, `IMG-15` and `OCR-14` as the in-memory doubles of `pdf`, `image` and
+   `ocr`, and `GEN-21` is the CI gate, so the Phase 5 row's four borrowed IDs were stale.
+   [`docs/plan/subplan-scripts.md`](docs/plan/subplan-scripts.md) allocates `SCR-01`…`SCR-10`
+   and the row above now cites them; no ID was renumbered.
 
 9. **The OCR result states absence in its typing, not in empty values.**
    `OCRResult`'s nine product fields — `text`, `markdown`, `structured_document`, `tables`,
