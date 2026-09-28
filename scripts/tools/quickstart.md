@@ -211,8 +211,11 @@ python scripts/tools/llm.py --run-id demo \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
 ```
 
-Then the real thing, which is the honest failure this bench exists for — no model is served here,
-so it prints a typed `MODEL_UNAVAILABLE` (`status: 404`) and exits `1`:
+Then the real thing, which is the honest failure this bench exists for. How it fails is typed, and
+either way it exits `1`: `PROVIDER_ERROR` (`ollama could not be reached`, `[Errno 61] Connection
+refused`) when nothing is listening, or `MODEL_UNAVAILABLE` when the endpoint answers but does not
+offer the model — the latter carries the HTTP `status: 404` in its error metadata, not in the
+payload's own `status` field:
 
 ```bash
 python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
