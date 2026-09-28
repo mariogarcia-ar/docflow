@@ -311,9 +311,9 @@ The mirror is the walk, folder for folder, plus one directory per input. The sec
 over `tests/fixtures`, lands like this:
 
 ```text
-tests/fixtures/pdf/pdf_sample_text.pdf  ->  var/batch_pdf/fixtures/pdf/pdf_sample_text/result.json
-tests/fixtures/chicos/<uuid>.pdf        ->  var/batch_pdf/fixtures/chicos/<uuid>/result.json
-tests/fixtures/matrix/scan150.pdf       ->  var/batch_pdf/fixtures/matrix/scan150/result.json
+tests/fixtures/pdf/pdf_sample_text.pdf  ->  var/batch_pdf/fixtures/pdf/pdf_sample_text/inspect.json
+tests/fixtures/chicos/<uuid>.pdf        ->  var/batch_pdf/fixtures/chicos/<uuid>/inspect.json
+tests/fixtures/matrix/scan150.pdf       ->  var/batch_pdf/fixtures/matrix/scan150/inspect.json
 ```
 
 Every rule below belongs to `_batch.py` — the folder frame all four tools run on — and not to one
@@ -324,13 +324,14 @@ tool:
   own output root**, so a second run over the same tree does not pick up what the first one wrote.
 - **Every input gets its own directory**: `var/batch_<processor>/<walked folder>/<the input's
   folder relative to it>/<the input's stem>/`, which is what keeps two files of one folder from
-  colliding — and, as in `var/tools/`, two commands over one input share it. `--out DIR` replaces
-  that root entirely; the walked folder is then not repeated.
-- **Every input that produced a payload gets a record**: `result.json` in that directory, beside
-  whatever the method published. So a method that publishes no artifact at all — `inspect`,
-  `info`, `text`, `tokens` — still leaves something to read, which is the point of running it over
-  a corpus. An input whose failure **raised** has no payload and is reported, not filed: its typed
-  record is printed and counted, and its directory is never created.
+  colliding. `--out DIR` replaces that root entirely; the walked folder is then not repeated.
+- **Every input that produced a payload gets a record, named after its command**: `<command>.json`
+  in that directory, beside whatever the method published. Two commands over one input keep both
+  records — `inspect.json` beside `classify.json` — instead of the second overwriting the first.
+  And a method that publishes no artifact at all — `inspect`, `info`, `text`, `tokens` — still
+  leaves something to read, which is the point of running it over a corpus. An input whose failure
+  **raised** has no payload and is reported, not filed: its typed record is printed and counted,
+  and its directory is never created.
 - **A default command is stated, never silent.** With no subcommand the run makes the tool's own
   flag-free method — the one that publishes nothing, so a bare run cannot fill the tree — and the
   header says `command: inspect (default, none stated)`. A tool whose every command needs a flag
@@ -368,7 +369,8 @@ the batch adds no behaviour of its own. The subcommand is optional and the flags
 | `run` | `--dpi`, plus the capabilities | `batch_pdf.py tests/fixtures/matrix run --dpi 200 --extract-text` |
 
 What lands in the input's directory is that method's output, so `split` files its pages, `render`
-its PNG and `run` the whole artifact tree, next to the `result.json` every method leaves. The bare
+its PNG and `run` the whole artifact tree, next to the `<command>.json` record every method
+leaves. The bare
 run makes `inspect` — the flag-free method that only reports; the other flag-free method, `split`,
 writes, so it is never the thing a bare run does. `tests/fixtures/pdf` is the demonstration in one
 line: four inputs, one of them the corrupt sample, `files: 4 · succeeded: 3 · failed: 1`, exit `1`.
@@ -408,7 +410,7 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics                    
 ```
 
 - **The bare run makes `text`** — the flag-free method that publishes nothing. Only `run`
-  publishes artifacts here; the other six methods leave a `result.json` and nothing else.
+  publishes artifacts here; the other six methods leave a `<command>.json` and nothing else.
 - **It is not cheap.** Every input is converted once by the engine, so a corpus of images costs
   what the engine costs; the default is safe for the output tree, not for the clock.
 - **An input the engine refuses fails its own record and the walk continues** — that is the whole

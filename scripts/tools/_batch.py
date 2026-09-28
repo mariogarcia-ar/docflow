@@ -7,7 +7,7 @@ suffixes it takes, the command it runs and that command's method.
 
 The shape is the one ``batch_pdf.py`` was written with, unchanged: each input writes into
 ``<root>/<its folder relative to the walked one>/<its stem>/``, with its payload as
-``result.json`` beside whatever the method published, and a failure is printed as the library's
+``<command>.json`` beside whatever the method published, and a failure is printed as the library's
 typed record and counted instead of ending the run.
 """
 
@@ -18,15 +18,28 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 import _cli
 
-#: The file each input's record is written to, inside that input's mirror directory.
-RESULT_NAME: Final[str] = "result.json"
-
 #: What one method returns: the payload its caller files, or the artifacts it published.
 Payload = dict[str, Any]
+
+
+def result_name(command: str) -> str:
+    """Return the file name one command's record is written to.
+
+    The name carries the command, so two commands over one corpus input keep both records —
+    ``inspect.json`` beside ``classify.json`` — instead of the second overwriting the first.
+
+    Args:
+        command: The subcommand being run.
+
+    Returns:
+        The record's file name, inside that input's mirror directory.
+    """
+    return f"{command}.json"
+
 
 #: A method as a batch tool calls it: the parsed flags, the parser to refuse through, the input,
 #: and the directory that input's run writes under.
@@ -233,7 +246,7 @@ def run_one(
             print(f"{input_path.name}: FAILED -> {root}")
         _cli.print_error([failure.error])
         return entry
-    _cli.write_payload(root / RESULT_NAME, payload)
+    _cli.write_payload(root / result_name(command), payload)
     failures = _payload_failures(payload)
     entry["status"] = payload.get("status")
     entry["error"] = failures[0] if failures else None

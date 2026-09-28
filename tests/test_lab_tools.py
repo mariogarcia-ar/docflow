@@ -13,6 +13,11 @@ tree statically, and the glue tests install an in-memory double. The real seam i
 by hand (``SCR-07``) and recorded as an observation, never as a gate.
 """
 
+# One module holds every tool's guard and glue: the convention it asserts is cross-tool, so
+# splitting it by tool would scatter the one thing it exists to prove. The length is the harness,
+# not duplication.
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import ast
@@ -356,7 +361,7 @@ def test_batch_pdf_mirrors_the_folder_it_walked(
     code = tool_module("batch_pdf").main(["--out", str(out), str(corpus), "inspect"])
 
     assert code == 0
-    records = sorted(out.rglob("result.json"))
+    records = sorted(out.rglob("inspect.json"))
     assert [record.parent.relative_to(out).as_posix() for record in records] == [
         "sub1/a",
         "sub2/deeper/b",
@@ -380,7 +385,34 @@ def test_batch_pdf_states_the_command_it_defaulted_to(
 
     assert code == 0
     assert "inspect (default, none stated)" in capsys.readouterr().err
-    assert (out / "a" / "result.json").is_file()
+    assert (out / "a" / "inspect.json").is_file()
+
+
+def test_batch_pdf_keeps_one_record_per_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two commands over one input keep both records: neither overwrites the other.
+
+    Both used to be filed as ``result.json`` in the input's own directory, so running
+    ``classify`` after ``inspect`` silently replaced the first record with the second.
+    """
+    double = FakePoppler((FakePage(lines=("A line of text.",)),))
+    monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", double.run)
+    corpus = build_corpus(tmp_path, "a.pdf")
+    out = tmp_path / "mirror"
+
+    inspect_code = tool_module("batch_pdf").main(
+        ["--out", str(out), str(corpus), "inspect"]
+    )
+    classify_code = tool_module("batch_pdf").main(
+        ["--out", str(out), str(corpus), "classify", "--page", "1"]
+    )
+
+    assert (inspect_code, classify_code) == (0, 0)
+    assert (out / "a" / "inspect.json").is_file()
+    assert (out / "a" / "classify.json").is_file()
+    record = json.loads((out / "a" / "inspect.json").read_text(encoding="utf-8"))
+    assert record["page_count"] == 1
 
 
 def test_batch_pdf_counts_every_failure_and_exits_one(
@@ -398,7 +430,7 @@ def test_batch_pdf_counts_every_failure_and_exits_one(
     printed = capsys.readouterr().out
     assert printed.count("ERROR CORRUPTED_PDF") == 2
     assert "failed: 2" in printed
-    assert not list(out.rglob("result.json"))
+    assert not list(out.rglob("inspect.json"))
 
 
 def test_batch_pdf_refuses_a_folder_that_is_not_one(
@@ -477,7 +509,7 @@ def test_write_payload_creates_the_directories_it_writes_through(
     tmp_path: Path,
 ) -> None:
     """The file half of the payload printer writes canonical JSON, parents and all."""
-    written = _cli.write_payload(tmp_path / "a" / "b" / "result.json", {"n": 1})
+    written = _cli.write_payload(tmp_path / "a" / "b" / "payload.json", {"n": 1})
 
     assert json.loads(written.read_text(encoding="utf-8")) == {"n": 1}
     assert written.read_text(encoding="utf-8").endswith("\n")
@@ -499,7 +531,7 @@ def test_batch_image_mirrors_the_folder_it_walked(
 
     assert code == 0
     assert sorted(
-        record.parent.relative_to(out).as_posix() for record in out.rglob("result.json")
+        record.parent.relative_to(out).as_posix() for record in out.rglob("info.json")
     ) == ["b", "sub/a"]
     assert "info (default, none stated)" in capsys.readouterr().err
 
@@ -553,7 +585,7 @@ def test_batch_ocr_mirrors_the_folder_it_walked(
 
     assert code == 0
     assert sorted(
-        record.parent.relative_to(out).as_posix() for record in out.rglob("result.json")
+        record.parent.relative_to(out).as_posix() for record in out.rglob("text.json")
     ) == ["b", "sub/a"]
     assert "text (default, none stated)" in capsys.readouterr().err
 
@@ -575,7 +607,7 @@ def test_batch_ocr_types_an_engine_throw_and_keeps_going(
     printed = capsys.readouterr().out
     assert "ERROR ENGINE_ERROR" in printed
     assert "failed: 1" in printed
-    assert [record.parent.name for record in out.rglob("result.json")] == ["good"]
+    assert [record.parent.name for record in out.rglob("text.json")] == ["good"]
 
 
 def test_batch_ocr_reports_a_returned_failure_as_a_failure(
@@ -605,7 +637,7 @@ def test_batch_ocr_reports_a_returned_failure_as_a_failure(
     assert "ERROR OCR_ERROR:" in printed
     assert "failed: 1" in printed
     assert (
-        json.loads((out / "a" / "result.json").read_text(encoding="utf-8"))["status"]
+        json.loads((out / "a" / "run.json").read_text(encoding="utf-8"))["status"]
         == "failed"
     )
 
@@ -656,7 +688,7 @@ def test_batch_llm_mirrors_the_folder_it_walked(
 
     assert code == 0
     assert sorted(
-        record.parent.relative_to(out).as_posix() for record in out.rglob("result.json")
+        record.parent.relative_to(out).as_posix() for record in out.rglob("tokens.json")
     ) == ["b", "sub/a"]
     assert "assets_dir:" in capsys.readouterr().err
 
@@ -704,7 +736,7 @@ def test_batch_llm_installs_the_scripted_provider_only_when_asked(
     )
 
     assert code == 0
-    assert installed == []
+    assert not installed
 
     code = tool_module("batch_llm").main(
         ["--fake", "--out", str(out), str(corpus), *OFFLINE_TOKENS]
@@ -735,7 +767,7 @@ def test_batch_llm_keeps_going_when_the_provider_refuses(
     printed = capsys.readouterr().out
     assert "ERROR PROVIDER_ERROR" in printed
     assert "failed: 2" in printed
-    assert not list(out.rglob("result.json"))
+    assert not list(out.rglob("tokens.json"))
 
 
 # --- SCR-01 unit tests: the shared plumbing -----------------------------------------

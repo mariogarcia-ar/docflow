@@ -124,7 +124,7 @@ convention is in [`docs/plan/README.md` §4.1](docs/plan/README.md) and the desi
 ```bash
 python scripts/tools/pdf.py split mi.pdf          # → var/tools/pdf/mi-<hash>/page_001/…
 python scripts/tools/pdf.py inspect mi.pdf
-python scripts/tools/batch_pdf.py cartas/         # → var/batch_pdf/cartas/<stem>/result.json
+python scripts/tools/batch_pdf.py cartas/         # → var/batch_pdf/cartas/<stem>/inspect.json
 python scripts/tools/workflow.py plan mi.pdf      # "--dry-run" is what "plan" means
 ```
 
@@ -139,7 +139,7 @@ two tools call the same methods through one shared layer.
 Input is an argument; output goes to `var/tools/<tool>/`, never beside the input and never
 into `out/`. Override with `--out`. The **batch** tools take a folder instead of a file, mirror
 the tree they walked under `var/batch_<processor>/<folder>/<relative folders>/<stem>/`, file each
-input's payload as `result.json` beside whatever the method published, and exit `1` when any input
+input's payload as `<command>.json` beside whatever the method published, and exit `1` when any input
 failed — one bad file does not end the corpus.
 
 **A tool is a caller, not a component.** Three boundaries hold, and the guard test
