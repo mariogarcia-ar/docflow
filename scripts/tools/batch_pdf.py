@@ -71,6 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser,
         suffixes=SUFFIXES,
         default=default,
+        validate=_pdf.validate_flags,
     )
 
 

@@ -64,6 +64,11 @@ HEADER_STATED_KEYS: Final[frozenset[str]] = frozenset({"input"})
 #: What every tool's subcommand handler receives, and must return: an exit code.
 Handler = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], int]
 
+#: A tool's check that the flags it parsed can run at all. It is made once, before the run
+#: announces itself, and it refuses through the parser — so a missing required flag is
+#: ``argparse``'s own usage error, and no header is printed for a run that cannot start.
+Validate = Callable[[str, argparse.Namespace, argparse.ArgumentParser], None]
+
 
 def bootstrap() -> None:
     """Put the repository root and ``src/`` on ``sys.path``.
@@ -472,6 +477,7 @@ def run_tool(
     text: bool = False,
     out_only: Collection[str] = (),
     report_only: Collection[str] = (),
+    validate: Validate | None = None,
     header_extra: Callable[[argparse.Namespace], Mapping[str, Any]] | None = None,
     prepare: Callable[[argparse.Namespace], None] | None = None,
 ) -> int:
@@ -489,6 +495,10 @@ def run_tool(
         out_only: Subcommands that accept ``--out`` in place of an input.
         report_only: Subcommands that publish no file, whose report is the stdout summary.
             The header says so rather than naming a run root no run will create.
+        validate: The tool's check that this subcommand's flags can run at all, made before
+            anything else the run does. A tool that has a subcommand with a required flag
+            passes one, so a gap is a usage error rather than a header for a run that then
+            refuses to start.
         header_extra: Further facts to state in the header, read from the arguments.
         prepare: A hook that runs after parsing and before the handler — the place a tool
             patches a seam in its own process.
@@ -499,6 +509,8 @@ def run_tool(
     """
     args = parser.parse_args(argv)
     subcommand = args.subcommand
+    if validate is not None:
+        validate(subcommand, args, parser)
     if subcommand in out_only and args.out:
         root = Path(args.out).expanduser().resolve()
         input_path = Path(getattr(args, "input", None) or root).resolve()

@@ -256,6 +256,7 @@ def run_batch(
     suffixes: Sequence[str],
     default: bool = False,
     header_extra: Mapping[str, Any] | None = None,
+    validate: _cli.Validate | None = None,
 ) -> int:
     """Walk the folder, run the command over every input, and report the run.
 
@@ -271,11 +272,17 @@ def run_batch(
             stated — the header says so, so a default is never silent.
         header_extra: The tool's own header fields, for what it resolves and states the way its
             single-input twin does — an asset root, say — rather than letting the two disagree.
+        validate: The layer's check that this command's flags can run at all, made once before
+            the walk. A method refuses a missing flag when it is called, which is per input:
+            the header would already be printed, and a folder holding no input would never
+            call the method at all and would report a successful run of nothing.
 
     Returns:
         ``0`` when every input produced a result, ``1`` when any input failed.
     """
     walked = folder(args, parser)
+    if validate is not None:
+        validate(command, args, parser)
     root = (
         Path(args.out).expanduser().resolve()
         if args.out is not None

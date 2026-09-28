@@ -54,7 +54,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         The process exit code: ``0`` when the run produced a result, ``1`` when the library
         returned a typed failure.
     """
-    return _cli.run_tool("pdf", build_parser(), HANDLERS, argv, report_only=REPORT_ONLY)
+    return _cli.run_tool(
+        "pdf",
+        build_parser(),
+        HANDLERS,
+        argv,
+        report_only=REPORT_ONLY,
+        validate=_pdf.validate_flags,
+    )
 
 
 def _handler(name: str) -> _cli.Handler:

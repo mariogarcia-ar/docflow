@@ -415,6 +415,64 @@ def test_batch_pdf_refuses_a_folder_that_is_not_one(
     assert "is not a folder" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    ("subcommand", "flags", "missing"),
+    (
+        ("classify", (), "--page"),
+        ("text", (), "--page"),
+        ("blocks", (), "--page"),
+        ("images", (), "--page"),
+        ("render", ("--page", "1"), "--dpi"),
+        ("run", (), "--dpi"),
+    ),
+)
+def test_a_batch_refuses_a_missing_required_flag_before_it_walks(
+    subcommand: str,
+    flags: tuple[str, ...],
+    missing: str,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A missing flag is refused once, before the run announces itself.
+
+    The folder is empty on purpose. Validating per input calls no method when there is no
+    input to run, so this is the corpus over which the gap used to go unnoticed: the run
+    reported ``files: 0`` and exited ``0`` for a command that could not have run at all.
+    """
+    empty = tmp_path / "empty"
+    empty.mkdir()
+
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("batch_pdf").main(
+            ["--out", str(tmp_path / "mirror"), str(empty), subcommand, *flags]
+        )
+
+    assert exit_info.value.code == 2
+    printed = capsys.readouterr().err
+    assert f"{subcommand} requires {missing}" in printed
+    assert f"== batch_pdf.py {subcommand} ==" not in printed
+
+
+@pytest.mark.parametrize(
+    ("subcommand", "flags", "missing"),
+    (("classify", (), "--page"), ("render", ("--page", "1"), "--dpi")),
+)
+def test_pdf_refuses_a_missing_required_flag_before_its_header(
+    subcommand: str,
+    flags: tuple[str, ...],
+    missing: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The single-input tool refuses the same gap, before it names the run it would make."""
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("pdf").main([subcommand, str(SAMPLE_PDF), *flags])
+
+    assert exit_info.value.code == 2
+    printed = capsys.readouterr().err
+    assert f"{subcommand} requires {missing}" in printed
+    assert f"== pdf.py {subcommand} ==" not in printed
+
+
 def test_write_payload_creates_the_directories_it_writes_through(
     tmp_path: Path,
 ) -> None:

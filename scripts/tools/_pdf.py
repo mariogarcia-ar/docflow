@@ -43,6 +43,24 @@ SUBCOMMANDS: tuple[tuple[str, str], ...] = (
 #: The inputs the PDF processor takes, matched case-insensitively: what it can read.
 SUFFIXES: Final[tuple[str, ...]] = (".pdf",)
 
+#: The subcommands that read one page: their report is a page's, so ``--page`` is not optional.
+PAGE_COMMANDS: Final[tuple[str, ...]] = (
+    "render",
+    "text",
+    "blocks",
+    "images",
+    "classify",
+)
+
+#: The subcommands that take ``--page``: those five, plus ``run``, whose ``--page`` selects one
+#: page when it is given. A whole-document run states none, so the flag is taken and not
+#: required there — the one place the two sets differ.
+PAGE_FLAG_COMMANDS: Final[tuple[str, ...]] = (*PAGE_COMMANDS, "run")
+
+#: The subcommands that resolve a page at a stated resolution: rendering one and running the
+#: contract both do, so ``--dpi`` is taken and required on each.
+DPI_COMMANDS: Final[tuple[str, ...]] = ("render", "run")
+
 #: What one method returns: the payload its caller prints, or writes beside the artifacts.
 Payload = dict[str, Any]
 
@@ -72,13 +90,12 @@ def build_subcommands(
         parser = _cli.add_subcommand(
             subparsers, name, help_text, input_argument=input_argument
         )
-        if name in ("render", "run"):
+        if name in PAGE_FLAG_COMMANDS:
             parser.add_argument("--page", type=int, help="Page index, 1-based.")
+        if name in DPI_COMMANDS:
             parser.add_argument(
                 "--dpi", type=int, help="Render resolution; never defaulted."
             )
-        elif name in ("text", "blocks", "images", "classify"):
-            parser.add_argument("--page", type=int, help="Page index, 1-based.")
         if name == "run":
             for flag, flag_help in (
                 ("--extract-pages", "One self-contained PDF per page."),
@@ -104,6 +121,32 @@ def dpi(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return int(
         _cli.required(args, parser, "dpi", "--dpi", why="no resolution is defaulted")
     )
+
+
+def validate_flags(
+    command: str, args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> None:
+    """Refuse a missing required flag, once, before the run starts.
+
+    The guards are the same two :func:`page` and :func:`dpi` the methods call, over the same
+    name sets :func:`build_subcommands` registers the flags from: a command that takes a flag it
+    cannot run without is a command this refuses, and ``run`` — which takes ``--page`` without
+    requiring it — is the one case the two sets do not share. The sets are not restated here,
+    because a second copy of them is a second thing to keep in step.
+
+    Both tools pass this as their ``validate`` hook, so the refusal happens before the header
+    and a batch refuses once rather than per input — and an empty folder, which calls no
+    method at all, cannot report a successful run of a command that was missing its flag.
+
+    Args:
+        command: The subcommand being run.
+        args: The parsed arguments.
+        parser: The parser to report the usage error through.
+    """
+    if command in PAGE_COMMANDS:
+        page(args, parser)
+    if command in DPI_COMMANDS:
+        dpi(args, parser)
 
 
 def run_options(

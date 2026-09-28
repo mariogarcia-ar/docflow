@@ -342,6 +342,11 @@ tool:
   it as `ok` while the summary counts it as failed would be the run contradicting itself.
 - **One bad file does not end the batch.** Each failure is printed and counted, and the run keeps
   going: the exit code is `1` when any input failed, `0` when none did, and `2` for a usage error.
+- **A missing required flag is refused once, before the walk.** The frame takes the check from the
+  layer, so `_pdf.py`'s `--page` and `--dpi` are a usage error (`2`) raised before the run states
+  its header — not per input. A method only meets its own gap when there is an input to run it on,
+  so an empty folder used to report `files: 0` and exit `0` for a command that could never have
+  run. `_llm.py`'s inference flags are still refused per input (see `docs/plan/bitacora.md`).
 - **A batch takes no `--fixture` and no identity flags**: its input is the folder positional, and
   something that is not a folder is refused by name (`'x.txt' is not a folder: …`). `--recursive`,
   `--out` and `--json` are the tool's global flags and belong before the subcommand, as

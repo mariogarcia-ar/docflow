@@ -1797,3 +1797,85 @@ ruff check .               All checks passed!
 ruff format --check .      179 files already formatted
 pylint src tests           10.00/10
 ```
+
+---
+
+## 2026-09-28 — Phase 5 · lab benches (`SCR-11`, `SCR-12`)
+
+**Delivered.**
+
+| File | What it is |
+|---|---|
+| `scripts/tools/_cli.py` | the `Validate` alias and `run_tool(..., validate=)`: a tool's check that the parsed subcommand's flags can run at all, made after parsing and before anything else the run does |
+| `scripts/tools/_batch.py` | `run_batch(..., validate=)`: the same check, made once after the folder resolves and before the header — once per run, not once per input |
+| `scripts/tools/_pdf.py` | `PAGE_COMMANDS`, `PAGE_FLAG_COMMANDS`, `DPI_COMMANDS` and `validate_flags`, so the flag registration and the refusal read the same name sets |
+| `scripts/tools/pdf.py`, `scripts/tools/batch_pdf.py` | each passes `_pdf.validate_flags` as that hook |
+| `tests/test_lab_tools.py` | two parametrized guards: a batch refuses each of the six flag-needing commands before it walks, over an **empty** folder; `pdf.py` refuses `--page`/`--dpi` before its header |
+| `scripts/tools/readme.md` | one rule added to the `_batch.py` block: a required flag is refused once, before the walk |
+
+**What the run found.** Two observations from a hand run of
+`python scripts/tools/batch_pdf.py tests/fixtures/pdf classify`, which exits `2`:
+
+1. **Not a defect: the refusal itself.** `classify`, `text`, `blocks` and `images` read one page, so
+   `--page` is required and the batch substitutes no default — §3.3 already pins exit `2` for a
+   missing required flag, and the readme's `batch_pdf.py` table already prints `--page 1` in the
+   invocation. Run as `… classify --page 1`: `files: 4 · succeeded: 3 · failed: 1`, exit `1` — the
+   corrupt committed sample, exactly the readme's demonstration.
+2. **A code defect: the refusal was per input.** `_cli.required` is a post-parse check on purpose
+   (`required=True` would hide an injected `default=`, and a default makes the run *proceed*, which
+   is what keeps the "no default" guard falsifiable), so the check fired inside the method, when the
+   first input called it. Two consequences, both reproduced by hand:
+   - the run header was printed for a run that then refused to start;
+   - `batch_pdf.py /tmp/empty classify` reported `files: 0 · succeeded: 0 · failed: 0` and exited
+     **`0`** — an empty folder calls no method, so the gap went unnoticed entirely. That exit code
+     contradicts §3.3's "missing required flag → `2`": the tool against its own contract.
+
+**Decisions taken in code.**
+
+- **The hook sits on the frame, the declaration on the layer.** `_cli.run_tool` and `_batch.run_batch`
+  take an optional `validate`; the layer passes it, because `_pdf.py` knows which of its flags are
+  required and `_batch.py` knows when a run starts. Neither learns what a page is.
+- **One name set, not two.** `build_subcommands` registers `--page` from `PAGE_FLAG_COMMANDS` and
+  `--dpi` from `DPI_COMMANDS`; `validate_flags` refuses from `PAGE_COMMANDS` and `DPI_COMMANDS`.
+  `PAGE_FLAG_COMMANDS` is `(*PAGE_COMMANDS, "run")` deliberately: `run` **takes** `--page` and does
+  not **require** it, the one place the sets differ. A first attempt collapsed them into one set and
+  dropped `--page` from `run` altogether — the suite caught it as an `AttributeError` on
+  `args.page`, which is why the two sets are named.
+- **The refusal is not restated.** `validate_flags` calls the same `page()` and `dpi()` the methods
+  call, so "no page number is defaulted" has one author.
+- **No plan edit.** What is now enforced is what `subplan-scripts.md` §3.3 already states; the frozen
+  artifact is unchanged.
+
+**Invariant evidence.**
+
+*Invariant: a batch refuses a missing required flag before it walks, even when it holds no input.*
+Mutation — removing `validate=_pdf.validate_flags` from `batch_pdf.py` turned the new guards **red**:
+6 of the 8 parametrizations failed with `DID NOT RAISE SystemExit`, and the captured output showed
+`files: 0`, `succeeded: 0`, `failed: 0` and a printed header — the defect reproduced. The 2 that
+stayed green are the `pdf.py` parametrizations, which go through `_cli.run_tool` and are not reached
+by that mutation. Argument restored, re-run: **green** (103 passed in the module).
+
+**Gate evidence.**
+
+```
+pytest                     716 passed
+ruff check .               All checks passed!
+ruff format --check .      180 files already formatted
+pylint src tests           10.00/10
+```
+
+`pylint` still reports `too-many-lines` on `tests/test_lab_tools.py` (1292/1000) and
+`use-implicit-booleaness-not-comparison` at line 707. Both are **pre-existing**: `pylint
+--from-stdin` over `git show HEAD:tests/test_lab_tools.py` reports the same two (1234/1000, line
+649), and neither moves the rating off 10.00.
+
+**Left stale (plan owner).** `docs/plan/issues/wbs-scripts.md` describes `run_batch(...)` as taking
+`suffixes=`, `default=`, `header_extra=`, and `_pdf.py` as holding `SUBCOMMANDS`,
+`build_subcommands`, the eight methods and `COMMANDS`. Both now under-describe the code: the frame
+takes `validate=` and the layer holds three name sets and `validate_flags`. A WBS is frozen, so
+correcting the description is a plan revision (`SCR-11`, `SCR-12`) and not this entry.
+
+**Next.** `_llm.py` has the same shape — `provider`, `model`, `task`, `template` and `run_id` are
+required per subcommand and refused inside the method — so `batch_llm.py <empty-folder> call` exits
+`0` for the same reason. The hook now exists; wiring it is a per-command table over eight
+subcommands. `_ocr.py` takes no required flag and needs nothing.
