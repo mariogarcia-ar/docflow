@@ -435,7 +435,7 @@ flowchart LR
 | 2 | `workflow/` (orchestrator) |
 | 3 | `workflow/` source selection + end-to-end result |
 | 4 | all — hardening |
-| 5 | `scripts/tools/` — lab tools, outside the library (§4.1, `SCR-01`…`SCR-10`) |
+| 5 | `scripts/tools/` — lab tools, outside the library (§4.1, `SCR-01`…`SCR-18`) |
 
 Within Phase 1 the four processors are independent and parallel; the orchestrator (Phase
 2) depends on all of them only through their contracts, not their internals. Phase 5 depends

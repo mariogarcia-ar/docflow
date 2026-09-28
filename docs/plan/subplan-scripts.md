@@ -67,22 +67,45 @@ The instruction file is stale on that point and is registered in §9.
 ```
 scripts/tools/
 ├── _cli.py         shared plumbing: NOT a tool, holds no contract and reaches no engine
-├── pdf.py
-├── image.py
-├── ocr.py
-├── llm.py
-└── workflow.py
+├── _batch.py       the folder frame every batch tool runs on (SCR-12) — also not a tool
+├── _pdf.py         the PDF bench's command layer, shared by pdf.py and batch_pdf.py (SCR-11)
+├── _image.py       the image bench's command layer (SCR-13)
+├── _ocr.py         the OCR bench's command layer (SCR-14)
+├── _llm.py         the LLM bench's command layer (SCR-15)
+├── pdf.py          SCR-02
+├── batch_pdf.py    SCR-12
+├── image.py        SCR-03
+├── batch_image.py  SCR-13
+├── ocr.py          SCR-04
+├── batch_ocr.py    SCR-14
+├── llm.py          SCR-05
+├── batch_llm.py    SCR-15
+└── workflow.py     SCR-06
 ```
 
 `_cli.py` is justified by the five callers rule this repository already applies to
 `utils/`/`helpers/`: a symbol belongs in a shared module only when more than one caller needs
-it, and here five do. It holds **only** the plumbing that would otherwise be copy-pasted five
-times — output-root resolution, fixture resolution, the `--json` printer, the human printer,
-and the exit-code mapping. It is not a seam: it imports no engine, no provider and no
-contract, and nothing under `src/` may import it.
+it, and here every tool does. It holds **only** the plumbing that would otherwise be
+copy-pasted fifteen times — output-root resolution, fixture resolution, the `--json` printer,
+the human printer, and the exit-code mapping. It is not a seam: it imports no engine, no
+provider and no contract, and nothing under `src/` may import it.
+
+**The layer split (`SCR-11`, `SCR-13`, `SCR-14`, `SCR-15`).** Each of the four processors is
+served by *two* tools — one file, one folder — and both call the same methods. The methods
+therefore live in a `_`-prefixed layer beside them: `_pdf.py`'s eight, `_image.py`'s, `_ocr.py`'s
+and `_llm.py`'s. A layer registers the flags (`build_subcommands`) and holds the methods
+(`COMMANDS`); it has no `main`, prints nothing, is never invoked, and raises the processor's typed
+failures rather than printing them. This is the five-callers rule one step further: the same eight
+methods have two callers, and the alternative — the batch tool importing its single-file twin, or
+a second copy of every payload in it — is exactly the drift the guards exist to catch.
+
+**`_batch.py` (`SCR-12`)** is the folder frame, shared by all four batch tools: the walk, the
+mirror (`<root>/<relative folders>/<stem>/`), the per-input `result.json`, the line each input
+prints, the summary and the exit code. It names no processor, so a sixth batch tool is a suffix
+set, a layer and a command — and nothing else.
 
 Filename convention: a tool is `<name>.py` with a lowercase name; a leading underscore marks
-a module that is not a tool. The guard test enumerates the set, so a sixth tool is a plan
+a module that is not a tool. The guard test enumerates the set, so a sixteenth module is a plan
 revision and not a surprise.
 
 ### 3.2 The three boundaries (and the one deliberate exception)
@@ -95,18 +118,25 @@ revision and not a surprise.
    lacks. If a subcommand needs something the processor cannot do, the tool is wrong, or the
    processor has a gap.
 
-**The exception — the lab bench.** `pdf.py`, `image.py` and `ocr.py` **may** import their own
-processor's `primitives/` and drive one named primitive. That is what a bench is for: `render
---dpi 400` drives `render_page_to_image` without a document run, which the orchestrator is
-forbidden to do. **`workflow.py` is excluded from the exception**: it is bound by the same
-prohibition the orchestrator is, and reaches the four processors only through their public
-contracts.
+**The exception — the lab bench.** `_pdf.py`, `_image.py`, `_ocr.py` and `_llm.py` **may** import
+their own processor's `primitives/` and drive one named primitive. That is what a bench is for:
+`render --dpi 400` drives `render_page_to_image` without a document run, which the orchestrator is
+forbidden to do. The exception sits on the **layer**, not on the tool: after `SCR-11`…`SCR-15` each
+single-file tool imports only `_cli` and its own layer, so the tool's source names no primitive
+either — a stronger position than the one this subplan was frozen with, and the same one, since the
+layer is what does the driving. **`workflow.py` is excluded from the exception**: it is bound by the
+same prohibition the orchestrator is, and reaches the four processors only through their public
+contracts. `_batch.py` and `_cli.py` are not covered by the exception at all: neither reaches a
+primitive, and neither may.
 
 ### 3.3 Invocation, output and exit codes
 
 ```bash
 python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
 python scripts/tools/pdf.py --fixture pdf_sample_mixed.pdf render --page 2 --dpi 300
+python scripts/tools/batch_pdf.py tests/fixtures/pdf            # inspect, over every PDF below it
+python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos call \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
 python scripts/tools/workflow.py plan tests/fixtures/pdf/pdf_sample_text.pdf --dry-run
 python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     call --provider ollama --model llama3.1 --task extract \
@@ -118,17 +148,25 @@ python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0
   a run can be repeated and compared, and no two inputs collide. `--out <dir>` replaces the
   root; output is **never** written beside the input and never into `out/`. `/var/` is
   already in `.gitignore`.
+- **Batch output root (`SCR-12`):** `var/batch_<processor>/<walked-folder>/`, mirrored folder for
+  folder plus one directory per input, so two PDFs in one folder cannot collide. The walk skips
+the run's own root, so a second run over the same tree does not pick up what the first one wrote.
 - **Fixture roots:** `tests/fixtures/` and `tests/fixtures-txt/` (the second for text inputs).
   `--fixture <name>` resolves a bare name or a name with a subdirectory; a **path** is taken
   as given. The resolved absolute path is printed in the run header, so a resolved fixture is
-  never silent, and `--fixtures-root` relocates the search when the tree moves.
+  never silent, and `--fixtures-root` relocates the search when the tree moves. A batch tool
+  takes no `--fixture`: its input is the folder positional, and a folder that is not one is a
+  usage error.
 - **stdout** carries the human summary; `--json` prints the machine-readable payload instead
   (built from the result's own fields, not a second serialization of the library's state).
 - **Exit codes:** `0` the run produced a result and its `status` is a success; `1` the library
   returned a typed failure (`status != success`, or `DocumentResult.status == FAILED`) — the
   typed error records are printed, the tool does not raise; `2` a usage error (unknown
   subcommand, missing required flag, unresolvable input), which is `argparse`'s own code.
-  Nothing else, and never a traceback for a failure the library already typed.
+  Nothing else, and never a traceback for a failure the library already typed. A **batch** run
+  exits `1` when *any* input failed and `0` when none did: one bad file does not end the corpus,
+  and an input whose failure the contract *returned* rather than raised is counted, printed and
+  filed with its own status instead of being reported as `ok`.
 
 ### 3.4 Subcommand → symbol map (the whole contract of each tool)
 
@@ -207,6 +245,38 @@ and `policies["allow_ocr"|"allow_vlm"]` are all required by the library, which r
 missing key **by name**. The tool surfaces that refusal as a printed
 `CONFIGURATION_ERROR` and exit `1`; it does not fill the gap.
 
+**The four batch tools (`SCR-12`…`SCR-15`)** — the same commands over every matching file below a
+folder, dispatching through the same layers:
+
+| Tool | Layer | Inputs it takes | Command when none is stated | Commands it does **not** offer |
+|---|---|---|---|---|
+| `batch_pdf.py` | `_pdf.py` | `.pdf` | `inspect` — flag-free, publishes nothing | — |
+| `batch_image.py` | `_image.py` | `.png .jpg .jpeg .tif .tiff .bmp` | `info` — flag-free, publishes nothing | — |
+| `batch_ocr.py` | `_ocr.py` | the image set, because the OCR processor's input *is* an image | `text` — flag-free, publishes nothing | — |
+| `batch_llm.py` | `_llm.py` | `.txt .md` | **none** — a subcommand is required | `status`, `models`, `fake`, `resume` |
+
+The four rules the batch tools share:
+
+1. **A default is stated, never silent.** `inspect`, `info` and `text` are the flag-free methods
+   that publish no artifact, so a bare run can only report; the header says
+   `command: <name> (default, none stated)`. The frame takes that fact from the tool rather than
+   reading it back off the parsed arguments, and the default command is *parsed as a subcommand*,
+   so a bare run and a stated one are the same run — its flags included.
+2. **`batch_llm.py` has no default**, because it has no flag-free command to make: `--provider`
+   and `--model` are required on every one of its commands, exactly as on `llm.py`. A bare run is
+   refused with exit `2`.
+3. **The subset is a decision, not an omission.** `status` asks about a *run directory*, `models`
+   asks about a *model* and never reads the input, `fake` is a single-input demonstration, and
+   `resume` pins one run identity — which a corpus cannot give one input without giving it to all
+   of them. The four that remain are the ones whose answer is a property of the input. A command
+   left out is not registered, so naming it is a usage error rather than a silent no-op.
+4. **`--fake` on `batch_llm.py`** installs the same committed scripted provider as `llm.py fake`
+   and `workflow.py --fake-llm`, so a whole corpus of chains is demonstrable with no model served
+   and no token spent. It patches the provider seam and nothing above it.
+
+A batch tool does not re-declare a payload, a flag or an artifact path: a method's payload lives in
+its layer, and the frame files it as `result.json` beside whatever the method published.
+
 ### 3.5 The fixture map (what the bench actually runs on)
 
 | Tool | Roots and cases |
@@ -224,6 +294,12 @@ documental run and the `.txt` for a prompt, and can compare them by eye. The too
 diff the two: comparing is a reading, and a tool that compares would be a second
 implementation of the extraction it is trying to check.
 
+The **batch** tools' demonstration folders are the ones `SCR-17` records: `tests/fixtures/pdf`
+(four PDFs, one of them corrupt: `files: 4 · succeeded: 3 · failed: 1`), `tests/fixtures/image`
+(four images, one of them corrupt: the same three-and-one), `tests/fixtures/ocr` (two images, both
+converted) and `tests/fixtures-txt/casos` (three texts, answered two ways: `--fake` for
+`SUCCESS`, and no model served for a typed `MODEL_UNAVAILABLE` on every input).
+
 ## 4. Execution plan (PM)
 
 ### 4.1 WBS
@@ -240,6 +316,14 @@ implementation of the extraction it is trying to check.
 | SCR-08 | Structural guard test + tool-glue tests over the existing doubles | M | SCR-02, SCR-03, SCR-04, SCR-05, SCR-06 |
 | SCR-09 | The four QA gates clean on the whole tree | S | SCR-07, SCR-08 |
 | SCR-10 | Reconcile the stale lab-tool citations named in §9 | S | SCR-09 |
+| SCR-11 | `scripts/tools/_pdf.py` — the PDF bench's command layer, and `pdf.py` rewritten onto it | M | SCR-09 |
+| SCR-12 | `scripts/tools/_batch.py` — the shared folder frame — and `batch_pdf.py` | L | SCR-11 |
+| SCR-13 | `scripts/tools/_image.py` and `batch_image.py` | M | SCR-12 |
+| SCR-14 | `scripts/tools/_ocr.py` and `batch_ocr.py` | M | SCR-12 |
+| SCR-15 | `scripts/tools/_llm.py` and `batch_llm.py` (`--fake`, no default command) | L | SCR-12 |
+| SCR-16 | The batch sections of `scripts/tools/readme.md`: pairing, mirror, defaults, exit codes | S | SCR-12 |
+| SCR-17 | Hand run of the four batch tools over the fixture folders, recorded in the bitacora | M | SCR-13, SCR-14, SCR-15 |
+| SCR-18 | This revision: §3.1/§3.4/§4/§5/§6/§9, the WBS issue file, and the root `README.md` table | S | SCR-17 |
 
 ### 4.2 Order / waves
 
@@ -250,8 +334,19 @@ implementation of the extraction it is trying to check.
 - **Wave 3 — Verify:** `SCR-07` ∥ `SCR-08`. The hand run and the machine guard are two
   different questions and neither substitutes for the other.
 - **Wave 4 — Close:** `SCR-09` → `SCR-10`.
+- **Wave 5 — Batch mode, one processor at a time:** `SCR-11` (the PDF layer, which proves the
+  split on the processor with the widest surface) → `SCR-12` (the shared frame, extracted once
+  there is a second tool to share it with) → `SCR-13` ∥ `SCR-14` ∥ `SCR-15` (image, OCR and LLM,
+  each against the frame already in place) → `SCR-16` (the readme) ∥ `SCR-17` (the hand run) →
+  `SCR-18` (this revision).
 
-**Critical path:** `SCR-01 → SCR-06 → SCR-07 → SCR-09 → SCR-10`.
+**Critical path:** `SCR-01 → SCR-06 → SCR-07 → SCR-09 → SCR-10 → SCR-11 → SCR-12 → SCR-15 →
+SCR-17 → SCR-18`.
+
+**Entry condition (wave 5):** `SCR-10` closed, so the five tools and the convention are settled — a
+layer extracted before `SCR-09` would be a layer over moving code. No layer precedes the tool it
+serves, because the layer is *found* by the second caller: `SCR-11` exists only because
+`SCR-12` was about to copy `pdf.py`.
 
 **Entry condition:** Phases 1–3 are closed (they are: `pdf`, `image`, `ocr`, `llm` and the
 orchestrator all have their acceptance evidence green), so every symbol in §3.4 exists.
@@ -303,6 +398,28 @@ Scenario: "workflow.py" is bound by the orchestrator's frontier
   When its imports are read
   Then it imports "docflow.pdf", "docflow.image", "docflow.ocr" and "docflow.llm" entry points
   And it imports no "docflow.*.primitives" module
+
+Scenario: A batch runs a whole folder and does not stop at the first bad file
+  Given "tests/fixtures/pdf", which holds three readable PDFs and one corrupt one
+  When "scripts/tools/batch_pdf.py tests/fixtures/pdf" runs
+  Then every readable PDF has a mirror directory under "var/batch_pdf/pdf/<stem>/"
+  And each of those holds the "result.json" of the method that ran
+  And the corrupt one is printed as "pdf_corrupt.pdf: FAILED" with its typed record and files nothing
+  And the summary reads "files: 4 · succeeded: 3 · failed: 1"
+  And the exit code is 1
+
+Scenario: A batch states the command it made instead of assuming one
+  Given "scripts/tools/batch_image.py tests/fixtures/image" with no subcommand
+  When the run starts
+  Then the header says "command: info (default, none stated)"
+  And "info" is the flag-free method that publishes nothing
+  And the same run with a stated command prints "command: <name>" with no such note
+
+Scenario: The batch frame is one implementation, not four
+  Given "_batch.py" and the four batch tools
+  When their sources are read
+  Then no batch tool contains a walk, a mirror, a summary or an exit-code computation of its own
+  And no batch tool declares a payload, a flag or an artifact path that its layer does not
 ```
 
 ## 6. Test plan
@@ -316,18 +433,26 @@ an engine is the tool's **shape** and its **glue**, and that is what it checks.
 
 **Structural guards (`SCR-08`), AST over the tree — no execution:**
 
-1. The tool set is exactly `_cli.py` + the five tools; nothing else lives in `scripts/tools/`.
+1. The tool set is exactly `_cli.py`, `_batch.py`, the four processor layers (`_pdf.py`,
+   `_image.py`, `_ocr.py`, `_llm.py`) and the nine tools; nothing else lives in `scripts/tools/`.
 2. No module under `src/docflow/` mentions `scripts` or `var` (the frontier), and none imports
    `tests/` (the existing `test_skeleton.py` assertion, re-run over the new files).
 3. No tool's source names an engine binary (`pdftoppm`, `pdftotext`, `pdfimages`,
    `pdfseparate`, `pdfinfo`, `pdfunite`, `pdftocairo`), an engine module (`cv2`, `PIL`,
-   `docling`, `subprocess`) or a provider SDK (`httpx`, `openai`, `ollama`). A tool that calls
-   the library cannot need any of them; one that names them has started reimplementing.
+   `docling`, `subprocess`) or a provider SDK (`httpx`, `openai`, `ollama`, `anthropic`). A tool
+   that calls the library cannot need any of them; one that names them has started reimplementing.
+   Run over the layers too (`SCR-11`…`SCR-15`): a layer may drive a primitive but still may not
+   name the engine the primitive reaches.
 4. `workflow.py` imports no `docflow.*.primitives` module.
 5. No module under `src/docflow/` calls `sys.exit`.
 6. Every tool exposes a parser builder and its documented subcommands parse; `--help` exits
    `0`. This is the cheapest possible coverage of the surface, and it is the surface the
-   runbook quotes.
+   runbook quotes. For a batch tool the probe passes the folder *and* the command: a probe that
+   passed only one of the two would have proved nothing about the other.
+7. The tool declares which of its subcommands publish no file, and the set matches the reader's
+   expectation — `REPORT_ONLY` per tool, restated in the test so a subcommand that moves between
+   the two sets reddens it. A batch tool's set is empty on purpose: the frame files a record for
+   every input that produced a payload.
 
 **Glue tests with the existing doubles (no engine, no provider):** the suite already owns the
 machinery — `tests/fakes/processors/` replaces whole processors at the contract level, the
@@ -350,6 +475,20 @@ their own; they consume the ones the processors already ship.
 4. **No default model.** *Mutation:* give `llm.py`'s `--model` a default of `"llama3.1"`.
    *Observed:* the "no inference without a stated provider and model" test fails, because the
    command now succeeds with no `--model`.
+5. **A returned failure is not reported as `ok`.** *Mutation:* force the frame's per-input line
+   back to `ok` instead of deriving it from `_failed`. *Observed:* the returned-failure test fails
+   on `': FAILED ->' not in 'a.png: ok -> …'` — and with the frame's own record-printing dropped,
+   on the missing `ERROR …:` line. Both mutations are recorded in `docs/plan/bitacora.md`.
+6. **A default command is stated, never silent.** *Mutation:* pass `default=False` from
+   `batch_ocr.py`. *Observed:* the batch test fails: no
+   `command: text (default, none stated)` in the header.
+7. **A method's engine throw is a typed failure, not a crash.** *Mutation:* remove the typing from
+   `_ocr._conversion` and call the engine call directly. *Observed:* the corpus test fails — the
+   engine's own exception escapes the batch and ends the run at the first bad input.
+8. **The batch frame is one implementation.** *Mutation:* give a batch tool its own mirror
+   computation, or a payload its layer does not hold. *Observed:* the frame's tests fail (the
+   mirrored paths stop matching) and `SCR-12`'s guard on the layer/tool split fails on the
+   duplicate symbol.
 
 Each invariant leaves the four-field record `docs/plan/README.md` §7 fixes (Invariant /
 Mutation / Observed failure / Restored green) in the root `README.md`, where `GEN-16` audits
@@ -360,6 +499,15 @@ the set. A record whose mutation did not turn its test red is a defect of the te
 glue tests exercise; the real negatives (`tests/fixtures/negativos/**`) are for the hand run
 of `SCR-07`, where a document that legitimately yields nothing is the interesting observation —
 not an assertion.
+
+**The batch tests (`SCR-12`…`SCR-15`)** build their own corpus in `tmp_path` rather than walking a
+committed folder, so a fixture that gains a file cannot change what they assert. Two of them need a
+double that is not the engine: `batch_ocr.py`'s returned-failure test scripts the Docling double's
+*status* (a refused conversion), and `batch_llm.py`'s reads its tokens with the window stated by the
+caller, which is the one LLM command that reaches no provider at all. The `--fake` flag's own test
+patches the installer **by name** (`_llm.install_fake`), because a tool invoked by path imports its
+siblings as top-level modules while a test imports them as `scripts.tools.*` — two module objects,
+and patching the wrong one would leave the tool's own copy in place and pass either way.
 
 ## 7. Definition of Ready / Definition of Done
 
@@ -374,12 +522,15 @@ not an assertion.
 
 **Definition of Done**
 
-- The five tools and `_cli.py` exist at the paths §3.1 fixes, and the tool set is exactly
-  those six files.
+- The fifteen modules of §3.1 exist at the paths it fixes, and the tool set is exactly those
+  fifteen: `_cli.py`, `_batch.py`, the four processor layers, and the nine tools.
 - Every subcommand in §3.4 calls the symbol the table names; no tool contains a transformation,
-  a retry, a cache, a fallback or a default engine/provider/model/DPI/threshold.
-- Output lands under `var/tools/<tool>/<stem>-<hash8>/`; the input is untouched; nothing is
-  written into `out/`.
+  a retry, a cache, a fallback or a default engine/provider/model/DPI/threshold. A batch tool
+  additionally contains no walk, mirror, summary or exit-code computation of its own: those are
+  `_batch.py`'s, and the tool supplies only its suffix set, its layer and its command.
+- Output lands under `var/tools/<tool>/<stem>-<hash8>/`, and a batch's under
+  `var/batch_<processor>/<walked-folder>/<relative folders>/<stem>/`; the input is untouched;
+  nothing is written into `out/`.
 - `--fixture` resolution and the resolved path are printed.
 - Typed failures print and exit `1`; usage errors exit `2`; nothing else.
 - The guard test is proven to fail under each documented mutation and restored green.
@@ -413,15 +564,26 @@ not an assertion.
   packaged — no console script, no `[project.scripts]` entry, no `pip install` (decision 11).
 - The `docflow-kernel` console entry point and `src/docflow/kernel_cli/` named in
   `.github/copilot-instructions.md`: superseded by `docs/plan/README.md` §9.1.
-- Batch corpus runs over `documentos/` and mirrored output trees.
 - Executing the tools in CI (`GEN-21` runs the four gates, not the bench).
 - Interactive/watch modes, shell completion, and any tool-local cache.
 - A comparison/diff tool: comparing two extractions is a *reading*, and a tool that compared
-  them would be a second implementation of the thing under test.
+them would be a second implementation of the thing under test.
+- A `batch_workflow.py`: the orchestrator's input is a *document request*, not a folder of files,
+  and a corpus of documental runs is a different feature with its own cost model. `SCR-12`'s frame
+  is written so that adding it would be a suffix set, a layer and a command — when a plan asks
+  for it.
+- Parallelism inside a batch: the four batch tools walk and run **serially**, in sorted order, so
+  two runs over one tree print the same lines in the same sequence. Concurrency is a cost decision
+  nobody has asked for yet (`# TODO: [RELEASE]` when one does).
 
-**Resolved decisions**
-
-1. **Location and names — RESOLVED:** `scripts/tools/<name>.py`, matching the root `README.md`
+**Reversed by this revision.** The bullet that read *"Batch corpus runs over `documentos/` and
+mirrored output trees"* was in force while the bench served one file at a time. It is now
+**in scope**, by the decision recorded in `docs/feedback/batch-mode-across-processors.md`: an
+operator with a corpus either runs the tool in a loop and re-assembles the summary by hand, or the
+bench does it once for everyone. The reversal is scoped to the four processors' own folders — the
+committed fixture roots and any folder a caller names — and does **not** reintroduce
+`documentos/`: the corpus stays out of the repository (`.gitignore`), and a batch run over it writes
+to `var/batch_<processor>/<folder>/`, which is ignored too.
    §"Lab tools" and the `/var/` ignore rule; `_`-prefixed modules are not tools.
 2. **A tool is a caller, not a component — RESOLVED:** the three boundaries of §3.2 hold, and
    `SCR-08` asserts them rather than promising them.
@@ -465,6 +627,22 @@ not an assertion.
 13. **No CI execution of the tools — RESOLVED for the PoC:** `GEN-21` runs the four gates. A
     bench that executes real engines on every pull request is a cost this stage does not take;
     the guards keep the tools honest in the meantime.
+14. **Two tools per processor, one layer under them — RESOLVED (`SCR-11`…`SCR-15`):** the
+    single-file tool and the folder tool call the same methods, so the methods live in a shared
+    `_`-prefixed layer. The alternative — the batch importing its twin — would make one tool's
+    private helper another tool's API, and a second copy of every payload would drift.
+15. **The batch's command is the caller's, and a default is stated — RESOLVED:** a batch tool with
+    a flag-free method that publishes nothing makes it, and says so in the header. A tool with no
+    such method (`batch_llm.py`, whose every command requires a provider and a model) makes
+    **none** and requires the caller to state one. A default is never silent, and never invented to
+    make a bare run succeed.
+16. **The batch's command subset is a decision — RESOLVED (`SCR-15`):** the four commands whose
+    answer is a property of the input. `status`, `models`, `fake` and `resume` are not registered
+    on `batch_llm.py` at all, so naming one is a usage error rather than a silent no-op.
+17. **One mirror, one record, one exit code — RESOLVED (`SCR-12`):** every batch tool writes
+    `<root>/<relative folders>/<stem>/result.json`, publishes the method's artifacts beside it, and
+    exits `1` when any input failed. The walk skips the run's own root. The frame lives in
+    `_batch.py`, so the fifth batch tool is a suffix set, a layer and a command.
 
 **Stale documents this subplan creates or leaves (owner in parentheses)**
 
@@ -475,6 +653,9 @@ borrowed IDs an open plan revision now records them as resolved. What remains is
 
 | Document | What is stale | Owner |
 |---|---|---|
+| `docs/plan/issues/wbs-scripts.md` | §1/§2/§3 carry `SCR-01`…`SCR-10` only; `SCR-11`…`SCR-18` and their Depends/Blocks edges are added by this revision | `SCR-18` |
+| `docs/plan/README.md` §4.1 and §6 | the module set and the wave table name the six original modules | `SCR-18` |
+| root `README.md` | the "Lab tools" table names the six original modules and `SCR-02`…`SCR-06`; it gains the batch tools | `SCR-18` |
 | `docs/plan/issues/wbs-general.md` | §1 and §4 name no Phase 5 range at all; the `SCR-*` range exists only in this subplan and its WBS | `SCR-10` |
 | `.github/copilot-instructions.md` | describes `docflow-kernel` + `src/docflow/kernel_cli/` as the lab surface; `docs/plan/README.md` §9.1 resolved the layout without a kernel layer, and §4.1 here names the replacement | `SCR-10` |
 | `docs/plan/bitacora.md` | has no entry for this pass until `SCR-07` writes one | `SCR-07` |

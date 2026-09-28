@@ -25,8 +25,8 @@
 | 2 | Orchestrator: state, reuse, resume | — | `ORC-01`…`ORC-19` | 19 | 3 / 13 / 3 | a run interrupted mid-pipeline resumes without re-running completed stages (proved by a test that observes stage states after a resume); forcing a stage invalidates its downstream dependents; four QA gates pass |
 | 3 | Integration: source selection and end-to-end result | `GEN-07`…`GEN-10` | `ORC-12`, `ORC-13`, `ORC-17` (implementation owners, already counted in Phase 2) | 4 | 0 / 3 / 1 | one end-to-end happy-path test per input type (PDF with native text; scanned image → OCR → LLM) produces a `DocumentResult`; four QA gates pass |
 | 4 | Hardening + programme close-out | `GEN-11`…`GEN-22` | `PDF-11`, `PDF-12`, `PDF-13`, `PDF-14`, `IMG-10`, `IMG-11`, `IMG-13`, `IMG-14`, `IMG-15`, `OCR-09`, `OCR-10`, `OCR-12`, `OCR-13`, `OCR-14`, `LLM-13`, `ORC-15`, `ORC-16`, `ORC-19` | 12 | 6 / 4 / 2 | all phases' acceptance evidence re-run green; every shortcut carries an explicit `# TODO: [MVP]` / `# TODO: [RELEASE]` tag |
-| 5 | Lab tools, one operator CLI per processor | — | `SCR-01`…`SCR-10` (delegated to [`wbs-scripts.md`](wbs-scripts.md)) | 10 | 2 / 6 / 2 | every tool's documented subcommand parses and calls the symbol `subplan-scripts.md` §3.4 names; the structural guards are green and mutation-falsified; the four QA gates pass |
-| **Total** | | **22** | **87** | **109** | **36 / 61 / 12** | |
+| 5 | Lab tools, one operator CLI per processor, each with a folder twin | — | `SCR-01`…`SCR-18` (delegated to [`wbs-scripts.md`](wbs-scripts.md)) | 18 | 4 / 10 / 4 | every tool's documented subcommand parses and calls the symbol `subplan-scripts.md` §3.4 names; the four batch tools share one frame and one layer per processor; the structural guards are green and mutation-falsified; the four QA gates pass |
+| **Total** | | **22** | **95** | **117** | **38 / 65 / 14** | |
 
 **Scope.** This document owns the work that belongs to no single processor: the shared
 skeleton and contract types (Phase 0), the cross-processor integration layer that turns four
@@ -631,8 +631,8 @@ flowchart LR
 ### 4.6 Phase 5 — Lab tools (`scripts/tools/`)
 
 - **Entry condition:** Phases 1–3 exit met — the four processors and the orchestrator have their acceptance evidence green. A tool is never built ahead of the processor it exposes.
-- **Issues:** `SCR-01`…`SCR-10` (delegated to [`wbs-scripts.md`](wbs-scripts.md); the range is owned by [`subplan-scripts.md`](../subplan-scripts.md) §4, not by this file's `GEN-xx` range).
-- **Deliverables:** the five operator CLIs plus the shared `scripts/tools/_cli.py`; the structural guard test that holds the three boundaries of `docs/plan/README.md` §4.1 — including the orchestrator's own frontier on `workflow.py` — with its invariants mutation-falsified; the hand run over `tests/fixtures/` and `tests/fixtures-txt/`, recorded in `docs/plan/bitacora.md` as an observation.
+- **Issues:** `SCR-01`…`SCR-18` (delegated to [`wbs-scripts.md`](wbs-scripts.md); the range is owned by [`subplan-scripts.md`](../subplan-scripts.md) §4, not by this file's `GEN-xx` range). `SCR-01`…`SCR-10` are the five tools and the shared plumbing; `SCR-11`…`SCR-18` are the batch revision that followed — `_pdf.py`, `_batch.py`, the image, OCR and LLM pairs, the bench readme, the hand run and the revision itself.
+- **Deliverables:** the five operator CLIs plus the shared `scripts/tools/_cli.py`; the four folder twins plus the shared folder frame `scripts/tools/_batch.py` and the four per-processor layers; the structural guard test that holds the three boundaries of `docs/plan/README.md` §4.1 — including the orchestrator's own frontier on `workflow.py` — with its invariants mutation-falsified; the hand run over `tests/fixtures/` and `tests/fixtures-txt/`, recorded in `docs/plan/bitacora.md` as an observation.
 - **Exit criterion:** "every tool's documented subcommand parses and calls the symbol its subplan §3.4 names; the guards are green and mutation-falsified; the four QA gates pass."
 - **Gate:** all four gates. `scripts/` is inside the two Ruff gates and outside `pylint src tests` (`subplan-scripts.md` §9, decision 10).
 

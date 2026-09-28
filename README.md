@@ -59,7 +59,7 @@ would be a silent stand-in, which this project forbids at every stage.
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
-| 5 — lab tools | one operator CLI per processor | `SCR-01`…`SCR-10` |
+| 5 — lab tools | one operator CLI per processor, and a folder twin for each | `SCR-01`…`SCR-18` |
 
 ---
 
@@ -103,6 +103,7 @@ src/docflow/           the library — import name is `docflow`, never `src.docf
 └── identities.py      the three identities + the artifact metadata key set
 
 scripts/tools/         operator tools — NOT part of the library, never imported by src/
+                       (var/batch_<processor>/ holds a folder run's mirrored tree)
 var/                   tool run output (var/tools/<tool>/) — never committed
 tests/                 mirrors src/docflow/, one test module per source module
 docs/                  the specification. `docs/idea/` explores; `docs/plan/` decides.
@@ -123,11 +124,15 @@ convention is in [`docs/plan/README.md` §4.1](docs/plan/README.md) and the desi
 ```bash
 python scripts/tools/pdf.py split mi.pdf          # → var/tools/pdf/mi-<hash>/page_001/…
 python scripts/tools/pdf.py inspect mi.pdf
+python scripts/tools/batch_pdf.py cartas/         # → var/batch_pdf/cartas/<stem>/result.json
 python scripts/tools/workflow.py plan mi.pdf      # "--dry-run" is what "plan" means
 ```
 
 Input is an argument; output goes to `var/tools/<tool>/`, never beside the input and never
-into `out/`. Override with `--out`.
+into `out/`. Override with `--out`. The **batch** tools take a folder instead of a file, mirror
+the tree they walked under `var/batch_<processor>/<folder>/<relative folders>/<stem>/`, file each
+input's payload as `result.json` beside whatever the method published, and exit `1` when any input
+failed — one bad file does not end the corpus.
 
 **A tool is a caller, not a component.** Three boundaries hold, and the guard test
 (`SCR-08`) asserts them, so the CI gate that runs `pytest` enforces them too:
@@ -148,12 +153,20 @@ is: it reaches the four processors only through their public contracts.
 | Tool | Task | Exposes |
 |---|---|---|
 | `pdf.py` | `SCR-02` | `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` |
+| `batch_pdf.py` | `SCR-12` | the same eight commands over every PDF below a folder (`inspect` when none is stated) |
 | `image.py` | `SCR-03` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run` |
+| `batch_image.py` | `SCR-13` | the same seven over every image below a folder (`info` when none is stated) |
 | `ocr.py` | `SCR-04` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics` |
+| `batch_ocr.py` | `SCR-14` | the same seven over every image below a folder (`text` when none is stated) |
 | `llm.py` | `SCR-05` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
+| `batch_llm.py` | `SCR-15` | `call`, `graph`, `node`, `tokens` over every text below a folder — a command is **required**, and `--fake` installs the scripted provider |
 | `workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 
-All five now exist under `scripts/tools/`, each built after its processor's own acceptance
+Each processor's two tools call one shared layer (`_pdf.py`, `_image.py`, `_ocr.py`, `_llm.py`)
+and the four batch tools share the folder frame `_batch.py`, so the batch adds a suffix set, a layer
+and a command and nothing else.
+
+All nine now exist under `scripts/tools/`, each built after its processor's own acceptance
 evidence went green. Two design notes worth knowing — `ocr.py` has **no** `--engine`
 flag, because Docling is fixed and never user-selectable; and `llm.py` requires `--provider`
 and `--model` on every inference subcommand, because a default model is exactly the silent
@@ -523,6 +536,18 @@ inverse edit, and the restore was re-measured:
 | `workflow.py` carries the orchestrator's frontier — it reaches no `primitives/` module (`tests/test_lab_tools.py::test_workflow_tool_imports_no_primitives_module`) | `from docflow.ocr.primitives import convert_image_with_docling` added to `scripts/tools/workflow.py` | `pytest tests/test_lab_tools.py::test_workflow_tool_imports_no_primitives_module -q` → 1 failed: `E AssertionError: workflow.py reached a processor's internals: ['line 41: docflow.ocr.primitives']` | inverse edit, then `pytest tests/test_lab_tools.py` → 40 passed |
 | No default model — a default is the silent stand-in the project forbids (`tests/test_lab_tools.py::test_llm_call_without_a_model_is_a_usage_error`) | `llm.py`'s `--model` given `default="llama3.1"` (`scripts/tools/llm.py`) | `pytest tests/test_lab_tools.py::test_llm_call_without_a_model_is_a_usage_error -q` → 1 failed: `Failed: DID NOT RAISE SystemExit`, with the captured run showing `model: llama3.1` — the request was built from a model nobody stated | inverse edit, then `pytest tests/test_lab_tools.py` → 40 passed |
 
+Wave 5's four records, same shape (`SCR-12`…`SCR-15`). The two frame invariants were the two
+mutations that found real defects: the first was applied to `_batch.run_one`, and the second to
+`_ocr._conversion`, each after the defect had been fixed and before the fix was kept:
+
+| Invariant | Mutation | Observed failure | Restored green |
+|---|---|---|---|
+| A contract that *returned* a failed status is reported as `FAILED`, not as `ok` (`tests/test_lab_tools.py::test_batch_ocr_reports_a_returned_failure_as_a_failure`) | the frame's per-input line forced back to `print(f"{input_path.name}: ok -> {root}")` (`scripts/tools/_batch.py`) | `pytest tests/test_lab_tools.py -q -k returned_failure` → 1 failed: `E assert ': FAILED ->' in 'a.png: ok -> …'` — the run printed `ok` above `succeeded: 0 · failed: 1` | inverse edit, then `pytest tests/test_lab_tools.py` → 95 passed |
+| A returned failure's own typed record is shown, not left in `result.json` (`tests/test_lab_tools.py::test_batch_ocr_reports_a_returned_failure_as_a_failure`) | `if failed and failures: _cli.print_error(failures)` dropped from `run_one` (`scripts/tools/_batch.py`) | `pytest tests/test_lab_tools.py -q -k returned_failure` → 1 failed: `E assert 'ERROR OCR_ERROR:' in 'a.png: FAILED -> …'` — no exception had carried the record, so nothing named the failure | inverse edit, then `pytest tests/test_lab_tools.py` → 95 passed |
+| A default command is stated in the header, never silent (`tests/test_lab_tools.py::test_batch_ocr_mirrors_the_folder_it_walked`) | `default=default` → `default=False` in `batch_ocr.py` | `pytest tests/test_lab_tools.py -q -k batch_ocr` → 1 failed: no `command: text (default, none stated)` in the header | inverse edit, then `pytest tests/test_lab_tools.py` → 95 passed |
+| An input the engine refuses is one input's failure, not the run's (`tests/test_lab_tools.py::test_batch_ocr_types_an_engine_throw_and_keeps_going`) | the `try/except` typing removed from `_ocr._conversion`, calling the engine call directly (`scripts/tools/_ocr.py`) | `pytest tests/test_lab_tools.py -q -k engine_throw` → 1 failed: the engine's own `ValueError` escaped the batch and ended the corpus at the first bad input | inverse edit, then `pytest tests/test_lab_tools.py` → 95 passed |
+| A layer states its processor's inputs, and both of its tools read that one statement (`tests/test_lab_tools.py::test_batch_pdf_mirrors_the_folder_it_walked`) | `_pdf.SUFFIXES` widened to `(".pdf", ".txt")` — the same edit as a second, drifting copy of the set in the tool (`scripts/tools/_pdf.py`) | `pytest tests/test_lab_tools.py -q -k batch_pdf_mirrors` → 1 failed: `E assert ['notes', 'sub1/a', 'sub2/deeper/b'] == ['sub1/a', 'sub2/deeper/b']` — the run walked a file its processor cannot read | inverse edit, then `pytest tests/test_lab_tools.py` → 95 passed |
+
 **Never a silent stand-in.** No empty string, no `0`, no `[]`, no `None`-without-reason, and no
 default engine or threshold used in place of a real answer.
 **No processor imports another processor.** The orchestrator is the only component that
@@ -629,7 +654,9 @@ OCR type names (`OCRContext` and `OCRDocument` are canonical; the subplan's `Con
    repurposed `PDF-14`, `IMG-15` and `OCR-14` as the in-memory doubles of `pdf`, `image` and
    `ocr`, and `GEN-21` is the CI gate, so the Phase 5 row's four borrowed IDs were stale.
    [`docs/plan/subplan-scripts.md`](docs/plan/subplan-scripts.md) allocates `SCR-01`…`SCR-10`
-   and the row above now cites them; no ID was renumbered.
+   and the row above now cites them; no ID was renumbered. The batch revision of the same
+   subplan appends `SCR-11`…`SCR-18` (`_pdf.py`, `_batch.py`, the three remaining pairs, the
+   bench readme, the hand run and the revision itself), again without renumbering.
 
 9. **The OCR result states absence in its typing, not in empty values.**
    `OCRResult`'s nine product fields — `text`, `markdown`, `structured_document`, `tables`,

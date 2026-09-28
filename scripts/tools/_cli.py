@@ -245,7 +245,7 @@ def _add_input_argument(subparser: argparse.ArgumentParser) -> None:
 
 
 def _add_common_arguments(
-    parser: argparse.ArgumentParser, *, identity: bool = False
+    parser: argparse.ArgumentParser, *, identity: bool = False, fixtures: bool = True
 ) -> None:
     """Add the arguments every tool shares.
 
@@ -254,15 +254,18 @@ def _add_common_arguments(
         identity: Also add ``--document-id`` and ``--run-id``, for a tool whose contract
             carries correlation metadata. A tool whose contract does not (``workflow.py``)
             leaves them out rather than shipping a flag that does nothing.
+        fixtures: Also add ``--fixture`` and ``--fixtures-root``. A tool whose input is a folder
+            the run walks leaves them out: it resolves no fixture, so the flags would do nothing.
     """
-    parser.add_argument(
-        "--fixture",
-        help="Fixture name resolved under tests/fixtures/ or tests/fixtures-txt/.",
-    )
-    parser.add_argument(
-        "--fixtures-root",
-        help="A root that replaces both default fixture roots for this run.",
-    )
+    if fixtures:
+        parser.add_argument(
+            "--fixture",
+            help="Fixture name resolved under tests/fixtures/ or tests/fixtures-txt/.",
+        )
+        parser.add_argument(
+            "--fixtures-root",
+            help="A root that replaces both default fixture roots for this run.",
+        )
     parser.add_argument(
         "--json",
         action="store_true",
@@ -292,6 +295,7 @@ def build_parser(
     identity: bool = False,
     subcommand_required: bool = True,
     positional: tuple[str, str] | None = None,
+    fixtures: bool = True,
 ) -> tuple[argparse.ArgumentParser, Any]:
     """Build a tool's parser: the shared arguments plus its subcommand group.
 
@@ -305,13 +309,14 @@ def build_parser(
             subcommands: a tool whose input is a folder rather than a file takes it once, so
             it cannot live on a subcommand. ``argparse`` fills positionals in declaration
             order, which is why this is not the tool's own ``add_argument``.
+        fixtures: Also add the fixture flags; see :func:`_add_common_arguments`.
 
     Returns:
         The parser, and the subcommand group to register subcommands on. The group is typed
         loosely because ``argparse`` exposes no public type for a subparser action.
     """
     parser = argparse.ArgumentParser(prog=prog, description=description)
-    _add_common_arguments(parser, identity=identity)
+    _add_common_arguments(parser, identity=identity, fixtures=fixtures)
     if positional is not None:
         parser.add_argument(positional[0], help=positional[1])
     subparsers = parser.add_subparsers(

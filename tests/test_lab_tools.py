@@ -19,13 +19,17 @@ import ast
 import importlib
 import json
 import re
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from docflow.llm import primitives as llm_primitives
 from scripts.tools import _cli
+from tests.fakes.engines.fake_docling import FakeConversionStatus, FakeDocling
+from tests.fakes.engines.fake_opencv import FakeOpenCV
 from tests.fakes.engines.fake_poppler import FakePage, FakePoppler
 from tests.fakes.processors import ProcessorDoubles
 from tests.support import imported_modules, sha256_of
@@ -36,8 +40,30 @@ SRC_ROOT = REPO_ROOT / "src" / "docflow"
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
 FIXTURES_TXT = REPO_ROOT / "tests" / "fixtures-txt"
 
-TOOLS = ("pdf", "batch_pdf", "image", "ocr", "llm", "workflow")
-TOOL_FILES = {"_cli.py", "_pdf.py", *(f"{tool}.py" for tool in TOOLS)}
+TOOLS = (
+    "pdf",
+    "batch_pdf",
+    "image",
+    "batch_image",
+    "ocr",
+    "batch_ocr",
+    "llm",
+    "batch_llm",
+    "workflow",
+)
+TOOL_FILES = {
+    "_cli.py",
+    "_batch.py",
+    "_pdf.py",
+    "_image.py",
+    "_ocr.py",
+    "_llm.py",
+    *(f"{tool}.py" for tool in TOOLS),
+}
+
+#: The tools whose input is a folder. Their documented invocation names the folder *and* the
+#: command, so a probe that passes only one of the two proves nothing about the other.
+BATCH_TOOLS = ("batch_pdf", "batch_image", "batch_ocr", "batch_llm")
 
 DOCUMENTED_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
     "pdf": (
@@ -69,8 +95,19 @@ DOCUMENTED_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
         "classify",
         "run",
     ),
+    "batch_image": (
+        "info",
+        "metrics",
+        "normalize",
+        "ocr-ready",
+        "vlm-ready",
+        "classify",
+        "run",
+    ),
     "ocr": ("run", "text", "md", "json", "tables", "blocks", "metrics"),
+    "batch_ocr": ("run", "text", "md", "json", "tables", "blocks", "metrics"),
     "llm": ("call", "node", "graph", "resume", "status", "models", "tokens", "fake"),
+    "batch_llm": ("call", "graph", "node", "tokens"),
     "workflow": (
         "run",
         "plan",
@@ -179,7 +216,9 @@ def test_no_module_under_src_imports_the_test_tree() -> None:
 # --- Guard 3: a tool calls, it never reimplements ------------------------------------
 
 
-@pytest.mark.parametrize("tool", ("_cli", "_pdf", *TOOLS))
+@pytest.mark.parametrize(
+    "tool", ("_cli", "_batch", "_pdf", "_image", "_ocr", "_llm", *TOOLS)
+)
 def test_no_tool_names_an_engine_or_a_provider_sdk(tool: str) -> None:
     """A tool's source names no engine binary, engine module or provider SDK."""
     source = (TOOLS_DIR / f"{tool}.py").read_text(encoding="utf-8")
@@ -249,7 +288,8 @@ def test_every_documented_subcommand_parses(tool: str) -> None:
     parser = tool_module(tool).build_parser()
 
     for subcommand in DOCUMENTED_SUBCOMMANDS[tool]:
-        assert parser.parse_args([subcommand]) is not None
+        arguments = [str(FIXTURES), subcommand] if tool in BATCH_TOOLS else [subcommand]
+        assert parser.parse_args(arguments) is not None
 
 
 @pytest.mark.parametrize("tool", TOOLS)
@@ -272,9 +312,12 @@ def test_help_exits_zero(tool: str) -> None:
 REPORT_ONLY: dict[str, tuple[str, ...]] = {
     "pdf": ("inspect", "text", "blocks"),
     "batch_pdf": (),
+    "batch_image": (),
     "image": ("info", "metrics", "classify"),
     "ocr": ("text", "md", "json", "tables", "blocks", "metrics"),
+    "batch_ocr": (),
     "llm": ("node", "status", "models", "tokens"),
+    "batch_llm": (),
     "workflow": ("plan", "status", "context"),
 }
 
@@ -380,6 +423,261 @@ def test_write_payload_creates_the_directories_it_writes_through(
 
     assert json.loads(written.read_text(encoding="utf-8")) == {"n": 1}
     assert written.read_text(encoding="utf-8").endswith("\n")
+
+
+def test_batch_image_mirrors_the_folder_it_walked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The image batch walks images, mirrors them, and states the command it made."""
+    monkeypatch.setattr("docflow.image.primitives.cv2", FakeOpenCV())
+    corpus = tmp_path / "corpus"
+    (corpus / "sub").mkdir(parents=True)
+    shutil.copy(FIXTURES / "image" / "color_layout.png", corpus / "sub" / "a.png")
+    shutil.copy(FIXTURES / "image" / "skewed_text.png", corpus / "b.png")
+    (corpus / "notes.txt").write_text("not an image", encoding="utf-8")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_image").main(["--out", str(out), str(corpus)])
+
+    assert code == 0
+    assert sorted(
+        record.parent.relative_to(out).as_posix() for record in out.rglob("result.json")
+    ) == ["b", "sub/a"]
+    assert "info (default, none stated)" in capsys.readouterr().err
+
+
+def test_image_reads_through_the_shared_layer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``image.py`` still builds its payload in the layer the batch tool shares."""
+    monkeypatch.setattr("docflow.image.primitives.cv2", FakeOpenCV())
+
+    code = tool_module("image").main(
+        ["info", str(FIXTURES / "image" / "color_layout.png")]
+    )
+
+    assert code == 0
+    assert "resolution:" in capsys.readouterr().out
+
+
+def install_ocr_engine(monkeypatch: pytest.MonkeyPatch) -> FakeDocling:
+    """Install the Docling double at the seam the OCR layer calls and return it."""
+    double = FakeDocling()
+    monkeypatch.setattr("docflow.ocr.primitives.convert_image_with_docling", double)
+    return double
+
+
+def test_ocr_reads_through_the_shared_layer(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``ocr.py`` builds its payload in the layer ``batch_ocr.py`` drives."""
+    install_ocr_engine(monkeypatch)
+
+    code = tool_module("ocr").main(["text", str(SAMPLE_OCR)])
+
+    assert code == 0
+    assert "Quarterly report" in capsys.readouterr().out
+
+
+def test_batch_ocr_mirrors_the_folder_it_walked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The OCR batch walks images, mirrors them, and states the command it made."""
+    install_ocr_engine(monkeypatch)
+    corpus = tmp_path / "corpus"
+    (corpus / "sub").mkdir(parents=True)
+    shutil.copy(SAMPLE_OCR, corpus / "sub" / "a.png")
+    shutil.copy(SAMPLE_OCR, corpus / "b.png")
+    (corpus / "notes.txt").write_text("not an image", encoding="utf-8")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_ocr").main(["--out", str(out), str(corpus)])
+
+    assert code == 0
+    assert sorted(
+        record.parent.relative_to(out).as_posix() for record in out.rglob("result.json")
+    ) == ["b", "sub/a"]
+    assert "text (default, none stated)" in capsys.readouterr().err
+
+
+def test_batch_ocr_types_an_engine_throw_and_keeps_going(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An input the engine refuses fails its own record; the rest of the corpus still runs."""
+    install_ocr_engine(monkeypatch)
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    shutil.copy(SAMPLE_OCR, corpus / "good.png")
+    (corpus / "bad.png").write_bytes(b"a .png that is not a PNG")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_ocr").main(["--out", str(out), str(corpus)])
+
+    assert code == 1
+    printed = capsys.readouterr().out
+    assert "ERROR ENGINE_ERROR" in printed
+    assert "failed: 1" in printed
+    assert [record.parent.name for record in out.rglob("result.json")] == ["good"]
+
+
+def test_batch_ocr_reports_a_returned_failure_as_a_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A contract that *returned* a failed status is not reported as ``ok``.
+
+    The failure never reaches the frame as an exception: ``run`` contains it and returns a
+    ``FAILED`` result, so the line the run prints has to agree with the summary it ends with — and
+    the typed record the payload states has to be shown, since no exception carried it.
+    """
+    refused = FakeDocling(
+        status=FakeConversionStatus.FAILURE, errors=["no model available"]
+    )
+    monkeypatch.setattr("docflow.ocr.primitives.convert_image_with_docling", refused)
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    shutil.copy(SAMPLE_OCR, corpus / "a.png")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_ocr").main(["--out", str(out), str(corpus), "run"])
+
+    assert code == 1
+    printed = capsys.readouterr().out
+    assert ": FAILED ->" in printed
+    assert ": ok ->" not in printed
+    assert "ERROR OCR_ERROR:" in printed
+    assert "failed: 1" in printed
+    assert (
+        json.loads((out / "a" / "result.json").read_text(encoding="utf-8"))["status"]
+        == "failed"
+    )
+
+
+def build_text_corpus(tmp_path: Path) -> Path:
+    """Write a small text corpus and return the folder, with one file of each kind."""
+    corpus = tmp_path / "corpus"
+    (corpus / "sub").mkdir(parents=True)
+    (corpus / "sub" / "a.txt").write_text("one case", encoding="utf-8")
+    (corpus / "b.md").write_text("# another case", encoding="utf-8")
+    (corpus / "template.json").write_text("{}", encoding="utf-8")
+    return corpus
+
+
+#: A token count with the window stated by the caller: the one LLM command that reaches no provider
+#: at all, which is what keeps these tests offline and independent of a served model.
+OFFLINE_TOKENS: tuple[str, ...] = (
+    "tokens",
+    "--provider",
+    "ollama",
+    "--model",
+    "llama3.1",
+    "--context-window",
+    "4096",
+)
+
+
+def test_llm_reads_through_the_shared_layer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``llm.py`` still builds its payload in the layer ``batch_llm.py`` drives."""
+    code = tool_module("llm").main([*OFFLINE_TOKENS, str(CASE_TEXT)])
+
+    assert code == 0
+    assert "tokens:" in capsys.readouterr().out
+
+
+def test_batch_llm_mirrors_the_folder_it_walked(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The LLM batch walks text inputs, mirrors them, and states the asset root it used."""
+    corpus = build_text_corpus(tmp_path)
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_llm").main(
+        ["--out", str(out), str(corpus), *OFFLINE_TOKENS]
+    )
+
+    assert code == 0
+    assert sorted(
+        record.parent.relative_to(out).as_posix() for record in out.rglob("result.json")
+    ) == ["b", "sub/a"]
+    assert "assets_dir:" in capsys.readouterr().err
+
+
+def test_batch_llm_requires_a_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A bare run is a usage error: this tool has no flag-free command to fall back on."""
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("batch_llm").main([str(build_text_corpus(tmp_path))])
+
+    assert exit_info.value.code == 2
+    assert "SUBCOMMAND" in capsys.readouterr().err
+
+
+def test_batch_llm_refuses_a_command_that_is_not_about_an_input(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``status`` is not registered here: asking about a run directory is not a corpus question."""
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("batch_llm").main([str(build_text_corpus(tmp_path)), "status"])
+
+    assert exit_info.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+
+
+def test_batch_llm_installs_the_scripted_provider_only_when_asked(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``--fake`` replaces the provider seam; without it the flag's work is never done.
+
+    The seam is patched **by name** rather than through this file's own import of the layer: a tool
+    invoked by path imports its siblings as top-level modules (``import _llm``), while this file
+    imports them as ``scripts.tools._llm``. Those are two module objects, and patching the wrong one
+    would leave the tool's own copy of the function in place — so the test would pass whether or not
+    the flag worked.
+    """
+    installed: list[int] = []
+    monkeypatch.setattr("_llm.install_fake", lambda: installed.append(1))
+    corpus = build_text_corpus(tmp_path)
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_llm").main(
+        ["--out", str(out), str(corpus), *OFFLINE_TOKENS]
+    )
+
+    assert code == 0
+    assert installed == []
+
+    code = tool_module("batch_llm").main(
+        ["--fake", "--out", str(out), str(corpus), *OFFLINE_TOKENS]
+    )
+
+    assert code == 0
+    assert installed == [1]
+
+
+def test_batch_llm_keeps_going_when_the_provider_refuses(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A refused call fails its own record; the rest of the corpus still runs."""
+    refused = llm_primitives.typed_failure("PROVIDER_ERROR", "no model is served")
+
+    def refuse(text: str) -> int:
+        raise refused
+
+    monkeypatch.setattr("docflow.llm.primitives.count_tokens", refuse)
+    corpus = build_text_corpus(tmp_path)
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_llm").main(
+        ["--out", str(out), str(corpus), *OFFLINE_TOKENS]
+    )
+
+    assert code == 1
+    printed = capsys.readouterr().out
+    assert "ERROR PROVIDER_ERROR" in printed
+    assert "failed: 2" in printed
+    assert not list(out.rglob("result.json"))
 
 
 # --- SCR-01 unit tests: the shared plumbing -----------------------------------------

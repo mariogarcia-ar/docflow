@@ -20,7 +20,7 @@ import argparse
 from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import _cli
 
@@ -39,6 +39,9 @@ SUBCOMMANDS: tuple[tuple[str, str], ...] = (
     ("classify", "The page's descriptive TEXT/IMAGE/MIXED classification."),
     ("run", "Run the PDF contract."),
 )
+
+#: The inputs the PDF processor takes, matched case-insensitively: what it can read.
+SUFFIXES: Final[tuple[str, ...]] = (".pdf",)
 
 #: What one method returns: the payload its caller prints, or writes beside the artifacts.
 Payload = dict[str, Any]

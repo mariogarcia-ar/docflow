@@ -1451,3 +1451,305 @@ pylint src tests           10.00/10
 ```
 
 **Next.** Unchanged, and owed: the `SCR-11`/`SCR-12` plan revision named in the entry above.
+
+---
+
+## 2026-09-27 — Phase 5 · batch mode across the processors: the plan
+
+**Delivered.** `docs/feedback/batch-mode-across-processors.md` — a decision note that plans the
+batch pattern for image, OCR and LLM, and declares itself the winner over `subplan-scripts.md` §9's
+"batch corpus runs over `documentos/` and mirrored output trees" bullet.
+
+**What it settles.** Four tools, four layers, one frame: `_batch.py` (the folder frame — walk,
+mirror, per-input record, summary, exit code — extracted from `batch_pdf.py`), `_image.py`,
+`_ocr.py` and `_llm.py` on the `_pdf.py` precedent, and `batch_image.py`, `batch_ocr.py`,
+`batch_llm.py`. Defaults `info` (image) and `text` (OCR) — the flag-free methods that publish
+nothing — and **none** for LLM, where `--provider`/`--model` are required so a bare run cannot be
+honest. `batch_llm`'s subset is `call`, `graph`, `node`, `tokens` plus a `--fake` flag; `status`
+(reads one run directory), `models` (one inventory, not a per-input question) and `fake` (a two-run
+demonstration under one pinned `--run-id`) are not per-input methods. `batch_workflow.py` is out of
+scope: the orchestrator's frontier plus a product feature, not a bench observation. The note also
+fixes the input suffix sets, the guards to widen (1: the module set; 3: no engine named, over every
+module; 7: the `REPORT_ONLY` pin per tool) and the risks (Docling's cost per image, the image
+publication defect, no model served).
+
+**Sequencing it prescribes.** 1) the plan revision — subplan §3.1/§3.4/§4/§5/§6/§9 and
+`issues/wbs-scripts.md` §1/§2/§3 in one pass, `SCR-11`…`SCR-18`, with the shipped PDF pair recorded
+as **done** and the bitacora as its evidence; plus the `docs/plan/README.md` §4.1/§6 and root
+`README.md` citations. 2) `_batch.py`, and `batch_pdf.py` refactored onto it (behaviour-preserving;
+the existing guards and glue tests are the evidence). 3) image. 4) OCR. 5) LLM. 6) the hand run of
+the four batch tools over real fixture folders, recorded here, and the four QA gates.
+
+**Gate evidence.**
+
+```
+pytest                     680 passed
+ruff check .               All checks passed!
+ruff format --check .      172 files already formatted
+pylint src tests           10.00/10
+```
+
+**Owed.** The revision and the three implementations above, in that order. This pass changed no
+code, no test and no frozen artifact — it is the plan those steps will be applied against.
+
+---
+
+## 2026-09-28 — Phase 5 · the batch plan applied: the frame and image (`SCR-11`…`SCR-13`)
+
+**Delivered.** Steps 2 and 3 of `docs/feedback/batch-mode-across-processors.md`, each gated.
+
+| File | Change |
+|---|---|
+| `scripts/tools/_batch.py` | **new**: the folder frame every batch tool runs on — `build_parser` (the folder positional and `--recursive`, no fixture flags), the walk (`inputs_under`), the mirror, the per-input record, the summary and the exit code |
+| `scripts/tools/batch_pdf.py` | refactored onto `_batch`: it keeps what is its own — the suffix set, the default command, the layer, the error type it catches — and nothing else |
+| `scripts/tools/_image.py` | **new**: the image bench's seven methods, moved from `image.py` with the payloads and flags, the pipelines still named where they run |
+| `scripts/tools/image.py` | a CLI over `_image`: parser, one handler factory, `main` |
+| `scripts/tools/batch_image.py` | **new**: the seven methods over a folder, the image suffixes, `info` as the bare run |
+| `scripts/tools/_cli.py` | `fixtures=False`, for a tool that resolves no fixture; the batch's default root is now `_batch.default_root(tool)` |
+| `tests/test_lab_tools.py` | guard 1's module set, guard 3 over `_batch` and `_image`, `batch_image`'s documented commands and its empty `REPORT_ONLY` pin, plus two glue tests (the mirrored tree, and `image.py` reading through the layer) |
+| `scripts/tools/readme.md` | the layout table, the shared-frame paragraph and a `batch_image.py` section |
+
+**A defect found on the way, and fixed.** The frame counted *exceptions* as failures only, so a
+contract run that **returns** a failed status was counted as a success — a corpus in which every
+input failed would have exited `0`. `_batch._failed` now asks `_cli.exit_code_for`, so one place
+owns what "failed" means: a returned failure is counted, reported in the summary, and sets the exit
+code. `batch_pdf.py`'s behaviour on `run` over a bad corpus changes with it, which is the fix.
+
+**Hand runs.**
+
+```
+batch_pdf.py tests/fixtures/pdf      files: 4 · ok 3 · failed 1 (pdf_corrupt.pdf)   exit 1
+image.py info …/color_layout.png     format png · 335 bytes · 160x120 · 3 channels   exit 0
+batch_image.py tests/fixtures/image  files: 4 · ok 3 · failed 1 (DECODE_ERROR)       exit 1
+  → var/batch_image/image/{color_layout,embedded_logo,skewed_text}/result.json
+```
+
+The `batch_pdf.py` run is byte-for-byte what the pre-refactor entry recorded, which is the evidence
+the frame move changed no behaviour.
+
+**Gate evidence.**
+
+```
+pytest                     688 passed
+ruff check .               All checks passed!
+ruff format --check .      175 files already formatted
+pylint src tests           10.00/10
+```
+
+**Still owed, in the plan's order.** `_ocr.py` + `batch_ocr.py` (step 4), `_llm.py` +
+`batch_llm.py` (step 5), the hand run of all four batch tools (step 6), and the **plan revision**
+(step 1): `subplan-scripts.md` §3.1/§3.4/§4/§5/§6/§9 plus `issues/wbs-scripts.md` in one pass,
+`SCR-11`…`SCR-18`, with §9's out-of-scope bullet reversed and
+`docs/feedback/batch-mode-across-processors.md` as the winning decision.
+
+**Next.** `_ocr.py` + `batch_ocr.py`, then the LLM pair, then the revision.
+
+---
+
+## 2026-09-28 — Phase 5 · OCR on the same two layers (`SCR-14`)
+
+**Delivered.** Step 4 of `docs/feedback/batch-mode-across-processors.md`, gated.
+
+| File | Change |
+|---|---|
+| `scripts/tools/_ocr.py` | **new**: the OCR bench's seven methods, moved from `ocr.py` with the payloads and flags, plus `SUFFIXES` — the inputs a processor takes are that processor's own fact |
+| `scripts/tools/ocr.py` | a CLI over `_ocr`: parser, one handler factory, `main` (230 lines lighter) |
+| `scripts/tools/batch_ocr.py` | **new**: the seven methods over a folder, `text` as the bare run, `run` the only method that publishes |
+| `scripts/tools/_image.py` | `SUFFIXES` moved here from `batch_image.py`, so each layer states its processor's inputs |
+| `tests/test_lab_tools.py` | `_ocr` in guard 3, `batch_ocr` in the documented commands and the `REPORT_ONLY` pin, plus three glue tests |
+| `scripts/tools/readme.md` | the layout table and a `batch_ocr.py` section |
+
+**Two defects found on the way, and fixed.**
+
+1. **A bare run did not parse the command it made.** `_batch` inferred the default from
+   `args.subcommand is None` after *not* parsing a subcommand — so the default's own flags were
+   never registered, and `batch_ocr.py <folder>` died with `AttributeError: 'Namespace' object has
+   no attribute 'ocr'`. `batch_pdf.py` and `batch_image.py` had the same hole, hidden only because
+   `inspect` and `info` read no flag. The frame now **appends the default command to the arguments
+   and parses it as a subcommand** (`_batch.resolve_command`), and takes `default` as an explicit
+   argument instead of reading it back off the namespace: after that parse the two runs are
+   indistinguishable there, and the header still has to say which one happened.
+2. **An engine throw ended the corpus run.** `_conversion` called the engine call directly, so a
+   file the engine refuses escaped as a traceback rather than as a typed failure — the run's first
+   bad input killed a batch that promises one bad file does not. It is now typed the way the
+   processor's own entrypoint types it (`ENGINE_ERROR`, `recoverable=False`), because the engine's
+   exception class is not nameable without importing the engine.
+
+**Mutation evidence** (each mutation applied, observed red, reverted, green again).
+
+| Invariant | Mutation | Observed failure |
+|---|---|---|
+| An input the engine refuses is one input's failure, not the run's | the `try/except` typing removed from `_ocr._conversion` | `test_batch_ocr_types_an_engine_throw_and_keeps_going` red: the engine's `ValueError` escaped the batch |
+| A default command is stated in the header, never silent | `default=default` → `default=False` in `batch_ocr.py` | `test_batch_ocr_mirrors_the_folder_it_walked` red: no `command: text (default, none stated)` |
+
+**Hand runs** (the real Docling engine, installed locally).
+
+```
+ocr.py text …/ocr_prepared_text_and_table.png   text: (empty — the synthetic fixture has no glyphs)   14.1s
+batch_ocr.py tests/fixtures/ocr                 files: 2 · succeeded: 2 · failed: 0                    exit 0
+  → var/batch_ocr/ocr/{ocr_blank,ocr_prepared_text_and_table}/result.json
+batch_pdf.py tests/fixtures/pdf                 files: 4 · succeeded: 3 · failed: 1                   exit 1
+```
+
+The `batch_pdf.py` line is again byte-for-byte what the previous entry recorded, which is the
+evidence `resolve_command` changed no observable behaviour for the tools that already had a default.
+
+**Gate evidence.**
+
+```
+pytest                     696 passed
+ruff check .               All checks passed!
+ruff format --check .      177 files already formatted
+pylint src tests           10.00/10
+```
+
+**Still owed, in the plan's order.** `_llm.py` + `batch_llm.py` (step 5), the hand run of the LLM
+pair (step 6), and the **plan revision** (step 1) — `subplan-scripts.md` §3.1/§3.4/§4/§5/§6/§9 plus
+`issues/wbs-scripts.md` in one pass, `SCR-11`…`SCR-18`, with §9's out-of-scope bullet reversed.
+
+**Next.** The LLM pair, then the revision.
+
+---
+
+## 2026-09-28 — Phase 5 · LLM on the same two layers (`SCR-15`), and a frame defect fixed
+
+**Delivered.** Step 5 of `docs/feedback/batch-mode-across-processors.md`, gated.
+
+| File | Change |
+|---|---|
+| `scripts/tools/_llm.py` | **new**: the LLM bench's eight methods, moved from `llm.py` with the payloads, the flags, `DEFAULT_ASSETS_DIR`, `SUFFIXES` and `install_fake` (the seam the three tools share) |
+| `scripts/tools/llm.py` | a CLI over `_llm`: parser, one handler factory, `main` (390 lines lighter) |
+| `scripts/tools/batch_llm.py` | **new**: four of the eight commands over a folder (`call`, `graph`, `node`, `tokens`), a **required** subcommand, `--fake` |
+| `scripts/tools/_batch.py` | `header_extra`, so a batch states what its single-input twin states (the asset root) |
+| `scripts/tools/batch_pdf.py` `batch_image.py` `batch_ocr.py` | `resolve_command` and the explicit `default` |
+| `tests/test_lab_tools.py` | `_llm` in guard 3, `batch_llm`'s four documented commands and its `REPORT_ONLY` pin, guard 6 now names the folder for the four batch tools, six new tests |
+| `scripts/tools/readme.md` | the layout table and a `batch_llm.py` section |
+
+**Three defects found on the way, and fixed.** The first two were recorded in the Phase C entry;
+this pass found the third.
+
+3. **A returned failure was printed as `ok`.** The frame counted a contract's returned `FAILED`
+   status as a failure (the Phase A fix) but still printed `name: ok -> …` for it, so a corpus in
+   which *every* input failed printed three `ok` lines above `succeeded: 0 · failed: 3`. The line
+   is now derived from the same `_failed` the summary uses, and the typed failure the payload
+   itself states — under `error` for `run`, under `errors` for the LLM chain — is printed, since
+   no exception carried it. Both shapes are read by `_batch._payload_failures`.
+
+**Mutation evidence** (each mutation applied, observed red, reverted, green again).
+
+| Invariant | Mutation | Observed failure |
+|---|---|---|
+| A returned failure is not reported as `ok` | the line forced back to `ok` | `test_batch_ocr_reports_a_returned_failure_as_a_failure` red: `': FAILED ->' not in 'a.png: ok -> …'` |
+| A returned failure's own record is shown | `_cli.print_error(failures)` dropped | same test red: no `ERROR OCR_ERROR:` line |
+
+**Hand runs.**
+
+```
+batch_llm.py --fake tests/fixtures-txt/casos call …   files: 3 · succeeded: 3 · failed: 0   exit 0
+batch_llm.py tests/fixtures-txt/casos call …          files: 3 · succeeded: 0 · failed: 3   exit 1
+  each input: `…: FAILED -> var/batch_llm/casos/<stem>` + `ERROR MODEL_UNAVAILABLE: ollama does not offer the model 'llama3.1'`
+llm.py tokens --context-window 4096 …                 624 tokens, window_source: caller        exit 0
+batch_ocr.py tests/fixtures/ocr                       files: 2 · succeeded: 2 · failed: 0      exit 0
+```
+
+The last line re-verifies the OCR batch after the frame change, and the `--fake`/no-model pair is
+the same three inputs answered two ways — which is what the scripted provider is for.
+
+**Gate evidence.**
+
+```
+pytest                     708 passed
+ruff check .               All checks passed!
+ruff format --check .      179 files already formatted
+pylint src tests           10.00/10
+```
+
+**Still owed, in the plan's order.** The hand run of all four batch tools in one place (step 6 —
+done piecemeal above), and the **plan revision** (step 1): `subplan-scripts.md`
+§3.1/§3.4/§4/§5/§6/§9 plus `issues/wbs-scripts.md` in one pass, `SCR-11`…`SCR-18`, with §9's
+out-of-scope bullet reversed and `docs/feedback/batch-mode-across-processors.md` as the winning
+decision.
+
+**Next.** The plan revision — the one thing standing between `docs/plan/` and `scripts/tools/`.
+
+---
+
+## 2026-09-28 — Phase 5 · the batch revision (`SCR-18`)
+
+**Delivered.** Step 1 of `docs/feedback/batch-mode-across-processors.md` — the pass that makes
+`docs/plan/` agree with `scripts/tools/`. Documentation only; no code, no test and no frozen
+*decision* changed, only what the artifacts say the bench contains.
+
+| Document | Change |
+|---|---|
+| `subplan-scripts.md` §3.1 | the fifteen-module layout, plus the layer split (`SCR-11`, `13`, `14`, `15`) and `_batch.py` (`SCR-12`) stated as design, not as an accident of the tree |
+| `subplan-scripts.md` §3.2 | the lab-bench exception moved from the tools to the **layers** — after the split a single-file tool imports only `_cli` and its layer, so it no longer names a primitive either |
+| `subplan-scripts.md` §3.3 | the batch output root (`var/batch_<processor>/<folder>/`), why a batch takes no `--fixture`, and the corpus exit code — `1` when any input failed, including one whose contract *returned* the failure |
+| `subplan-scripts.md` §3.4 | a table of the four batch tools (layer, suffix set, default command, excluded commands) and the four rules they share |
+| `subplan-scripts.md` §3.5 | the demonstration folders `SCR-17` records |
+| `subplan-scripts.md` §4 | `SCR-11`…`SCR-18`, wave 5, and the extended critical path |
+| `subplan-scripts.md` §5/§6/§7 | three batch scenarios, guards 1/3/6/7 rewritten to the real set, and four new invariants with their mutations |
+| `subplan-scripts.md` §9 | the **reversal** of the out-of-scope bullet, a `batch_workflow.py` exclusion and the serial-walk decision, four new resolved decisions, and the stale-citation table |
+| `issues/wbs-scripts.md` | the range, the summary, eighteen index rows with their Depends/Blocks edges, the eight new issues, the graph, wave 5, the critical path, the traceability rows and §11's reversal |
+| `docs/plan/README.md`, `issues/wbs-general.md`, root `README.md` | every Phase 5 citation widened to `SCR-01`…`SCR-18`; the root readme's tool table gains the four batch tools, and its invariant table gains wave 5's four records |
+
+**Nothing was renumbered.** `SCR-11`…`SCR-18` are appended; the wave-5 leg of the critical path is
+`SCR-11 → SCR-12 → SCR-15 → SCR-17 → SCR-18`, and each of the eight has a row in the subplan's §4,
+a row in the WBS index and a section in its detailed issues — verified by counting the three lists
+(18 each), which is what the revision's acceptance criterion asks for.
+
+**The reversal, recorded.** *"Batch corpus runs over `documentos/` and mirrored output trees"* is no
+longer out of scope. `docs/feedback/batch-mode-across-processors.md` is the winning decision; the
+reversal is scoped to the four processors' own folders — the committed fixture roots and any folder a
+caller names — and does **not** reintroduce `documentos/`, which stays ignored, like the
+`var/batch_<processor>/` trees a batch writes.
+
+**Gate evidence** (unchanged by this pass — documentation only, and the gates were re-run to say so
+rather than to assume it):
+
+```
+pytest                     708 passed
+ruff check .               All checks passed!
+ruff format --check .      179 files already formatted
+pylint src tests           10.00/10
+```
+
+**Status.** With this entry the plan's six steps are closed: the layer and frame (`SCR-11`,
+`SCR-12`), the three remaining pairs (`SCR-13`…`SCR-15`), the bench readme (`SCR-16`), the hand runs
+(`SCR-17`) and the revision (`SCR-18`). `SCR-10` — the sweep of `wbs-general.md` and
+`.github/copilot-instructions.md` — was already satisfied by the planning pass; its remaining
+targets are named in `subplan-scripts.md` §9 and none of them is a batch citation.
+
+---
+
+## 2026-09-28 — Phase 5 · `_pdf.py` brought to the same shape as the other three layers
+
+**Found by reading the tree, not by a failing test.** `SUFFIXES` was stated by `_image.py`,
+`_ocr.py` and `_llm.py`, and read by their batch tools — but `_pdf.py` had no such declaration and
+`batch_pdf.py` still carried its own `(".pdf",)` literal. The asymmetry is a leftover from the
+order the work was done in: the image set had to move into a layer because `batch_ocr.py` needed a
+source for it, and the PDF tool was already written and passing when that happened. The wrong
+suffixes in one place and the right ones in another is exactly the drift the whole layer split
+exists to prevent, so `_pdf.py` now states `(".pdf",)` and `batch_pdf.py` reads `_pdf.SUFFIXES`,
+like the other three.
+
+**Mutation evidence.**
+
+| Invariant | Mutation | Observed failure |
+|---|---|---|
+| A layer states its processor's inputs, and both of its tools read that one statement | `_pdf.SUFFIXES` widened to `(".pdf", ".txt")` | `test_batch_pdf_mirrors_the_folder_it_walked` red: `assert ['notes', 'sub1/a', 'sub2/deeper/b'] == ['sub1/a', 'sub2/deeper/b']` — the run walked a file its processor cannot read |
+
+The record is in the root `README.md`, beside wave 5's other four.
+
+**Hand run.** `batch_pdf.py --out var/check tests/fixtures/pdf` → `files: 4 · succeeded: 3 ·
+failed: 1`, exit `1`, and only the three readable PDFs got a mirrored directory — byte-for-byte what
+the earlier entries recorded, which is the evidence the wiring change altered no behaviour.
+
+**Gate evidence.**
+
+```
+pytest                     708 passed
+ruff check .               All checks passed!
+ruff format --check .      179 files already formatted
+pylint src tests           10.00/10
+```
