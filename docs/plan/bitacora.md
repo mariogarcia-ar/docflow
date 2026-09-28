@@ -1753,3 +1753,47 @@ ruff check .               All checks passed!
 ruff format --check .      179 files already formatted
 pylint src tests           10.00/10
 ```
+
+---
+
+## 2026-09-28 — Phase 5 · the bench readme restructured: one file, or one folder
+
+**Delivered.** `scripts/tools/readme.md` — the command documentation is now grouped by **mode**
+instead of by tool, which is the question an operator actually has ("do I point this at a file or
+at a folder?"):
+
+| Section | What is in it |
+|---|---|
+| `## Commands over one file` | the five single-input tools — `pdf.py`, `image.py`, `ocr.py`, `llm.py`, `workflow.py` — each with its subcommand → symbol table, and what is deliberately *not* there (`image.py crop`, `ocr.py diff`, `--engine`) |
+| `## Commands over a folder (batch)` | the four batch tools, after **The shape of a batch run** — the mirror, the record per input, the stated default, the `FAILED`/`ok` line, the exit codes — which is stated **once**, because it is `_batch.py`'s and not any one tool's |
+
+The two batch sections that duplicated those rules per tool (`batch_image.py`, `batch_ocr.py`,
+`batch_llm.py` each saying "the mirror, the `--out` rule and the exit codes are the ones the
+`batch_pdf.py` section above states") now say only what is theirs: their inputs, their default, what
+their methods publish, and their demonstration folder. `## Invocation` frames the two modes side by
+side, and the stale counts went with it — the report-only set is nineteen of **sixty-four**
+subcommands (it said thirty-eight, which predates the batch tools), and a batch tool's set is empty
+on purpose.
+
+**Every documented command was run, not reasoned about.** All of them behave exactly as the readme
+says: `pdf.py inspect` `0`; `llm.py call` `1` with a typed `MODEL_UNAVAILABLE`; `workflow.py plan`
+`0` with a complete request; `batch_pdf.py tests/fixtures/pdf` `1`; `batch_pdf.py tests/fixtures`
+`files: 31`; `batch_image.py tests/fixtures/image` `1`; `batch_ocr.py tests/fixtures/ocr` `0`;
+`batch_llm.py --fake … call` `0` and the same command without `--fake` `1`; both `--help` lines `0`;
+and the three bare runs (`batch_pdf` default `inspect` `0`, `batch_image` default `info` `1`,
+`batch_ocr` default `text` `0`) plus `--no-recursive … split` `0`.
+
+**Also touched:** the root `README.md` signposts the two modes and names the two sections, and its
+"Lab tools" block gained the batch line it was missing; the bench readme's *Working without an engine
+or a model* section now lists `batch_llm.py --fake` beside the other two scripted-provider switches,
+and *Known limitation* states that the image publication defect applies per input in a batch, so the
+rest of a corpus still runs.
+
+**Gate evidence.**
+
+```
+pytest                     708 passed
+ruff check .               All checks passed!
+ruff format --check .      179 files already formatted
+pylint src tests           10.00/10
+```

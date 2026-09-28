@@ -128,6 +128,14 @@ python scripts/tools/batch_pdf.py cartas/         # → var/batch_pdf/cartas/<st
 python scripts/tools/workflow.py plan mi.pdf      # "--dry-run" is what "plan" means
 ```
 
+There are **two ways to run the bench**, and they take the same commands: **over one file**, where
+the input positional names a file and the run writes under `var/tools/<tool>/<stem>-<hash8>/`, or
+**over a folder**, where it names a folder and every matching file below it is an input. Both are
+written up command by command in
+[`scripts/tools/readme.md`](scripts/tools/readme.md) — *Commands over one file* and *Commands over
+a folder (batch)* — and the second is not a second implementation of the first: each processor's
+two tools call the same methods through one shared layer.
+
 Input is an argument; output goes to `var/tools/<tool>/`, never beside the input and never
 into `out/`. Override with `--out`. The **batch** tools take a folder instead of a file, mirror
 the tree they walked under `var/batch_<processor>/<folder>/<relative folders>/<stem>/`, file each

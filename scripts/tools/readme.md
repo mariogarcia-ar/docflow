@@ -48,26 +48,36 @@ The set of **modules** here is asserted by `tests/test_lab_tools.py` guard 1: `_
 
 ## Invocation
 
+There are **two ways to run the bench**, and they take the same commands:
+
 ```bash
+# one file: the input positional names a file
 python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
-python scripts/tools/pdf.py --fixture pdf_sample_mixed.pdf render --page 1 --dpi 300
-python scripts/tools/batch_pdf.py tests/fixtures/pdf     # inspect, over every PDF below the folder
+python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+    call --provider ollama --model llama3.1 --task extract \
+    --template simple_extract --schema simple
 python scripts/tools/workflow.py --allow-ocr --no-allow-vlm \
     --pdf-dpi 150 --image-normalize --ocr \
     --task extract --provider ollama --model llama3.1 --template simple_extract \
     plan tests/fixtures/pdf/pdf_sample_text.pdf
-python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
-    call --provider ollama --model llama3.1 --task extract \
-    --template simple_extract --schema simple
+
+# one folder: the folder positional names a folder, and every matching file below it is an input
+python scripts/tools/batch_pdf.py tests/fixtures/pdf                 # inspect, over every PDF below it
+python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos tokens \
+    --provider ollama --model llama3.1 --context-window 4096
 ```
 
-Every line above runs as written against the committed fixtures. The `render` line shows the two
-spellings at once — `--fixture` before the subcommand, `--page`/`--dpi` after it — and the batch
-line is `tests/fixtures/pdf`'s four PDFs, three written and one reported as the corrupt file it
-is (exit `1`). The `plan` line carries a **complete** workflow request,
-because the library refuses a missing option key by name; `plan` needs no `--dry-run`, since
-planning *is* the dry run. The `call` line is the honest failure the bench exists for: no model is
-served on this machine, so it prints a typed `MODEL_UNAVAILABLE` and exits `1`.
+Every line above runs as written against the committed fixtures. Each mode has its own section
+below — [**Commands over one file**](#commands-over-one-file) and
+[**Commands over a folder (batch)**](#commands-over-a-folder-batch) — and the second is not a
+second implementation of the first: each processor's two tools call the same methods, so a
+subcommand behaves the same way in both and the batch adds a folder, a mirror and a summary.
+
+The `plan` line carries a **complete** workflow request, because the library refuses a missing
+option key by name, and it needs no `--dry-run` — planning *is* the dry run. The `llm.py` line is
+the honest failure the bench exists for: no model is served on this machine, so it prints a typed
+`MODEL_UNAVAILABLE` and exits `1`. The `batch_pdf.py` line is `tests/fixtures/pdf`'s four PDFs,
+three written and one reported as the corrupt file it is (exit `1`).
 
 Each tool is invoked **by path**. No `pip install` is needed: the tools put the repository root
 and `src/` on `sys.path` themselves, which is what `_cli.bootstrap()` does.
@@ -123,15 +133,19 @@ The tools do **not** diff the two — comparing is a reading.
 **Output root.** `var/tools/<tool>/<stem>-<hash8>/`, where `hash8` is the first eight characters
 of the input's SHA-256. The same input therefore lands in the same directory and two inputs never
 collide. Output is **never** written beside the input and never into `out/`; `/var/` is in
-`.gitignore`. `--out` replaces the root entirely.
+`.gitignore`. `--out` replaces the root entirely. A **batch** writes one level up instead —
+`var/batch_<processor>/<walked folder>/…`, mirroring the tree it walked — in the shape
+[Commands over a folder (batch)](#commands-over-a-folder-batch) describes.
 
 Only a subcommand that **publishes** creates that directory. When the report *is* the stdout
 summary — `pdf.py inspect`, `ocr.py text`, `workflow.py plan` and their peers, nineteen of the
-thirty-eight subcommands — the run writes no file at all, and its header states
+sixty-four subcommands — the run writes no file at all, and its header states
 `output: (none — this subcommand publishes no file)` instead of naming a directory no run creates.
 That line is declared per tool (`REPORT_ONLY`) and checked twice: the glue test drives the
 report-only subcommands and asserts the filesystem stayed empty, and `tests/test_lab_tools.py`
-pins the declaration so a subcommand cannot move between the two sets unnoticed.
+pins the declaration so a subcommand cannot move between the two sets unnoticed. A **batch tool's**
+set is empty on purpose: the frame files a record for every input that produced a payload, so a
+batch's run root always holds something.
 
 **stdout** carries the human summary, or the `--json` payload. The run header goes to **stderr**
 on purpose, so a `--json` body stays clean while the resolved input is still stated. The header
@@ -155,10 +169,12 @@ Nothing else. A failure the library already typed never reaches the operator as 
 
 ---
 
-## What each tool exposes
+## Commands over one file
 
-Every subcommand calls a symbol that exists in the library. Nothing here reimplements anything:
-printing a result is a tool's job, producing it is not.
+One input per run: the input positional names a file (or `--fixture` names one), the run writes
+under `var/tools/<tool>/<stem>-<hash8>/`, and the summary goes to stdout. Every subcommand calls a
+symbol that exists in the library — nothing here reimplements anything: printing a result is a
+tool's job, producing it is not.
 
 ### `pdf.py` — `SCR-02`
 
@@ -172,109 +188,6 @@ printing a result is a tool's job, producing it is not.
 | `images` | `primitives.extract_images_from_page` | embedded images |
 | `classify` | `primitives.composition.analyze_pdf_page` + `classify_pdf_page` | the `TEXT`/`IMAGE`/`MIXED` verdict |
 | `run` | `process_pdf`, or `process_pdf_page` with `--page` | the contract; `--dpi` required |
-
-### `batch_pdf.py` — `SCR-12`
-
-`pdf.py` over a corpus: the same eight methods, run over every PDF under a folder, with the tree
-mirrored under `var/batch_pdf/<folder>/`. Both tools dispatch through `_pdf`, so a method, its
-payload and its flags live in exactly one place and the batch adds no behaviour of its own.
-
-```bash
-python scripts/tools/batch_pdf.py tests/fixtures/pdf        # the four committed samples
-python scripts/tools/batch_pdf.py tests/fixtures            # the whole tree: 31 PDFs, eight folders
-python scripts/tools/batch_pdf.py tests/fixtures/chicos run --dpi 200 --extract-text
-python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matrix split
-```
-
-The batch command is `pdf.py`'s command with a folder where the file was. The subcommand is
-optional — the run makes `inspect` when none is stated, and says so — and the flags after it are
-the ones `pdf.py` registered for it:
-
-```bash
-python scripts/tools/pdf.py inspect tests/fixtures/matrix/scan150.pdf   # one input
-python scripts/tools/batch_pdf.py tests/fixtures/matrix                 # every PDF below it
-python scripts/tools/pdf.py split tests/fixtures/matrix/scan150.pdf
-python scripts/tools/batch_pdf.py tests/fixtures/matrix split           # the stated command, per input
-```
-
-The mirror is the walk, folder for folder, plus one directory per input. The second command above,
-over `tests/fixtures`, lands like this:
-
-```text
-tests/fixtures/pdf/pdf_sample_text.pdf  ->  var/batch_pdf/fixtures/pdf/pdf_sample_text/result.json
-tests/fixtures/chicos/<uuid>.pdf        ->  var/batch_pdf/fixtures/chicos/<uuid>/result.json
-tests/fixtures/matrix/scan150.pdf       ->  var/batch_pdf/fixtures/matrix/scan150/result.json
-```
-
-With `--out var/x` the walked folder is not repeated: `var/x/scan150/…`.
-
-| Subcommand | Needs | Batch invocation |
-|---|---|---|
-| `inspect` | nothing | `batch_pdf.py tests/fixtures/matrix` (the default) |
-| `split` | nothing | `batch_pdf.py tests/fixtures/matrix split` |
-| `render` | `--page`, `--dpi` | `batch_pdf.py tests/fixtures/matrix render --page 1 --dpi 150` |
-| `text`, `blocks`, `images`, `classify` | `--page` | `batch_pdf.py tests/fixtures/matrix text --page 1` |
-| `run` | `--dpi`, plus the capabilities | `batch_pdf.py tests/fixtures/matrix run --dpi 200 --extract-text` |
-
-Each row is `pdf.py`'s own subcommand with `pdf.py`'s own flags — the batch adds the folder and
-nothing else: no new option, and no default for one. What lands in the input's directory is that
-method's output, so `split` files its pages, `render` its PNG and `run` the whole artifact tree,
-next to the `result.json` every method leaves.
-
-- **The folder is walked recursively by default** (`--no-recursive` for the top level only), and
-  only `.pdf` files are inputs, matched case-insensitively. The walk **skips the run's own output
-  root**, so a second run over the same tree does not pick up the pages the first one wrote.
-- **Every input gets its own directory**: `<root>/<the input's folder relative to the walked
-  folder>/<the input's stem>/`, which is what keeps two PDFs in one folder from colliding — and,
-  as in `var/tools/`, two commands over one input share it.
-- **Every input that produced a payload gets a record**: it is written to `result.json` in that
-  directory, beside whatever the method published. So `inspect` — which publishes no artifact at
-  all (`pdf.py`'s report-only set) — still leaves something to read, which is the point of running
-  it over a corpus. An input whose failure *raised* has no payload and is reported, not filed: its
-  typed record is printed and counted, and its directory is never created.
-- **The command is stated, never guessed.** With no subcommand the run makes `inspect` — the
-  flag-free method that only reports — and the header says `command: inspect (default, none
-  stated)`. The other flag-free method, `split`, writes, so it is never the thing a bare run does.
-- **The line and the summary agree.** An input whose failure *raised* is printed as
-  `name: FAILED`, with the library's typed record, and files nothing. An input whose contract
-  *returned* a failed status — `run` contains its failures rather than raising them — is printed as
-  `name: FAILED` too, files the payload it produced, and its own typed record is shown: reporting
-  it as `ok` while the summary counts it as failed would be the run contradicting itself.
-- **One bad file does not end the batch.** Each failure is printed as the library's typed record
-  and counted, and the run keeps going: the exit code is `1` when any input failed, `0` when none
-  did, and `2` for a usage error. `tests/fixtures/pdf` is that demonstration in one line — four
-  inputs, one of them the corrupt sample: `files: 4 · succeeded: 3 · failed: 1`, exit `1`.
-- **`--out DIR`** replaces `var/batch_pdf/<folder>/` entirely; the mirror is then `DIR/<relative
-  folders>/<stem>/`. `--recursive`, `--out` and `--json` are the tool's global flags and belong
-  before the subcommand, as everywhere else.
-
-### `batch_image.py` — `SCR-13`
-
-`image.py` over a folder: the same seven methods, run over every image below it, mirrored under
-`var/batch_image/<folder>/`. The **folder frame is shared** — the walk, the mirror, the record per
-input, the summary and the exit codes are `_batch.py`, which every batch tool runs on — so only the
-suffix set and the command a bare run makes differ from `batch_pdf.py`.
-
-```bash
-python scripts/tools/image.py info tests/fixtures/image/color_layout.png   # one input
-python scripts/tools/batch_image.py tests/fixtures/image                   # every image below it
-python scripts/tools/image.py classify tests/fixtures/image/skewed_text.png
-python scripts/tools/batch_image.py tests/fixtures/image classify          # the stated method, per input
-```
-
-- **The inputs are the image suffixes** — `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`, matched
-  case-insensitively — so a folder holding PDFs beside images gives up only its images.
-- **The bare run makes `info`**, the flag-free method that publishes nothing, and the header says
-  `command: info (default, none stated)`. Every other method here writes: `normalize`, `ocr-ready`,
-  `vlm-ready` and `run` all publish, so none of them is a safe default.
-- **A record is filed per input that produced a payload**, beside whatever the method published:
-  `classify` files a record and no artifact, `normalize` files both, and a failed input files
-  nothing — its typed record is printed and counted.
-- `tests/fixtures/image` is that demonstration in one line: four images, one of them the committed
-  corrupt sample, so `files: 4 · succeeded: 3 · failed: 1` with a typed `DECODE_ERROR`, exit `1`.
-
-The mirror, the `--out` rule, the flags (`--recursive`, `--out`, `--json` before the subcommand)
-and the exit codes are exactly the ones the `batch_pdf.py` section above states.
 
 ### `image.py` — `SCR-03`
 
@@ -291,31 +204,6 @@ and the exit codes are exactly the ones the `batch_pdf.py` section above states.
 There is **no `crop` subcommand**: the library has no `crop_region`
 (`subplan-procesador-image.md` §9.6 defers it), and a tool may not invent one.
 
-### `batch_ocr.py` — `SCR-14`
-
-`ocr.py` over a folder: the same seven methods, run over every image below it, mirrored under
-`var/batch_ocr/<folder>/`. The frame is `_batch.py`, so the mirror, the `--out` rule, the flags and
-the exit codes are exactly the ones the `batch_pdf.py` section above states.
-
-```bash
-python scripts/tools/ocr.py text tests/fixtures/ocr/ocr_prepared_text_and_table.png  # one input
-python scripts/tools/batch_ocr.py tests/fixtures/ocr                                # every image below it
-python scripts/tools/ocr.py metrics tests/fixtures/ocr/ocr_blank.png
-python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics                        # the stated method, per input
-```
-
-- **The bare run makes `text`** — the flag-free method that publishes nothing — and the header
-  says `command: text (default, none stated)`. Only `run` publishes artifacts here; the other six
-  methods leave a `result.json` and nothing else.
-- **It is not cheap.** Every input is converted once by the engine, so a corpus of images costs
-  what the engine costs; the default is safe for the output tree, not for the clock.
-- **An input the engine refuses fails its own record and the walk continues** — that is the whole
-  point of a corpus run. The typed failure is printed, counted and reflected in the exit code, and
-  `text`, `md`, `json`, `tables`, `blocks` and `metrics` type the engine's own throw rather than
-  letting it end the run at the first bad file.
-- `tests/fixtures/ocr` is that demonstration in one line: two images, both converted,
-  `files: 2 · succeeded: 2 · failed: 0`, exit `0`.
-
 ### `ocr.py` — `SCR-04`
 
 | Subcommand | Calls | Notes |
@@ -331,39 +219,6 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics                    
 There is **no `--engine` flag**. The engine is fixed and never presented as a selectable option.
 There is **no `diff` subcommand** either: comparing two extractions is a reading, and a tool that
 compared them would be a second implementation of the thing under test.
-
-### `batch_llm.py` — `SCR-15`
-
-`llm.py` over a folder: the same commands, run over every text file below it, mirrored under
-`var/batch_llm/<folder>/`. The frame is `_batch.py`, so the mirror, the `--out` rule and the exit
-codes are the ones the `batch_pdf.py` section above states.
-
-```bash
-python scripts/tools/batch_llm.py tests/fixtures-txt/casos tokens \
-    --provider ollama --model llama3.1 --context-window 4096
-python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos call \
-    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
-python scripts/tools/batch_llm.py tests/fixtures-txt/casos call \
-    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
-```
-
-- **Four of the eight commands**, and precisely the four whose answer is a property of the input:
-  `call`, `graph`, `node`, `tokens`. `status` asks about a *run directory*, `models` asks about a
-  *model* and never reads the input, `fake` is a single-input demonstration, and `resume` pins one
-  run identity — which a corpus can only give one input by giving it to all of them. Naming any of
-  the four here is a usage error, not a silent no-op.
-- **No default command.** The other batch tools make a flag-free method when the caller states
-  none; this one has none to make, because `--provider` and `--model` are required on every command
-  here as on `llm.py`. A bare run is refused, exit `2`.
-- **`--fake` installs the committed scripted provider** — the same seam `llm.py fake` and
-  `workflow.py --fake-llm` install — so a whole corpus of chains runs with no model served and no
-  token spent. The refusal on a missing `--provider`/`--model` stands either way.
-- **`--assets-dir`** is the same flag with the same default as `llm.py`, and the resolved value is
-  stated in the run header, exactly as `llm.py` states it.
-- The third command is the honest failure the bench exists for: nothing is served on this machine,
-  so **every** input returns a typed `MODEL_UNAVAILABLE` — each printed as
-  `name: FAILED` with its own record, `files: 3 · succeeded: 0 · failed: 3`, exit `1`. The second,
-  with `--fake`, is the same three inputs and `SUCCESS`.
 
 ### `llm.py` — `SCR-05`
 
@@ -415,6 +270,183 @@ demonstrated with no model.
 
 ---
 
+## Commands over a folder (batch)
+
+The same commands over a corpus: the folder positional names a folder, and every file below it
+that matches the tool's suffixes is an input. There are four of them, one per processor — the
+orchestrator has no folder twin, because a document request is not a folder of files — and each is
+the *same* method the per-file tool calls, dispatched through the same layer.
+
+```bash
+python scripts/tools/batch_pdf.py tests/fixtures/pdf        # the four committed samples
+python scripts/tools/batch_pdf.py tests/fixtures            # the whole tree: 31 PDFs, eight folders
+python scripts/tools/batch_image.py tests/fixtures/image    # four images, one of them corrupt
+python scripts/tools/batch_ocr.py tests/fixtures/ocr        # two images, both converted
+python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos call \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matrix split
+```
+
+| Tool | Layer it dispatches through | Inputs it takes | Command with none stated | Commands it does not offer |
+|---|---|---|---|---|
+| `batch_pdf.py` `SCR-12` | `_pdf.py` | `.pdf` | `inspect` | — |
+| `batch_image.py` `SCR-13` | `_image.py` | `.png .jpg .jpeg .tif .tiff .bmp` | `info` | — |
+| `batch_ocr.py` `SCR-14` | `_ocr.py` | the image set: the OCR input *is* an image | `text` | — |
+| `batch_llm.py` `SCR-15` | `_llm.py` | `.txt .md` | **none** — a command is required | `status`, `models`, `fake`, `resume` |
+
+### The shape of a batch run
+
+A batch command is the per-file command with a folder where the file was. The subcommand is
+optional on three of the four tools — the run makes that tool's own default and **says so** — and
+the flags after it are the ones the per-file tool registered for it, unchanged:
+
+```bash
+python scripts/tools/pdf.py inspect tests/fixtures/matrix/scan150.pdf   # one input
+python scripts/tools/batch_pdf.py tests/fixtures/matrix                 # every PDF below it
+python scripts/tools/pdf.py split tests/fixtures/matrix/scan150.pdf
+python scripts/tools/batch_pdf.py tests/fixtures/matrix split           # the stated command, per input
+```
+
+The mirror is the walk, folder for folder, plus one directory per input. The second command above,
+over `tests/fixtures`, lands like this:
+
+```text
+tests/fixtures/pdf/pdf_sample_text.pdf  ->  var/batch_pdf/fixtures/pdf/pdf_sample_text/result.json
+tests/fixtures/chicos/<uuid>.pdf        ->  var/batch_pdf/fixtures/chicos/<uuid>/result.json
+tests/fixtures/matrix/scan150.pdf       ->  var/batch_pdf/fixtures/matrix/scan150/result.json
+```
+
+Every rule below belongs to `_batch.py` — the folder frame all four tools run on — and not to one
+tool:
+
+- **The folder is walked recursively by default** (`--no-recursive` for the top level only), and
+  only the tool's own suffixes are inputs, matched case-insensitively. The walk **skips the run's
+  own output root**, so a second run over the same tree does not pick up what the first one wrote.
+- **Every input gets its own directory**: `var/batch_<processor>/<walked folder>/<the input's
+  folder relative to it>/<the input's stem>/`, which is what keeps two files of one folder from
+  colliding — and, as in `var/tools/`, two commands over one input share it. `--out DIR` replaces
+  that root entirely; the walked folder is then not repeated.
+- **Every input that produced a payload gets a record**: `result.json` in that directory, beside
+  whatever the method published. So a method that publishes no artifact at all — `inspect`,
+  `info`, `text`, `tokens` — still leaves something to read, which is the point of running it over
+  a corpus. An input whose failure **raised** has no payload and is reported, not filed: its typed
+  record is printed and counted, and its directory is never created.
+- **A default command is stated, never silent.** With no subcommand the run makes the tool's own
+  flag-free method — the one that publishes nothing, so a bare run cannot fill the tree — and the
+  header says `command: inspect (default, none stated)`. A tool whose every command needs a flag
+  has no such method and requires the command instead (`batch_llm.py`).
+- **The line and the summary agree.** An input whose failure **raised** is printed as
+  `name: FAILED`, with the library's typed record, and files nothing. An input whose contract
+  *returned* a failed status — `run` contains its failures rather than raising them — is printed as
+  `name: FAILED` too, files the payload it produced, and its own typed record is shown: reporting
+  it as `ok` while the summary counts it as failed would be the run contradicting itself.
+- **One bad file does not end the batch.** Each failure is printed and counted, and the run keeps
+  going: the exit code is `1` when any input failed, `0` when none did, and `2` for a usage error.
+- **A batch takes no `--fixture` and no identity flags**: its input is the folder positional, and
+  something that is not a folder is refused by name (`'x.txt' is not a folder: …`). `--recursive`,
+  `--out` and `--json` are the tool's global flags and belong before the subcommand, as
+  everywhere else.
+
+### `batch_pdf.py` — `SCR-12`
+
+`pdf.py` over a corpus: the same eight methods, mirrored under `var/batch_pdf/<folder>/`. Both
+tools dispatch through `_pdf`, so a method, its payload and its flags live in exactly one place and
+the batch adds no behaviour of its own. The subcommand is optional and the flags after it are
+`pdf.py`'s own — the batch adds the folder and nothing else: no new option and no default for one.
+
+| Subcommand | Needs | Batch invocation |
+|---|---|---|
+| `inspect` | nothing | `batch_pdf.py tests/fixtures/matrix` (the default) |
+| `split` | nothing | `batch_pdf.py tests/fixtures/matrix split` |
+| `render` | `--page`, `--dpi` | `batch_pdf.py tests/fixtures/matrix render --page 1 --dpi 150` |
+| `text`, `blocks`, `images`, `classify` | `--page` | `batch_pdf.py tests/fixtures/matrix text --page 1` |
+| `run` | `--dpi`, plus the capabilities | `batch_pdf.py tests/fixtures/matrix run --dpi 200 --extract-text` |
+
+What lands in the input's directory is that method's output, so `split` files its pages, `render`
+its PNG and `run` the whole artifact tree, next to the `result.json` every method leaves. The bare
+run makes `inspect` — the flag-free method that only reports; the other flag-free method, `split`,
+writes, so it is never the thing a bare run does. `tests/fixtures/pdf` is the demonstration in one
+line: four inputs, one of them the corrupt sample, `files: 4 · succeeded: 3 · failed: 1`, exit `1`.
+
+### `batch_image.py` — `SCR-13`
+
+`image.py` over a folder: the same seven methods, mirrored under `var/batch_image/<folder>/`, over
+the image suffixes — `.png`, `.jpg`, `.jpeg`, `.tif`, `.tiff`, `.bmp`, matched
+case-insensitively — so a folder holding PDFs beside images gives up only its images.
+
+```bash
+python scripts/tools/image.py info tests/fixtures/image/color_layout.png   # one input
+python scripts/tools/batch_image.py tests/fixtures/image                   # every image below it
+python scripts/tools/image.py classify tests/fixtures/image/skewed_text.png
+python scripts/tools/batch_image.py tests/fixtures/image classify          # the stated method, per input
+```
+
+- **The bare run makes `info`**, the flag-free method that publishes nothing. Every other method
+  here writes: `normalize`, `ocr-ready`, `vlm-ready` and `run` all publish, so none of them is a
+  safe default.
+- **A record is filed per input that produced a payload**, beside whatever the method published:
+  `classify` files a record and no artifact, `normalize` files both, and a failed input files
+  nothing — its typed record is printed and counted.
+- `tests/fixtures/image` is that demonstration in one line: four images, one of them the committed
+  corrupt sample, so `files: 4 · succeeded: 3 · failed: 1` with a typed `DECODE_ERROR`, exit `1`.
+
+### `batch_ocr.py` — `SCR-14`
+
+`ocr.py` over a folder: the same seven methods, mirrored under `var/batch_ocr/<folder>/`. Its
+inputs are the image suffixes, because the OCR processor's input *is* an image.
+
+```bash
+python scripts/tools/ocr.py text tests/fixtures/ocr/ocr_prepared_text_and_table.png  # one input
+python scripts/tools/batch_ocr.py tests/fixtures/ocr                                # every image below it
+python scripts/tools/ocr.py metrics tests/fixtures/ocr/ocr_blank.png
+python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics                        # the stated method, per input
+```
+
+- **The bare run makes `text`** — the flag-free method that publishes nothing. Only `run`
+  publishes artifacts here; the other six methods leave a `result.json` and nothing else.
+- **It is not cheap.** Every input is converted once by the engine, so a corpus of images costs
+  what the engine costs; the default is safe for the output tree, not for the clock.
+- **An input the engine refuses fails its own record and the walk continues** — that is the whole
+  point of a corpus run. The typed failure is printed, counted and reflected in the exit code, and
+  `text`, `md`, `json`, `tables`, `blocks` and `metrics` type the engine's own throw rather than
+  letting it end the run at the first bad file.
+- `tests/fixtures/ocr` is that demonstration in one line: two images, both converted,
+  `files: 2 · succeeded: 2 · failed: 0`, exit `0`.
+
+### `batch_llm.py` — `SCR-15`
+
+`llm.py` over a folder: the same commands, mirrored under `var/batch_llm/<folder>/`, over `.txt`
+and `.md` inputs.
+
+```bash
+python scripts/tools/batch_llm.py tests/fixtures-txt/casos tokens \
+    --provider ollama --model llama3.1 --context-window 4096
+python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos call \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+python scripts/tools/batch_llm.py tests/fixtures-txt/casos call \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+```
+
+- **Four of the eight commands**, and precisely the four whose answer is a property of the input:
+  `call`, `graph`, `node`, `tokens`. `status` asks about a *run directory*, `models` asks about a
+  *model* and never reads the input, `fake` is a single-input demonstration, and `resume` pins one
+  run identity — which a corpus can only give one input by giving it to all of them. Naming any of
+  the four here is a usage error, not a silent no-op.
+- **No default command.** The other batch tools make a flag-free method when the caller states
+  none; this one has none to make, because `--provider` and `--model` are required on every command
+  here as on `llm.py`. A bare run is refused, exit `2`.
+- **`--fake` installs the committed scripted provider** — the same seam `llm.py fake` and
+  `workflow.py --fake-llm` install — so a whole corpus of chains runs with no model served and no
+  token spent. The refusal on a missing `--provider`/`--model` stands either way.
+- **`--assets-dir`** is the same flag with the same default as `llm.py`, and the resolved value is
+  stated in the run header, exactly as `llm.py` states it.
+- The third command is the honest failure the bench exists for: nothing is served on this machine,
+  so **every** input returns a typed `MODEL_UNAVAILABLE` — each printed as `name: FAILED` with its
+  own record, `files: 3 · succeeded: 0 · failed: 3`, exit `1`. The second, with `--fake`, is the
+  same three inputs and `SUCCESS`.
+
+---
+
 ## The boundaries
 
 Three hold for every tool, and `tests/test_lab_tools.py` asserts them rather than trusting them:
@@ -440,9 +472,11 @@ a defect:
 - **No engine installed** → the library returns a typed failure, the tool prints it and exits `1`.
 - **No model served** → `llm.py` returns a typed `MODEL_UNAVAILABLE` (the local endpoint answering
   `404`), and `workflow.py` reports its stage as failed.
-- **Neither, but you still want to see the chain** → `llm.py fake` and `workflow.py --fake-llm`
-  install the committed scripted provider, so a graph, its node reuse and a resume are
-  demonstrable with no network and no token spent.
+- **Neither, but you still want to see the chain** → `llm.py fake`, `workflow.py --fake-llm` and
+  `batch_llm.py --fake` install the committed scripted provider, so a graph, its node reuse, a
+  resume, and a whole corpus of chains are demonstrable with no network and no token spent. The
+  three install the same seam, and the refusal on a missing `--provider`/`--model` stands either
+  way.
 
 ## Gates
 
@@ -461,11 +495,12 @@ The structural guards and the glue tests live in `tests/test_lab_tools.py` and r
 
 ## Known limitation
 
-`image.py normalize`, `image.py ocr-ready`, `image.py vlm-ready` and any `workflow.py` run that
-prepares an image **cannot publish an artifact with the real engine**: the processor's atomic
-publication writes through a `.tmp` sibling, and OpenCV infers its encoder from the file
-extension, so it refuses that name. The run reports a typed `WRITE_ERROR` and exits `1` instead of
-crashing. The defect is in the processor, is registered with an owner in
+`image.py normalize`, `image.py ocr-ready`, `image.py vlm-ready`, their `batch_image.py` peers and
+any `workflow.py` run that prepares an image **cannot publish an artifact with the real engine**:
+the processor's atomic publication writes through a `.tmp` sibling, and OpenCV infers its encoder
+from the file extension, so it refuses that name. The run reports a typed `WRITE_ERROR` and exits
+`1` instead of crashing — per input, for a batch, so the rest of the corpus still runs. The defect
+is in the processor, is registered with an owner in
 [`docs/plan/bitacora.md`](../../docs/plan/bitacora.md) (2026-09-27), and is deliberately not
 patched from here.
 
