@@ -349,16 +349,27 @@ def _render(
 
 
 def _text_page(input_path: Path, page_number: int, root: Path) -> Payload:
-    """Read one page's native text and publish it as that page's ``.txt`` file.
+    """Read one page's native text and publish both of its text artifacts.
 
-    The file is named after the page, the way ``render`` names its PNG: the scope decides how
-    many files a run publishes, never what one of them is called. The write reuses the
-    processor's own atomic writer, so a half-written artifact is never visible under its final
-    name.
+    Two files, one per read: ``page_NNN.txt`` is the reconstruction from the word rows, and
+    ``page_NNN_layout.txt`` is the engine's own ``-layout`` rendering, kept beside it rather
+    than instead of it because it carries the page's columns and the reconstruction does not.
+    Both are named after the page, the way ``render`` names its PNG: the scope decides how
+    many files a run publishes, never what one of them is called. The writes reuse the
+    processor's own atomic writer, so a half-written artifact is never visible.
     """
     text, _ = primitives.extract_text_from_page(input_path, page_number, True)
+    laid_out = primitives.extract_layout_text_from_page(input_path, page_number)
     published = primitives.publish_text(root / f"page_{page_number:03d}.txt", text)
-    return {"page": page_number, "text": text, "output": str(published)}
+    published_layout = primitives.publish_text(
+        root / f"page_{page_number:03d}_layout.txt", laid_out
+    )
+    return {
+        "page": page_number,
+        "text": text,
+        "output": str(published),
+        "layout_output": str(published_layout),
+    }
 
 
 def _text(

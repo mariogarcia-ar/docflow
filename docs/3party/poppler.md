@@ -88,7 +88,7 @@ Argv shapes read from the Debian man pages (`26.01.0-5`).
 |---|---|
 | `dpi` (`-r`) | yes |
 | Page range (`-f`/`-l`) | yes |
-| Text layout mode (`-layout` vs reading order), `-colspacing`, `-raw`, `-nodiag` | yes |
+| Text layout mode (`-tsv` reconstruction, plus the opt-in `-layout` read), `-colspacing`, `-raw`, `-nodiag` | yes — `PDFOptions.layout` is part of the normalized options |
 | Output format flags (`-png`/`-jpeg`/`-all`), `-jpegopt` | yes |
 | `-enc`, `-eol`, `-nopgbrk` | yes (bytes change) |
 | Poppler version | **yes** — recorded as `engine_version`, and the plan's drift risk is caught on the version bump, not by a test |
@@ -178,9 +178,17 @@ the choice itself lands in `docs/plan/` (`PDF-03`, `PDF-05`, `PDF-06`), never he
       (`1 = ###PAGE###`, `3 = ###FLOW###`, `4 = ###LINE###`, `5 = word`), parseable with `str.split`
       and no XML parser — where `-bbox-layout` emits an XHTML document that would want one. Both
       shapes are recorded in §D.
-      *Left to `PDF-06`:* whether `text.txt` is joined from the same `-tsv` word rows (one read, and
-      then `text.txt` and `blocks.json` provably cannot describe two different reads) or comes from a
-      separate `-layout` call (the engine's own spacing, at the cost of a second read).
+      **Answered twice over, in the end.** `PDF-06` took the first option for `text.txt`: it is
+      joined from the same `-tsv` word rows, so `text.txt` and `blocks.json` provably cannot
+      describe two different reads. The second option was then taken *as well* — as a second
+      artifact rather than a substitute: `native_text/text_layout.txt` is the `-layout` stdout,
+      published beside the reconstruction when `layout=True`, at the cost of one more call per page
+      and never instead of the pair. Probed 2026-09-29 on `tests/fixtures/casos/`: the artifact is
+      byte-identical to `pdftotext -layout` apart from the page separator and the final newline,
+      which the seam strips. On a two-column ticket footer the reconstruction stays readable where
+      `-layout` interleaves the two texts line by line; in the same ticket's header `-layout` keeps
+      each word's own column where the reconstruction joins with single spaces. Neither is a
+      superset, which is why both are published.
 - [x] A page with no text layer — **not an error by itself.** The engine exits 0 and writes a single
       form feed, so blankness is tested after stripping page separators, never as `size == 0`. A
       legitimately image-only page is *data* (no `native_text`, classification `IMAGE`); the failure is

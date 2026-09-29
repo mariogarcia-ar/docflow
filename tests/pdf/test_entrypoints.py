@@ -37,6 +37,7 @@ PAGE_ARTIFACTS = (
     "source/page.pdf",
     "render/page.png",
     "native_text/text.txt",
+    "native_text/text_layout.txt",
     "native_text/blocks.json",
     "metadata.json",
 )
@@ -132,6 +133,55 @@ def test_a_text_dominant_page_is_classified_text_with_its_blocks(
     assert page.text_blocks[0].bbox is not None
 
 
+def test_the_layout_text_is_the_engines_own_rendering_beside_the_reconstruction(
+    poppler: Callable[..., FakePoppler], tmp_path: Path
+) -> None:
+    """``layout`` publishes a *second* text artifact: the ``-layout`` read, not a copy.
+
+    The two reads differ by construction — the reconstruction joins a line's words with one
+    space, the engine keeps each word's own column — so a run that published the same bytes
+    twice, or that fed one read into both artifacts, cannot pass this test.
+    """
+    fake = poppler(text_document())
+    request = build_request(SAMPLE_TEXT, tmp_path / "document")
+
+    result = process_pdf(request)
+    page = result.pages[0]
+    root = request.output_dir / "page_001" / "native_text"
+
+    reconstructed = (root / "text.txt").read_text(encoding="utf-8")
+    laid_out = (root / "text_layout.txt").read_text(encoding="utf-8")
+
+    assert page.native_text is not None
+    assert laid_out != reconstructed
+    assert laid_out.split() == reconstructed.split(), (
+        "the same words, in the same order"
+    )
+    assert "  " in laid_out, "the engine's columns survived"
+    assert "  " not in reconstructed, "the reconstruction joins with single spaces"
+    assert "\f" not in laid_out, (
+        "the engine's page separator is not part of the artifact"
+    )
+    assert root / "text_layout.txt" in page.artifacts
+    assert len([call for call in fake.calls if "-layout" in call]) == 3
+
+
+def test_the_layout_text_is_absent_when_layout_is_not_requested(
+    poppler: Callable[..., FakePoppler], tmp_path: Path
+) -> None:
+    """The second read is opt-in: without ``layout`` there is no layout artifact."""
+    fake = poppler(text_document())
+    request = build_request(SAMPLE_TEXT, tmp_path / "document", layout=False)
+
+    result = process_pdf(request)
+
+    assert result.status == "success"
+    assert files_under(request.output_dir / "page_001") == set(PAGE_ARTIFACTS) - {
+        "native_text/text_layout.txt"
+    }
+    assert "-layout" not in [flag for call in fake.calls for flag in call]
+
+
 def test_an_image_dominant_page_is_classified_image_and_keeps_its_images(
     poppler: Callable[..., FakePoppler], tmp_path: Path
 ) -> None:
@@ -146,6 +196,9 @@ def test_an_image_dominant_page_is_classified_image_and_keeps_its_images(
     assert page.status == "success"
     assert page.native_text is not None
     assert page.native_text.read_text(encoding="utf-8") == ""
+    assert (
+        request.output_dir / "page_001" / "native_text" / "text_layout.txt"
+    ).read_text(encoding="utf-8") == "", "an empty layout artifact is data too"
     assert [embedded.image_id for embedded in page.embedded_images] == ["image_001"]
     assert (
         request.output_dir / "page_001" / "embedded_images" / "image_001.png"

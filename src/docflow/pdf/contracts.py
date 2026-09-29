@@ -66,7 +66,9 @@ class PDFOptions:
         render: Render each page to PNG.
         extract_text: Extract native text and its blocks.
         extract_images: Extract embedded images.
-        layout: Preserve layout information in the extracted blocks.
+        layout: Preserve layout information in the extracted blocks, and publish the
+            engine's own ``-layout`` rendering of the page's text beside the
+            reconstructed one. It has no effect without ``extract_text``.
         dpi: Render resolution. Explicit: never a silent default substituted for a
             missing value.
     """

@@ -55,7 +55,7 @@ Inputs: `.pdf`. Code says `—` where a subcommand needs no flag.
 | `inspect` | — | page count, per-page geometry, engine report |
 | `split` | — | one self-contained PDF per page |
 | `render` | `--dpi` | one page as a PNG, or every page |
-| `text` | — | the page's native text, or every page's; writes `page_NNN.txt` |
+| `text` | — | the page's native text, or every page's; writes `page_NNN.txt` and `page_NNN_layout.txt` |
 | `blocks` | — | the same read, block view (reading order, boxes) |
 | `images` | — | the page's embedded images, or every page's |
 | `classify` | — | metrics plus the `TEXT` / `IMAGE` / `MIXED` verdict, per page |
@@ -83,9 +83,12 @@ python scripts/tools/pdf.py run tests/fixtures/pdf/pdf_sample_text.pdf \
 
 That is all eight subcommands, one line each. `text` and `blocks` are the same read in two views;
 `images` reads the sample whose one page is nothing but an embedded image; and `classify` is shown
-both ways — one page and all three. `text` publishes each page's native text as `page_NNN.txt`, the
-way `render` publishes each page's PNG; `inspect` and `blocks` publish nothing, their report being
-the stdout summary.
+both ways — one page and all three. `text` publishes **two** files per page, named after the page
+the way `render` names its PNG: `page_NNN.txt`, the text rebuilt in reading order, and
+`page_NNN_layout.txt`, the engine's own `-layout` rendering, which keeps the page's columns. Read
+the first to read the page; reach for the second when *where* a value sits is the information — in
+the two-column footer of a ticket the first stays readable and the second interleaves the two
+texts. `inspect` and `blocks` publish nothing, their report being the stdout summary.
 
 ### A folder
 

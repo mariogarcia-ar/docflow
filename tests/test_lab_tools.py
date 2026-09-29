@@ -534,7 +534,8 @@ def test_a_page_command_reads_every_page_when_no_page_is_stated(
     assert payload["scope"] == "all pages (3)"
     assert [entry["page"] for entry in payload["pages"]] == [1, 2, 3]
     assert (payload["status"], payload["errors"]) == ("success", [])
-    assert _binaries_called(double).count("pdftotext") == 3
+    reads = [call for call in double.calls if "-tsv" in call]
+    assert len(reads) == 3
 
 
 def test_a_one_page_document_is_a_scope_of_one(
@@ -556,7 +557,7 @@ def test_a_one_page_document_is_a_scope_of_one(
 def test_a_stated_page_keeps_its_payload_shape(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``--page`` returns one page's own keys, gaining the scope it states and its file."""
+    """``--page`` returns one page's own keys, gaining the scope it states and its files."""
     _page_double(monkeypatch, *(FakePage(lines=("A line.",)) for _ in range(3)))
 
     code = tool_module("pdf").main(
@@ -570,6 +571,7 @@ def test_a_stated_page_keeps_its_payload_shape(
     assert "pages" not in payload
     assert payload["text"].strip()
     assert Path(payload["output"]).name == "page_002.txt"
+    assert Path(payload["layout_output"]).name == "page_002_layout.txt"
 
 
 def test_a_stated_page_inspects_nothing_it_did_not_before(
@@ -606,10 +608,10 @@ def test_every_page_gets_its_own_images_directory(
     ]
 
 
-def test_pdf_text_publishes_one_file_per_page(
+def test_pdf_text_publishes_two_files_per_page(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``text`` publishes each page's text, the way ``render`` publishes each page's PNG."""
+    """``text`` publishes each page's text twice over: the reconstruction and the layout."""
     _page_double(
         monkeypatch, *(FakePage(lines=(f"Line {number}.",)) for number in range(1, 3))
     )
@@ -622,13 +624,19 @@ def test_pdf_text_publishes_one_file_per_page(
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
     entries = payload["pages"]
-    names = ("page_001.txt", "page_002.txt")
     assert [entry["page"] for entry in entries] == [1, 2]
-    for entry, name in zip(entries, names, strict=True):
+    for entry, name in zip(entries, ("page_001.txt", "page_002.txt"), strict=True):
         written = out / name
-        assert written.is_file()
+        laid_out = out / name.replace(".txt", "_layout.txt")
+        assert written.is_file() and laid_out.is_file()
         assert written.read_text(encoding="utf-8") == entry["text"]
         assert Path(entry["output"]).name == name
+        assert Path(entry["layout_output"]).name == laid_out.name
+        # Two reads, not one published twice: same words, different spacing.
+        layout_text = laid_out.read_text(encoding="utf-8")
+        assert layout_text != entry["text"]
+        assert layout_text.split() == entry["text"].split()
+        assert "  " in layout_text
 
 
 def test_one_failing_page_does_not_end_the_document(

@@ -96,6 +96,7 @@ __all__ = [
     "analyze_pdf_page",
     "classify_pdf_page",
     "extract_images_from_page",
+    "extract_layout_text_from_page",
     "extract_page",
     "extract_text_from_page",
     "for_page",
@@ -632,6 +633,51 @@ def extract_text_from_page(
         failure_type="TEXT_EXTRACTION_ERROR",
     )
     return _parse_text_rows(completed.stdout, page_number, layout=layout)
+
+
+def extract_layout_text_from_page(pdf_path: Path, page_number: int) -> str:
+    """Extract one page's native text with the engine's own layout preserved.
+
+    A **second** engine call, and deliberately not the read :func:`extract_text_from_page`
+    makes: that one is reconstructed from the word rows of ``pdftotext -tsv`` (reading
+    order, one line per visual line, single spaces between words), while this one is the
+    engine's ``-layout`` rendering of the same page. They answer different questions and
+    are published side by side rather than merged, because neither is a superset of the
+    other: the reconstruction is what a consumer should read in order, and this one keeps
+    the physical arrangement a table, a form or a label/value grid carries.
+
+    The engine's page separator is removed and the trailing newline folded, so the artifact
+    holds the page's text and nothing of the engine's pagination. A page with no text layer
+    returns an empty string, exactly as the reconstructed read does, so an empty artifact
+    stays data rather than a failure.
+
+    Args:
+        pdf_path: The document to read.
+        page_number: Page index, 1-based.
+
+    Returns:
+        The page's text as the engine lays it out.
+
+    Raises:
+        PDFPrimitiveError: With ``TEXT_EXTRACTION_ERROR`` when the engine fails.
+    """
+    completed = _run_poppler(
+        "pdftotext",
+        [
+            "-layout",
+            "-f",
+            str(page_number),
+            "-l",
+            str(page_number),
+            "-enc",
+            TEXT_ENCODING,
+            str(pdf_path),
+            "-",
+        ],
+        page_number=page_number,
+        failure_type="TEXT_EXTRACTION_ERROR",
+    )
+    return completed.stdout.replace("\f", "").rstrip("\n")
 
 
 def _reported_images(pdf_path: Path, page_number: int) -> list[dict[str, Any]]:

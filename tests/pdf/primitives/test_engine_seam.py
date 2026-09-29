@@ -17,6 +17,7 @@ from docflow.pdf.primitives import (
     ENGINE_NAME,
     PDFPrimitiveError,
     extract_images_from_page,
+    extract_layout_text_from_page,
     extract_page,
     extract_text_from_page,
     inspect_pdf,
@@ -283,6 +284,38 @@ def test_dropping_the_layout_keeps_the_same_read(
     assert len(calls_to(fake, "pdftotext")) == 1
     assert text == "Page one of the text sample.\nSecond line of page one."
     assert [block.bbox for block in blocks] == [None, None]
+
+
+def test_the_layout_read_is_a_second_call_on_purpose(
+    poppler: Callable[..., FakePoppler],
+) -> None:
+    """The layout text is the engine's own rendering, from a call of its own.
+
+    Deliberately not the read :func:`extract_text_from_page` makes: that one is the ``-tsv``
+    reconstruction, this one is ``-layout``, and the two answers differ by construction.
+    """
+    fake = poppler(text_document())
+
+    laid_out = extract_layout_text_from_page(SAMPLE_TEXT, 1)
+
+    calls = calls_to(fake, "pdftotext")
+    assert len(calls) == 1
+    assert calls[0][1] == "-layout"
+    assert str(SAMPLE_TEXT) in calls[0]
+    assert calls[0][-1] == "-"
+    assert laid_out.split()[0] == "Page"
+    assert "  " in laid_out, "the engine's columns, which the reconstruction drops"
+    assert "\f" not in laid_out, "the page separator is not part of the artifact"
+    assert not laid_out.endswith("\n")
+
+
+def test_a_page_without_a_text_layer_has_an_empty_layout_text(
+    poppler: Callable[..., FakePoppler],
+) -> None:
+    """The layout read answers empty for the same page the reconstruction does."""
+    poppler(image_document())
+
+    assert extract_layout_text_from_page(SAMPLE_IMAGE, 1) == ""
 
 
 def test_a_page_without_a_text_layer_reports_empty_text_as_data(

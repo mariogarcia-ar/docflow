@@ -183,7 +183,7 @@ tool's job, producing it is not.
 | `inspect` | `primitives.inspect_pdf` | page count, per-page geometry, engine report |
 | `split` | `primitives.split_pdf` | one self-contained PDF per page |
 | `render` | `primitives.render_page_to_image` | requires `--dpi`; `--page` picks one page |
-| `text` | `primitives.extract_text_from_page` + `publish_text` | the page's native text, or every page's; publishes `page_NNN.txt` |
+| `text` | `primitives.extract_text_from_page` + `extract_layout_text_from_page` + `publish_text` | the page's native text, or every page's; publishes `page_NNN.txt` **and** `page_NNN_layout.txt` |
 | `blocks` | `primitives.extract_text_from_page` | the same read, block view |
 | `images` | `primitives.extract_images_from_page` | embedded images, under the page's own directory |
 | `classify` | `primitives.composition.analyze_pdf_page` + `classify_pdf_page` | the `TEXT`/`IMAGE`/`MIXED` verdict, per page |
@@ -196,18 +196,41 @@ resolved to is stated in the payload, so an omitted flag is never silent, and th
 follows the scope that was asked for:
 
 ```json
-{"input": "…", "scope": "page 2", "page": 2, "text": "…", "output": "…/page_002.txt"}
+{"input": "…", "scope": "page 2", "page": 2, "text": "…", "output": "…/page_002.txt",
+ "layout_output": "…/page_002_layout.txt"}
 {"input": "…", "scope": "all pages (3)", "pages": [{"page": 1, "text": "…", "output": "…"}, …],
  "status": "success", "errors": []}
 ```
 
 `pages` is present exactly when the run covered every page, and a reader discriminates the two
-shapes on `pages` versus `page`. `text` publishes each page's native text as `page_NNN.txt` under
-the run root, the way `render` publishes its PNG — the page's own name, so a scope of many pages
-never collides. A page that fails does not end the document: its typed record
+shapes on `pages` versus `page`. A page that fails does not end the document: its typed record
 joins `errors` with its page number, the pages that succeeded are still reported, and `status` is
 `success`, `partial` or `failed`. `run` is not in that set — its `--page` switches to the
 page-level contract, and its absence runs the whole document, which aggregates and publishes.
+
+#### Why `text` publishes two files
+
+Each page gets **two** text artifacts, because the two reads answer different questions and
+neither is a superset of the other:
+
+| Artifact (tool / `run`) | Read | Shape | Read it when |
+|---|---|---|---|
+| `page_NNN.txt` / `native_text/text.txt` | `pdftotext -tsv`, rebuilt word row by word row | reading order, one logical line per line, single spaces between words | you want the page *as text*: a consumer that walks it line by line, and the LLM stage |
+| `page_NNN_layout.txt` / `native_text/text_layout.txt` | `pdftotext -layout` | the engine's own rendering: columns and horizontal spacing preserved | the page's **arrangement** is the information — tables, forms, label/value grids, invoice headers |
+
+Both are named after the page, the way `render` names its PNG, so a scope of many pages never
+collides. Measured on `tests/fixtures/casos/`: in the two-column footer of a bus ticket the
+reconstruction keeps each column contiguous while `-layout` interleaves them line by line
+(`o no, deberán cumplimentar…` printed above `El boleto es válido…`); in the same ticket's header
+`-layout` keeps `Boleto:SUV-255671438-0` glued as the PDF has it and puts `Boleto:`, `Butaca:` and
+`Salida:` on one visual line, which the reconstruction splits. On a fixture with no columns the two
+are identical, down to the words.
+
+**The second read is opt-in.** `layout=True` — the `run --layout` switch, and what `pdf.py text`
+asks for — pays for the `-layout` call per page; `layout=False` makes neither the call nor the file
+(a test asserts both). `text.txt` and `blocks.json` still come from **one** read: the layout
+artifact is an addition *beside* them, never a replacement, so the pair that must agree about
+reading order still does.
 
 ### `image.py` — `SCR-03`
 

@@ -2063,3 +2063,67 @@ WBS file:
 | `docs/plan/subplan-paginas.md` §3.3 | the `text` row's *Published per page* cell says "nothing"; it publishes `page_NNN.txt` | plan owner |
 | `docs/plan/subplan-paginas.md` §3.4 | the `text` payload examples, and the claim that `scope` is "the only change to the single-page payload" — `output` is now a second addition | plan owner |
 | `docs/plan/issues/wbs-paginas.md` | the paired WBS file must move in the same pass as §3.3/§3.4 | plan owner |
+
+---
+
+## 2026-09-29 — PDF · a second text artifact: the engine's own `-layout` rendering
+
+**Asked for after reading the two outputs side by side.** `text.txt` is a *reconstruction*: it is
+joined from the word rows of `pdftotext -tsv`, so it reads in order and loses the page's columns.
+The engine's `-layout` rendering is the other half of the same page — it keeps every word's column.
+Neither is a superset of the other, so both are published now:
+
+| Artifact | Read | Read it when |
+|---|---|---|
+| `native_text/text.txt` | `pdftotext -tsv`, rebuilt row by row | you want the page as text: a line-by-line consumer, the LLM stage |
+| `native_text/text_layout.txt` | `pdftotext -layout` | the page's arrangement is the information: tables, forms, invoice headers |
+
+The bench mirrors it: `pdf.py text` / `batch_pdf.py … text` write `page_NNN.txt` **and**
+`page_NNN_layout.txt`, named per page the way `render` names its PNG.
+
+**The cost is a second engine call per page, and it is opt-in.** Gated on the existing
+`PDFOptions.layout` — no new option, no contract field — so `run --layout` and `pdf.py text` pay
+for it and `layout=False` makes neither the call nor the file. `text.txt` and `blocks.json` still
+come from **one** read; the layout artifact is added *beside* them, never instead of them, so the
+pair that must agree about reading order still does.
+
+**Measured, not asserted.** With the real engine our `page_001_layout.txt` is byte-identical to
+`pdftotext -layout` apart from the page separator and the final newline, which the seam strips
+(`diff` on the 69-line ticket shows one line, the `\ No newline at end of file` marker). The
+usefulness argument comes from the two `casos` fixtures: in the ticket's two-column footer the
+reconstruction keeps each column contiguous where `-layout` interleaves them line by line
+(`o no, deberán cumplimentar…` above `El boleto es válido…`), and in the same ticket's header
+`-layout` keeps `Boleto:SUV-255671438-0` glued and `Boleto:`/`Butaca:`/`Salida:` on one visual
+line, which the reconstruction splits. On a fixture with no columns the two agree word for word.
+
+**Mutation evidence.**
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `entrypoints`: the layout block never runs (`if False:`) | 3 red — `test_the_happy_path_processes_every_page_and_publishes_its_namespace` (`'native_text/text_layout.txt'` extra in the expected set), `test_the_layout_text_is_the_engines_own_rendering_beside_the_reconstruction`, `test_one_failing_stage_yields_a_partial_page_that_keeps_its_artifacts` | inverse edit; `tests/pdf` 84 passed |
+| `_pdf._text_page`: the layout read stubbed to `""` | `test_pdf_text_publishes_two_files_per_page` red — the published file no longer holds the same words as the reconstruction | inverse edit; 109 passed in `tests/test_lab_tools.py` |
+
+**New tests.** The engine seam gained `test_the_layout_read_is_a_second_call_on_purpose` (the call
+is `-layout`, one of them, to stdout) and `test_a_page_without_a_text_layer_has_an_empty_layout_text`;
+the entry point gained the opt-in pair — the artifact is the engine's own rendering beside the
+reconstruction, and it is absent (with the call) when `layout=False`.
+
+**Gate evidence.**
+
+```
+pytest                     726 passed
+ruff check .               All checks passed!
+ruff format --check .      181 files already formatted
+pylint src tests           10.00/10
+```
+
+**Left stale (owner).** This deliberately adds a **second reader for one engine call**, which the
+plan forbade by name, so a **plan revision is owed** — not taken here, for the same reason as the
+entry above (a frozen plan moves in its own pass, subplan and WBS together):
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/plan/subplan-procesador-pdf.md` §9, decision 7 | "one reader per concern … two paths to the same engine call is how a page count starts disagreeing with itself" — the design now has `extract_text_from_page` (`-tsv`) and `extract_layout_text_from_page` (`-layout`), and the rationale that survives is narrower: the two reads are *different outputs*, not two paths to one, and `text.txt`/`blocks.json` still come from one call | plan owner |
+| `docs/plan/subplan-procesador-pdf.md` §3 | the primitive list and the native-text bullet do not mention the layout read | plan owner |
+| `docs/plan/issues/wbs-procesador-pdf.md` §PDF-06 | the objective says "from one read" and the scope names one primitive; the paired WBS must move with §3/§9 | plan owner |
+| `docs/plan/issues/wbs-procesador-pdf.md` §PDF-05 / PDF-03 range | no task owns the new artifact; whether it is PDF-06's or a new row is the revision's call | plan owner |

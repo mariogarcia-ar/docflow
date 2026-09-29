@@ -255,6 +255,12 @@ class FakePoppler:
         return ""
 
     def _text(self, argv: Sequence[str]) -> str:
+        """The ``pdftotext`` run, in whichever of its two modes the seam asked for."""
+        if "-layout" in argv:
+            return self._layout_text(argv)
+        return self._text_report(argv)
+
+    def _text_report(self, argv: Sequence[str]) -> str:
         """The ``pdftotext -tsv`` report: the page's flows, lines and words."""
         page_number = self._page_of(argv) or 1
         page = self.pages[page_number - 1]
@@ -281,6 +287,32 @@ class FakePoppler:
                 for word_number, word in enumerate(line.split())
             )
         return "\n".join(rows) + "\n"
+
+    def _layout_text(self, argv: Sequence[str]) -> str:
+        """The ``pdftotext -layout`` rendering: each word at its own column.
+
+        The engine's column arithmetic is not modelled — only the property that makes the
+        two modes different: a word keeps the column the ``-tsv`` report gives it, so two
+        words are separated by padding instead of a single space. The page separator the
+        engine appends is modelled as well, because the seam has to strip it before the
+        artifact is published.
+        """
+        page_number = self._page_of(argv) or 1
+        rendered = []
+        for line in self.pages[page_number - 1].lines:
+            pieces = []
+            column = 0
+            for word_number, word in enumerate(line.split()):
+                if word_number:
+                    # The line's own left margin is column 0; the engine normalises it
+                    # away, so only the gaps between words survive into the rendering.
+                    start = round(50.0 * word_number / 6.0)
+                    pieces.append(" " * max(1, start - column))
+                    column = max(column, start)
+                pieces.append(word)
+                column += len(word)
+            rendered.append("".join(pieces))
+        return "\n".join(rendered) + "\n\f"
 
     def _images(self, argv: Sequence[str]) -> str:
         """The ``pdfimages`` run: either the report, or the extracted image files."""

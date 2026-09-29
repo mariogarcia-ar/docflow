@@ -15,6 +15,7 @@ output_dir/
     ├── source/page.pdf
     ├── render/page.png
     ├── native_text/text.txt
+    ├── native_text/text_layout.txt
     ├── native_text/blocks.json
     ├── embedded_images/image_001.png
     └── metadata.json
@@ -60,6 +61,7 @@ from docflow.pdf.primitives import (
     analyze_pdf_page,
     classify_pdf_page,
     extract_images_from_page,
+    extract_layout_text_from_page,
     extract_page,
     extract_text_from_page,
     for_page,
@@ -86,6 +88,7 @@ PROCESSOR_VERSION: Final[str] = "0.0.0"
 PAGE_PDF_NAME: Final[Path] = Path("source") / "page.pdf"
 PAGE_IMAGE_NAME: Final[Path] = Path("render") / "page.png"
 PAGE_TEXT_NAME: Final[Path] = Path("native_text") / "text.txt"
+PAGE_LAYOUT_NAME: Final[Path] = Path("native_text") / "text_layout.txt"
 PAGE_BLOCKS_NAME: Final[Path] = Path("native_text") / "blocks.json"
 PAGE_METADATA_NAME: Final[Path] = Path("metadata.json")
 EMBEDDED_IMAGES_DIRECTORY: Final[Path] = Path("embedded_images")
@@ -589,6 +592,32 @@ def process_pdf_page(
             )
             if blocks is not None:
                 produced.published.append(blocks)
+
+    if options.extract_text and options.layout:
+        # A second engine call on purpose. ``extract_text_from_page`` reconstructs the text
+        # from the ``-tsv`` word rows; this is the engine's own ``-layout`` rendering of the
+        # same page, and it is published *beside* the reconstruction rather than replacing
+        # it, because neither is a superset of the other.
+        # TODO: [MVP] the layout text is published and listed in ``artifacts``, but the page
+        # result has no named handle for it; a consumer reaching it by name waits on the
+        # orchestrator's source selection.
+        layout_text = _attempt(
+            failures,
+            page_number,
+            extract_layout_text_from_page,
+            request.pdf_path,
+            page_number,
+        )
+        if layout_text is not None:
+            published_layout = _attempt(
+                failures,
+                page_number,
+                publish_text,
+                output_dir / PAGE_LAYOUT_NAME,
+                layout_text,
+            )
+            if published_layout is not None:
+                produced.published.append(published_layout)
 
     if options.extract_images:
         extracted_images = _attempt(
