@@ -23,6 +23,7 @@ DoR-DoD / Risks / Out of scope & resolved decisions):
 | [`subplan-procesador-llm-call.md`](subplan-procesador-llm-call.md) | `procesador-llm-call` | 1 |
 | [`subplan-orquestador.md`](subplan-orquestador.md) | `procesador-orquestador` | 2 |
 | [`subplan-scripts.md`](subplan-scripts.md) | lab tools (`scripts/tools/`) — outside the library | 5 |
+| [`subplan-paginas.md`](subplan-paginas.md) | page scope in the PDF bench (`scripts/tools/_pdf.py`) — a revision of the bench, not a phase | 5 (revision) |
 
 ---
 
@@ -254,7 +255,9 @@ orchestrator is required to.
 
 The full design — the subcommand→symbol map, the fixture map, the invariants and the resolved
 decisions — is [`subplan-scripts.md`](subplan-scripts.md), and its task-level decomposition is
-[`issues/wbs-scripts.md`](issues/wbs-scripts.md).
+[`issues/wbs-scripts.md`](issues/wbs-scripts.md). The **page scope** of the five page-addressed
+commands — a stated `--page` or every page — is [`subplan-paginas.md`](subplan-paginas.md), whose
+task-level decomposition is [`issues/wbs-paginas.md`](issues/wbs-paginas.md).
 
 ---
 

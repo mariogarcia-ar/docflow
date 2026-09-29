@@ -1,20 +1,20 @@
 # Subplan — page scope in the PDF bench (`--page` omitted = every page)
 
-> Status: **proposed — decided, not yet applied.** This subplan is the authority for the
-> **page scope** of the five page-addressed commands of the PDF bench
-> (`render`, `text`, `blocks`, `images`, `classify`). On that question only it **supersedes**
-> `subplan-scripts.md`: §3.3 (a missing `--page` is a usage error), §3.4 (the `Notes` of the
-> five `pdf.py` rows), §5 (the refusal scenarios), §6 (the refusal cases of the glue tests and
-> the invariant list) and §9 (which gains the decision this file records). It also supersedes
-> the 2026-09-28 "pre-walk flag validation" decision for those five commands and nothing else:
-> `--dpi` on `render` and `run` is still required and still refused before the header.
+> Status: **applied** (`PAG-01`…`PAG-07`). This subplan is the authority for the **page scope**
+> of the five page-addressed commands of the PDF bench (`render`, `text`, `blocks`, `images`,
+> `classify`). On that question only it **supersedes** `subplan-scripts.md`: §3.3 (a missing
+> `--page` is a usage error, and one bad invocation example) and §3.4 (the `Notes` of the five
+> `pdf.py` rows), with the decision recorded as §9's entry 18 — **all three corrected in the same
+> pass**. It also supersedes the 2026-09-28 "pre-walk flag validation" decision for those five
+> commands and nothing else: `--dpi` on `render` and `run` is still required and still refused
+> before the header.
 >
-> Until `PAG-06` performs that edit, this file is the winning decision and `subplan-scripts.md`
-> is stale on exactly those clauses — the same discipline
-> `docs/feedback/batch-mode-across-processors.md` used for its reversal. This file is
-> **unregistered** in `docs/plan/README.md`'s subplans table and §4.1 until `PAG-06` adds it,
-> and it introduces **no new phase**: it is a revision of Phase 5's bench, not a phase of the
-> library.
+> **§5 and §6 were not edited, because they name no page clause** — no acceptance scenario and no
+> guard in either ever pinned the refusal. That is a finding rather than an omission: the required
+> flag lived only in §3.3's prose and in the tests, so the tests are where the change had to land,
+> and the subplan that froze the refusal has no scenario to contradict. `docs/plan/README.md`'s
+> subplans table and §4.1 carry this file's row, and it introduces **no new phase**: it is a
+> revision of Phase 5's bench, not a phase of the library.
 >
 > Task IDs use a **new, contiguous range `PAG-01`…`PAG-07`** — one prefix per subplan, as
 > `PDF-*`, `IMG-*`, `OCR-*`, `LLM-*`, `ORC-*` and `SCR-*` already are. `SCR-01`…`SCR-18` are
@@ -89,7 +89,7 @@ an artifact tree for every page. The gap is a **report** over every page with no
 | `PAGE_FLAG_COMMANDS` | `(*PAGE_COMMANDS, "run")` — the flag registrations | unchanged |
 | `DPI_COMMANDS` | `("render", "run")` | unchanged |
 | `build_subcommands` | registers `--page` on `PAGE_FLAG_COMMANDS` | unchanged |
-| `page()` | `required(...)` — refuses a missing `--page` | unchanged: it is still how a **stated** page is read |
+| `page()` | `required(...)` — refuses a missing `--page` | **deleted**: `page_scope` reads `args.page` directly. The flag stays default-free because the behaviour test goes red if a `default=` is injected, which is falsifiable where a refusal that can no longer fire is not |
 | `validate_flags` | refuses a missing `--page` on `PAGE_COMMANDS`, then `--dpi` | refuses only `--dpi` (on `render`/`run`). The `--page` branch is deleted |
 | `_render`, `_text`, `_blocks`, `_images`, `_classify` | one page each | each resolves its scope, then runs its own per-page work once per page |
 
@@ -100,14 +100,24 @@ command that "could never have run".
 
 ### 3.2 The scope resolver
 
-One new private helper in `_pdf.py`, used by all five methods:
+One new private helper in `_pdf.py`, used by all five methods, plus the record it returns:
 
 ```python
-def page_scope(
-    args: argparse.Namespace, parser: argparse.ArgumentParser, input_path: Path
-) -> tuple[list[int], str]:
-    """Return the pages this run covers and the scope to state, inspecting only when needed."""
+@dataclass(frozen=True)
+class PageScope:
+    pages: list[int]                # the pages to read, in order
+    label: str                      # "page 2" | "all pages (3)"
+    stated: bool                    # it decides the payload's *shape*, not its content
+    document: PDFDocumentInfo | None = None   # None when --page was stated: no inspection
+
+def page_scope(args: argparse.Namespace, input_path: Path) -> PageScope: ...
 ```
+
+`document` is the one field the draft of this section did not have. It carries the inspection the
+scope already made, so `classify` — the only method that needs the geometry — does not read the
+same document a second time: without it, a whole-document `classify` would make one `pdfinfo` call
+plus one per page. It is `None` on the stated-page path, which is exactly what keeps that path's
+engine-call count unchanged; `classify` inspects there, as it always has.
 
 - `--page N` stated → `([N], "page N")`, and **no inspection** — the single-page path keeps
   today's engine-call count exactly.
@@ -164,8 +174,10 @@ The payload key mirrors the scope the caller asked for, and the single-page keys
 
 - `scope` is **added to both forms** — that is the only change to the single-page payload. A
   reader sees it in the human summary, in `--json`, and in the batch's `<command>.json`.
-- The all-pages form carries `pages`, `status` and `errors`; `images` and `classify` also carry
-  `artifacts`, the files the run published (mirroring `_run`'s document payload).
+- The all-pages form carries `pages`, `status` and `errors`. There is deliberately **no flat
+  `artifacts` key**: each entry names the files it published (`images[].path`, `output`), so a
+  list beside them would be a second copy of the same paths, and `run` carries one only because
+  the *contract* returns it (§9, decision 10).
 - A reader discriminates the two on `pages` vs `page`. The **uniform alternative** — always
   `pages`, even for one page — is recorded and rejected in §9, decision 2.
 - **No new contract.** These are payload dict keys built from what the primitives returned; the
@@ -416,15 +428,23 @@ three pages of one synthetic document is not evidence about a corpus.
    document run; the two "all pages" paths are stated side by side in §3.6.
 9. **Gate scope is unchanged — RESOLVED.** `scripts/` stays covered by the two Ruff gates;
    `pylint src tests` does not reach it (`subplan-scripts.md` §9, decision 10).
+10. **No flat `artifacts` key — RESOLVED during implementation.** The all-pages entries name the
+    files they published, so a document-level list would be a second copy of the same paths. This
+    narrows §3.4, which had drafted one for `images` and `classify`.
+11. **`page()` is deleted, not kept — RESOLVED during implementation.** It wrapped
+    `_cli.required`, which can only refuse a *missing* value; with "absent" now meaningful the
+    call could never fire, and a guard that cannot fail is worse than none. The absence of a
+    default is guarded by `test_a_page_command_reads_every_page_when_no_page_is_stated`, which
+    goes red the moment a `default=` is injected.
 
 **Stale documents this subplan creates or leaves (owner in parentheses)**
 
 | Document | What is stale | Owner |
 |---|---|---|
-| `subplan-scripts.md` §3.3, §3.4, §5, §6, §9 | the five page commands' required flag, the five `Notes` cells, the refusal scenarios, the refused-flag cases, and the decision list | `PAG-06` |
-| `docs/plan/README.md` subplans table and §4.1 | this subplan is unregistered and the module/subcommand text still implies a required `--page` | `PAG-06` |
-| root `README.md` | the Lab tools table's `Needs` column and the invariant table (two new records) | `PAG-06`, `PAG-07` |
-| `scripts/tools/readme.md`, `scripts/tools/quickstart.md` | the five `Needs` cells, the "missing required flag is refused once" bullet, and every page example | `PAG-05` |
-| `docs/plan/issues/wbs-scripts.md` | cites `SCR-08`'s refusal cases as the evidence for the pre-walk hook; four of them no longer exist | `PAG-06` |
-| `docs/plan/issues/wbs-general.md` §1 | the Phase 5 totals name no `PAG-*` range | `PAG-06` |
-| `docs/plan/bitacora.md` | has no entry for this change until the hand run writes one | `PAG-04` |
+| `subplan-scripts.md` §3.3, §3.4, §9 | corrected by `PAG-06`: the page-scope bullet and the `render` example, the five `Notes` cells, and decision 18 | done |
+| `docs/plan/README.md` subplans table and §4.1 | corrected by `PAG-06`: this subplan's row, and the pointer to its WBS | done |
+| root `README.md` | corrected by `PAG-06`/`PAG-07`. The Lab tools table needed **nothing** — it lists subcommands, not flags — so the work was the two new four-field records in the invariant table | done |
+| `scripts/tools/readme.md`, `scripts/tools/quickstart.md` | corrected by `PAG-05`: the five `Needs` cells, the "missing required flag" bullet, the page-scope section, and every page example | done |
+| `docs/plan/issues/wbs-scripts.md` | **checked and left unedited.** Its §7 cites no refusal case, and SCR-02's scope lists `--page` among the flags `render` takes — which stayed true. The draft of this table claimed it cites the retired cases; reading the file did not bear that out, so the table was corrected rather than the citation invented | checked |
+| `docs/plan/issues/wbs-general.md` §1 and §4.6 | corrected by `PAG-06`: this revision's own row, and totals that move to 22 own / 102 child / 124 tasks / 42-68-14 | done |
+| `docs/plan/bitacora.md` | the 2026-09-28 entry was written by `PAG-04`, with the hand run and the gate numbers | done |

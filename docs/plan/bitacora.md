@@ -1879,3 +1879,140 @@ correcting the description is a plan revision (`SCR-11`, `SCR-12`) and not this 
 required per subcommand and refused inside the method — so `batch_llm.py <empty-folder> call` exits
 `0` for the same reason. The hook now exists; wiring it is a per-command table over eight
 subcommands. `_ocr.py` takes no required flag and needs nothing.
+
+---
+
+## 2026-09-28 — Phase 5 revision · page scope in the PDF bench (`PAG-01` … `PAG-07`)
+
+**The rule.** A page-addressed command of `pdf.py` / `batch_pdf.py` that is given no `--page`
+reads **every page of the document**, in page order; a one-page document is simply a scope of one.
+The scope a run resolved to is stated back in the payload, so an omitted flag is never silent, and
+the payload's shape follows the scope that was asked for: one page keeps its own keys, every page
+reports a `pages` list with a `status` and its `errors`.
+
+**Delivered.**
+
+| File | What changed |
+|---|---|
+| `scripts/tools/_pdf.py` | `PageScope` + `page_scope`, `_pages`, `_scope_status`, `_scope_payload`, `_images_dir`, and one per-page builder per command; `validate_flags` reduced to `--dpi`; `page()` deleted |
+| `tests/test_lab_tools.py` | 4 refusal parametrizations retired, 1 swapped for `run`/`--dpi`; 9 tests added |
+| `docs/plan/subplan-paginas.md`, `docs/plan/issues/wbs-paginas.md` | the subplan and its WBS — written, applied and closed in this pass |
+| `scripts/tools/readme.md`, `scripts/tools/quickstart.md` | the page-scope section, the `Needs` cells, the examples, and the corrected `classify` note |
+| `docs/plan/subplan-scripts.md` | §3.3's page-scope bullet and the `render --page 1` example, §3.4's five `Notes` cells, §9 decision 18 |
+| `docs/plan/README.md`, `docs/plan/issues/wbs-general.md` | this subplan's row and §4.1 pointer; §1's Phase 5 revision row, §4.6, and the totals they move to 22 own / 102 child / 124 tasks / 42-68-14 |
+| root `README.md` | the two four-field mutation records below |
+
+**Tasks.** All seven are done:
+
+| Wave | Tasks | Status |
+|---|---|---|
+| 1 — The rule | `PAG-01`, `PAG-02` | done |
+| 2 — Prove it | `PAG-03`, `PAG-04`, `PAG-05` | done |
+| 3 — Close | `PAG-06`, `PAG-07` | done |
+
+**Gate evidence.**
+
+```
+pytest                     722 passed
+ruff check .               All checks passed!
+ruff format --check .      181 files already formatted
+pylint src tests           10.00/10
+```
+
+`722` is the previous `717` plus five: four parametrizations retired and nine tests added. The two
+Ruff gates read the whole tree, so `scripts/tools/_pdf.py` is inside them; `pylint src tests` does
+not reach it, which is `subplan-scripts.md` §9 decision 10 and stays stated rather than widened.
+
+**Invariant evidence.** Two invariants were mutation-falsified this session. **The canonical
+records live in the root `README.md`** (the table `GEN-16` audits); the summary is:
+
+- *An omitted `--page` resolves to every page.* Mutating `page_scope`'s all-pages branch to
+  `pages=[1]` turned **5 tests red** (scope, collision, partial and both batch runs) while `label`
+  still read `all pages (3)` — a run that said one thing and did another. The one that stayed green
+  was the one-page case, where a scope of one *is* the mutation.
+- *Two pages never share an artifact directory.* Pointing `_images_dir` back at `root / "images"`
+  turned the collision test red with `assert ['images/image_001.png'] == ['page_001/images/…',
+  'page_002/images/…']` — the second page overwriting the first, exactly as the processor's
+  per-call naming predicts.
+
+**Hand run (`PAG-04`), on the engines actually installed here** (Poppler 25.02.0):
+
+```
+python scripts/tools/pdf.py --json classify tests/fixtures/pdf/pdf_sample_text.pdf
+  scope: all pages (3) · status: success · errors: 0 · [(1,TEXT), (2,TEXT), (3,TEXT)]      exit 0
+python scripts/tools/pdf.py --json classify tests/fixtures/pdf/pdf_sample_mixed.pdf
+  scope: all pages (1) · status: success · errors: 0 · [(1,TEXT)]                          exit 0
+python scripts/tools/pdf.py --out … images tests/fixtures/pdf_aptos_layout/9073693b-….pdf
+  page_001/images/image_001..006.png (6) · page_002/images/image_001..005.png (5)          exit 0
+python scripts/tools/pdf.py --out … images <the same input> --page 1
+  images/image_001..006.png (6)      ← a stated page keeps its flat directory              exit 0
+python scripts/tools/pdf.py --out … render <the same input> --dpi 72
+  2 PNGs from a command that named no page                                                 exit 0
+python scripts/tools/pdf.py --out … classify tests/fixtures/pdf/pdf_corrupt.pdf
+  ERROR CORRUPTED_PDF: pdfinfo reported a syntax error · no payload                        exit 1
+python scripts/tools/pdf.py --out … --json classify tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf
+  scope: all pages (59) · status: success · errors: 0 · {TEXT: 57, IMAGE: 2} · 3.0 s        exit 0
+
+python scripts/tools/batch_pdf.py tests/fixtures/pdf classify
+  files: 4 · succeeded: 3 · failed: 1 · the corrupt sample is the one failure               exit 1
+python scripts/tools/batch_pdf.py tests/fixtures/matrix render --dpi 150
+  files: 3 · succeeded: 3 · failed: 0                                                       exit 0
+```
+
+**Decisions taken in code.**
+
+1. **The scope travels as a payload key, so the frame did not change at all.** `_cli.py` and
+   `_batch.py` have no new line: `print_result` already prints every key, `run_one` already files
+   the payload, and `_failed`/`_payload_failures` already read `status` and `error`/`errors`. That
+   is why the change is one file.
+2. **`page()` was deleted, not kept.** It wrapped `_cli.required`, which can only refuse a
+   *missing* value; with "absent" now meaningful, the call could never fire, and a guard that
+   cannot fail is worse than none. The flag stays default-free because
+   `test_a_page_command_reads_every_page_when_no_page_is_stated` goes red the moment a `default=`
+   is injected — falsifiable in the behaviour rather than in a refusal.
+3. **Only the looping form writes `page_NNN/images/`.** A stated page keeps the flat `images/`
+   directory it has always had, because the sub-directory exists to stop N pages colliding and one
+   page has nothing to collide with. The alternative — always `page_NNN/` — was rejected: it would
+   break a recorded layout for no benefit.
+4. **A failure before the loop still raises; a failure inside it is collected.** `page_scope`
+   inspects before the first page, so an uninspectable document keeps today's behaviour exactly:
+   the typed record is printed, nothing is filed, exit `1`. Inside the loop a failed page becomes a
+   page-scoped record in `errors` and the other pages are still reported — one bad page must not
+   cost a caller the other twenty-nine.
+5. **`PageScope.document` carries the inspection the scope already made.** Without it, `classify`
+   — the only method that needs the geometry — would call `pdfinfo` once per page on top of the one
+   the scope made: 60 calls for a 59-page document instead of one. On a stated page the field is
+   `None` and `classify` inspects exactly as it did before, which is what keeps that path's engine
+   count unchanged.
+6. **No flat `artifacts` key.** The all-pages entries name the files they published, so a
+   document-level list would be a second copy of the same paths; `run` carries one only because the
+   *contract* returns it.
+7. **Three of this subplan's own claims did not survive implementation, and the plan was corrected
+   rather than the code.** (a) It declared that it superseded §5 and §6 of `subplan-scripts.md`;
+   neither mentions the page flag, and neither needed an edit — the refusal had been pinned by
+   tests alone, which is a finding about the frozen artifact, not an omission. (b) It drafted a
+   flat `artifacts` key (decision 6). (c) It said `page()` would be unchanged (decision 2). All
+   three corrections are in the subplan's §3.1, §3.4 and §9, which is where a plan and its code
+   are supposed to agree.
+
+**Found by the bench (the point of the exercise).**
+
+| Finding | Evidence | Owner |
+|---|---|---|
+| **The shared-`images/` collision was real, not hypothetical.** The two-page layout fixture carries 6 images on page 1 and 5 on page 2, and the processor names each page's images from its own per-call index — so both pages produce `image_001.png`. The flat directory would have silently destroyed five files on the second page | `page_001/images/image_001..006.png` (6) beside `page_002/images/image_001..005.png` (5) | the reason invariant 10 exists |
+| The 59-page scale fixture reads **57 `TEXT`, 2 `IMAGE`, and no `MIXED`** — the `MIXED` branch is unreachable while the engine reports no image placement | `verdict counts {'TEXT': 57, 'IMAGE': 2}` · 3.0 s for the whole document | already tagged `# TODO: [MVP]` in `pdf/primitives/composition.py` |
+| `pdf_sample_mixed.pdf` reads `TEXT` for **two** reasons, not one: its image is drawn 96×96 pt on a 612×792 page, about **1.9%** coverage, so even a placement-aware reader would still call it `TEXT` | coverage `0.0190` against `IMAGE_COVERAGE_MIN = 0.30` | the quickstart's `Reading classify` note says so now — the fixture named "mixed" cannot demonstrate `MIXED` without a much larger image |
+| An omitted `--page` multiplies the work silently: 2 PNGs where one was asked for on a 2-page document, 59 pages read where 1 was | the `render`/`classify` runs above | accepted cost of the rule; stated in the payload and in the readme |
+
+**Left stale (owner).** Three owed revisions predate this pass and were **not** taken here, to keep
+this change's footprint on page scope:
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/plan/issues/wbs-scripts.md` | `run_batch(...)` still lists three keywords where the frame takes four — `validate=` was added on 2026-09-28 | plan owner |
+| `docs/plan/subplan-scripts.md` §3.1/§3.3/§5, `docs/feedback/batch-mode-across-processors.md` | still say the per-input record is `result.json`; it has been `<command>.json` since the 2026-09-28 rename | plan owner |
+| `docs/plan/subplan-scripts.md` §3.3 | the `workflow.py plan … --dry-run` example puts a **global** flag after the subcommand, so it is a usage error if copied verbatim. This pass touched §3.3 for the page flag and deliberately did not widen to it — the same discipline that left the two rows above | plan owner |
+
+**Next.** Unchanged from the entry above: wiring `_llm.validate_flags` is the remaining bench defect
+of that shape, and the image processor's publication defect is still the one thing standing between
+the bench and an end-to-end run. Nothing in this revision is waiting on a plan decision.

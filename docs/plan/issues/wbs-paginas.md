@@ -7,7 +7,7 @@
 | Derived from | `docs/plan/subplan-paginas.md` §4 (WBS table, order/waves) |
 | Source of truth | `docs/plan/subplan-paginas.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `PAG-01` … `PAG-07` |
-| Status | all seven `NOT_STARTED`; the file is created by the same pass that created the subplan |
+| Status | all seven `DONE`, with their evidence in the `docs/plan/bitacora.md` entry for 2026-09-28 |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one
 row of `subplan-paginas.md` §4; no new scope is introduced here.
@@ -59,13 +59,13 @@ two pages were addressed with two different directories. The real engine is exer
 
 | ID | Task (short) | Effort | Wave | Depends on | Deliverable artifact(s) | Issue file | Status |
 |---|---|---|---|---|---|---|---|
-| PAG-01 | The scope resolver and optional `--page` | M | 1 — The rule | — | `scripts/tools/_pdf.py` | this file §PAG-01 | NOT_STARTED |
-| PAG-02 | The all-pages payload and failure collection | M | 1 — The rule | PAG-01 | `scripts/tools/_pdf.py` | this file §PAG-02 | NOT_STARTED |
-| PAG-03 | Retire the refusal cases, add the scope cases | M | 2 — Prove it | PAG-02 | `tests/test_lab_tools.py` | this file §PAG-03 | NOT_STARTED |
-| PAG-04 | Hand run over the multi-page fixtures | S | 2 — Prove it | PAG-03 | `docs/plan/bitacora.md` entry | this file §PAG-04 | NOT_STARTED |
-| PAG-05 | The bench readme and quickstart | S | 2 — Prove it | PAG-03 | `scripts/tools/readme.md`, `scripts/tools/quickstart.md` | this file §PAG-05 | NOT_STARTED |
-| PAG-06 | Reconcile the frozen plan and the index | S | 3 — Close | PAG-04 | `subplan-scripts.md`, `docs/plan/README.md`, root `README.md` | this file §PAG-06 | NOT_STARTED |
-| PAG-07 | The four QA gates and the mutation records | S | 3 — Close | PAG-05, PAG-06 | QA gate output, root `README.md` | this file §PAG-07 | NOT_STARTED |
+| PAG-01 | The scope resolver and optional `--page` | M | 1 — The rule | — | `scripts/tools/_pdf.py` | this file §PAG-01 | DONE |
+| PAG-02 | The all-pages payload and failure collection | M | 1 — The rule | PAG-01 | `scripts/tools/_pdf.py` | this file §PAG-02 | DONE |
+| PAG-03 | Retire the refusal cases, add the scope cases | M | 2 — Prove it | PAG-02 | `tests/test_lab_tools.py` | this file §PAG-03 | DONE |
+| PAG-04 | Hand run over the multi-page fixtures | S | 2 — Prove it | PAG-03 | `docs/plan/bitacora.md` entry | this file §PAG-04 | DONE |
+| PAG-05 | The bench readme and quickstart | S | 2 — Prove it | PAG-03 | `scripts/tools/readme.md`, `scripts/tools/quickstart.md` | this file §PAG-05 | DONE |
+| PAG-06 | Reconcile the frozen plan and the index | S | 3 — Close | PAG-04 | `subplan-scripts.md`, `docs/plan/README.md`, `wbs-general.md`, root `README.md` | this file §PAG-06 | DONE |
+| PAG-07 | The four QA gates and the mutation records | S | 3 — Close | PAG-05, PAG-06 | QA gate output, root `README.md` | this file §PAG-07 | DONE |
 
 ## 3. Detailed issues
 
@@ -89,7 +89,7 @@ two pages were addressed with two different directories. The real engine is exer
   - Given `--page 2`, when the same command runs, then exactly one page is addressed and no `pdfinfo` call is made that the single-page path did not make before.
   - Given a two-page document with an embedded image on each page, when `images` runs with no `--page`, then the double's `pdfimages` calls name `page_001/images` and `page_002/images`.
   - Given `tests/fixtures/pdf/pdf_corrupt.pdf` with no `--page`, when any of the five runs, then the failure is the one `inspect_pdf` raises today, printed and exiting `1`.
-- **Evidence / DoD:** Type hints and Google-style docstrings; `ruff check .` and `ruff format --check .` clean; the single-page payload of `classify --page 1` is byte-identical to today's; the source names no engine.
+- **Evidence / DoD:** Type hints and Google-style docstrings; `ruff check .` and `ruff format --check .` clean; the single-page payload is today's payload plus `scope`, and its engine-call count is unchanged; the source names no engine.
 - **Tags:** —
 
 ### PAG-02 — The all-pages payload, per-page failures and `status`
@@ -124,8 +124,8 @@ two pages were addressed with two different directories. The real engine is exer
 - **Blocks:** PAG-04, PAG-05
 - **Objective:** Replace the coverage the rule removes with coverage of the rule, and keep the usage-error path falsifiable.
 - **Scope / Deliverables:** In `tests/test_lab_tools.py`:
-  - retire the four `("…", (), "--page")` batch cases and the one `("classify", (), "--page")` single-file case, keeping the `render`/`--dpi` cases in **both** tests so the pre-walk hook still has a witness;
-  - add the six cases of `subplan-paginas.md` §6: scope stated (1 page and N pages), the single-page form additive, no inspection on the stated-page path, two pages/two directories, one bad page/one partial run, corrupt input unchanged;
+  - retire the four `("…", (), "--page")` batch cases, and swap the single-file test's `("classify", (), "--page")` case for `("run", (), "--dpi")` — keeping the `render`/`--dpi` cases in **both** tests so the pre-walk hook still has a witness;
+  - add the cases of `subplan-paginas.md` §6, which landed as nine tests: scope stated (one page and N pages), the single-page form additive, no inspection on the stated-page path, two pages/two directories, one bad page/one partial run, the uninspectable document, the batch's partial-as-failed rule, and the batch reading every page of each input;
   - add the two invariants with their mutations (9: an omitted `--page` must resolve to every page; 10: two pages must never share an artifact directory) and leave their four-field records in the root `README.md`.
 - **Out of bounds:** No new test tier, no engine reached, no fixture invented — `fake_poppler` drives the synthetic cases and its `calls` log is the assertion; `test_every_documented_subcommand_parses` and `test_every_tool_declares_the_subcommands_that_publish_nothing` are unaffected (the subcommand set does not change).
 - **Acceptance criteria:**
@@ -188,7 +188,8 @@ two pages were addressed with two different directories. The real engine is exer
   - `docs/plan/subplan-scripts.md`: §3.3 (a missing `--page` is no longer a usage error), the five `Notes` cells of §3.4, the refusal scenarios of §5, the retired cases and invariants of §6, and §9 (the new decision, and the 2026-09-28 pre-walk validation entry scoped down to `--dpi`);
   - `docs/plan/README.md`: this subplan's row in the subplans table (Phase **5 — revision**) and §4.1's page-scope text;
   - root `README.md`: the Lab tools table's `Needs` column and the pointer to the two new invariant records;
-  - `docs/plan/issues/wbs-scripts.md`: its §7 traceability cites `SCR-08`'s refusal cases as the evidence for the pre-walk hook, and four of them no longer exist — the citation is corrected to the retained `render`/`--dpi` cases;
+  - `docs/plan/issues/wbs-scripts.md`: **checked and left unedited.** Its §7 traceability cites no refusal case, and its SCR-02 scope lists `--page` among the flags `render` takes — which stayed true. The claim in `subplan-paginas.md` §9's stale table that it cites the retired cases did not survive reading the file, and the table was corrected rather than the citation invented;
+  - `docs/plan/issues/wbs-general.md`: §1's Phase 5 block gains this revision's own row (`PAG-01`…`PAG-07`, totals now 22 own / 102 child / 124 tasks / 42-68-14) and §4.6 names it.
   - `docs/plan/issues/wbs-general.md`: §1's Phase 5 totals gain this subplan's own row (`PAG-01`…`PAG-07`).
 - **Out of bounds:** No task ID renumbered, no `SCR-*` row re-scoped, no clause of `subplan-scripts.md` edited that this change does not touch, and no new phase introduced — the subplans table lists this file under Phase 5.
 - **Acceptance criteria:**

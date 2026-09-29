@@ -54,18 +54,24 @@ Inputs: `.pdf`. Code says `—` where a subcommand needs no flag.
 |---|---|---|
 | `inspect` | — | page count, per-page geometry, engine report |
 | `split` | — | one self-contained PDF per page |
-| `render` | `--page` `--dpi` | one page as a PNG |
-| `text` | `--page` | the page's native text |
-| `blocks` | `--page` | the same read, block view (reading order, boxes) |
-| `images` | `--page` | the page's embedded images |
-| `classify` | `--page` | metrics plus the `TEXT` / `IMAGE` / `MIXED` verdict |
+| `render` | `--dpi` | one page as a PNG, or every page |
+| `text` | — | the page's native text, or every page's |
+| `blocks` | — | the same read, block view (reading order, boxes) |
+| `images` | — | the page's embedded images, or every page's |
+| `classify` | — | metrics plus the `TEXT` / `IMAGE` / `MIXED` verdict, per page |
 | `run` | `--dpi` | the processor's contract; `--page` switches to the page-level one |
+
+The five page-addressed commands (`render`, `text`, `blocks`, `images`, `classify`) take `--page`
+to read **one** page and read **every** page when it is omitted — there is no second spelling for
+a whole document, and one page is simply a scope of one. The payload says which scope it read
+(`scope`), and a run over every page reports a `pages` list, a `status` and its `errors`.
 
 ### One file
 
 ```bash
 python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
 python scripts/tools/pdf.py --json classify tests/fixtures/pdf/pdf_sample_mixed.pdf --page 1
+python scripts/tools/pdf.py --json classify tests/fixtures/pdf/pdf_sample_text.pdf   # all 3 pages
 python scripts/tools/pdf.py render tests/fixtures/pdf/pdf_sample_text.pdf --page 1 --dpi 200
 python scripts/tools/pdf.py run tests/fixtures/pdf/pdf_sample_text.pdf \
     --dpi 200 --extract-text --extract-images
@@ -77,7 +83,8 @@ python scripts/tools/pdf.py run tests/fixtures/pdf/pdf_sample_text.pdf \
 
 ```bash
 python scripts/tools/batch_pdf.py tests/fixtures/pdf              # inspect — the default command
-python scripts/tools/batch_pdf.py tests/fixtures/pdf classify --page 1
+python scripts/tools/batch_pdf.py tests/fixtures/pdf classify     # every page of every PDF
+python scripts/tools/batch_pdf.py tests/fixtures/pdf classify --page 1   # just the first page
 python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matrix split
 ```
 
@@ -87,8 +94,15 @@ one the corrupt sample: `files: 4 · succeeded: 3 · failed: 1`, exit `1`.
 
 **Reading `classify`.** Poppler reports no placement for an embedded image, so
 `image_coverage` and `largest_image_coverage` stay `0.0` and the verdict rests on the native text
-layer alone. A scanned page carrying a hidden OCR layer therefore reads `TEXT`, not `IMAGE` —
-the `MIXED` branch cannot fire until a reader that reports image placement is behind the seam.
+layer alone: a scanned page carrying a hidden OCR layer therefore reads `TEXT`, not `IMAGE`.
+
+That is why `pdf_sample_mixed.pdf` reads `TEXT` — but it is not the whole reason, and the two are
+worth telling apart. The sample's image is drawn 96×96 pt on a 612×792 page, so it covers about
+**1.9%**, far under the 30% a dominant image needs: even a reader that reported placement would
+still call that page `TEXT`. The missing placement explains the `0.0`; the `TEXT` would survive
+its return. `IMAGE` needs a page with no native text at all, and `MIXED` an image that really does
+dominate — which is what reading all 59 pages of `tests/fixtures/pdf_large/MetodoCITRA17-APL.pdf`
+shows: 57 `TEXT`, 2 `IMAGE`, no `MIXED`.
 
 ---
 

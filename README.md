@@ -556,6 +556,15 @@ mutations that found real defects: the first was applied to `_batch.run_one`, an
 | An input the engine refuses is one input's failure, not the run's (`tests/test_lab_tools.py::test_batch_ocr_types_an_engine_throw_and_keeps_going`) | the `try/except` typing removed from `_ocr._conversion`, calling the engine call directly (`scripts/tools/_ocr.py`) | `pytest tests/test_lab_tools.py -q -k engine_throw` → 1 failed: the engine's own `ValueError` escaped the batch and ended the corpus at the first bad input | inverse edit, then `pytest tests/test_lab_tools.py` → 95 passed |
 | A layer states its processor's inputs, and both of its tools read that one statement (`tests/test_lab_tools.py::test_batch_pdf_mirrors_the_folder_it_walked`) | `_pdf.SUFFIXES` widened to `(".pdf", ".txt")` — the same edit as a second, drifting copy of the set in the tool (`scripts/tools/_pdf.py`) | `pytest tests/test_lab_tools.py -q -k batch_pdf_mirrors` → 1 failed: `E assert ['notes', 'sub1/a', 'sub2/deeper/b'] == ['sub1/a', 'sub2/deeper/b']` — the run walked a file its processor cannot read | inverse edit, then `pytest tests/test_lab_tools.py` → 95 passed |
 
+And the page-scope invariants of the bench revision (`PAG-01`, `PAG-02`), same four-field shape.
+Both were applied to `scripts/tools/_pdf.py` and restored by the exact inverse edit, with the
+restore re-measured:
+
+| Invariant | Mutation | Observed failure | Restored green |
+|---|---|---|---|
+| An omitted `--page` resolves to every page (`tests/test_lab_tools.py::test_a_page_command_reads_every_page_when_no_page_is_stated`) | `page_scope`'s all-pages branch returned `pages=[1]` instead of `range(1, page_count + 1)` (`scripts/tools/_pdf.py`) | `pytest tests/test_lab_tools.py -q -k "every_page or scope_of_one or images_directory or failing_page or partial_document"` → **5 failed**, 1 passed: the scope, the collision, the partial and both batch runs lost their pages while `label` still read `all pages (3)`, so the run said one thing and did another. The one that stayed green is the one-page case, where a scope of one is the mutation | inverse edit (`git diff` empty), then `pytest tests/test_lab_tools.py` → 109 passed |
+| Two pages never share an artifact directory (`tests/test_lab_tools.py::test_every_page_gets_its_own_images_directory`) | `_images_dir` returned `root / "images"` for every page (`scripts/tools/_pdf.py`) | `pytest tests/test_lab_tools.py -q -k images_directory` → 1 failed: `E AssertionError: assert ['images/image_001.png'] == ['page_001/images/image_001.png', 'page_002/images/image_001.png']` — the second page overwrote the first page's image, which is exactly what the processor's per-call naming predicts | inverse edit, then `pytest tests/test_lab_tools.py` → 109 passed |
+
 **Never a silent stand-in.** No empty string, no `0`, no `[]`, no `None`-without-reason, and no
 default engine or threshold used in place of a real answer.
 **No processor imports another processor.** The orchestrator is the only component that

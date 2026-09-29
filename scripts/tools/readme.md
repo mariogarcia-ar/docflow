@@ -182,12 +182,30 @@ tool's job, producing it is not.
 |---|---|---|
 | `inspect` | `primitives.inspect_pdf` | page count, per-page geometry, engine report |
 | `split` | `primitives.split_pdf` | one self-contained PDF per page |
-| `render` | `primitives.render_page_to_image` | requires `--page` and `--dpi` |
-| `text` | `primitives.extract_text_from_page` | the page's native text |
+| `render` | `primitives.render_page_to_image` | requires `--dpi`; `--page` picks one page |
+| `text` | `primitives.extract_text_from_page` | the page's native text, or every page's |
 | `blocks` | `primitives.extract_text_from_page` | the same read, block view |
-| `images` | `primitives.extract_images_from_page` | embedded images |
-| `classify` | `primitives.composition.analyze_pdf_page` + `classify_pdf_page` | the `TEXT`/`IMAGE`/`MIXED` verdict |
+| `images` | `primitives.extract_images_from_page` | embedded images, under the page's own directory |
+| `classify` | `primitives.composition.analyze_pdf_page` + `classify_pdf_page` | the `TEXT`/`IMAGE`/`MIXED` verdict, per page |
 | `run` | `process_pdf`, or `process_pdf_page` with `--page` | the contract; `--dpi` required |
+
+**Page scope.** `render`, `text`, `blocks`, `images` and `classify` are page-addressed: `--page N`
+reads page N, and **omitting it reads every page of the document**, in order. A one-page document
+is a scope of one — there is no second spelling for it, and no `--all-pages` flag. The scope a run
+resolved to is stated in the payload, so an omitted flag is never silent, and the payload's shape
+follows the scope that was asked for:
+
+```json
+{"input": "…", "scope": "page 2", "page": 2, "text": "…"}
+{"input": "…", "scope": "all pages (3)", "pages": [{"page": 1, "text": "…"}, …],
+ "status": "success", "errors": []}
+```
+
+`pages` is present exactly when the run covered every page, and a reader discriminates the two
+shapes on `pages` versus `page`. A page that fails does not end the document: its typed record
+joins `errors` with its page number, the pages that succeeded are still reported, and `status` is
+`success`, `partial` or `failed`. `run` is not in that set — its `--page` switches to the
+page-level contract, and its absence runs the whole document, which aggregates and publishes.
 
 ### `image.py` — `SCR-03`
 
@@ -328,10 +346,11 @@ tool:
 - **Every input that produced a payload gets a record, named after its command**: `<command>.json`
   in that directory, beside whatever the method published. Two commands over one input keep both
   records — `inspect.json` beside `classify.json` — instead of the second overwriting the first.
-  And a method that publishes no artifact at all — `inspect`, `info`, `text`, `tokens` — still
-  leaves something to read, which is the point of running it over a corpus. An input whose failure
-  **raised** has no payload and is reported, not filed: its typed record is printed and counted,
-  and its directory is never created.
+  A page-addressed command's record holds one page's keys when `--page` was stated and a `pages`
+  list when it was not. And a method that publishes no artifact at all — `inspect`, `info`, `text`,
+  `tokens` — still leaves something to read, which is the point of running it over a corpus. An
+  input whose failure **raised** has no payload and is reported, not filed: its typed record is
+  printed and counted, and its directory is never created.
 - **A default command is stated, never silent.** With no subcommand the run makes the tool's own
   flag-free method — the one that publishes nothing, so a bare run cannot fill the tree — and the
   header says `command: inspect (default, none stated)`. A tool whose every command needs a flag
@@ -344,10 +363,12 @@ tool:
 - **One bad file does not end the batch.** Each failure is printed and counted, and the run keeps
   going: the exit code is `1` when any input failed, `0` when none did, and `2` for a usage error.
 - **A missing required flag is refused once, before the walk.** The frame takes the check from the
-  layer, so `_pdf.py`'s `--page` and `--dpi` are a usage error (`2`) raised before the run states
-  its header — not per input. A method only meets its own gap when there is an input to run it on,
-  so an empty folder used to report `files: 0` and exit `0` for a command that could never have
-  run. `_llm.py`'s inference flags are still refused per input (see `docs/plan/bitacora.md`).
+  layer, so `_pdf.py`'s `--dpi` — required by `render` and `run` — is a usage error (`2`) raised
+  before the run states its header, not per input. A method only meets its own gap when there is an
+  input to run it on, so an empty folder used to report `files: 0` and exit `0` for a command that
+  could never have run. `--page` is no longer one of those: a page command that states none reads
+  every page, so there is no gap to refuse. `_llm.py`'s inference flags are still refused per input
+  (see `docs/plan/bitacora.md`).
 - **A batch takes no `--fixture` and no identity flags**: its input is the folder positional, and
   something that is not a folder is refused by name (`'x.txt' is not a folder: …`). `--recursive`,
   `--out` and `--json` are the tool's global flags and belong before the subcommand, as
@@ -364,9 +385,12 @@ the batch adds no behaviour of its own. The subcommand is optional and the flags
 |---|---|---|
 | `inspect` | nothing | `batch_pdf.py tests/fixtures/matrix` (the default) |
 | `split` | nothing | `batch_pdf.py tests/fixtures/matrix split` |
-| `render` | `--page`, `--dpi` | `batch_pdf.py tests/fixtures/matrix render --page 1 --dpi 150` |
-| `text`, `blocks`, `images`, `classify` | `--page` | `batch_pdf.py tests/fixtures/matrix text --page 1` |
+| `render` | `--dpi` | `batch_pdf.py tests/fixtures/matrix render --dpi 150` |
+| `text`, `blocks`, `images`, `classify` | nothing | `batch_pdf.py tests/fixtures/matrix classify` |
 | `run` | `--dpi`, plus the capabilities | `batch_pdf.py tests/fixtures/matrix run --dpi 200 --extract-text` |
+
+A page-addressed command given no `--page` reads every page of every input, and the scope each
+input resolved to is in that input's record (`scope`, and `pages` when it read them all).
 
 What lands in the input's directory is that method's output, so `split` files its pages, `render`
 its PNG and `run` the whole artifact tree, next to the `<command>.json` record every method

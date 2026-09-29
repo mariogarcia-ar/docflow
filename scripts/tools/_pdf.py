@@ -8,7 +8,16 @@ through :data:`COMMANDS`, both by name.
 It is **not** a tool: it has no ``main``, it prints nothing, and it is never invoked directly. A
 method does the work and returns the payload; the caller decides whether that becomes stdout
 (:mod:`_cli`'s printers) or a file beside the artifacts. The processor's typed failures are
-raised, never caught here — a tool prints them and exits ``1``.
+raised, never caught here — a tool prints them and exits ``1`` — with one exception: the loop
+over every page keeps a failed page's record beside the pages that succeeded, because one bad
+page must not cost a caller the rest of the document.
+
+**Page scope.** Five of the eight methods are page-addressed: ``render``, ``text``, ``blocks``,
+``images`` and ``classify``. A stated ``--page`` reads that page; its absence reads **every**
+page of the document, in order — a one-page document is simply a scope of size one, with no
+branch for it. The scope a run resolved to is stated back in the payload, so an omitted flag is
+never silent. ``run`` is not one of them: its ``--page`` switches to the page-level contract and
+its absence runs the whole document.
 
 It carries the lab-bench exception of ``subplan-scripts.md`` §3.2 for its own processor: it may
 drive ``docflow.pdf.primitives``. ``workflow.py`` may not, and does not use this module.
@@ -17,8 +26,9 @@ drive ``docflow.pdf.primitives``. ``workflow.py`` may not, and does not use this
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
-from dataclasses import asdict
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, Final
 
@@ -26,7 +36,7 @@ import _cli
 
 from docflow import pdf as pdf_processor
 from docflow.pdf import PDFContext, PDFOptions, PDFRequest, primitives
-from docflow.pdf.primitives import composition
+from docflow.pdf.primitives import PDFPrimitiveError, composition
 
 #: One subcommand per method, with the help text both tools print.
 SUBCOMMANDS: tuple[tuple[str, str], ...] = (
@@ -43,7 +53,10 @@ SUBCOMMANDS: tuple[tuple[str, str], ...] = (
 #: The inputs the PDF processor takes, matched case-insensitively: what it can read.
 SUFFIXES: Final[tuple[str, ...]] = (".pdf",)
 
-#: The subcommands that read one page: their report is a page's, so ``--page`` is not optional.
+#: The subcommands that read pages: a stated ``--page`` selects one and its absence selects
+#: every page, so the flag is never required. ``run`` takes ``--page`` too
+#: (:data:`PAGE_FLAG_COMMANDS`), but there its absence means something else — the whole
+#: document contract.
 PAGE_COMMANDS: Final[tuple[str, ...]] = (
     "render",
     "text",
@@ -53,9 +66,14 @@ PAGE_COMMANDS: Final[tuple[str, ...]] = (
 )
 
 #: The subcommands that take ``--page``: those five, plus ``run``, whose ``--page`` selects one
-#: page when it is given. A whole-document run states none, so the flag is taken and not
-#: required there — the one place the two sets differ.
+#: page when it is given and whose absence runs the whole document.
 PAGE_FLAG_COMMANDS: Final[tuple[str, ...]] = (*PAGE_COMMANDS, "run")
+
+#: The help each page-taking subcommand prints for ``--page``: one flag, two meanings.
+PAGE_HELP: Final[dict[str, str]] = {
+    **dict.fromkeys(PAGE_COMMANDS, "Page index, 1-based; omit it to read every page."),
+    "run": "Page index, 1-based; omit it to run the whole document.",
+}
 
 #: The subcommands that resolve a page at a stated resolution: rendering one and running the
 #: contract both do, so ``--dpi`` is taken and required on each.
@@ -91,7 +109,7 @@ def build_subcommands(
             subparsers, name, help_text, input_argument=input_argument
         )
         if name in PAGE_FLAG_COMMANDS:
-            parser.add_argument("--page", type=int, help="Page index, 1-based.")
+            parser.add_argument("--page", type=int, help=PAGE_HELP[name])
         if name in DPI_COMMANDS:
             parser.add_argument(
                 "--dpi", type=int, help="Render resolution; never defaulted."
@@ -109,11 +127,121 @@ def build_subcommands(
     return parsers
 
 
-def page(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
-    """Return ``--page``, refusing to guess one."""
-    return int(
-        _cli.required(args, parser, "page", "--page", why="no page number is defaulted")
+@dataclass(frozen=True)
+class PageScope:
+    """The pages one run covers, and what the run must state about them.
+
+    Attributes:
+        pages: The page numbers to read, in order — one of them when the caller stated a
+            page, all of them when they stated none.
+        label: The scope as the payload states it: ``"page 2"``, or ``"all pages (3)"``.
+        stated: Whether the caller named a page. It decides the payload's **shape**, not its
+            content: a one-page document read without ``--page`` is still an all-pages run,
+            because that is the question that was asked.
+        document: The inspection the scope needed, when it needed one. It is ``None`` when
+            ``--page`` was stated — so the single-page path makes no engine call it did not
+            make before — and is handed on so the one method that needs the geometry
+            (``classify``) does not read the same document a second time.
+    """
+
+    pages: list[int]
+    label: str
+    stated: bool
+    document: composition.PDFDocumentInfo | None = None
+
+
+def page_scope(args: argparse.Namespace, input_path: Path) -> PageScope:
+    """Return the pages a run covers, inspecting the document only when it must.
+
+    ``--page`` has no default on purpose: its absence is what selects every page, so a
+    substituted value would turn a whole-document read into a one-page read without saying so.
+
+    Args:
+        args: The parsed arguments, whose ``page`` is ``None`` when the caller stated none.
+        input_path: The document, read for its page count when no page was stated.
+
+    Returns:
+        The scope. A stated page needs no inspection, which is what keeps that path's engine
+        calls exactly what they were.
+
+    Raises:
+        PDFPrimitiveError: Propagated from ``inspect_pdf`` — a document that cannot be read
+            fails before any page is, with the record it has always produced.
+    """
+    if args.page is not None:
+        page_number = int(args.page)
+        return PageScope(pages=[page_number], label=f"page {page_number}", stated=True)
+    document = primitives.inspect_pdf(input_path)
+    return PageScope(
+        pages=list(range(1, document.page_count + 1)),
+        label=f"all pages ({document.page_count})",
+        stated=False,
+        document=document,
     )
+
+
+def _pages(
+    scope: PageScope, one: Callable[[int], Payload]
+) -> tuple[list[Payload], list[Payload]]:
+    """Run one page's work over a scope, collecting a page's typed failure.
+
+    A page that fails does not end the document: its typed record is kept beside the pages that
+    succeeded, so one bad page cannot cost a caller the other twenty-nine.
+    """
+    entries: list[Payload] = []
+    errors: list[Payload] = []
+    for page_number in scope.pages:
+        try:
+            entries.append(one(page_number))
+        except PDFPrimitiveError as failure:
+            errors.append(asdict(primitives.for_page(failure.error, page_number)))
+    return entries, errors
+
+
+def _scope_status(entries: Sequence[Payload], errors: Sequence[Payload]) -> str:
+    """Return the outcome over a scope: every page produced one, some did, or none did."""
+    if not entries:
+        return "failed"
+    return "partial" if errors else "success"
+
+
+def _scope_payload(
+    input_path: Path, scope: PageScope, one: Callable[[int], Payload]
+) -> Payload:
+    """Build a run's payload: one page's own shape, or every page's list and outcome.
+
+    A stated page keeps the shape it has always had — its own keys, plus the scope it states —
+    and a failure is raised rather than reported, because one page has nowhere to lose it.
+    Every page gathers its entries, keeps the failures beside them, and names the outcome over
+    the whole scope.
+    """
+    if scope.stated:
+        return {
+            "input": str(input_path),
+            "scope": scope.label,
+            **one(scope.pages[0]),
+        }
+    entries, errors = _pages(scope, one)
+    return {
+        "input": str(input_path),
+        "scope": scope.label,
+        "pages": entries,
+        "status": _scope_status(entries, errors),
+        "errors": errors,
+    }
+
+
+def _images_dir(root: Path, page_number: int, *, every_page: bool) -> Path:
+    """Return the directory one page's embedded images are written to.
+
+    A stated page keeps the flat ``images/`` directory it has always used. A scope of many
+    pages gives each its own, because the processor names an extracted image from a per-call
+    index (``image_001.png``, ``image_002.png``, …): two pages sharing one directory would have
+    the second overwrite the first.
+    """
+    if not every_page:
+        return root / "images"
+    return root / f"page_{page_number:03d}" / "images"
 
 
 def dpi(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
@@ -128,11 +256,10 @@ def validate_flags(
 ) -> None:
     """Refuse a missing required flag, once, before the run starts.
 
-    The guards are the same two :func:`page` and :func:`dpi` the methods call, over the same
-    name sets :func:`build_subcommands` registers the flags from: a command that takes a flag it
-    cannot run without is a command this refuses, and ``run`` — which takes ``--page`` without
-    requiring it — is the one case the two sets do not share. The sets are not restated here,
-    because a second copy of them is a second thing to keep in step.
+    ``--dpi`` is the only flag a command cannot run without (:data:`DPI_COMMANDS`), and the set
+    is the one :func:`build_subcommands` registers the flag from — a second copy of it would be
+    a second thing to keep in step. ``--page`` is not guarded here: a page-addressed command
+    that states none reads every page, so there is no gap to refuse.
 
     Both tools pass this as their ``validate`` hook, so the refusal happens before the header
     and a batch refuses once rather than per input — and an empty folder, which calls no
@@ -143,8 +270,6 @@ def validate_flags(
         args: The parsed arguments.
         parser: The parser to report the usage error through.
     """
-    if command in PAGE_COMMANDS:
-        page(args, parser)
     if command in DPI_COMMANDS:
         dpi(args, parser)
 
@@ -196,25 +321,37 @@ def _split(
     }
 
 
+def _render_page(
+    input_path: Path, page_number: int, root: Path, resolution: int
+) -> Payload:
+    """Render one page and report where the PNG landed."""
+    destination = root / f"page_{page_number:03d}_{resolution}dpi.png"
+    produced = primitives.render_page_to_image(
+        input_path, page_number, destination, resolution
+    )
+    return {"page": page_number, "dpi": resolution, "output": str(produced)}
+
+
 def _render(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
     input_path: Path,
     root: Path,
 ) -> Payload:
-    """Render one page and report where the PNG landed."""
-    page_number = page(args, parser)
+    """Render one page, or every page, and report where each PNG landed."""
+    scope = page_scope(args, input_path)
     resolution = dpi(args, parser)
-    destination = root / f"page_{page_number:03d}_{resolution}dpi.png"
-    produced = primitives.render_page_to_image(
-        input_path, page_number, destination, resolution
+    return _scope_payload(
+        input_path,
+        scope,
+        partial(_render_page, input_path, root=root, resolution=resolution),
     )
-    return {
-        "input": str(input_path),
-        "page": page_number,
-        "dpi": resolution,
-        "output": str(produced),
-    }
+
+
+def _text_page(input_path: Path, page_number: int) -> Payload:
+    """Read one page's native text."""
+    text, _ = primitives.extract_text_from_page(input_path, page_number, True)
+    return {"page": page_number, "text": text}
 
 
 def _text(
@@ -223,11 +360,16 @@ def _text(
     input_path: Path,
     root: Path,
 ) -> Payload:
-    """Read one page's native text."""
-    del root
-    page_number = page(args, parser)
-    text, _ = primitives.extract_text_from_page(input_path, page_number, True)
-    return {"input": str(input_path), "page": page_number, "text": text}
+    """Read one page's native text, or every page's."""
+    del parser, root
+    scope = page_scope(args, input_path)
+    return _scope_payload(input_path, scope, partial(_text_page, input_path))
+
+
+def _blocks_page(input_path: Path, page_number: int) -> Payload:
+    """Read one page's native text blocks, in reading order."""
+    _, blocks = primitives.extract_text_from_page(input_path, page_number, True)
+    return {"page": page_number, "blocks": [asdict(block) for block in blocks]}
 
 
 def _blocks(
@@ -236,30 +378,20 @@ def _blocks(
     input_path: Path,
     root: Path,
 ) -> Payload:
-    """Read one page's native text blocks, in reading order."""
-    del root
-    page_number = page(args, parser)
-    _, blocks = primitives.extract_text_from_page(input_path, page_number, True)
-    return {
-        "input": str(input_path),
-        "page": page_number,
-        "blocks": [asdict(block) for block in blocks],
-    }
+    """Read one page's native text blocks, or every page's, in reading order."""
+    del parser, root
+    scope = page_scope(args, input_path)
+    return _scope_payload(input_path, scope, partial(_blocks_page, input_path))
 
 
-def _images(
-    args: argparse.Namespace,
-    parser: argparse.ArgumentParser,
-    input_path: Path,
-    root: Path,
+def _images_page(
+    input_path: Path, page_number: int, root: Path, *, every_page: bool
 ) -> Payload:
-    """Extract one page's embedded images."""
-    page_number = page(args, parser)
+    """Extract one page's embedded images into that page's own directory."""
     images = primitives.extract_images_from_page(
-        input_path, page_number, root / "images"
+        input_path, page_number, _images_dir(root, page_number, every_page=every_page)
     )
     return {
-        "input": str(input_path),
         "page": page_number,
         "images": [
             {
@@ -275,19 +407,41 @@ def _images(
     }
 
 
-def _classify(
+def _images(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
     input_path: Path,
     root: Path,
 ) -> Payload:
-    """Measure one page's composition and name its classification."""
-    page_number = page(args, parser)
-    document = primitives.inspect_pdf(input_path)
+    """Extract one page's embedded images, or every page's."""
+    del parser
+    scope = page_scope(args, input_path)
+    return _scope_payload(
+        input_path,
+        scope,
+        partial(_images_page, input_path, root=root, every_page=not scope.stated),
+    )
+
+
+def _classify_page(
+    input_path: Path,
+    page_number: int,
+    root: Path,
+    *,
+    every_page: bool,
+    document: composition.PDFDocumentInfo | None,
+) -> Payload:
+    """Measure one page's composition and name its classification.
+
+    The inspection the scope already made is handed in; only a stated page, whose scope needed
+    no inspection, reads the document here.
+    """
+    if document is None:
+        document = primitives.inspect_pdf(input_path)
     width, height = document.page_dimensions[page_number - 1]
     text, blocks = primitives.extract_text_from_page(input_path, page_number, True)
     images = primitives.extract_images_from_page(
-        input_path, page_number, root / "images"
+        input_path, page_number, _images_dir(root, page_number, every_page=every_page)
     )
     metrics = composition.analyze_pdf_page(
         composition.PDFPageData(
@@ -300,11 +454,32 @@ def _classify(
         )
     )
     return {
-        "input": str(input_path),
         "page": page_number,
         "metrics": asdict(metrics),
         "classification": composition.classify_pdf_page(metrics),
     }
+
+
+def _classify(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    input_path: Path,
+    root: Path,
+) -> Payload:
+    """Measure one page's composition, or every page's, and name its classification."""
+    del parser
+    scope = page_scope(args, input_path)
+    return _scope_payload(
+        input_path,
+        scope,
+        partial(
+            _classify_page,
+            input_path,
+            root=root,
+            every_page=not scope.stated,
+            document=scope.document,
+        ),
+    )
 
 
 def _page_payload(result: Any) -> Payload:

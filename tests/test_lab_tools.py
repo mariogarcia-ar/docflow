@@ -35,7 +35,7 @@ from docflow.llm import primitives as llm_primitives
 from scripts.tools import _cli
 from tests.fakes.engines.fake_docling import FakeConversionStatus, FakeDocling
 from tests.fakes.engines.fake_opencv import FakeOpenCV
-from tests.fakes.engines.fake_poppler import FakePage, FakePoppler
+from tests.fakes.engines.fake_poppler import FakeImage, FakePage, FakePoppler
 from tests.fakes.processors import ProcessorDoubles
 from tests.support import imported_modules, sha256_of
 
@@ -449,14 +449,7 @@ def test_batch_pdf_refuses_a_folder_that_is_not_one(
 
 @pytest.mark.parametrize(
     ("subcommand", "flags", "missing"),
-    (
-        ("classify", (), "--page"),
-        ("text", (), "--page"),
-        ("blocks", (), "--page"),
-        ("images", (), "--page"),
-        ("render", ("--page", "1"), "--dpi"),
-        ("run", (), "--dpi"),
-    ),
+    (("render", ("--page", "1"), "--dpi"), ("run", (), "--dpi")),
 )
 def test_a_batch_refuses_a_missing_required_flag_before_it_walks(
     subcommand: str,
@@ -470,6 +463,9 @@ def test_a_batch_refuses_a_missing_required_flag_before_it_walks(
     The folder is empty on purpose. Validating per input calls no method when there is no
     input to run, so this is the corpus over which the gap used to go unnoticed: the run
     reported ``files: 0`` and exited ``0`` for a command that could not have run at all.
+
+    ``--dpi`` is the only flag left in that position. ``--page`` is not required any more:
+    a page command that states none reads every page, so there is no gap to refuse.
     """
     empty = tmp_path / "empty"
     empty.mkdir()
@@ -487,7 +483,7 @@ def test_a_batch_refuses_a_missing_required_flag_before_it_walks(
 
 @pytest.mark.parametrize(
     ("subcommand", "flags", "missing"),
-    (("classify", (), "--page"), ("render", ("--page", "1"), "--dpi")),
+    (("render", ("--page", "1"), "--dpi"), ("run", (), "--dpi")),
 )
 def test_pdf_refuses_a_missing_required_flag_before_its_header(
     subcommand: str,
@@ -503,6 +499,179 @@ def test_pdf_refuses_a_missing_required_flag_before_its_header(
     printed = capsys.readouterr().err
     assert f"{subcommand} requires {missing}" in printed
     assert f"== pdf.py {subcommand} ==" not in printed
+
+
+def _page_double(
+    monkeypatch: pytest.MonkeyPatch,
+    *pages: FakePage,
+    failures: dict[Any, Any] | None = None,
+) -> FakePoppler:
+    """Install a Poppler double over ``pages`` and return it."""
+    double = FakePoppler(pages, failures=failures)
+    monkeypatch.setattr("docflow.pdf.primitives.subprocess.run", double.run)
+    return double
+
+
+def _binaries_called(double: FakePoppler) -> list[str]:
+    """Return the engine binaries a run reached, in call order."""
+    return [Path(call[0]).name for call in double.calls]
+
+
+def test_a_page_command_reads_every_page_when_no_page_is_stated(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Omitting ``--page`` reads the whole document, and the payload says which scope it read."""
+    double = _page_double(
+        monkeypatch, *(FakePage(lines=(f"Line {number}.",)) for number in range(1, 4))
+    )
+
+    code = tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF)])
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == "all pages (3)"
+    assert [entry["page"] for entry in payload["pages"]] == [1, 2, 3]
+    assert (payload["status"], payload["errors"]) == ("success", [])
+    assert _binaries_called(double).count("pdftotext") == 3
+
+
+def test_a_one_page_document_is_a_scope_of_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A one-page document needs no branch: the scope is simply the whole document."""
+    _page_double(monkeypatch, FakePage(lines=("The only line.",)))
+
+    code = tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF)])
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == "all pages (1)"
+    assert [entry["page"] for entry in payload["pages"]] == [1]
+
+
+def test_a_stated_page_keeps_its_payload_shape(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--page`` returns one page's own keys, and only gains the scope it states."""
+    _page_double(monkeypatch, *(FakePage(lines=("A line.",)) for _ in range(3)))
+
+    code = tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF), "--page", "2"])
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == "page 2"
+    assert payload["page"] == 2
+    assert "pages" not in payload
+    assert payload["text"].strip()
+
+
+def test_a_stated_page_inspects_nothing_it_did_not_before(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stated page needs no page count, so the path keeps its engine-call count."""
+    double = _page_double(monkeypatch, FakePage(lines=("A line.",)))
+
+    tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF), "--page", "1"])
+
+    assert "pdfinfo" not in _binaries_called(double)
+
+
+def test_every_page_gets_its_own_images_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two pages' images cannot collide: the processor names them per call, not per page."""
+    _page_double(monkeypatch, *(FakePage(images=(FakeImage(),)) for _ in range(2)))
+    out = tmp_path / "run"
+
+    code = tool_module("pdf").main(
+        ["--json", "--out", str(out), "images", str(SAMPLE_PDF)]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["scope"] == "all pages (2)"
+    written = sorted(path.relative_to(out).as_posix() for path in out.rglob("*.png"))
+    assert written == [
+        "page_001/images/image_001.png",
+        "page_002/images/image_001.png",
+    ]
+
+
+def test_one_failing_page_does_not_end_the_document(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A page that fails is reported beside the pages that did not, and the run still reports."""
+    _page_double(
+        monkeypatch,
+        *(FakePage(lines=("A line.",)) for _ in range(2)),
+        failures={("pdftotext", 2): (1, "Syntax Error")},
+    )
+
+    code = tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF)])
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "partial"
+    assert [entry["page"] for entry in payload["pages"]] == [1]
+    assert [error["page_number"] for error in payload["errors"]] == [2]
+    assert payload["errors"][0]["type"]
+
+
+def test_a_document_that_cannot_be_inspected_fails_before_the_loop(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No page count, no scope: the typed record is printed and no payload claims otherwise."""
+    _page_double(monkeypatch, FakePage(), failures={"pdfinfo": (1, "Syntax Error")})
+
+    code = tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF)])
+
+    assert code == 1
+    printed = capsys.readouterr()
+    assert "ERROR CORRUPTED_PDF" in printed.out
+    assert "pages" not in printed.out
+
+
+def test_batch_pdf_reports_a_partial_document_as_failed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The frame counts a payload-recorded error as a failure, records and all."""
+    _page_double(
+        monkeypatch,
+        *(FakePage(lines=("A line.",)) for _ in range(2)),
+        failures={("pdftotext", 2): (1, "Syntax Error")},
+    )
+    corpus = build_corpus(tmp_path, "a.pdf")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_pdf").main(["--out", str(out), str(corpus), "text"])
+
+    assert code == 1
+    printed = capsys.readouterr().out
+    assert "a.pdf: FAILED ->" in printed
+    assert "failed: 1" in printed
+    record = json.loads((out / "a" / "text.json").read_text(encoding="utf-8"))
+    assert record["status"] == "partial"
+    assert record["errors"][0]["page_number"] == 2
+
+
+def test_batch_pdf_reads_every_page_of_each_input(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The batch carries no page flag of its own: each input is read whole."""
+    _page_double(
+        monkeypatch, *(FakePage(lines=(f"Line {number}.",)) for number in range(1, 3))
+    )
+    corpus = build_corpus(tmp_path, "a.pdf", "b.pdf")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_pdf").main(["--out", str(out), str(corpus), "text"])
+
+    assert code == 0
+    for name in ("a", "b"):
+        record = json.loads((out / name / "text.json").read_text(encoding="utf-8"))
+        assert record["scope"] == "all pages (2)"
+        assert [entry["page"] for entry in record["pages"]] == [1, 2]
+    assert "files: 2" in capsys.readouterr().out
 
 
 def test_write_payload_creates_the_directories_it_writes_through(

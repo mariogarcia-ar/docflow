@@ -133,7 +133,7 @@ primitive, and neither may.
 
 ```bash
 python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
-python scripts/tools/pdf.py --fixture pdf_sample_mixed.pdf render --page 2 --dpi 300
+python scripts/tools/pdf.py --fixture pdf_sample_mixed.pdf render --page 1 --dpi 300
 python scripts/tools/batch_pdf.py tests/fixtures/pdf            # inspect, over every PDF below it
 python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos call \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
@@ -157,6 +157,14 @@ the run's own root, so a second run over the same tree does not pick up what the
   never silent, and `--fixtures-root` relocates the search when the tree moves. A batch tool
   takes no `--fixture`: its input is the folder positional, and a folder that is not one is a
   usage error.
+- **Page scope (`PAG-01`…`PAG-07`):** `render`, `text`, `blocks`, `images` and `classify` are
+  page-addressed. A stated `--page` reads that page; **omitting it reads every page of the
+  document**, in order, and a one-page document needs no branch. The scope a run resolved to is
+  stated in the payload (`scope`, plus `pages` when every page was read), so an omitted flag is
+  never silent and the payload's shape follows the scope that was asked for. A page that fails
+  does not end the document: its typed record joins `errors` and the other pages are still
+  reported. `run` is not in that set — its `--page` switches to the page-level contract and its
+  absence runs the whole document. The full design is [`subplan-paginas.md`](subplan-paginas.md).
 - **stdout** carries the human summary; `--json` prints the machine-readable payload instead
   (built from the result's own fields, not a second serialization of the library's state).
 - **Exit codes:** `0` the run produced a result and its `status` is a success; `1` the library
@@ -178,11 +186,11 @@ Every row names a symbol that exists today. A row with no symbol would not be a 
 |---|---|---|
 | `inspect` | `pdf.primitives.inspect_pdf` | pages, geometry, encryption |
 | `split` | `pdf.primitives.split_pdf` | one file per page |
-| `render` | `pdf.primitives.render_page_to_image` | `--page`, `--dpi` |
-| `text` | `pdf.primitives.extract_text_from_page` | the page's native text |
+| `render` | `pdf.primitives.render_page_to_image` | `--dpi`; `--page` picks one page, its absence every page |
+| `text` | `pdf.primitives.extract_text_from_page` | the page's native text, or every page's |
 | `blocks` | `pdf.primitives.extract_text_from_page` | same call, `--blocks` view; text and blocks come from **one** read |
-| `images` | `pdf.primitives.extract_images_from_page` | embedded images |
-| `classify` | `pdf.primitives.composition.analyze_pdf_page` + `classify_pdf_page` | the page's `TEXT`/`IMAGE`/`MIXED` verdict |
+| `images` | `pdf.primitives.extract_images_from_page` | embedded images; one page writes `images/`, every page writes `page_NNN/images/` |
+| `classify` | `pdf.primitives.composition.analyze_pdf_page` + `classify_pdf_page` | the page's `TEXT`/`IMAGE`/`MIXED` verdict, or every page's |
 | `run` | `pdf.process_pdf` | the contract; `--page` adds `process_pdf_page` |
 
 **`image.py`** — same shape; `crop` is **not** here (§9, decision 8):
@@ -643,6 +651,14 @@ to `var/batch_<processor>/<folder>/`, which is ignored too.
     `<root>/<relative folders>/<stem>/result.json`, publishes the method's artifacts beside it, and
     exits `1` when any input failed. The walk skips the run's own root. The frame lives in
     `_batch.py`, so the fifth batch tool is a suffix set, a layer and a command.
+18. **The page flag is optional, and its absence means every page — RESOLVED, and the question is
+    owned by [`subplan-paginas.md`](subplan-paginas.md) (`PAG-01`…`PAG-07`).** This subplan is
+    stale on exactly three of its clauses, all now corrected above: §3.3's page-scope bullet (which
+    replaces the old "a missing `--page` is a usage error") and its `render --page 1` example,
+    §3.4's five `Notes` cells for `render`/`text`/`blocks`/`images`/`classify`. **§5 and §6 need no
+    correction** — no acceptance scenario and no guard in either ever named the page flag, which is
+    itself the finding: the refusal was pinned by tests alone, so it moved without a scenario to
+    contradict.
 
 **Stale documents this subplan creates or leaves (owner in parentheses)**
 
