@@ -23,10 +23,11 @@ import _pdf
 from docflow.pdf.primitives.errors import PDFPrimitiveError
 
 #: Subcommands that publish no file: their report is the stdout summary, so the run header
-#: says so instead of naming an output root no run creates. The other five do write —
+#: says so instead of naming an output root no run creates. The other six do write —
 #: ``classify`` among them, because measuring image dominance extracts the page's embedded
-#: images. Verified by the hand run in ``docs/plan/bitacora.md`` (2026-09-27).
-REPORT_ONLY: Final[tuple[str, ...]] = ("inspect", "text", "blocks")
+#: images, and ``text`` because it publishes each page's native text beside them. Verified by
+#: the hand runs in ``docs/plan/bitacora.md`` (2026-09-27, 2026-09-29).
+REPORT_ONLY: Final[tuple[str, ...]] = ("inspect", "blocks")
 
 
 def build_parser() -> argparse.ArgumentParser:

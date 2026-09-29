@@ -2016,3 +2016,50 @@ this change's footprint on page scope:
 **Next.** Unchanged from the entry above: wiring `_llm.validate_flags` is the remaining bench defect
 of that shape, and the image processor's publication defect is still the one thing standing between
 the bench and an end-to-end run. Nothing in this revision is waiting on a plan decision.
+
+---
+
+## 2026-09-29 — Phase 5 · `text` publishes its page files (`pdf.py`, `batch_pdf.py`)
+
+**Asked for at the bench.** `batch_pdf.py tests/fixtures/pdf text` reported each page's native text
+inside the payload and the `text.json` record, and wrote nothing a caller could hand to another
+tool; `render` had always left its PNGs beside the record. `text` now publishes each page's native
+text as `page_NNN.txt` under the run root — the naming rule `render` already uses, so the scope
+decides **how many** files a run writes and never what one is called. `blocks` is deliberately
+unchanged: it stays report-only, and `inspect` with it.
+
+**No new seam.** The write reuses the processor's own `pdf.primitives.publish_text`, so the artifact
+goes through the same `.tmp` → validate → rename as every other one, and an empty page still
+publishes an empty file rather than a missing one. The tool composes; it invents no writer, no
+suffix and no contract. `pdf.py`'s `REPORT_ONLY` loses `text` (six subcommands write, two report),
+and the payload gains one key, `output`, exactly as `render`'s carries it.
+
+**Mutation evidence** (the new test must fail when the invariant is broken).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `_pdf._text_page`: drop the `publish_text` call and the `output` key | `test_pdf_text_publishes_one_file_per_page` red (`.../run/page_001.txt`.is_file() `False`) and `test_a_stated_page_keeps_its_payload_shape` red (`KeyError: 'output'`) — 2 failed, 107 deselected | inverse edit, then 109 passed in `tests/test_lab_tools.py` |
+
+**Hand run (real engine).** `batch_pdf.py tests/fixtures/pdf text` → `files: 4 · succeeded: 3 ·
+failed: 1`, exit `1`, with `page_001.txt` … `page_003.txt` beside `text.json` in the three readable
+inputs (the corrupt sample files nothing, as before); `pdf.py text` over the three-page sample →
+three files and a payload whose `scope` is `all pages (3)`.
+
+**Gate evidence.**
+
+```
+pytest                     722 passed
+ruff check .               All checks passed!
+ruff format --check .      181 files already formatted
+pylint src tests           10.00/10
+```
+
+**Left stale (owner).** Which artifacts a subcommand publishes is a plan decision, so a **plan
+revision is owed** — not taken here, because a frozen plan moves in its own pass together with its
+WBS file:
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/plan/subplan-paginas.md` §3.3 | the `text` row's *Published per page* cell says "nothing"; it publishes `page_NNN.txt` | plan owner |
+| `docs/plan/subplan-paginas.md` §3.4 | the `text` payload examples, and the claim that `scope` is "the only change to the single-page payload" — `output` is now a second addition | plan owner |
+| `docs/plan/issues/wbs-paginas.md` | the paired WBS file must move in the same pass as §3.3/§3.4 | plan owner |

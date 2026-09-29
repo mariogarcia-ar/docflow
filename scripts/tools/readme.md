@@ -138,7 +138,7 @@ collide. Output is **never** written beside the input and never into `out/`; `/v
 [Commands over a folder (batch)](#commands-over-a-folder-batch) describes.
 
 Only a subcommand that **publishes** creates that directory. When the report *is* the stdout
-summary — `pdf.py inspect`, `ocr.py text`, `workflow.py plan` and their peers, nineteen of the
+summary — `pdf.py inspect`, `ocr.py text`, `workflow.py plan` and their peers, eighteen of the
 sixty-four subcommands — the run writes no file at all, and its header states
 `output: (none — this subcommand publishes no file)` instead of naming a directory no run creates.
 That line is declared per tool (`REPORT_ONLY`) and checked twice: the glue test drives the
@@ -183,7 +183,7 @@ tool's job, producing it is not.
 | `inspect` | `primitives.inspect_pdf` | page count, per-page geometry, engine report |
 | `split` | `primitives.split_pdf` | one self-contained PDF per page |
 | `render` | `primitives.render_page_to_image` | requires `--dpi`; `--page` picks one page |
-| `text` | `primitives.extract_text_from_page` | the page's native text, or every page's |
+| `text` | `primitives.extract_text_from_page` + `publish_text` | the page's native text, or every page's; publishes `page_NNN.txt` |
 | `blocks` | `primitives.extract_text_from_page` | the same read, block view |
 | `images` | `primitives.extract_images_from_page` | embedded images, under the page's own directory |
 | `classify` | `primitives.composition.analyze_pdf_page` + `classify_pdf_page` | the `TEXT`/`IMAGE`/`MIXED` verdict, per page |
@@ -196,13 +196,15 @@ resolved to is stated in the payload, so an omitted flag is never silent, and th
 follows the scope that was asked for:
 
 ```json
-{"input": "…", "scope": "page 2", "page": 2, "text": "…"}
-{"input": "…", "scope": "all pages (3)", "pages": [{"page": 1, "text": "…"}, …],
+{"input": "…", "scope": "page 2", "page": 2, "text": "…", "output": "…/page_002.txt"}
+{"input": "…", "scope": "all pages (3)", "pages": [{"page": 1, "text": "…", "output": "…"}, …],
  "status": "success", "errors": []}
 ```
 
 `pages` is present exactly when the run covered every page, and a reader discriminates the two
-shapes on `pages` versus `page`. A page that fails does not end the document: its typed record
+shapes on `pages` versus `page`. `text` publishes each page's native text as `page_NNN.txt` under
+the run root, the way `render` publishes its PNG — the page's own name, so a scope of many pages
+never collides. A page that fails does not end the document: its typed record
 joins `errors` with its page number, the pages that succeeded are still reported, and `status` is
 `success`, `partial` or `failed`. `run` is not in that set — its `--page` switches to the
 page-level contract, and its absence runs the whole document, which aggregates and publishes.

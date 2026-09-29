@@ -348,10 +348,17 @@ def _render(
     )
 
 
-def _text_page(input_path: Path, page_number: int) -> Payload:
-    """Read one page's native text."""
+def _text_page(input_path: Path, page_number: int, root: Path) -> Payload:
+    """Read one page's native text and publish it as that page's ``.txt`` file.
+
+    The file is named after the page, the way ``render`` names its PNG: the scope decides how
+    many files a run publishes, never what one of them is called. The write reuses the
+    processor's own atomic writer, so a half-written artifact is never visible under its final
+    name.
+    """
     text, _ = primitives.extract_text_from_page(input_path, page_number, True)
-    return {"page": page_number, "text": text}
+    published = primitives.publish_text(root / f"page_{page_number:03d}.txt", text)
+    return {"page": page_number, "text": text, "output": str(published)}
 
 
 def _text(
@@ -360,10 +367,10 @@ def _text(
     input_path: Path,
     root: Path,
 ) -> Payload:
-    """Read one page's native text, or every page's."""
-    del parser, root
+    """Read one page's native text, or every page's, publishing one file per page."""
+    del parser
     scope = page_scope(args, input_path)
-    return _scope_payload(input_path, scope, partial(_text_page, input_path))
+    return _scope_payload(input_path, scope, partial(_text_page, input_path, root=root))
 
 
 def _blocks_page(input_path: Path, page_number: int) -> Payload:

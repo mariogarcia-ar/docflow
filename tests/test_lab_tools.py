@@ -315,7 +315,7 @@ def test_help_exits_zero(tool: str) -> None:
 #: recorded in ``docs/plan/bitacora.md`` (2026-09-27). A subcommand that moves between the two
 #: sets, or is renamed, reddens this test.
 REPORT_ONLY: dict[str, tuple[str, ...]] = {
-    "pdf": ("inspect", "text", "blocks"),
+    "pdf": ("inspect", "blocks"),
     "batch_pdf": (),
     "batch_image": (),
     "image": ("info", "metrics", "classify"),
@@ -518,14 +518,16 @@ def _binaries_called(double: FakePoppler) -> list[str]:
 
 
 def test_a_page_command_reads_every_page_when_no_page_is_stated(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Omitting ``--page`` reads the whole document, and the payload says which scope it read."""
     double = _page_double(
         monkeypatch, *(FakePage(lines=(f"Line {number}.",)) for number in range(1, 4))
     )
 
-    code = tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF)])
+    code = tool_module("pdf").main(
+        ["--json", "--out", str(tmp_path), "text", str(SAMPLE_PDF)]
+    )
 
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -536,12 +538,14 @@ def test_a_page_command_reads_every_page_when_no_page_is_stated(
 
 
 def test_a_one_page_document_is_a_scope_of_one(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A one-page document needs no branch: the scope is simply the whole document."""
     _page_double(monkeypatch, FakePage(lines=("The only line.",)))
 
-    code = tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF)])
+    code = tool_module("pdf").main(
+        ["--json", "--out", str(tmp_path), "text", str(SAMPLE_PDF)]
+    )
 
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -550,12 +554,14 @@ def test_a_one_page_document_is_a_scope_of_one(
 
 
 def test_a_stated_page_keeps_its_payload_shape(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``--page`` returns one page's own keys, and only gains the scope it states."""
+    """``--page`` returns one page's own keys, gaining the scope it states and its file."""
     _page_double(monkeypatch, *(FakePage(lines=("A line.",)) for _ in range(3)))
 
-    code = tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF), "--page", "2"])
+    code = tool_module("pdf").main(
+        ["--json", "--out", str(tmp_path), "text", str(SAMPLE_PDF), "--page", "2"]
+    )
 
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -563,15 +569,18 @@ def test_a_stated_page_keeps_its_payload_shape(
     assert payload["page"] == 2
     assert "pages" not in payload
     assert payload["text"].strip()
+    assert Path(payload["output"]).name == "page_002.txt"
 
 
 def test_a_stated_page_inspects_nothing_it_did_not_before(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A stated page needs no page count, so the path keeps its engine-call count."""
     double = _page_double(monkeypatch, FakePage(lines=("A line.",)))
 
-    tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF), "--page", "1"])
+    tool_module("pdf").main(
+        ["--json", "--out", str(tmp_path), "text", str(SAMPLE_PDF), "--page", "1"]
+    )
 
     assert "pdfinfo" not in _binaries_called(double)
 
@@ -597,8 +606,33 @@ def test_every_page_gets_its_own_images_directory(
     ]
 
 
+def test_pdf_text_publishes_one_file_per_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``text`` publishes each page's text, the way ``render`` publishes each page's PNG."""
+    _page_double(
+        monkeypatch, *(FakePage(lines=(f"Line {number}.",)) for number in range(1, 3))
+    )
+    out = tmp_path / "run"
+
+    code = tool_module("pdf").main(
+        ["--json", "--out", str(out), "text", str(SAMPLE_PDF)]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    entries = payload["pages"]
+    names = ("page_001.txt", "page_002.txt")
+    assert [entry["page"] for entry in entries] == [1, 2]
+    for entry, name in zip(entries, names, strict=True):
+        written = out / name
+        assert written.is_file()
+        assert written.read_text(encoding="utf-8") == entry["text"]
+        assert Path(entry["output"]).name == name
+
+
 def test_one_failing_page_does_not_end_the_document(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A page that fails is reported beside the pages that did not, and the run still reports."""
     _page_double(
@@ -607,7 +641,9 @@ def test_one_failing_page_does_not_end_the_document(
         failures={("pdftotext", 2): (1, "Syntax Error")},
     )
 
-    code = tool_module("pdf").main(["--json", "text", str(SAMPLE_PDF)])
+    code = tool_module("pdf").main(
+        ["--json", "--out", str(tmp_path), "text", str(SAMPLE_PDF)]
+    )
 
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
@@ -1274,7 +1310,7 @@ def test_the_pdf_header_states_whether_the_subcommand_publishes(
 
 @pytest.mark.parametrize(
     ("subcommand", "flags"),
-    (("inspect", ()), ("text", ("--page", "1")), ("blocks", ("--page", "1"))),
+    (("inspect", ()), ("blocks", ("--page", "1"))),
 )
 def test_a_report_only_pdf_subcommand_publishes_nothing(
     subcommand: str,
