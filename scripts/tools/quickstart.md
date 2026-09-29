@@ -169,8 +169,10 @@ python scripts/tools/batch_image.py tests/fixtures/image vlm-ready
 python scripts/tools/batch_image.py tests/fixtures/image run
 ```
 
-The same seven subcommands as `image.py`, with the folder in place of the file — so the four that
-publish fail per input with the `WRITE_ERROR` below, and the corpus still runs to the end.
+The same seven subcommands as `image.py`, with the folder in place of the file. `tests/fixtures/image`
+is four inputs, one of them the committed corrupt sample, so **every** command listed reports
+`files: 4 · succeeded: 3 · failed: 1` and exits `1` — the four that publish adding the
+`WRITE_ERROR` below on top of the one `DECODE_ERROR`, and the walk still reaches the end.
 
 **Known limitation.** With the real engine, no image artifact can be published: atomic publication
 writes through a `.tmp` sibling and OpenCV infers its encoder from the extension, so it refuses
@@ -233,7 +235,9 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics
 python scripts/tools/batch_ocr.py tests/fixtures/ocr run
 ```
 
-The same seven subcommands as `ocr.py`, with the folder in place of the file.
+The same seven subcommands as `ocr.py`, with the folder in place of the file. `tests/fixtures/ocr` is
+two images, both converted, so every command reports `files: 2 · succeeded: 2 · failed: 0` and
+exits `0`.
 
 ---
 
