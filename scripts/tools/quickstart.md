@@ -70,23 +70,38 @@ a whole document, and one page is simply a scope of one. The payload says which 
 
 ```bash
 python scripts/tools/pdf.py inspect tests/fixtures/pdf/pdf_sample_mixed.pdf
+python scripts/tools/pdf.py split tests/fixtures/pdf/pdf_sample_text.pdf
+python scripts/tools/pdf.py render tests/fixtures/pdf/pdf_sample_text.pdf --page 1 --dpi 200
+python scripts/tools/pdf.py text tests/fixtures/pdf/pdf_sample_mixed.pdf
+python scripts/tools/pdf.py blocks tests/fixtures/pdf/pdf_sample_mixed.pdf --page 1
+python scripts/tools/pdf.py images tests/fixtures/pdf/pdf_sample_image.pdf
 python scripts/tools/pdf.py --json classify tests/fixtures/pdf/pdf_sample_mixed.pdf --page 1
 python scripts/tools/pdf.py --json classify tests/fixtures/pdf/pdf_sample_text.pdf   # all 3 pages
-python scripts/tools/pdf.py render tests/fixtures/pdf/pdf_sample_text.pdf --page 1 --dpi 200
 python scripts/tools/pdf.py run tests/fixtures/pdf/pdf_sample_text.pdf \
     --dpi 200 --extract-text --extract-images
 ```
 
-`inspect`, `text` and `blocks` publish nothing: their report is the stdout summary.
+That is all eight subcommands, one line each. `text` and `blocks` are the same read in two views;
+`images` reads the sample whose one page is nothing but an embedded image; and `classify` is shown
+both ways — one page and all three. `inspect`, `text` and `blocks` publish nothing: their report is
+the stdout summary.
 
 ### A folder
 
 ```bash
 python scripts/tools/batch_pdf.py tests/fixtures/pdf              # inspect — the default command
+python scripts/tools/batch_pdf.py tests/fixtures/pdf split
+python scripts/tools/batch_pdf.py tests/fixtures/pdf render --dpi 150
+python scripts/tools/batch_pdf.py tests/fixtures/pdf text
+python scripts/tools/batch_pdf.py tests/fixtures/pdf blocks
+python scripts/tools/batch_pdf.py tests/fixtures/pdf images
 python scripts/tools/batch_pdf.py tests/fixtures/pdf classify     # every page of every PDF
 python scripts/tools/batch_pdf.py tests/fixtures/pdf classify --page 1   # just the first page
+python scripts/tools/batch_pdf.py tests/fixtures/pdf run --dpi 200 --extract-text
 python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matrix split
 ```
+
+The same eight subcommands as `pdf.py`, with the folder in place of the file.
 
 With no subcommand the run makes `inspect` and says so in its header
 (`command: inspect (default, none stated)`). `tests/fixtures/pdf` is four inputs, three written and
@@ -132,18 +147,30 @@ python scripts/tools/image.py info tests/fixtures/image/color_layout.png
 python scripts/tools/image.py --json metrics tests/fixtures/image/skewed_text.png
 python scripts/tools/image.py classify tests/fixtures/image/color_layout.png
 python scripts/tools/image.py normalize tests/fixtures/image/skewed_text.png --deskew
+python scripts/tools/image.py ocr-ready tests/fixtures/image/skewed_text.png
+python scripts/tools/image.py vlm-ready tests/fixtures/image/color_layout.png
 python scripts/tools/image.py run tests/fixtures/image/color_layout.png \
     --normalize --prepare-for-ocr
 ```
 
-`info`, `metrics` and `classify` publish nothing.
+That is all seven subcommands: `normalize`, `ocr-ready` and `vlm-ready` are three separate
+pipelines, never aliases of one another. `info`, `metrics` and `classify` publish nothing; the four
+that do publish end in the typed `WRITE_ERROR` the limitation below describes.
 
 ### A folder
 
 ```bash
 python scripts/tools/batch_image.py tests/fixtures/image              # info — the default command
+python scripts/tools/batch_image.py tests/fixtures/image metrics
 python scripts/tools/batch_image.py tests/fixtures/image classify
+python scripts/tools/batch_image.py tests/fixtures/image normalize
+python scripts/tools/batch_image.py tests/fixtures/image ocr-ready
+python scripts/tools/batch_image.py tests/fixtures/image vlm-ready
+python scripts/tools/batch_image.py tests/fixtures/image run
 ```
+
+The same seven subcommands as `image.py`, with the folder in place of the file — so the four that
+publish fail per input with the `WRITE_ERROR` below, and the corpus still runs to the end.
 
 **Known limitation.** With the real engine, no image artifact can be published: atomic publication
 writes through a `.tmp` sibling and OpenCV infers its encoder from the extension, so it refuses
@@ -178,10 +205,19 @@ Only `run` publishes a file.
 
 ```bash
 python scripts/tools/ocr.py text tests/fixtures/ocr/ocr_prepared_text_and_table.png
+python scripts/tools/ocr.py md tests/fixtures/ocr/ocr_prepared_text_and_table.png
+python scripts/tools/ocr.py json tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py tables tests/fixtures/ocr/ocr_prepared_text_and_table.png --tables
+python scripts/tools/ocr.py blocks tests/fixtures/ocr/ocr_prepared_text_and_table.png
+python scripts/tools/ocr.py metrics tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py --json run tests/fixtures/ocr/ocr_prepared_text_and_table.png \
     --layout --tables --reading-order
 ```
+
+That is all seven subcommands. `text` and `md` are one conversion in two representations, `json`
+is the built document, `tables` and `blocks` are its ordered views, and `metrics` measures the
+document the others build. `tables` states `--tables` because that flag is what asks for the
+detection; the rest run with no flag at all.
 
 The engine writes its own INFO lines to **stdout**, so they can appear ahead of the payload.
 
@@ -189,8 +225,15 @@ The engine writes its own INFO lines to **stdout**, so they can appear ahead of 
 
 ```bash
 python scripts/tools/batch_ocr.py tests/fixtures/ocr              # text — the default command
+python scripts/tools/batch_ocr.py tests/fixtures/ocr md
+python scripts/tools/batch_ocr.py tests/fixtures/ocr json
+python scripts/tools/batch_ocr.py tests/fixtures/ocr tables
+python scripts/tools/batch_ocr.py tests/fixtures/ocr blocks
 python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics
+python scripts/tools/batch_ocr.py tests/fixtures/ocr run
 ```
+
+The same seven subcommands as `ocr.py`, with the folder in place of the file.
 
 ---
 
@@ -219,22 +262,50 @@ its resume under one identity.
 
 ### One file
 
+Three of the eight answer with no provider at all — the scripted chain, the state it leaves behind,
+and the offline token count:
+
 ```bash
-python scripts/tools/llm.py --run-id demo \
+python scripts/tools/llm.py --run-id demo --out var/demo \
     fake tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+python scripts/tools/llm.py --out var/demo status
+python scripts/tools/llm.py tokens tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+    --provider ollama --model llama3.1 --context-window 4096
 ```
 
-Then the real thing, which is the honest failure this bench exists for. How it fails is typed, and
-either way it exits `1`: `PROVIDER_ERROR` (`ollama could not be reached`, `[Errno 61] Connection
-refused`) when nothing is listening, or `MODEL_UNAVAILABLE` when the endpoint answers but does not
-offer the model — the latter carries the HTTP `status: 404` in its error metadata, not in the
-payload's own `status` field:
+`fake` runs the chain twice under the pinned `--run-id demo`, writing it under `--out var/demo`.
+`status` then reads that run and takes `--out` alone — the question is about the *run directory*,
+not about an input — and `tokens` counts offline, taking its window from `--context-window`.
+
+Then the ones that reach a provider, which is the honest failure this bench exists for. How it
+fails is typed, and either way it exits `1`: `PROVIDER_ERROR` (`ollama could not be reached`,
+`[Errno 61] Connection refused`) when nothing is listening, or `MODEL_UNAVAILABLE` when the
+endpoint answers but does not offer the model — the latter carries the HTTP `status: 404` in its
+error metadata, not in the payload's own `status` field:
 
 ```bash
 python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     call --provider ollama --model llama3.1 --task extract \
     --template simple_extract --schema simple
+python scripts/tools/llm.py node tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+python scripts/tools/llm.py graph tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+python scripts/tools/llm.py models tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+    --provider ollama --model llama3.1
+```
+
+`call` is one inference, `node` one node against a fresh chain state, `graph` the fixed linear
+chain, and `models` the inventory alone — it never generates, which is why it needs no task and no
+template. `resume` is the eighth: re-run under the same `--run-id demo` and `--out var/demo` as the
+`fake` line above, it finds that run's stored nodes and returns them (`REUSE` on each) without
+reaching a provider at all:
+
+```bash
+python scripts/tools/llm.py --run-id demo --out var/demo \
+    resume tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
 ```
 
 `node`, `status`, `models` and `tokens` publish nothing.
@@ -244,9 +315,15 @@ python scripts/tools/llm.py --fixture casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0
 ```bash
 python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos call \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos graph \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos node \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
 python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos tokens \
     --provider ollama --model llama3.1 --context-window 4096
 ```
+
+Those are all four commands this tool offers.
 
 This is the one batch tool with **no default command** — a command is required (`2` without one) —
 and it offers only `call`, `graph`, `node` and `tokens`. `status`, `models`, `fake` and `resume`
@@ -277,16 +354,47 @@ options (`--pdf-*`, `--image-*`, `--ocr*`), the LLM stage (`--task`, `--provider
 | `skip` | leave the given stages unrun (the same flag) |
 | `stop` | stop once a stage finishes (`--after PDF`) |
 
-The request must be **complete**: the library refuses a missing option or policy key **by name**
-(`CONFIGURATION_ERROR`, printed, exit `1`). The tool leaves a key you did not state absent and
-never fills the gap — so `--pdf-dpi` and both policies are not optional in practice.
+The request must be **complete**: the tool leaves a key you did not state absent and never fills the
+gap, and a subcommand that executes the workflow is refused **by name** (`CONFIGURATION_ERROR`,
+printed, exit `1`) when an option or policy key is missing. So `--pdf-dpi`, the option keys and both
+policies are not optional in practice, and every line below carries the same complete request
+before it — only `--stages` (`force`, `skip`) and `--after` (`stop`) go after the subcommand:
 
 ```bash
-python scripts/tools/workflow.py --allow-ocr --no-allow-vlm \
-    --pdf-dpi 150 --image-normalize --ocr \
-    --task extract --provider ollama --model llama3.1 --template simple_extract \
-    plan tests/fixtures/pdf/pdf_sample_text.pdf
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm --pdf-dpi 150 \
+    --image-normalize --ocr --task extract --provider ollama --model llama3.1 \
+    --template simple_extract --fake-llm run tests/fixtures/pdf/pdf_sample_text.pdf
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm --pdf-dpi 150 \
+    --image-normalize --ocr --task extract --provider ollama --model llama3.1 \
+    --template simple_extract plan tests/fixtures/pdf/pdf_sample_text.pdf
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm --pdf-dpi 150 \
+    --image-normalize --ocr --task extract --provider ollama --model llama3.1 \
+    --template simple_extract status tests/fixtures/pdf/pdf_sample_text.pdf
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm --pdf-dpi 150 \
+    --image-normalize --ocr --task extract --provider ollama --model llama3.1 \
+    --template simple_extract context tests/fixtures/pdf/pdf_sample_text.pdf
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm --pdf-dpi 150 \
+    --image-normalize --ocr --task extract --provider ollama --model llama3.1 \
+    --template simple_extract --fake-llm resume tests/fixtures/pdf/pdf_sample_text.pdf
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm --pdf-dpi 150 \
+    --image-normalize --ocr --task extract --provider ollama --model llama3.1 \
+    --template simple_extract --fake-llm force tests/fixtures/pdf/pdf_sample_text.pdf \
+    --stages PDF
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm --pdf-dpi 150 \
+    --image-normalize --ocr --task extract --provider ollama --model llama3.1 \
+    --template simple_extract --fake-llm skip tests/fixtures/pdf/pdf_sample_text.pdf \
+    --stages OCR
+python scripts/tools/workflow.py --allow-ocr --no-allow-vlm --pdf-dpi 150 \
+    --image-normalize --ocr --task extract --provider ollama --model llama3.1 \
+    --template simple_extract --fake-llm stop tests/fixtures/pdf/pdf_sample_text.pdf \
+    --after PDF
 ```
+
+`run` is the whole workflow; `plan` builds the execution plan and invokes no processor, needing no
+`--dry-run` because planning *is* the dry run; `status` and `context` read what the run left (the
+per-stage states and the durable `document_context.json`); `resume` continues a run without
+repeating completed work; `force` and `skip` name their stages through `--stages`; and `stop` takes
+its boundary through `--after`.
 
 `plan`, `status` and `context` publish nothing. Add `--fake-llm` to install the scripted provider
 below the orchestrator's frontier, which is what lets a whole document run be demonstrated with no

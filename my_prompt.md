@@ -1,3 +1,8 @@
+# notas
+al extraer la imagen de un pdf que solo tiene una imagen, extrajo el original .... esto es genial 
+
+
+# comandos
 ```bash
 # info
 python scripts/tools/batch_pdf.py tests/fixtures/pdf
