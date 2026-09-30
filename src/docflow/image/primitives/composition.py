@@ -7,10 +7,10 @@ Three jobs, all of them ours and none of them the engine's:
 * the thresholds are the *decisions* about what counts as usable: a blur floor, a contrast
   floor, a text-coverage floor and the OCR/VLM tuning values. They are named constants, never
   a library default and never a value smuggled in from a caller.
-* :func:`build_text_regions`, :func:`calculate_text_coverage`, :func:`is_low_quality` and
-  :func:`classify_image` derive names and shares from measurements alone. They read no
-  ``context``, touch no engine and decide nothing about what should happen next: the
-  orchestrator owns every routing decision.
+* :func:`build_text_regions`, :func:`calculate_text_coverage`, :func:`is_low_quality`,
+  :func:`classify_image`, :func:`glyph_height` and :func:`choose_ocr_profile` derive names,
+  shares and selections from measurements alone. They read no ``context``, touch no engine and
+  decide nothing about what should happen next: the orchestrator owns every routing decision.
 
 Every quality score is in the engine's own 8-bit pixel units (0..255), so one set of
 thresholds is comparable across the five readings. ``blur`` is the variance of the Laplacian,
@@ -20,6 +20,7 @@ below reads it as a floor.
 
 from __future__ import annotations
 
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -140,6 +141,230 @@ OCR_BINARIZE_C: Final[float] = 15.0
 #: Longest edge a VLM variant keeps. A larger image is resized to fit: the VLM's context is
 #: bounded, and downscaling is the only correction that buys anything there.
 VLM_MAX_DIMENSION: Final[int] = 2000
+
+# --- The OCR preparation profiles ---------------------------------------------------
+# TODO: [MVP] provisional PoC readings, taken off the 82-page corpus measured at the image
+# lab bench and revisited against OCR output at the MVP gate. They select *which* preparation
+# a page gets; the preparation itself is :data:`OCR_PROFILES`. No engine default and no
+# caller's guess stands in for one of them.
+
+#: Noise at or above which the page gets the denoise-first profile. The corpus' own readings
+#: run to 6.70, so this picks out the pages that carry noise and leaves the rest alone.
+OCR_NOISE_HIGH: Final[float] = 6.0
+
+#: Brightness at or above which a low-contrast page is read as washed out. It is a *pair*
+#: with :data:`OCR_CONTRAST_LOW`: a bright, sparse white page has a high mean and plenty of
+#: contrast, and is not the page this profile exists for.
+OCR_BRIGHTNESS_HIGH: Final[float] = 190.0
+
+#: Contrast below which the local contrast is equalized (the washed-out profile) or the
+#: uneven illumination is divided out (the uneven profile). Wider than :data:`CONTRAST_MIN`,
+#: which marks a page as degraded: a page between the two is legible to a reader and still
+#: worth enhancing before a binarizer reads it (corpus: a measured 19.68 on a page the
+#: library's own floor called healthy).
+OCR_CONTRAST_LOW: Final[float] = 30.0
+
+#: Blur below which an unsharp mask precedes the binarization. A reading of the **native**
+#: frame: the variance of the Laplacian falls from 18.75 to 1.00 over a x3 resample, so this
+#: threshold is not comparable with a reading taken after the upscale.
+OCR_BLUR_LOW: Final[float] = 50.0
+
+#: The band a reported skew has to be inside to count as a measured skew. The lower bound is
+#: the deskew floor; the ceiling keeps the engine's own convention out of the rule — OpenCV 5
+#: reports an axis-aligned ink box as ``-90`` (75% of the corpus), which is the absence of a
+#: skew and not a large one.
+OCR_SKEW_MIN: Final[float] = 0.5
+OCR_SKEW_MAX: Final[float] = 15.0
+
+#: Pixel tolerance for "this region is glued to the frame's edge": a border the detector
+#: traced around the whole page, not a line of text, so it measures no letter.
+OCR_EDGE_TOLERANCE: Final[float] = 2.0
+
+#: Text-region heights accepted as a letter's height. Below the range is speckle, above it a
+#: rule, a logo or a whole paragraph's box; either would drive the upscale off a size that no
+#: letter has.
+OCR_GLYPH_HEIGHT_RANGE: Final[tuple[float, float]] = (5.0, 60.0)
+
+#: Median letter height below which the page is scaled up, and the height it is brought
+#: towards. The corpus' median region height is 14 px, so this is the case for most scans.
+OCR_GLYPH_MIN_PX: Final[float] = 20.0
+OCR_GLYPH_TARGET_PX: Final[float] = 30.0
+
+#: The two ceilings on the upscale: a factor past the first resamples more than the page
+#: resolves, and a page past the second costs more memory than the legibility it buys.
+OCR_SCALE_MAX: Final[float] = 4.0
+OCR_MAX_SIDE: Final[int] = 4000
+
+#: Kernel and median window that estimate the paper's own background for the flattening.
+ILLUMINATION_KERNEL: Final[int] = 7
+ILLUMINATION_MEDIAN_KERNEL: Final[int] = 21
+
+#: The upscale below which nothing is applied: a 5% resample is a cost with no reading to
+#: show for it.
+OCR_SCALE_MIN_FACTOR: Final[float] = 1.05
+
+
+@dataclass(frozen=True)
+class OcrProfile:
+    """One OCR preparation profile: what the OCR variant applies once it is selected.
+
+    Attributes:
+        name: The profile's name, as the rule reports it.
+        denoise: Whether the non-local-means denoiser runs first.
+        equalize_contrast: Whether CLAHE runs.
+        contrast_clip_limit: The equalizer's clip limit, read only when it runs. A pale page
+            has less to clip than a noisy one, so the two profiles do not share one.
+        flatten_illumination: Whether the page's own background is estimated and divided out.
+        binarize_block_size: The binarizer's neighbourhood, in pixels. Odd, by the engine's
+            own requirement.
+        binarize_c: The binarizer's constant, subtracted from the local mean.
+    """
+
+    name: str
+    denoise: bool
+    equalize_contrast: bool
+    contrast_clip_limit: float
+    flatten_illumination: bool
+    binarize_block_size: int
+    binarize_c: float
+
+
+#: The four profiles, by name. Each one is a decision, not a pipeline: the steps it names are
+#: what :func:`docflow.image.primitives.prepare_image_for_ocr` applies, in the order that
+#: function fixes.
+OCR_PROFILES: Final[dict[str, OcrProfile]] = {
+    "clean": OcrProfile(
+        name="clean",
+        denoise=False,
+        equalize_contrast=False,
+        contrast_clip_limit=CONTRAST_CLIP_LIMIT,
+        flatten_illumination=False,
+        binarize_block_size=OCR_BINARIZE_BLOCK_SIZE,
+        binarize_c=OCR_BINARIZE_C,
+    ),
+    "washed_out": OcrProfile(
+        name="washed_out",
+        denoise=False,
+        equalize_contrast=True,
+        contrast_clip_limit=3.0,
+        flatten_illumination=False,
+        binarize_block_size=41,
+        binarize_c=8.0,
+    ),
+    "noisy": OcrProfile(
+        name="noisy",
+        denoise=True,
+        equalize_contrast=True,
+        contrast_clip_limit=2.0,
+        flatten_illumination=False,
+        binarize_block_size=OCR_BINARIZE_BLOCK_SIZE,
+        binarize_c=OCR_BINARIZE_C,
+    ),
+    "uneven_or_skewed": OcrProfile(
+        name="uneven_or_skewed",
+        denoise=False,
+        equalize_contrast=False,
+        contrast_clip_limit=CONTRAST_CLIP_LIMIT,
+        flatten_illumination=True,
+        binarize_block_size=51,
+        binarize_c=10.0,
+    ),
+}
+
+
+def choose_ocr_profile(metrics: ImageMetrics) -> OcrProfile:
+    """Return the OCR preparation profile the measurements select.
+
+    The rule reads the metrics and nothing else: no ``context``, no workflow flag and no
+    caller's instruction reaches it, and the page's own readings decide which profile it gets.
+    The order is the order of the problems: noise first (denoising a washed-out page would
+    soften the ink it is about to enhance), then a bright, low-contrast page, then the pages
+    whose illumination is uneven or whose content leans.
+
+    Args:
+        metrics: The page's measurements.
+
+    Returns:
+        One of :data:`OCR_PROFILES`. A page inside every band gets ``clean``, which is a
+        profile and not an absence: it still binarizes.
+    """
+    quality = metrics.quality
+    if quality.noise >= OCR_NOISE_HIGH:
+        return OCR_PROFILES["noisy"]
+    if (
+        quality.brightness >= OCR_BRIGHTNESS_HIGH
+        and quality.contrast < OCR_CONTRAST_LOW
+    ):
+        return OCR_PROFILES["washed_out"]
+    skew = metrics.skew
+    measured_skew = skew is not None and OCR_SKEW_MIN <= abs(skew) <= OCR_SKEW_MAX
+    if measured_skew or quality.contrast < OCR_CONTRAST_LOW:
+        return OCR_PROFILES["uneven_or_skewed"]
+    return OCR_PROFILES["clean"]
+
+
+def _is_glued_to_the_edge(
+    bbox: tuple[float, float, float, float], width: int, height: int
+) -> bool:
+    """Return whether a region's box reaches the frame's edge."""
+    left, top, right, bottom = bbox
+    tolerance = OCR_EDGE_TOLERANCE
+    return (
+        left <= tolerance
+        or top <= tolerance
+        or right >= width - tolerance
+        or bottom >= height - tolerance
+    )
+
+
+def glyph_height(metrics: ImageMetrics) -> float | None:
+    """Return the page's median letter height, or ``None`` when nothing measures one.
+
+    Args:
+        metrics: The page's measurements.
+
+    Returns:
+        The median height of the regions that are neither glued to the frame's edge — such a
+        box is a border the detector traced, not a line of text — nor outside
+        :data:`OCR_GLYPH_HEIGHT_RANGE`. ``None`` states "not measured": a default height would
+        be an invented letter size, and the upscale it drives would resample the page for it.
+    """
+    width, height = metrics.dimensions.width, metrics.dimensions.height
+    low, high = OCR_GLYPH_HEIGHT_RANGE
+    heights = [
+        region.bbox[3] - region.bbox[1]
+        for region in metrics.text_regions
+        if not _is_glued_to_the_edge(region.bbox, width, height)
+        and low <= region.bbox[3] - region.bbox[1] <= high
+    ]
+    return statistics.median(heights) if heights else None
+
+
+def ocr_upscale_factor(metrics: ImageMetrics) -> float | None:
+    """Return the factor the OCR variant scales the page up by, or ``None`` for none.
+
+    Small letters are the case the upscale exists for: below :data:`OCR_GLYPH_MIN_PX` the page
+    is brought towards :data:`OCR_GLYPH_TARGET_PX`. Two ceilings bound the factor —
+    :data:`OCR_SCALE_MAX` and :data:`OCR_MAX_SIDE` — and a factor under
+    :data:`OCR_SCALE_MIN_FACTOR` is not applied at all.
+
+    Args:
+        metrics: The page's measurements.
+
+    Returns:
+        The factor, or ``None`` when the page's letters measure at or above the floor, when no
+        letter was measured, or when the ceilings leave nothing worth applying.
+    """
+    width, height = metrics.dimensions.width, metrics.dimensions.height
+    if width <= 0 or height <= 0:
+        return None
+    letter = glyph_height(metrics)
+    if letter is None or letter >= OCR_GLYPH_MIN_PX:
+        return None
+    factor = min(
+        OCR_SCALE_MAX, OCR_GLYPH_TARGET_PX / letter, OCR_MAX_SIDE / max(width, height)
+    )
+    return factor if factor > OCR_SCALE_MIN_FACTOR else None
 
 
 @dataclass(frozen=True)

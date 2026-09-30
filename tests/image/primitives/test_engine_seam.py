@@ -20,15 +20,17 @@ import pytest
 
 from docflow.image import (
     ArtifactRef,
+    ImageDimensions,
     ImageMetrics,
     ImageOptions,
     ImageQualityMetrics,
+    TextRegion,
 )
 from docflow.image.primitives import (
     CONTRAST_MIN,
-    NOISE_MAX,
     ImagePrimitiveError,
     analyze_image,
+    binarize_image,
     calculate_blur_score,
     calculate_brightness_score,
     calculate_contrast_score,
@@ -44,6 +46,7 @@ from docflow.image.primitives import (
     detect_orientation,
     detect_skew_angle,
     detect_text_regions,
+    flatten_illumination,
     get_image_channels,
     get_image_dimensions,
     get_image_metadata,
@@ -58,6 +61,12 @@ from docflow.image.primitives import (
     rotate_image,
     save_image,
     sharpen_image,
+    upscale_image,
+)
+from docflow.image.primitives.composition import (
+    OCR_BLUR_LOW,
+    OCR_NOISE_HIGH,
+    choose_ocr_profile,
 )
 from tests.factories import build_image_options
 from tests.fakes.engines.fake_opencv import (
@@ -440,9 +449,169 @@ def test_every_transformation_still_produces_an_image() -> None:
         normalize_contrast(grey),
         denoise_image(grey),
         sharpen_image(grey),
+        flatten_illumination(grey),
         convert_to_grayscale(grey),
+        binarize_image(grey, block_size=35, c=15.0),
     ):
         assert transformed.shape == grey.shape
+
+
+def test_the_upscale_scales_the_frame_by_the_factor_it_is_given() -> None:
+    """Growing is its own primitive: ``resize_image`` interpolates for shrinking, not for this."""
+    scaled = upscale_image(uniform(20, 10, PAPER), 2.5)
+
+    assert get_image_dimensions(scaled) == (50, 25)
+
+
+def test_a_factor_that_is_not_an_upscale_is_refused() -> None:
+    """A factor of one resamples the page for nothing; the caller states that by not calling."""
+    with pytest.raises(ImagePrimitiveError) as failure:
+        upscale_image(uniform(8, 8, PAPER), 1.0)
+
+    assert failure.value.error.type == "INVALID_INPUT"
+    assert failure.value.error.recoverable is False
+
+
+def test_a_binarization_block_that_is_not_an_odd_window_is_refused() -> None:
+    """The engine's own answer to an even block is its exception; a caller's error is not."""
+    grey = bars(60, 40, [(10, 10, 40, 6)])
+
+    with pytest.raises(ImagePrimitiveError) as failure:
+        binarize_image(grey, block_size=40, c=15.0)
+
+    assert failure.value.error.type == "INVALID_INPUT"
+    assert set(binarize_image(grey, block_size=41, c=8.0).values) <= {0.0, 255.0}
+
+
+def test_flattening_divides_the_page_by_its_own_background() -> None:
+    """The estimate is local: a dim side and a bright side both come back as paper.
+
+    Mutation that must break this: divide by the page's *mean* instead of by the local
+    background — the dim half then stays dim, which is the defect the flattening exists for.
+    """
+    assert flatten_illumination(uniform(8, 8, 120.0)).values == [255.0] * 64
+
+    rows = 8
+    shaded = FakeImage(
+        [level for _ in range(rows) for level in [120.0] * 30 + [240.0] * 30],
+        60,
+        rows,
+        1,
+    )
+
+    flattened = flatten_illumination(shaded)
+
+    assert flattened.values[5] == pytest.approx(255.0)
+    assert flattened.values[55] == pytest.approx(255.0)
+
+
+def metrics_with(metrics: ImageMetrics, **readings: float) -> ImageMetrics:
+    """Return the measured record with the named quality readings replaced."""
+    return replace(metrics, quality=replace(metrics.quality, **readings))
+
+
+@pytest.mark.parametrize(
+    ("readings", "expected_transformations", "expected_grid"),
+    [
+        (
+            {"brightness": 195.0, "contrast": 25.0},
+            ["convert_to_grayscale", "normalize_contrast", "binarize"],
+            (41, 8.0),
+        ),
+        (
+            {"noise": 7.0},
+            ["convert_to_grayscale", "denoise", "normalize_contrast", "binarize"],
+            (35, 15.0),
+        ),
+        (
+            {"contrast": 25.0},
+            ["convert_to_grayscale", "flatten_illumination", "binarize"],
+            (51, 10.0),
+        ),
+    ],
+)
+def test_each_profile_is_its_own_steps_and_its_own_binarization_grid(
+    opencv: Callable[..., FakeOpenCV],
+    tmp_path: Path,
+    readings: dict[str, float],
+    expected_transformations: list[str],
+    expected_grid: tuple[int, float],
+) -> None:
+    """The readings select the profile, and the profile's grid reaches the binarizer.
+
+    Mutation that must break this: hand ``binarize_image`` the frozen ``OCR_BINARIZE_*``
+    constants instead of the profile's — every page then records ``(35, 15.0)``, which is the
+    single-grid rule this replaces.
+    """
+    fake = opencv()
+    pixels = load_image(COLOR_LAYOUT)
+    healthy = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+
+    ocr = prepare_image_for_ocr(
+        pixels,
+        metrics_with(healthy, **readings),
+        build_image_options(),
+        tmp_path / "ocr_ready.png",
+    )
+
+    assert ocr.transformations == expected_transformations
+    assert fake.binarizations == [expected_grid]
+
+
+def test_small_letters_bring_the_upscale_before_the_binarization(
+    tmp_path: Path,
+) -> None:
+    """A page whose letters measure under the floor is scaled up; a larger one is not."""
+    pixels = load_image(COLOR_LAYOUT)
+    healthy = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+    twelve_px_letters = [
+        TextRegion(
+            region_id="region_001",
+            bbox=(10.0, 10.0, 60.0, 22.0),
+            text_coverage=0.5,
+        )
+    ]
+    small = replace(
+        healthy,
+        dimensions=ImageDimensions(width=1000, height=2000),
+        text_regions=twelve_px_letters,
+    )
+
+    ocr = prepare_image_for_ocr(
+        pixels, small, build_image_options(), tmp_path / "ocr_ready.png"
+    )
+
+    assert ocr.transformations == ["convert_to_grayscale", "upscale", "binarize"]
+    assert (ocr.artifact.width, ocr.artifact.height) == (320, 240)
+
+
+def test_a_profile_never_applies_a_correction_the_caller_did_not_ask_for(
+    tmp_path: Path,
+) -> None:
+    """The profile picks the enhancement; the frame corrections stay the caller's to state.
+
+    A leaning page is the case the temptation is real on: the skew selects the flattening
+    profile, and the deskew still waits for the option — the measurement and the option, never
+    the measurement alone.
+    """
+    pixels = load_image(COLOR_LAYOUT)
+    healthy = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+    leaning = replace(healthy, skew=3.0)
+
+    assert choose_ocr_profile(leaning).name == "uneven_or_skewed"
+
+    unasked = prepare_image_for_ocr(
+        pixels,
+        leaning,
+        build_options(deskew=False, correct_orientation=False),
+        tmp_path / "ocr_ready.png",
+    )
+    asked = prepare_image_for_ocr(
+        pixels, leaning, build_options(deskew=True), tmp_path / "deskewed.png"
+    )
+
+    assert "deskew" not in unasked.transformations
+    assert "deskew" in asked.transformations
 
 
 def test_the_analysis_measures_the_image_without_mutating_it() -> None:
@@ -481,7 +650,12 @@ def test_the_ocr_pipeline_binarizes_and_the_vlm_pipeline_keeps_the_colour(
 
 
 def test_a_pipeline_applies_only_what_the_measurements_justify(tmp_path: Path) -> None:
-    """A contrast and noise reading inside the bands buys no enhancement."""
+    """A page inside every profile band buys no enhancement at all.
+
+    The contrasts and the noise it trades on are the *profile's* bands
+    (:func:`choose_ocr_profile`), which are wider than the ``LOW_QUALITY`` floors: a page
+    between the two is legible and still gets the plain profile.
+    """
     pixels = load_image(COLOR_LAYOUT)
     facts = get_image_metadata(COLOR_LAYOUT, pixels)
     healthy = analyze_image(pixels, facts)
@@ -491,11 +665,11 @@ def test_a_pipeline_applies_only_what_the_measurements_justify(tmp_path: Path) -
         format=healthy.format,
         size=healthy.size,
         quality=ImageQualityMetrics(
-            blur=healthy.quality.blur,
+            blur=OCR_BLUR_LOW + 1.0,
             sharpness=healthy.quality.sharpness,
             contrast=CONTRAST_MIN * 4,
             brightness=healthy.quality.brightness,
-            noise=NOISE_MAX / 4,
+            noise=OCR_NOISE_HIGH / 2.0,
         ),
         orientation=0,
         skew=0.0,
@@ -510,6 +684,8 @@ def test_a_pipeline_applies_only_what_the_measurements_justify(tmp_path: Path) -
         deskew=False,
         quality=None,
     )
+
+    assert choose_ocr_profile(metrics).name == "clean"
 
     ocr = prepare_image_for_ocr(pixels, metrics, options, tmp_path / "ocr_ready.png")
     vlm = prepare_image_for_vlm(pixels, metrics, options, tmp_path / "vlm_ready.png")

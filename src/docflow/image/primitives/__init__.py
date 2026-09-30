@@ -76,13 +76,14 @@ from docflow.image.primitives.composition import (
     DENOISE_TEMPLATE_WINDOW,
     DESKEW_BORDER_VALUE,
     DESKEW_MIN_ANGLE,
+    ILLUMINATION_KERNEL,
+    ILLUMINATION_MEDIAN_KERNEL,
     INK_MAX_VALUE,
     INK_THRESHOLD,
     MIN_REGION_AREA,
     NOISE_MAX,
     NOISE_MEDIAN_KERNEL,
-    OCR_BINARIZE_BLOCK_SIZE,
-    OCR_BINARIZE_C,
+    OCR_BLUR_LOW,
     SHARPEN_AMOUNT,
     SHARPEN_KERNEL,
     SHARPEN_SIGMA,
@@ -92,7 +93,9 @@ from docflow.image.primitives.composition import (
     brightness_shift,
     build_text_regions,
     calculate_text_coverage,
+    choose_ocr_profile,
     classify_image,
+    ocr_upscale_factor,
 )
 from docflow.image.primitives.errors import ImagePrimitiveError, typed_failure
 from docflow.image.primitives.publication import publish_artifact, publish_json
@@ -172,6 +175,7 @@ __all__ = [
     "detect_orientation",
     "detect_skew_angle",
     "detect_text_regions",
+    "flatten_illumination",
     "get_image_channels",
     "get_image_dimensions",
     "get_image_metadata",
@@ -190,6 +194,7 @@ __all__ = [
     "save_image",
     "sharpen_image",
     "typed_failure",
+    "upscale_image",
     "validate_image_input",
     "validate_image_result",
 ]
@@ -511,22 +516,59 @@ def resize_image(pixels: Any, width: int, height: int) -> Any:
     )
 
 
+def upscale_image(pixels: Any, factor: float) -> Any:
+    """Return ``pixels`` scaled up by ``factor``.
+
+    Growing is not shrinking: :func:`resize_image` interpolates with the engine's area rule,
+    which is the right one for a downscale and the wrong one for this. The OCR profile asks
+    for this when the page's letters are too small to binarize cleanly.
+
+    Args:
+        pixels: The decoded image.
+        factor: The scale, strictly above one.
+
+    Returns:
+        The scaled image.
+
+    Raises:
+        ImagePrimitiveError: With ``INVALID_INPUT`` when the factor is not above one: a
+            factor of one resamples the page for nothing, and a caller that wants no upscale
+            says so by not calling this.
+    """
+    if factor <= 1.0:
+        raise typed_failure(
+            "INVALID_INPUT",
+            f"an upscale factor of {factor} is not an upscale",
+            recoverable=False,
+            metadata={"factor": factor},
+        )
+    width, height = get_image_dimensions(pixels)
+    target = (max(1, round(width * factor)), max(1, round(height * factor)))
+    return _apply(
+        lambda cv2: cv2.resize(pixels, target, interpolation=cv2.INTER_CUBIC),
+        f"scale the image up by {factor}",
+    )
+
+
 # --- Enhance -----------------------------------------------------------------------
 
 
-def normalize_contrast(gray: Any) -> Any:
+def normalize_contrast(gray: Any, *, clip_limit: float = CONTRAST_CLIP_LIMIT) -> Any:
     """Return a single-channel image with its local contrast equalized.
 
     Args:
         gray: The single-channel image. CLAHE is a single-channel operator; the caller
             converts a colour image first.
+        clip_limit: The equalizer's clip limit. The OCR profile names it rather than this
+            function defaulting one: a pale page has less to clip than a noisy one, so the
+            two profiles do not equalize at the same strength.
 
     Returns:
         The contrast-normalized image.
     """
     engine = _engine()
     equalizer = engine.createCLAHE(
-        clipLimit=CONTRAST_CLIP_LIMIT, tileGridSize=CONTRAST_TILE_GRID_SIZE
+        clipLimit=clip_limit, tileGridSize=CONTRAST_TILE_GRID_SIZE
     )
     return _apply(
         lambda _: equalizer.apply(gray), "equalize the image's local contrast"
@@ -607,27 +649,75 @@ def sharpen_image(pixels: Any) -> Any:
     )
 
 
-def binarize_image(gray: Any) -> Any:
-    """Return a single-channel image thresholded into ink and background.
+def flatten_illumination(gray: Any) -> Any:
+    """Return a single-channel image with its uneven illumination divided out.
 
-    The threshold is adaptive and its block size and constant are ours, named in
-    :mod:`docflow.image.primitives.composition`: a threshold the engine computes (Otsu) is a
-    number nobody recorded, and this project does not accept an unrecorded decision.
+    A photographed page is lit unevenly and a binarizer reads the dim side as ink. The
+    background is estimated as the local *maximum* (a dilation), smoothed so a single bright
+    speck does not become the paper everywhere, and divided out: every pixel is then read
+    against its own neighbourhood's paper instead of the page's average.
 
     Args:
         gray: The single-channel image.
 
     Returns:
-        The binary image: 0 for ink, 255 for background.
+        The flattened image.
     """
+    background = _apply(
+        lambda cv2: cv2.medianBlur(
+            cv2.dilate(
+                gray,
+                cv2.getStructuringElement(
+                    cv2.MORPH_RECT, (ILLUMINATION_KERNEL, ILLUMINATION_KERNEL)
+                ),
+            ),
+            ILLUMINATION_MEDIAN_KERNEL,
+        ),
+        "estimate the page's own background",
+    )
+    return _apply(
+        lambda cv2: cv2.divide(gray, background, scale=INK_MAX_VALUE),
+        "divide the page by its background",
+    )
+
+
+def binarize_image(gray: Any, *, block_size: int, c: float) -> Any:
+    """Return a single-channel image thresholded into ink and background.
+
+    The threshold is adaptive and both of its parameters are the caller's: the OCR profile
+    names the block size and the constant, so the page's own profile decides them. A
+    threshold the engine computes (Otsu) is a number nobody recorded, and a parameter chosen
+    here would be the same.
+
+    Args:
+        gray: The single-channel image.
+        block_size: The neighbourhood the local mean is taken over, in pixels: odd and at
+            least three, which is what the engine's threshold requires.
+        c: The constant subtracted from the local mean.
+
+    Returns:
+        The binary image: 0 for ink, 255 for background.
+
+    Raises:
+        ImagePrimitiveError: With ``INVALID_INPUT`` when the block size is not an odd window
+            of at least three: the engine's own answer to that is its exception, and a
+            caller's arithmetic error is not the engine's to report.
+    """
+    if block_size < 3 or block_size % 2 == 0:
+        raise typed_failure(
+            "INVALID_INPUT",
+            f"a binarization block of {block_size} is not an odd window of at least three",
+            recoverable=False,
+            metadata={"block_size": block_size},
+        )
     return _apply(
         lambda cv2: cv2.adaptiveThreshold(
             gray,
             INK_MAX_VALUE,
             cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
             cv2.THRESH_BINARY,
-            OCR_BINARIZE_BLOCK_SIZE,
-            OCR_BINARIZE_C,
+            block_size,
+            c,
         ),
         "binarize the image",
     )
@@ -1074,14 +1164,20 @@ def prepare_image_for_ocr(
     """Produce the OCR-optimized variant: single channel, high contrast, binarized.
 
     OCR benefits from a representation a VLM must not be given: greyscale destroys colour and
-    binarization destroys everything but the ink. Every step but the last is applied only when
-    the measurement justifies it; binarization is what this variant *is*.
+    binarization destroys everything but the ink. Which enhancement precedes the binarization
+    is the profile the *page's own measurements* select (:func:`choose_ocr_profile`): a noisy
+    page is denoised, a pale one equalized harder, an unevenly lit one flattened, and a page
+    whose letters measure too small is scaled up first. A page inside every band gets the
+    plain profile — greyscale and binarize — and nothing else. Binarization is what this
+    variant *is*: it is the one step no profile omits.
 
     Args:
         pixels: The decoded image.
-        metrics: The image's measurements.
-        options: The requested corrections. A stated quality factor does not reach this
-            pipeline: binarized ink is the one representation a lossy encoder would ruin.
+        metrics: The image's measurements, which select the profile.
+        options: The requested frame corrections. They are the caller's to state and are
+            never applied because a measurement suggested them; a stated quality factor does
+            not reach this pipeline, because binarized ink is the one representation a lossy
+            encoder would ruin.
         destination: Where ``ocr_ready.png`` is published.
 
     Returns:
@@ -1089,16 +1185,26 @@ def prepare_image_for_ocr(
     """
     transformed = pixels
     applied: list[str] = []
+    profile = choose_ocr_profile(metrics)
 
     if get_image_channels(transformed) != 1:
         transformed = convert_to_grayscale(transformed)
         applied.append("convert_to_grayscale")
-    if metrics.quality.contrast < CONTRAST_MIN:
-        transformed = normalize_contrast(transformed)
-        applied.append("normalize_contrast")
-    if metrics.quality.noise > NOISE_MAX:
+    factor = ocr_upscale_factor(metrics)
+    if factor is not None:
+        transformed = upscale_image(transformed, factor)
+        applied.append("upscale")
+    if profile.denoise:
         transformed = denoise_image(transformed)
         applied.append("denoise")
+    if profile.equalize_contrast:
+        transformed = normalize_contrast(
+            transformed, clip_limit=profile.contrast_clip_limit
+        )
+        applied.append("normalize_contrast")
+    if profile.flatten_illumination:
+        transformed = flatten_illumination(transformed)
+        applied.append("flatten_illumination")
     if options.correct_orientation and metrics.orientation:
         transformed = rotate_image(transformed, float(metrics.orientation))
         applied.append("correct_orientation")
@@ -1109,8 +1215,15 @@ def prepare_image_for_ocr(
     ):
         transformed = deskew_image(transformed, metrics.skew)
         applied.append("deskew")
+    if metrics.quality.blur < OCR_BLUR_LOW:
+        transformed = sharpen_image(transformed)
+        applied.append("sharpen")
 
-    transformed = binarize_image(transformed)
+    transformed = binarize_image(
+        transformed,
+        block_size=profile.binarize_block_size,
+        c=profile.binarize_c,
+    )
     applied.append("binarize")
 
     published = save_image(transformed, destination)

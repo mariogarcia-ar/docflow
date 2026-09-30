@@ -2,7 +2,8 @@
 
 Every case here is a rule of **ours** over a metrics record we construct. Nothing is decoded,
 no engine is reached, and no case claims a value is the "right" blur or contrast: those are the
-engine's readings, and the engine is not the deliverable.
+engine's readings, and the engine is not the deliverable. The OCR preparation profiles
+(``IMG-08``) are a rule of the same kind: they read a metrics record and name a profile.
 """
 
 from __future__ import annotations
@@ -25,30 +26,48 @@ from docflow.image.primitives.composition import (
     BRIGHTNESS_TARGET,
     CONTRAST_MIN,
     NOISE_MAX,
+    OCR_BLUR_LOW,
+    OCR_BRIGHTNESS_HIGH,
+    OCR_CONTRAST_LOW,
+    OCR_NOISE_HIGH,
+    OCR_PROFILES,
+    OCR_SCALE_MAX,
     SHARPNESS_MIN,
     TEXT_COVERAGE_MIN,
     TEXT_DOMINANT_COVERAGE,
     brightness_shift,
     build_text_regions,
     calculate_text_coverage,
+    choose_ocr_profile,
     classify_image,
+    glyph_height,
     is_low_quality,
+    ocr_upscale_factor,
 )
 
 
 def build_metrics(
     *,
     text_coverage: float = 0.0,
-    blur: float = BLUR_MIN * 4,
+    blur: float = OCR_BLUR_LOW * 2,
     sharpness: float = SHARPNESS_MIN * 4,
     contrast: float = CONTRAST_MIN * 4,
     brightness: float = 128.0,
-    noise: float = NOISE_MAX / 4,
+    noise: float = OCR_NOISE_HIGH / 2.0,
+    skew: float | None = 0.0,
+    dimensions: ImageDimensions | None = None,
     regions: list[TextRegion] | None = None,
 ) -> ImageMetrics:
-    """Build a complete metrics record with every reading inside the usable bands."""
+    """Build a complete metrics record with every reading inside the usable bands.
+
+    Every default is inside both bands a reading is judged by: the ``LOW_QUALITY`` floors of
+    :func:`is_low_quality` and the wider bands :func:`choose_ocr_profile` selects on. A case
+    that wants the other side of a boundary overrides the one reading it is about.
+    """
     return ImageMetrics(
-        dimensions=ImageDimensions(width=200, height=100),
+        dimensions=ImageDimensions(width=200, height=100)
+        if dimensions is None
+        else dimensions,
         resolution=None,
         format="png",
         size=1024,
@@ -60,7 +79,7 @@ def build_metrics(
             noise=noise,
         ),
         orientation=0,
-        skew=0.0,
+        skew=skew,
         text_regions=[] if regions is None else regions,
         text_coverage=text_coverage,
     )
@@ -183,3 +202,133 @@ def test_a_page_above_the_band_is_reported_and_never_darkened() -> None:
     assert brightness_shift(BRIGHTNESS_MAX) is None
     assert brightness_shift(BRIGHTNESS_TARGET) is None
     assert brightness_shift(dark) == BRIGHTNESS_TARGET - dark
+
+
+@pytest.mark.parametrize(
+    ("readings", "expected"),
+    [
+        ({}, "clean"),
+        ({"noise": OCR_NOISE_HIGH}, "noisy"),
+        (
+            {"brightness": OCR_BRIGHTNESS_HIGH, "contrast": OCR_CONTRAST_LOW - 1.0},
+            "washed_out",
+        ),
+        ({"contrast": OCR_CONTRAST_LOW - 1.0}, "uneven_or_skewed"),
+        ({"skew": 1.0}, "uneven_or_skewed"),
+        # Both sides of the two boundaries the order depends on: a reading one tenth of a
+        # unit inside the band loses to the next test down, and noise outranks them all.
+        (
+            {
+                "noise": OCR_NOISE_HIGH - 0.1,
+                "brightness": OCR_BRIGHTNESS_HIGH - 0.1,
+                "contrast": OCR_CONTRAST_LOW,
+            },
+            "clean",
+        ),
+        (
+            {
+                "noise": OCR_NOISE_HIGH,
+                "brightness": OCR_BRIGHTNESS_HIGH,
+                "contrast": 0.0,
+            },
+            "noisy",
+        ),
+    ],
+)
+def test_the_profile_is_selected_by_the_readings_and_nothing_else(
+    readings: dict[str, float], expected: str
+) -> None:
+    """One case per boundary: the rule is the constants, and the test walks both sides."""
+    assert choose_ocr_profile(build_metrics(**readings)) == OCR_PROFILES[expected]
+
+
+def test_the_plain_profile_is_still_a_profile() -> None:
+    """A page inside every band is not left alone: it still gets the frozen binarization."""
+    plain = choose_ocr_profile(build_metrics())
+
+    assert plain.name == "clean"
+    assert not plain.denoise
+    assert not plain.equalize_contrast
+    assert not plain.flatten_illumination
+    assert plain.binarize_block_size % 2 == 1
+
+
+def test_the_engines_axis_aligned_reading_is_not_a_skew() -> None:
+    """OpenCV 5 reports an upright ink box as ``-90``: that is no skew, not a large one.
+
+    The corpus the batch tool wrote carries ``-90`` on three quarters of its pages (measured
+    in ``var/batch_image``), so a rule that read the field raw would send most of them to the
+    flattening profile. Mutation that must break this test: drop ``OCR_SKEW_MAX`` from the
+    comparison, which selects ``uneven_or_skewed`` for a page whose ink is axis-aligned.
+    """
+    upright = build_metrics(skew=-89.96, contrast=45.81, brightness=243.98, noise=2.49)
+
+    assert choose_ocr_profile(upright).name == "clean"
+    assert choose_ocr_profile(replace(upright, skew=-5.01)).name == "uneven_or_skewed"
+    assert choose_ocr_profile(replace(upright, skew=None)).name == "clean"
+
+
+def test_only_the_regions_that_measure_a_letter_are_counted() -> None:
+    """A border, a rule and a paragraph's box are not letters, and the median is of the rest."""
+    metrics = build_metrics(
+        dimensions=ImageDimensions(width=1000, height=800),
+        regions=[
+            # Glued to the frame's top and right edges: the detector traced the page, not a line.
+            TextRegion(
+                region_id="region_001",
+                bbox=(0.0, 0.0, 1000.0, 1.0),
+                text_coverage=1.0,
+            ),
+            # One pixel tall: a rule.
+            TextRegion(
+                region_id="region_002", bbox=(10.0, 10.0, 60.0, 11.0), text_coverage=1.0
+            ),
+            # Four hundred pixels tall: a paragraph's box, not a letter.
+            TextRegion(
+                region_id="region_003",
+                bbox=(10.0, 20.0, 600.0, 420.0),
+                text_coverage=1.0,
+            ),
+            TextRegion(
+                region_id="region_004",
+                bbox=(10.0, 500.0, 60.0, 512.0),
+                text_coverage=1.0,
+            ),
+            TextRegion(
+                region_id="region_005",
+                bbox=(10.0, 540.0, 60.0, 558.0),
+                text_coverage=1.0,
+            ),
+        ],
+    )
+
+    assert glyph_height(metrics) == pytest.approx(15.0)
+    assert glyph_height(build_metrics()) is None
+
+
+def test_the_upscale_is_bounded_by_the_letter_and_by_the_page() -> None:
+    """The factor answers to the letters, then to what the page can pay for."""
+
+    def page(width: int, height: int, letter: float) -> ImageMetrics:
+        """Return a page whose only region is a line ``letter`` pixels tall."""
+        return build_metrics(
+            dimensions=ImageDimensions(width=width, height=height),
+            regions=[
+                TextRegion(
+                    region_id="region_001",
+                    bbox=(10.0, 10.0, 60.0, 10.0 + letter),
+                    text_coverage=1.0,
+                )
+            ],
+        )
+
+    # 30/12 = 2.5, held back to 2.0 by a 2000-pixel side against OCR_MAX_SIDE.
+    assert ocr_upscale_factor(page(1000, 2000, 12.0)) == pytest.approx(2.0)
+    assert ocr_upscale_factor(page(500, 500, 12.0)) == pytest.approx(2.5)
+    # 30/6 = 5, capped by the factor ceiling.
+    assert ocr_upscale_factor(page(100, 100, 6.0)) == pytest.approx(OCR_SCALE_MAX)
+    # A letter at or above the floor needs no upscale, and a 3% one is a resample for nothing.
+    assert ocr_upscale_factor(page(1000, 2000, 30.0)) is None
+    assert ocr_upscale_factor(page(1000, 2000, 29.0)) is None
+    # No letter measured is not a letter of size zero.
+    assert ocr_upscale_factor(build_metrics()) is None

@@ -368,6 +368,7 @@ class FakeOpenCV:
     IMREAD_COLOR = 1
     IMWRITE_JPEG_QUALITY = 1
     INTER_LINEAR = 1
+    INTER_CUBIC = 2
     INTER_AREA = 3
     COLOR_BGRA2BGR = 1
     COLOR_BGR2GRAY = 6
@@ -401,6 +402,7 @@ class FakeOpenCV:
         self.raises = dict(raises or {})
         self.calls: list[str] = []
         self.writes: list[tuple[str, list[int]]] = []
+        self.binarizations: list[tuple[int, float]] = []
 
     # --- Decode and encode ---------------------------------------------------------
 
@@ -619,6 +621,32 @@ class FakeOpenCV:
         return FakeImage(values, first.width, first.height, first.channels)
 
     @_recorded
+    def dilate(self, image: FakeImage, kernel: tuple[int, int]) -> FakeImage:
+        """Return the local maximum over the kernel's window.
+
+        The engine's dilation with a rectangular element is a window maximum, which is how the
+        seam estimates the paper's own background before dividing it out.
+        """
+        radius = max(1, (kernel[0] - 1) // 2)
+        return _neighbourhood(image, radius=radius, reducer=max)
+
+    @_recorded
+    def divide(
+        self, first: FakeImage, second: FakeImage, scale: float = 1.0
+    ) -> FakeImage:
+        """Return ``scale * first / second``, which is how a background is divided out.
+
+        A black background has no paper to recover and cannot divide anything: the double
+        answers the white level there, loudly, rather than raising a division by zero the
+        engine would not raise.
+        """
+        values = [
+            scale * left / right if right else MAX_LEVEL
+            for left, right in zip(first.values, second.values, strict=True)
+        ]
+        return FakeImage(values, first.width, first.height, first.channels)
+
+    @_recorded
     def absdiff(self, first: FakeImage, second: FakeImage) -> FakeImage:
         """Return the element-wise absolute difference."""
         values = [
@@ -652,6 +680,7 @@ class FakeOpenCV:
     ) -> FakeImage:
         """Return a locally thresholded binary image, mean-based and integral-image fast."""
         del adaptiveMethod, type
+        self.binarizations.append((int(blockSize), float(C)))
         radius = max(1, blockSize // 2)
         sums, integral = _integral(image)
         values = []
