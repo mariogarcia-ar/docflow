@@ -44,5 +44,5 @@ Rules, apply in this order:
 6. Do not infer any tax that is not printed: return "0".
 
 --- RECEIPT (OCR) ---
-{text}
+<doc>
 --- END OF RECEIPT ---

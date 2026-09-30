@@ -37,5 +37,5 @@ Rules, apply in this order:
    classification step, not here: it is not a reading of the receipt.
 
 --- RECEIPT (OCR) ---
-{text}
+<doc>
 --- END OF RECEIPT ---

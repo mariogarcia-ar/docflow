@@ -112,5 +112,5 @@ Rules, apply in this order:
 Do not invent any absent or illegible value: return "null".
 
 --- RECEIPT (OCR) ---
-{text}
+<doc>
 --- END OF RECEIPT ---

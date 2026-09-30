@@ -1,64 +1,64 @@
 {
   "assets": [
     {
-      "key": "prompts/extraction/invoice.txt",
+      "key": "template/extraction/invoice.md",
       "format": "text"
     },
     {
-      "key": "prompts/extraction/vision.txt",
+      "key": "template/extraction/vision.md",
       "format": "text"
     },
     {
-      "key": "prompts/review/invoice.txt",
+      "key": "template/review/invoice.md",
       "format": "text"
     },
     {
-      "key": "prompts/review/vision.txt",
+      "key": "template/review/vision.md",
       "format": "text"
     },
     {
-      "key": "prompts/extraction/invoice_deteccion.txt",
+      "key": "template/extraction/invoice_deteccion.md",
       "format": "text"
     },
     {
-      "key": "prompts/extraction/invoice_desglose.txt",
+      "key": "template/extraction/invoice_desglose.md",
       "format": "text"
     },
     {
-      "key": "prompts/extraction/invoice_rubro.txt",
+      "key": "template/extraction/invoice_rubro.md",
       "format": "text"
     },
     {
-      "key": "prompts/extraction/invoice_clasificacion.txt",
+      "key": "template/extraction/invoice_clasificacion.md",
       "format": "text"
     },
     {
-      "key": "schemas/extraction/invoice.json",
+      "key": "schema/extraction/invoice.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },
     {
-      "key": "schemas/review/invoice.json",
+      "key": "schema/review/invoice.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },
     {
-      "key": "schemas/extraction/invoice_detection.json",
+      "key": "schema/extraction/invoice_detection.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },
     {
-      "key": "schemas/extraction/invoice_desglose.json",
+      "key": "schema/extraction/invoice_desglose.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },
     {
-      "key": "schemas/extraction/invoice_rubro.json",
+      "key": "schema/extraction/invoice_rubro.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },
     {
-      "key": "schemas/extraction/invoice_clasificacion.json",
+      "key": "schema/extraction/invoice_clasificacion.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     }

@@ -33,5 +33,5 @@ Rules, apply in this order:
 5. motivo_rechazo is a short phrase, only if comprobante_valido is "false".
 
 --- TEXT (OCR) ---
-{text}
+<doc>
 --- END OF TEXT ---
