@@ -17,6 +17,7 @@ import pytest
 from tests.fakes.engines.fake_docling import (
     FAKE_ENGINE_VERSION,
     FakeConversionStatus,
+    FakeCoordOrigin,
     FakeDocling,
     FakeDoclingError,
     empty_document,
@@ -51,20 +52,34 @@ def test_the_document_exposes_the_surface_the_seam_reads() -> None:
 
 
 def test_the_boxes_are_reached_through_the_engines_own_provenance() -> None:
-    """The shape the seam unwraps is the engine's: ``prov[0].bbox.as_tuple()``."""
+    """The shape the seam unwraps is the engine's: ``prov[0].bbox`` **in its own origin**.
+
+    The engine reports this processor's pages in ``BOTTOMLEFT`` and hands a box over as
+    ``(l, b, r, t)``, so the second value is the one nearer the bottom: the fixtures' top-down
+    rectangle ``(12, 96, 204, 108)`` arrives here as ``(12, 12, 204, 24)`` on a 120-pixel page.
+    Asserting the converted numbers instead would assert our conversion back at itself, and would
+    keep letting a seam that ignores the origin pass.
+    """
     item, _level = next(iter(FakeDocling()(PREPARED, {}).document.iterate_items()))
 
     assert item.prov[0].page_no == 1
-    assert item.prov[0].bbox.as_tuple() == (12.0, 96.0, 204.0, 108.0)
+    assert item.prov[0].bbox.coord_origin == FakeCoordOrigin.BOTTOMLEFT
+    assert item.prov[0].bbox.as_tuple() == (12.0, 12.0, 204.0, 24.0)
 
 
 def test_the_items_come_back_in_adversarial_order() -> None:
-    """A fake that handed back already-sorted blocks would let a broken sort pass."""
+    """A fake that handed back already-sorted blocks would let a broken sort pass.
+
+    The numbers are the engine's own — measured from the bottom — so the caption the double hands
+    over *first* is the one nearest the bottom of the page and carries the *smallest* ``t``. An
+    assertion written the other way round would be asserting a top-down box the engine never
+    reports.
+    """
     document = FakeDocling()(PREPARED, {}).document
     tops = [item.prov[0].bbox.t for item, _level in document.iterate_items()]
 
     assert tops != sorted(tops)
-    assert tops[0] > tops[-1]
+    assert tops[0] < tops[-1]
 
 
 def test_a_table_is_a_document_item_and_a_table_view_at_once() -> None:

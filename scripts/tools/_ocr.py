@@ -11,28 +11,28 @@ method does the work and returns the payload; the caller decides whether that be
 never caught here — a tool prints them and exits ``1``.
 
 Three of the eight methods publish: ``run`` publishes the contract's document, and ``text`` and
-``mixed`` publish the reading they report as ``text.txt``. The other five build a payload and write
-nothing.
+``mixed`` publish one reading each — ``text.txt``, the engine's own plain text, and ``mixed.txt``,
+the page's rows composed by :func:`composition.render_reading`. The other five build a payload and
+write nothing.
 
 It carries the lab-bench exception of ``subplan-scripts.md`` §3.2 for its own processor: it may
 drive ``docflow.ocr.primitives``.
 
 There is no ``--engine`` flag: the engine is fixed and never presented as a selectable option.
-``--tables`` is on for the two subcommands whose answer needs the detected tables — ``tables``,
-which reports them, and ``mixed``, which reports the reading that carries them — and off
-everywhere else: detection is engine work, so a command that would otherwise answer with less than
-it promises asks for it itself rather than requiring the caller to say it twice. ``mixed`` is
-``text`` with the tables claimed, and nothing else: the engine's own text export already carries
-every detected table as Markdown where it was read, so the *reading* is the merge and no splicing
-of ours is needed — one that looked for a placeholder to substitute would be code that can never
-fire, because this engine writes none.
+A command whose answer needs a capability claims it when the caller states nothing
+(:data:`CLAIMS`): ``tables`` claims the detection it reports, and ``mixed`` claims the boxes, the
+tables and the geometry-derived order the page's rows are read from. ``--no-<flag>`` still states
+the opposite. ``mixed`` is the one rendering of the reading (:func:`composition.render_reading`):
+items that share a line of the page are one line, and a table is carried as its Markdown where
+the reading reaches it. It is not a post-processing of the engine's export — the export states
+one region per line, and no amount of joining newlines puts a label back beside its value.
 """
 
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
-from dataclasses import asdict
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Final
 
@@ -46,7 +46,7 @@ from docflow.ocr.primitives.errors import OCRPrimitiveError
 #: One subcommand per method, with the help text both tools print.
 SUBCOMMANDS: tuple[tuple[str, str], ...] = (
     ("text", "The extraction's plain text, published as text.txt."),
-    ("mixed", "The same reading with detected tables carried as Markdown."),
+    ("mixed", "The page's rows, with detected tables carried as Markdown."),
     ("md", "The extraction's Markdown."),
     ("json", "The structured document, serialized."),
     ("tables", "Detected tables, in reading order."),
@@ -67,6 +67,11 @@ SUFFIXES: Final[tuple[str, ...]] = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".
 #: package re-exports the contract, not its entry point's private names.
 TEXT_NAME: Final[Path] = Path("text.txt")
 
+#: The name ``mixed`` publishes its rendering under. It is a name of its own on purpose: the bytes
+#: are *not* the engine's text export that ``text.txt`` holds, but the page's rows — so one name
+#: would mean two readings, which is the one thing the name rule forbids.
+MIXED_NAME: Final[Path] = Path("mixed.txt")
+
 #: What one method returns: the payload its caller prints, or writes beside the artifacts.
 Payload = dict[str, Any]
 
@@ -74,32 +79,77 @@ Payload = dict[str, Any]
 #: the directory that input's run writes under.
 Command = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], Payload]
 
-#: The subcommands whose answer needs the detected tables, so ``--tables`` is on for them when
-#: the caller states nothing: ``tables`` reports them, and ``mixed`` reports the reading that
-#: carries them. Detection is engine work, and a command that never asked for it could report
-#: only a reading with the tables missing — which is the flat text, not what these two promise.
-TABLES_COMMANDS: Final[tuple[str, ...]] = ("tables", "mixed")
 
-#: The help ``--tables`` prints. The commands whose answer needs the detected tables say so,
-#: instead of reading like a flag the caller has to remember.
-TABLE_FLAG_HELP: Final[dict[bool, str]] = {
-    False: "Detect and extract tables.",
-    True: "Detect and extract tables; on by default, because this command answers with them.",
+@dataclass(frozen=True)
+class _Read:
+    """One conversion and everything the bench reads out of it.
+
+    Attributes:
+        conversion: The engine's own conversion result, for its exports.
+        geometry: The page geometry, for the boxes.
+        blocks: The extracted blocks, un-ordered and un-named.
+        tables: The extracted tables, in the same condition.
+        options: The canonical options the conversion was configured with.
+    """
+
+    conversion: Any
+    geometry: Any
+    blocks: list[Any]
+    tables: list[Any]
+    options: Any
+
+
+#: The subcommands whose answer needs a capability the flags otherwise leave off, so the run
+#: claims it when the caller states nothing. A command's answer decides what it asks the engine
+#: for: ``tables`` reports the detected tables, and ``mixed`` reads the page's *rows*, which needs
+#: the boxes to group them and the tables to carry them. A command that never claimed them would
+#: answer with less than it promises — an empty list, or a text with no rows in it. The claim is
+#: exactly what the rendering reads: ``mixed`` claims no reading order, because its rows are
+#: grouped by geometry whatever the document's own order was set to.
+CLAIMS: Final[dict[str, tuple[str, ...]]] = {
+    "tables": ("tables",),
+    "mixed": ("tables", "layout"),
+}
+
+#: The help each capability flag prints, by whether the command needs it: a flag the command cannot
+#: answer without says so, instead of reading like something the caller has to remember.
+CLAIM_HELP: Final[dict[str, tuple[str, str]]] = {
+    "layout": (
+        "Extract layout.",
+        "Extract layout; on by default, because this command reads the page's rows.",
+    ),
+    "tables": (
+        "Detect and extract tables.",
+        "Detect and extract tables; on by default, because this command answers with them.",
+    ),
+    "reading_order": (
+        "Preserve reading order.",
+        "Preserve reading order; on by default, because this command orders the page by geometry.",
+    ),
 }
 
 
+def _claim(subparser: argparse.ArgumentParser, flag: str, *, claimed: bool) -> None:
+    """Register one capability flag, on when the command's own answer needs it."""
+    subparser.add_argument(
+        f"--{flag.replace('_', '-')}",
+        action=argparse.BooleanOptionalAction,
+        default=claimed,
+        help=CLAIM_HELP[flag][1 if claimed else 0],
+    )
+
+
 def _add_ocr_options(
-    subparser: argparse.ArgumentParser, *, tables_by_default: bool = False
+    subparser: argparse.ArgumentParser, *, claims: Sequence[str] = ()
 ) -> None:
     """Add the OCR capability flags a subcommand builds its options from.
 
     Args:
         subparser: The subcommand's parser.
-        tables_by_default: Whether table detection is on when the caller states nothing. It is
-            on for the commands of :data:`TABLES_COMMANDS` and for those alone — the same shape
-            as ``--ocr`` being on because OCR is the processor's purpose: the capability a
-            command exists to show is not a flag the caller has to remember. ``--no-tables``
-            still states the opposite.
+        claims: The capabilities this command's answer needs, and so the ones it claims when the
+            caller states nothing. The shape is ``--ocr``'s, which is on because OCR is the
+            processor's purpose: what a command cannot answer without is not a flag the caller has
+            to remember. ``--no-<flag>`` still states the opposite.
     """
     subparser.add_argument(
         "--ocr",
@@ -107,16 +157,8 @@ def _add_ocr_options(
         default=True,
         help="Run OCR; on by default because it is the processor's purpose.",
     )
-    subparser.add_argument("--layout", action="store_true", help="Extract layout.")
-    subparser.add_argument(
-        "--tables",
-        action=argparse.BooleanOptionalAction,
-        default=tables_by_default,
-        help=TABLE_FLAG_HELP[tables_by_default],
-    )
-    subparser.add_argument(
-        "--reading-order", action="store_true", help="Preserve reading order."
-    )
+    for flag in ("layout", "tables", "reading_order"):
+        _claim(subparser, flag, claimed=flag in claims)
     subparser.add_argument(
         "--language", help="Expected language tag, or omit for none."
     )
@@ -146,7 +188,7 @@ def build_subcommands(
         parser = _cli.add_subcommand(
             subparsers, name, help_text, input_argument=input_argument
         )
-        _add_ocr_options(parser, tables_by_default=name in TABLES_COMMANDS)
+        _add_ocr_options(parser, claims=CLAIMS.get(name, ()))
         if name == "run":
             parser.add_argument(
                 "--page", type=int, default=1, help="Logical page number, 1-based."
@@ -197,39 +239,55 @@ def _conversion(
     return conversion, normalized
 
 
-def _document(
+def _read(
     args: argparse.Namespace, parser: argparse.ArgumentParser, input_path: Path
-) -> tuple[Any, Any]:
-    """Convert once and translate everything the run claims, in reading order.
+) -> _Read:
+    """Convert once and translate the items the run claims, in the engine's own order.
 
-    This is the bench assembling its own processor's primitives so that one representation
-    can be looked at without a whole ``run``; it composes, it transforms nothing itself.
+    This is the bench assembling its own processor's primitives so that one representation can be
+    looked at without a whole ``run``; it composes, it transforms nothing itself.
     """
     conversion, normalized = _conversion(args, parser, input_path)
     reported = primitives.conversion_failure(conversion, input_path)
     if reported is not None and not reported.recoverable:
         raise OCRPrimitiveError(reported)
     geometry = primitives.extract_docling_layout(conversion)
-    blocks = primitives.extract_docling_blocks(
-        conversion, geometry, with_layout=normalized.layout
-    )
-    tables = (
-        primitives.extract_docling_tables(
+    return _Read(
+        conversion=conversion,
+        geometry=geometry,
+        blocks=primitives.extract_docling_blocks(
             conversion, geometry, with_layout=normalized.layout
-        )
-        if normalized.tables
-        else []
+        ),
+        tables=(
+            primitives.extract_docling_tables(
+                conversion, geometry, with_layout=normalized.layout
+            )
+            if normalized.tables
+            else []
+        ),
+        options=normalized,
     )
+
+
+def _document(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, input_path: Path
+) -> tuple[Any, Any]:
+    """Translate everything the run claims into one ordered document."""
+    read = _read(args, parser, input_path)
     ordered = composition.preserve_reading_order(
-        blocks, tables, by_geometry=normalized.reading_order
+        read.blocks, read.tables, by_geometry=read.options.reading_order
     )
     document = primitives.build_ocr_document(
-        text=primitives.normalize_ocr_text(primitives.extract_docling_text(conversion)),
+        text=primitives.normalize_ocr_text(
+            primitives.extract_docling_text(read.conversion)
+        ),
         blocks=ordered.blocks,
         tables=ordered.tables,
-        layout=composition.normalize_layout(geometry, with_regions=normalized.layout),
+        layout=composition.normalize_layout(
+            read.geometry, with_regions=read.options.layout
+        ),
         reading_order=ordered.reading_order,
-        options=normalized,
+        options=read.options,
         engine_version=primitives.get_engine_version(),
     )
     return ordered, document
@@ -249,14 +307,37 @@ def _text(
     is what the payload reports, too — the processor's rule is that what the result states is
     exactly what the file holds.
 
-    ``text`` and ``mixed`` are one method because they are one reading: the difference between
-    them is the *request*, and it is carried by the flags `build_subcommands` registers
-    (``mixed`` claims the tables, ``text`` does not). Duplicating the body for the second name
-    would be two places to keep agreeing about what ``text.txt`` holds.
+    This is the engine's own export, unchanged: the page's arrangement is the engine's, and
+    ``mixed`` is the command that re-reads it.
     """
     conversion, _ = _conversion(args, parser, input_path)
     text = primitives.normalize_ocr_text(primitives.extract_docling_text(conversion))
     published = primitives.write_text_atomic(root / TEXT_NAME, text)
+    return {
+        "input": str(input_path),
+        "text": text,
+        "output": str(published),
+    }
+
+
+def _mixed(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    input_path: Path,
+    root: Path,
+) -> Payload:
+    """Read the page's rows and publish them as the run's ``mixed.txt``.
+
+    The reading with the page's own arrangement kept: items that share a line of the page are one
+    line, and every detected table is carried as its Markdown where the reading reaches it. It is
+    what ``text`` cannot be — the engine's export states one region per line, so a form's label
+    and its value arrive one under the other even though the page sets them side by side — and it
+    is *ours* rather than the engine's: the composition is ``composition.render_reading``, over
+    the same boxes and tables ``json`` reports, so the rendering and the document cannot disagree.
+    """
+    read = _read(args, parser, input_path)
+    text = composition.render_reading(read.blocks, read.tables)
+    published = primitives.write_text_atomic(root / MIXED_NAME, text)
     return {
         "input": str(input_path),
         "text": text,
@@ -394,11 +475,10 @@ def _run(
 
 
 #: The eight methods by subcommand name. Both tools dispatch through this, so a subcommand's
-#: behaviour lives in exactly one place — ``mixed`` and ``text`` share theirs on purpose, since
-#: what separates them is a flag and not a method.
+#: behaviour lives in exactly one place.
 COMMANDS: dict[str, Command] = {
     "text": _text,
-    "mixed": _text,
+    "mixed": _mixed,
     "md": _md,
     "json": _json,
     "tables": _tables,

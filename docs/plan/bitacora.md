@@ -2326,3 +2326,106 @@ paragraph, and the report-only count 64 → **66**), root `README.md`'s tool tab
 
 **Left as it is.** `json` and `metrics` still default `--tables` off — the claim rule, not a defect;
 the note at the end of the previous entry stands.
+
+---
+
+## 2026-09-30 — Phase 5 · the OCR reading by rows (`mixed`, `_engine_box`, `render_reading`)
+
+**The previous entry's `mixed` is superseded by this one.** The operator reported what the text
+actually gets wrong, with the region: the customer block reads
+
+```
+Cliente:
+Domicilio:
+CVC S.A. (63)
+CUIT:30-58221570-3
+CIRCUNVALACION 1245 BIS - ROSARIO (2000) - Santa Fe I.V.A.: Responsable Inscripto
+```
+
+five lines where the page sets three side-by-side pairs. `mixed` was "`text` with the tables
+claimed", and no claim repairs that: the engine states **one region per line**, so a label and its
+value arrive as two regions and its export puts them one under the other. `mixed` is now a
+*rendering* — `composition.render_reading` — and publishes `mixed.txt`, a name of its own.
+
+**Row rendering.** Items whose vertical spans overlap are one line, ordered left to right; the rows
+run top to bottom; a table is a block that is never merged into a line and is carried as its
+Markdown where the reading reaches it; nothing is joined across rows. Measured on the invoice: the
+five lines become the two the page states (`Cliente:   CVC S.A. (63)   CUIT:30-58221570-3`), the
+header's two columns pair up, and the totals block becomes its labels row and its values row. The
+command claims `--tables` and `--layout` (`_ocr.CLAIMS`) because the rendering reads both, and
+claims no reading order: the rows come from the boxes whatever the document's order was set to. A
+run that claims no layout has no boxes and is rendered verbatim, in the engine's sequence.
+
+**A defect found on the way: the engine's box origin was ignored — one conversion, four symptoms.**
+Docling reports the pages this processor converts in `CoordOrigin.BOTTOMLEFT` (measured:
+`prov[0].bbox.coord_origin`, the logo at `t=734…807` on a `595.68 × 841.92` page, `ORIGINAL` at
+`t=814…826` — the *largest* `t` is the *top*). `normalize_bbox` read those numbers as top-down, so
+every `bbox` in `document.json` had its top and its bottom swapped **and**
+`preserve_reading_order(by_geometry=True)` read the page from the bottom up: measured on the
+invoice, 39 extracted blocks came back as **3**, one of them an 816-character paragraph joining the
+whole form, ordered from `0,00 0,00 … Percep. Imp. Int.%` up to `ORIGINAL`. `_engine_box` now makes
+the conversion once, with the engine's own `to_top_left_origin(page_height)`, reached only when the
+box states `BOTTOMLEFT` — so blocks, tables and layout regions all reach the document in the one
+convention `composition` documents.
+
+**The double was hiding it, and now models it.** `FakeBoundingBox` reports `BOTTOMLEFT` and hands
+over `(l, b, r, t)`; the fixtures stay readable through `for_top_down_rect(page_height, …)`, which
+converts their top-down rectangles once. The double's own evidence (`docs/plan/bitacora.md`
+2026-09-25, §"the shapes are the engine's own") said "a bounding box is reached through
+`prov[0].bbox.as_tuple()`" — true, and incomplete: it never said *which way up*. With the origin
+modelled, every fake-driven conversion exercises the conversion, and disabling it turns four tests
+red instead of none.
+
+**Mutation evidence** (three rows, each applied to the source and restored by the inverse edit).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `_engine_box`: skip the origin conversion (`if False and …`) | 4 red — `test_the_layout_is_read_from_the_documents_own_page`, `test_the_extraction_translates_the_engines_structures_into_ours`, `test_the_two_runs_of_the_same_input_produce_the_same_functional_content`, `test_ocr_mixed_renders_the_pages_rows_and_publishes_them` | inverse edit; 240 passed in `tests/ocr tests/test_lab_tools.py` |
+| `_visual_rows`: never join an item to an existing row (`row = None`) | 3 red — the row-pairing, the left-to-right order and the table-in-place cases | inverse edit |
+| `_visual_rows`: let a table's row take neighbours (`if True and …`) | 1 red — `test_a_table_is_never_merged_into_a_row_that_shares_its_band`; the label and its value vanish, because a table row renders its first member | inverse edit |
+
+The third mutation found a **defect in the test it was meant to falsify**: the case overlapped by
+exactly half the shorter extent (`0.45–0.55` against `0.40–0.50`), which sits on the rule's
+boundary, so relaxing the rule changed nothing. The boxes were moved inside the band and the case
+went red as it should.
+
+**Hand run (real engine).** `ocr.py --out … mixed tests/fixtures/casos/66cd35e9-….jpg` publishes
+`mixed.txt` with the customer block as the two lines the page states, the header's columns paired,
+the table as Markdown in place, and the totals as their labels row and their values row.
+
+**Gate evidence.**
+
+```
+pytest                     774 passed
+ruff check .               All checks passed!
+ruff format --check .      181 files already formatted
+pylint src tests           10.00/10 — one message, the pre-existing
+                           src/docflow/pdf/entrypoints.py:475 R0912 (15/12)
+```
+
+**Plan revision applied in the same pass** (`SCR-04`, `SCR-14`), subplan and WBS together:
+`subplan-scripts.md` §3.4 (the `mixed` row names `composition.render_reading` and `mixed.txt`), §5
+(the scenario rewritten for the row rendering), §6 (invariant 10 rewritten for the rendering and
+the origin) and §9 (**decision 20 superseded and rewritten**, plus **decision 21** for the origin
+conversion); `wbs-scripts.md` §SCR-04 (one acceptance criterion) and §SCR-14 (out-of-bounds and one
+acceptance criterion). Bench docs: `scripts/tools/quickstart.md` (table, prose and the publication
+paragraph), `scripts/tools/readme.md` (the OCR table, the publication paragraph, the batch list),
+`scripts/tools/ocr.py` and `scripts/tools/batch_ocr.py` docstrings. Root `README.md` and
+`docs/plan/README.md` §4.1 name the subcommand set, which did not change.
+
+**Left stale (owner).**
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/3party/docling.md` §D/§K | the box origin (`CoordOrigin.BOTTOMLEFT` for image input, `as_tuple()` → `(l, b, r, t)`), the default backend (`OcrAutoOptions` → RapidOCR with `_RAPIDOCR_DEFAULT_LANGUAGE = "ch"`, an ISO-639 tag now resolving to `es`/`latin`), `export_to_text()` being a real plain-text serializer in docling-core 2.95 (it keeps `\|` on purpose — docling-core #245 is stale), and the upstream language defect (#2887 / #2927) | dossier owner |
+| `docs/plan/subplan-scripts.md` §3.3 | still carries the two example lines the 2026-09-27 entry registered as stale (a copied example, not a decision) | plan owner |
+
+**Still open, not fixed here — found while answering the same question.** `--language` and every
+`--engine-option` never reach the engine: `configure_image_pipeline` folds `ocr_language` and the
+passthrough keys into the config, and `load_docling_pipeline` hands `PdfPipelineOptions` only
+`do_ocr`, `do_table_structure` and `generate_page_images`. `--language es --engine-option
+force_full_page_ocr=true` produce byte-identical output to a plain run (`cmp`), `ocr_language` is
+not a Docling field at all, and the *other* ~30 fields (`ocr_options`, `layout_options`,
+`table_structure_options`, `images_scale`, …) are unreachable — so the only knobs that could
+influence the OCR model (including the `ch` default upstream #2887 measures at ~3× the CER of the
+English model) are inert. The fix is a library change with its own revision.

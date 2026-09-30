@@ -253,7 +253,7 @@ There is **no `crop` subcommand**: the library has no `crop_region`
 |---|---|---|
 | `run` | `process_ocr_image` | the contract |
 | `text` | `primitives.extract_docling_text` + `normalize_ocr_text` | one conversion, one representation; publishes it as `text.txt` |
-| `mixed` | the same two symbols, with `--tables` on | the reading with every detected table carried as Markdown in place; one method under two names |
+| `mixed` | `primitives.composition.render_reading` | the page's rows — a label and its value on one line — with every detected table carried as Markdown in place; publishes `mixed.txt` |
 | `md` | `primitives.extract_docling_markdown` | as above, no artifact |
 | `json` | `primitives.build_ocr_document` | the structured document, serialized |
 | `tables` | `primitives.extract_docling_tables` | in reading order; `--tables` on by default, as for `mixed` |
@@ -264,14 +264,16 @@ There is **no `--engine` flag**. The engine is fixed and never presented as a se
 There is **no `diff` subcommand** either: comparing two extractions is a reading, and a tool that
 compared them would be a second implementation of the thing under test.
 
-**`text` and `mixed` publish, and under the processor's own name.** They write the text they
-report as `text.txt` in the run's root — the name `run` gives the same content in its `ocr/`
-namespace — so those commands leave the same bytes for the same image and one name never means two
-readings. The text is normalized before it is written, which is the form the processor publishes
-and reports; there is one published file, never a second spelling of the same reading. `mixed` is
-the same method with the tables claimed, not a second renderer: the engine writes a detected table
-into its own text export where it was read, so a substitution step would be code that can never
-fire — Docling emits no `<table>` marker.
+**`text` publishes the engine's text; `mixed` publishes the page's rows.** `text` writes what it
+reports as `text.txt` in the run's root — the name `run` gives the same content in its `ocr/`
+namespace — normalized the way the processor publishes it, so those two commands leave the same
+bytes for the same image and one name never means two readings. `mixed` writes `mixed.txt`, a name
+of its own, because its bytes are *not* the engine's export: it renders the page's rows through
+`composition.render_reading` — items that share a line of the page are one line, a table carried as
+its Markdown where the reading reaches it — over the same boxes and tables `json` reports. That is
+the one thing string surgery on an export cannot do: the engine states one region per line, so a
+form's label and its value arrive one under the other, and no joining of newlines puts them back
+side by side. A run that claims no layout has no boxes to group and is rendered verbatim instead.
 
 ### `llm.py` — `SCR-05`
 
@@ -477,8 +479,8 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics                    
 
 - **The bare run makes `text`**, the flag-free method, and it publishes one `text.txt` per input:
   the reading its own record states, normalized the way the processor publishes it, and nothing
-  derived from it. `run` publishes the contract's document; `text` and `mixed` publish each input's
-  `text.txt`, the second with the detected tables carried as Markdown; `md`, `json`, `tables`,
+  derived from it; `text` and `mixed` publish each input's reading — `text.txt` and `mixed.txt` —
+  the second with the detected tables carried as Markdown in place; `md`, `json`, `tables`,
   `blocks` and `metrics` write nothing but their record.
 - **It is not cheap.** Every input is converted once by the engine, so a corpus of images costs
   what the engine costs; the default is safe for the output tree, not for the clock.

@@ -8,10 +8,10 @@ come from (:mod:`_ocr`) and the command a run makes when the caller states none.
 With no subcommand stated it runs ``text`` — stated in the run header, never silent. It is not
 cheap: every input is converted once by the engine, so a corpus of images takes as long as the
 engine takes. Three methods publish: ``run`` publishes the contract's document, and ``text`` and
-``mixed`` publish each input's ``text.txt`` — the reading its own record states, the second of
-them with the detected tables carried as Markdown — while ``md``, ``json``, ``tables``, ``blocks``
-and ``metrics`` write nothing but their record. Nothing is derived from the text: no render, no
-table directory, no document.
+``mixed`` publish each input's reading under a name of its own — ``text.txt``, the engine's own
+text, and ``mixed.txt``, the page's rows with the detected tables carried as Markdown. The ``md``,
+``json``, ``tables``, ``blocks`` and ``metrics`` commands write nothing but their record. Nothing is
+derived from the text: no render, no table directory, no document.
 """
 
 from __future__ import annotations

@@ -202,7 +202,7 @@ the processor's purpose), `--layout`, `--tables`, `--reading-order`, `--language
 | Subcommand | Needs | What it gives you |
 |---|---|---|
 | `text` | — | the extraction's plain text; writes `text.txt` |
-| `mixed` | — | the same reading with detected tables carried as Markdown; writes `text.txt` |
+| `mixed` | — | the page's rows, with detected tables as Markdown; writes `mixed.txt` |
 | `md` | — | the extraction's Markdown |
 | `json` | — | the structured document, serialized |
 | `tables` | — | detected tables, in reading order |
@@ -210,8 +210,8 @@ the processor's purpose), `--layout`, `--tables`, `--reading-order`, `--language
 | `metrics` | — | content metrics, over the built document |
 | `run` | — | the processor's contract; `--page` (default `1`) |
 
-`run` publishes the contract's document, and `text` and `mixed` publish the reading they report as
-`text.txt`; the other five write nothing but their report.
+`run` publishes the contract's document; `text` publishes the engine's own text as `text.txt`, and
+`mixed` publishes the page's rows as `mixed.txt`; the other five write nothing but their report.
 
 ### One file
 
@@ -229,17 +229,16 @@ python scripts/tools/ocr.py --json run tests/fixtures/ocr/ocr_prepared_text_and_
 
 That is all eight subcommands. `text` and `md` are one conversion in two representations, `json`
 is the built document, `tables` and `blocks` are its ordered views, and `metrics` measures the
-document the others build. `mixed` is `text` with the tables claimed — one method, a different
-request — because the engine writes a detected table into its own text export where it was read:
-the reading *is* the merge, so nothing is substituted for a placeholder. `tables` and `mixed`
-ask for the detection themselves — `--tables` is on for those two commands and off for the rest,
-because detection is engine work and a run that never asked for it could only report the empty
-list or a reading with the tables missing. `--no-tables` still states the opposite.
+document the others build. `mixed` renders the page the way the page is set: items that share a
+line of it are one line, so a form's label and its value come back together, and every detected
+table is carried as its Markdown where the reading reaches it. `tables` and `mixed` ask for the
+detection themselves — and `mixed` for the boxes too — because a run that never asked could only
+report the empty list or a text with no rows in it. `--no-tables` and `--no-layout` still state
+the opposite; a rendering with no boxes falls back to the engine's own sequence, one item per line.
 
-`text` and `mixed` publish what they report as `text.txt` — the same file, and the same bytes, a
-`run` of the same image writes for the same request. It is normalized the way the processor
-publishes it, so a page whose engine text carries trailing whitespace loses exactly that and
-nothing else.
+`text` and `mixed` publish what they report — `text.txt`, the engine's own text normalized the way
+the processor publishes it, and `mixed.txt`, the row rendering — so a page whose engine text
+carries trailing whitespace loses exactly that and nothing else.
 
 The engine writes its own INFO lines to **stdout**, so they can appear ahead of the payload.
 

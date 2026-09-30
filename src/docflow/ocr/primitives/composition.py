@@ -15,6 +15,8 @@ The rules this module fixes, once each:
 * **one identifier rule** — ``block_001`` / ``table_001``, zero-padded, minted *after* the
   ordering, so a position in the list and a name never disagree;
 * **one measurement** — :func:`analyze_ocr_result` is the only place an extraction is counted.
+* **one rendering of the reading** — :func:`render_reading` is the only place a page is turned
+  into lines: a row of the page is one line, and a table is a block where the reading reaches it.
 """
 
 from __future__ import annotations
@@ -375,6 +377,145 @@ def preserve_reading_order(
     return OrderedDocument(
         blocks=named_blocks, tables=named_tables, reading_order=reading_order
     )
+
+
+@dataclass(frozen=True)
+class _ReadingItem:
+    """One item of the reading, with everything rendering it as a row needs.
+
+    Attributes:
+        order: The item's position in the engine's own iteration.
+        bbox: Normalized box, or ``None`` when the run claimed no layout.
+        text: The item's own text — a table's Markdown.
+        block: Whether the item is a table, which is a block rather than a line.
+    """
+
+    order: int
+    bbox: Box | None
+    text: str
+    block: bool
+
+
+@dataclass
+class _Row:
+    """One visual row of the page: the items that share a line.
+
+    Attributes:
+        span: The row's vertical extent, grown as items join it.
+        members: The items on it.
+        whole: Whether the row is a block of its own, which is what a table is.
+    """
+
+    span: tuple[float, float]
+    members: list[_ReadingItem]
+    whole: bool = False
+
+
+def _reading_items(
+    blocks: Sequence[ExtractedBlock], tables: Sequence[ExtractedTable]
+) -> list[_ReadingItem]:
+    """Return every extracted item as one reading item, with a table's Markdown as its text."""
+    items = [
+        _ReadingItem(order=block.order, bbox=block.bbox, text=block.text, block=False)
+        for block in blocks
+        if block.text
+    ]
+    items.extend(
+        _ReadingItem(
+            order=table.order,
+            bbox=table.bbox,
+            text=table_to_markdown(table.cells),
+            block=True,
+        )
+        for table in tables
+        if table.cells
+    )
+    return items
+
+
+def _shares_a_line(span: tuple[float, float], box: Box) -> bool:
+    """Whether a box sits on a row's line, by half the shorter of the two vertical extents."""
+    overlap = min(span[1], box[3]) - max(span[0], box[1])
+    shorter = min(span[1] - span[0], box[3] - box[1])
+    return shorter > 0 and overlap > shorter / 2
+
+
+def _visual_rows(items: Sequence[_ReadingItem]) -> list[_Row]:
+    """Group items into the rows of the page, top to bottom.
+
+    Every item has to carry a box: a row is geometry, and the caller is the one that decides what
+    to do when a run claimed none.
+    """
+    rows: list[_Row] = []
+    for item in sorted(
+        items, key=lambda item: (item.bbox[1], item.bbox[0], item.order)
+    ):
+        if item.block:
+            rows.append(
+                _Row(span=(item.bbox[1], item.bbox[3]), members=[item], whole=True)
+            )
+            continue
+        row = next(
+            (
+                candidate
+                for candidate in rows
+                if not candidate.whole and _shares_a_line(candidate.span, item.bbox)
+            ),
+            None,
+        )
+        if row is None:
+            rows.append(_Row(span=(item.bbox[1], item.bbox[3]), members=[item]))
+            continue
+        row.span = (min(row.span[0], item.bbox[1]), max(row.span[1], item.bbox[3]))
+        row.members.append(item)
+    rows.sort(key=lambda row: (row.span[0], row.members[0].bbox[0]))
+    return rows
+
+
+def _render_row(row: _Row, separator: str) -> str:
+    """Render one row: a table as the block it is, a line as its items left to right."""
+    if row.whole:
+        return row.members[0].text
+    ordered = sorted(row.members, key=lambda item: (item.bbox[0], item.order))
+    return separator.join(item.text for item in ordered)
+
+
+def render_reading(
+    blocks: Sequence[ExtractedBlock],
+    tables: Sequence[ExtractedTable],
+    *,
+    separator: str = "   ",
+) -> str:
+    """Render an extraction as one text: a row of the page per line, a table as its Markdown.
+
+    The engine reports one region per text line, so a form's label and its value arrive as two
+    items that sit side by side — and the engine's own export puts them one under the other, which
+    loses the pairing the page itself states. This renders the **rows** instead: items whose
+    vertical spans overlap are one line, ordered left to right, and the rows run top to bottom. A
+    table is never merged into a line — it is a block, and it is rendered where the reading
+    reaches it. Nothing is joined *across* rows: the page's arrangement decides where a line ends,
+    which is the one thing a flat text cannot state.
+
+    Args:
+        blocks: The extracted blocks, in whatever order the engine handed them over.
+        tables: The extracted tables, in the same condition.
+        separator: What separates two items that share a row.
+
+    Returns:
+        The rendering, one row per line with a blank line between rows, and an empty string when
+        there is nothing to read. The boxes are the whole point of this rendering, so a run that
+        claimed no layout — where every box is ``None`` — is rendered verbatim in the engine's own
+        sequence instead: grouping is a claim about where things are, and a run that reported no
+        geometry never made it.
+    """
+    items = _reading_items(blocks, tables)
+    if not items:
+        return ""
+    if any(item.bbox is None for item in items):
+        return "\n\n".join(
+            item.text for item in sorted(items, key=lambda item: item.order)
+        )
+    return "\n\n".join(_render_row(row, separator) for row in _visual_rows(items))
 
 
 def _geometry_key(bbox: Box | None, position: int) -> tuple[Any, ...]:

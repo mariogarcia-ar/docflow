@@ -24,6 +24,7 @@ from docflow.ocr.primitives.composition import (
     normalize_layout,
     normalize_table,
     preserve_reading_order,
+    render_reading,
     table_to_markdown,
 )
 
@@ -252,6 +253,92 @@ def test_without_geometry_the_engine_sequence_decides_and_nothing_is_sorted() ->
     )
 
     assert [item.text for item in ordered.blocks] == ["engine first", "engine second"]
+
+
+def test_a_row_of_the_page_is_one_line_and_the_rows_run_top_to_bottom() -> None:
+    """A label and its value share a row, so they share a line — the engine's sequence cannot.
+
+    The engine hands the value over before the label it belongs to, because they are two regions;
+    the boxes are what puts them back together, and the rows are rendered top to bottom whatever
+    order they arrived in. This is the reading the engine's own text export cannot state.
+    """
+    rendered = render_reading(
+        [
+            block(0, "CVC S.A. (63)", (0.5, 0.30, 0.9, 0.32)),
+            block(1, "Domicilio:", (0.05, 0.36, 0.3, 0.38)),
+            block(2, "Cliente:", (0.05, 0.30, 0.2, 0.32)),
+            block(3, "CIRCUNVALACION 1245", (0.5, 0.36, 0.9, 0.38)),
+        ],
+        [],
+    )
+
+    assert rendered == "Cliente:   CVC S.A. (63)\n\nDomicilio:   CIRCUNVALACION 1245"
+
+
+def test_a_row_is_ordered_left_to_right_whatever_order_it_arrived_in() -> None:
+    """Three items on one line: the x of their boxes decides, not the engine's sequence."""
+    rendered = render_reading(
+        [
+            block(0, "third", (0.8, 0.10, 0.9, 0.12)),
+            block(1, "first", (0.1, 0.10, 0.2, 0.12)),
+            block(2, "second", (0.4, 0.10, 0.5, 0.12)),
+        ],
+        [],
+    )
+
+    assert rendered == "first   second   third"
+
+
+def test_a_table_is_a_block_of_its_own_and_keeps_its_place_in_the_reading() -> None:
+    """The table is carried as its Markdown, between the rows the page puts around it."""
+    rendered = render_reading(
+        [
+            block(0, "TOTAL", (0.05, 0.70, 0.2, 0.72)),
+            block(1, "Contado", (0.05, 0.20, 0.2, 0.22)),
+        ],
+        [table(1, [["Region", "Revenue"], ["North", "120"]], (0.05, 0.40, 0.9, 0.60))],
+    )
+
+    assert rendered == (
+        "Contado\n\n| Region | Revenue |\n| --- | --- |\n| North | 120 |\n\nTOTAL"
+    )
+
+
+def test_a_table_is_never_merged_into_a_row_that_shares_its_band() -> None:
+    """A label beside a table keeps a row of its own: a table is a block, not a line.
+
+    The boxes overlap by more than half the shorter extent, so a grouping that let a table's row
+    take neighbours would swallow the label and its value — the row renders its first member, which
+    is the table. The rule is what keeps both.
+    """
+    rendered = render_reading(
+        [
+            block(0, "cliente:", (0.05, 0.44, 0.3, 0.48)),
+            block(1, "value", (0.5, 0.44, 0.9, 0.48)),
+        ],
+        [table(2, [["a", "b"]], (0.05, 0.40, 0.9, 0.50))],
+    )
+
+    assert rendered == "| a | b |\n| --- | --- |\n\ncliente:   value"
+
+
+def test_without_boxes_the_engine_sequence_is_rendered_verbatim() -> None:
+    """A row is geometry, so a run that claimed none is rendered as the engine read it.
+
+    Grouping is a claim about where things are; a run that reported no geometry never made it, and
+    inventing a row from nothing would be exactly that claim.
+    """
+    rendered = render_reading(
+        [block(0, "value", None), block(2, "label:", None)],
+        [table(1, [["a", "b"]], None)],
+    )
+
+    assert rendered == "value\n\n| a | b |\n| --- | --- |\n\nlabel:"
+
+
+def test_an_extraction_with_nothing_in_it_renders_as_nothing() -> None:
+    """Nothing read is nothing to render — not a blank line."""
+    assert render_reading([], []) == ""
 
 
 def test_a_ragged_row_is_padded_to_the_widest_one() -> None:

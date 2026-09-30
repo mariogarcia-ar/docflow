@@ -138,7 +138,7 @@ hand (`SCR-07`) and recorded as an observation, never as a gate.
   - Given `tests/fixtures/ocr/ocr_prepared_text_and_table.png`, when `run` executes, then text, Markdown and the structured document are published under `ocr/` and their paths are printed.
   - Given `tests/fixtures/ocr/ocr_prepared_text_and_table.png`, when `text` executes, then `text.txt` is published in the run root holding exactly the text the payload states — the normalized reading a `run` of the same image writes under that name.
   - Given `tests/fixtures/ocr/ocr_blank.png`, when `text` runs, then an empty text with the `EMPTY` status is printed, an empty `text.txt` is published and the exit code is `0` — a blank page is data, not a failure.
-  - Given a page carrying a table, when `mixed` runs with no flag stated, then `text.txt` holds the reading with that table as Markdown where it was read — the same method as `text`, claiming the detection the command's answer needs.
+  - Given a page whose form sets a label beside its value, when `mixed` runs with no flag stated, then `mixed.txt` holds one line per row of the page — the label and its value on one line — with every detected table carried as its Markdown where the reading reaches it, and the boxes and tables claimed by the command rather than asked for by the caller.
   - Given `--engine docling`, then the command exits with a usage error, because the flag does not exist.
 - **Evidence / DoD:** The glue test drives `run` through `tests/fakes/processors/` and the representation subcommands through `fake_docling`; the `text` publication is guarded by the one-name-one-reading test; the source names no engine module.
 - **Tags:** —
@@ -307,11 +307,11 @@ hand (`SCR-07`) and recorded as an observation, never as a gate.
 - **Blocks:** SCR-17
 - **Objective:** The OCR bench's eight methods in a shared layer, and the folder twin — where the input *is* an image, so the suffix set is the image one.
 - **Scope / Deliverables:** `_ocr.py` (`SUFFIXES`, `TEXT_NAME`, `TABLES_COMMANDS`, the eight methods, `COMMANDS`); `batch_ocr.py` (`text` default, the layer); `ocr.py` reduced to a parser, one handler and `main`.
-- **Out of bounds:** No `--engine`; no `diff`; no Docling name in either file; no second copy of the reading-order composition; no artifact beyond the reading — `text` and `mixed` each publish one file, the reading the run reports, and the two names share one method rather than one of them owning a second copy.
+- **Out of bounds:** No `--engine`; no `diff`; no Docling name in either file; no second copy of the reading-order composition; no second rendering of a page — `mixed` renders rows through `composition.render_reading`, and no export of the engine is post-processed with string surgery.
 - **Acceptance criteria:**
   - Given `tests/fixtures/ocr`, when `batch_ocr.py` runs with no subcommand, then `files: 2 · succeeded: 2 · failed: 0`, two mirrored records, and each mirror holding the `text.txt` its own record states.
   - Given `text` and `run` over one image, then both `text.txt` files hold the same bytes — one name means one reading.
-  - Given `mixed` with no flag stated, then the tables are claimed by the command, and a page with a table publishes a reading carrying it.
+  - Given `mixed` with no flag stated, then the boxes and the tables are claimed by the command, and a page carrying a table publishes the rows with it in place.
   - Given an input the engine refuses, then that input fails its own record, the typed failure is printed and the rest of the corpus still runs.
   - Given an input whose contract *returned* `FAILED`, then it is printed as `FAILED`, its own record is shown and it is not reported as `ok`.
 - **Evidence / DoD:** Three glue tests (mirror, engine throw, returned failure) plus the hand run against the real engine.

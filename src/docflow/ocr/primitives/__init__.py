@@ -110,6 +110,11 @@ ENGINE_MODULE: Final[str] = "docling"
 #: only exists to be skipped. This settles the dossier's open question on ``generate_page_images``.
 GENERATE_PAGE_IMAGES: Final[bool] = False
 
+#: The origin an engine states when a box's ``t``/``b`` are measured from the **bottom** of the
+#: page. Docling reports it for the pages this processor converts, so a box read as top-down
+#: describes the page upside down (:func:`_engine_box`).
+BOTTOM_LEFT_ORIGIN: Final[str] = "BOTTOMLEFT"
+
 #: The conversion statuses this seam models, and the failure kind each one carries. A status that
 #: is not a key here is not a conversion this processor can describe, so it is an
 #: ``ENGINE_ERROR``.
@@ -415,12 +420,13 @@ def _label(item: Any) -> str:
     return _status_value(getattr(item, "label", None))
 
 
-def _located(item: Any) -> tuple[tuple[float, float, float, float], int] | None:
-    """Return an item's own bounding box and page number, in the engine's units.
+def _located(item: Any) -> tuple[Any, int] | None:
+    """Return the item's own box **as the engine reported it**, and the page it sits on.
 
     ``prov`` is where the engine records where an item was found; the first entry is the item's own
     position. An item without provenance was not located on a page, and ``None`` states that rather
-    than inventing a box.
+    than inventing a box. The box is handed over untranslated — it still carries the origin its
+    numbers are measured from, and :func:`_engine_box` is the one place that is honoured.
     """
     provenance = getattr(item, "prov", None) or []
     if not provenance:
@@ -428,11 +434,29 @@ def _located(item: Any) -> tuple[tuple[float, float, float, float], int] | None:
     box = getattr(provenance[0], "bbox", None)
     if box is None:
         return None
+    return box, int(getattr(provenance[0], "page_no", 1))
+
+
+def _origin_of(box: Any) -> str:
+    """Return the box's coordinate origin as a plain string, or ``""`` when it states none."""
+    return _status_value(getattr(box, "coord_origin", "") or "")
+
+
+def _engine_box(box: Any, page_height: float) -> tuple[float, float, float, float]:
+    """Return the engine's box in the convention the document states: top-down, engine units.
+
+    The engine says where its numbers are measured from, and it is not always the top: Docling
+    reports ``BOTTOMLEFT`` for the pages this processor converts, so the item highest on the page
+    carries the *largest* ``t``. Numbers read as if they were top-down therefore describe the page
+    upside down — an inverted ``--reading-order`` and a ``bbox`` whose top is its bottom. The
+    conversion is the engine's own (``to_top_left_origin``) rather than arithmetic of ours, and it
+    is made once, here, so every box the rest of this module normalizes is top-down. A box that
+    states no origin is taken at its word: it is already what it says it is.
+    """
+    if _origin_of(box) == BOTTOM_LEFT_ORIGIN:
+        box = box.to_top_left_origin(page_height)
     left, top, right, bottom = box.as_tuple()
-    return (
-        (float(left), float(top), float(right), float(bottom)),
-        int(getattr(provenance[0], "page_no", 1)),
-    )
+    return (float(left), float(top), float(right), float(bottom))
 
 
 def _claimed_box(
@@ -449,7 +473,8 @@ def _claimed_box(
     box, page = located
     if not with_layout:
         return None, page
-    return normalize_bbox(box, geometry.width, geometry.height), page
+    raw = _engine_box(box, geometry.height)
+    return normalize_bbox(raw, geometry.width, geometry.height), page
 
 
 def extract_docling_layout(conversion: Any) -> LayoutGeometry:
@@ -491,7 +516,7 @@ def extract_docling_layout(conversion: Any) -> LayoutGeometry:
     for item, _level in _items(document):
         located = _located(item)
         if located is not None:
-            regions.append(located[0])
+            regions.append(_engine_box(located[0], height))
     return LayoutGeometry(width=width, height=height, region_bboxes=regions)
 
 

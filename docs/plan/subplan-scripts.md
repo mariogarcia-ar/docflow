@@ -211,7 +211,7 @@ Every row names a symbol that exists today. A row with no symbol would not be a 
 |---|---|---|
 | `run` | `ocr.process_ocr_image` | the contract |
 | `text` | `ocr.primitives.extract_docling_text` + `normalize_ocr_text` | one representation, **published** as `text.txt` (§9, decision 19) |
-| `mixed` | the `text` row's symbols, with `--tables` on | the same reading with every detected table carried as Markdown in place; the same method, a different claim (§9, decision 20) |
+| `mixed` | `ocr.primitives.composition.render_reading` | the page's **rows**: items that share a line are one line, a table carried as its Markdown in place, nothing joined across rows; **published** as `mixed.txt` (§9, decision 20) |
 | `md` / `json` | `ocr.primitives.extract_docling_markdown` / `build_ocr_document` | one representation each, no artifact |
 | `tables` | `ocr.primitives.extract_docling_tables` | table markdown and cells |
 | `blocks` | `ocr.primitives.extract_docling_blocks` + `ocr.primitives.composition.preserve_reading_order` | in reading order |
@@ -437,13 +437,14 @@ Scenario: A bare OCR batch writes the text it reports, and one name means one re
       of the same image writes
   And no other artifact is written by that default
 
-Scenario: An OCR reading carries its tables, and no placeholder is substituted
-  Given "scripts/tools/ocr.py mixed" over a page carrying a table, with no flag stated
+Scenario: The OCR reading is rendered row by row, and the tables keep their place
+  Given "scripts/tools/ocr.py mixed" over a page whose form sets a label beside its value
   When the run finishes
-  Then "text.txt" holds the reading with the detected table as Markdown where it was read
-  And the detection was asked for by the command, so the caller states no flag to get it
-  And no marker is replaced: the engine writes the table where it was read, never a
-      placeholder for one, so a substitution step would be code that can never fire
+  Then "mixed.txt" holds one line per row of the page, the label and its value on that one line
+  And every detected table is carried as its Markdown where the reading reaches it
+  And the boxes and the tables it reads were claimed by the command, never asked for by the caller
+  And no placeholder is substituted and no export is post-processed: the engine writes the table
+      where it read it, and the rendering composes the page's rows
 
 Scenario: The batch frame is one implementation, not four
   Given "_batch.py" and the four batch tools
@@ -525,10 +526,13 @@ their own; they consume the ones the processors already ship.
    leaves `text.txt` missing (2 red, `FileNotFoundError`); the second leaves the file carrying the
    trailing whitespace the processor's `run` strips, so the artifact and the record of one reading
    disagree (1 red). Both restored by the inverse edit.
-10. **The two commands whose answer needs the detected tables claim the detection themselves.**
-   *Mutation:* drop `mixed` from `_ocr.TABLES_COMMANDS`. *Observed:* the parse guard fails for
-   that one command — `tables=False` where the command's answer needs the tables — while the other
-   seven stay green. Reverted by the inverse edit.
+10. **A rendered row is geometry, and the engine's origin decides which way is up.**
+   *Mutation, in two steps:* first drop `mixed` from `_ocr.CLAIMS`, then stop converting the box
+   origin in `primitives._engine_box`. *Observed:* the first renders a page with no rows in it (the
+   parse guard and the rendering test both red); the second inverts every box the document
+   states — the double's own provenance test red, and the geometry-ordering tests red, because the
+   double now reports the engine's `BOTTOMLEFT` instead of hiding it. Both restored by the inverse
+   edit.
 
 Each invariant leaves the four-field record `docs/plan/README.md` §7 fixes (Invariant /
 Mutation / Observed failure / Restored green) in the root `README.md`, where `GEN-16` audits
@@ -703,22 +707,41 @@ to `var/batch_<processor>/<folder>/`, which is ignored too.
     "the default publishes at most the reading it reports" rather than "publishes nothing". `md`,
     `json`, `tables`, `blocks` and `metrics` still publish nothing, and `text` derives nothing from
     the text it reads: no render, no table directory, no document.
-20. **The OCR bench's `mixed` is the reading with the tables claimed — RESOLVED (`SCR-04`, `SCR-14`),
-    and it adds an eighth command rather than a second reading.** The operator asked for one text
-    artifact holding the text *and* the detected tables, and imagined a placeholder to substitute:
-    Docling writes none. Measured on `tests/fixtures/casos/66cd35e9-….jpg` (docling 2.126.0),
-    `document.export_to_text()` emits the table as Markdown at its reading position when
+20. **The OCR bench's `mixed` renders the page's rows — RESOLVED (`SCR-04`, `SCR-14`), and it
+    supersedes the shape this decision first took the same day.** The operator asked for one text
+    artifact holding the text *and* the detected tables, and imagined a `<table>` placeholder to
+    substitute. Docling writes none: measured on `tests/fixtures/casos/66cd35e9-….jpg`
+    (docling 2.126.0), `export_to_text()` writes the table as Markdown where it was read when
     `do_table_structure` is on, and a degenerate single-row pseudo-table when it is off — never a
-    `<table>` marker, and no `<image>` either (that one appears in `export_to_markdown()` only). A
-    substitution step would therefore be code that can never fire, which is the silent stand-in
-    this project forbids. So `mixed` is `text` with `--tables` claimed: same symbols, same
-    `text.txt`, same normalization, one method in `_ocr.COMMANDS` under two names, and the same
-    rule as decision 19 — the file holds exactly what the record states. It is also the second
-    command of `_ocr.TABLES_COMMANDS`: a command whose answer needs the detection asks for it
-    itself, exactly as `tables` does. A rendering of *ours*, splicing `composition.table_to_markdown`
-    into the reading, was rejected: it would re-render the reading (the paragraph merge joins the
-    engine's consecutive text items with spaces), and a faithful line-per-item reading is what an
-    invoice needs.
+    `<table>` marker, and no `<image>` either (that one appears in `export_to_markdown()` only). The
+    operator then reported what the text really gets wrong, with the region: the customer block
+    reads `Cliente:` / `Domicilio:` / `CVC S.A. (63)` / `CUIT:…` / `CIRCUNVALACION …` — five lines
+    where the page sets three side-by-side pairs — because the engine states one region per line
+    and its export puts them one under the other. No joining of newlines repairs that, and doing it
+    costs the table: measured, the advised regex (`(?<!\n)\n(?!\n)`) removes exactly the three
+    newlines *inside* the Markdown table and leaves the block untouched. So `mixed` is a rendering
+    of ours — `composition.render_reading`, the single owner of the rule: items whose vertical
+    spans overlap are one line, ordered left to right; the rows run top to bottom; a table is a
+    block carried as its Markdown where the reading reaches it; nothing is joined across rows. It
+    publishes `mixed.txt` and not `text.txt`, because the bytes are not the engine's export
+    (decision 19) and one name may not mean two readings. The command claims `--tables` and
+    `--layout` (`_ocr.CLAIMS`) because the rendering reads both, and claims no reading order: its
+    rows come from the boxes whatever the document's own order was set to. Measured on the invoice,
+    the five lines become the two the page states and the totals block becomes its labels row and
+    its values row.
+21. **The engine's box origin is honoured at the seam — one conversion, four symptoms.** Docling
+    reports the pages this processor converts in `CoordOrigin.BOTTOMLEFT`, so the item *highest* on
+    the page carries the *largest* `t`. `normalize_bbox` read those numbers as top-down, so every
+    `bbox` in `document.json` had its top and its bottom swapped, and
+    `preserve_reading_order(by_geometry=True)` read the page from the bottom up — measured on the
+    invoice: 39 extracted blocks came back as **3**, one of them an 816-character paragraph joining
+    the whole form, ordered from the totals up to `ORIGINAL`. The conversion is the engine's own
+    (`to_top_left_origin(page_height)`, reached only when the box states `BOTTOMLEFT`), made once in
+    `_engine_box`, so blocks, tables and layout regions all reach the document in the one convention
+    `composition` documents. The double now models the origin it was hiding: `FakeBoundingBox`
+    reports `BOTTOMLEFT` and hands over `(l, b, r, t)`, with the fixtures still written top-down
+    through `for_top_down_rect` — a double reporting top-down numbers is what let an inverted
+    document pass every test.
 
 **Stale documents this subplan creates or leaves (owner in parentheses)**
 

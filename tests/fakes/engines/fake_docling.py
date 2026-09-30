@@ -16,8 +16,11 @@ Two properties of this double are load-bearing, and neither is cosmetic:
   records where it sits on the page — which is what makes the ordering invariant falsifiable;
 * **the shapes are the engine's own.** ``ConversionStatus`` is a ``str`` enum,
   ``document.iterate_items()`` yields ``(item, level)`` pairs, a bounding box is reached through
-  ``prov[0].bbox.as_tuple()``, a table's cells carry their row and column offsets, and a page
-  reports its size. Anything less faithful would stop testing the translation.
+  ``prov[0].bbox.as_tuple()`` **in the origin the engine states** — ``BOTTOMLEFT`` for the pages
+  this processor converts, so ``t``/``b`` count from the bottom and ``as_tuple()`` hands over
+  ``(l, b, r, t)`` — a table's cells carry their row and column offsets, and a page reports its
+  size. Anything less faithful would stop testing the translation — and a double reporting
+  top-down numbers hid an inverted document until the origin was modelled.
 
 Three knobs make Docling's failure surface reachable with no library installed:
 
@@ -97,29 +100,85 @@ class FakeSize:
         self.height = height
 
 
+class FakeCoordOrigin(StrEnum):
+    """The engine's coordinate origins, modelled as the ``str`` enum the real one is."""
+
+    TOPLEFT = "TOPLEFT"
+    BOTTOMLEFT = "BOTTOMLEFT"
+
+
 class FakeBoundingBox:
-    """A bounding box with the engine's own field names and its ``as_tuple`` accessor."""
+    """A bounding box with the engine's own field names, origin and ``as_tuple`` accessor.
+
+    The engine states where a box's numbers are measured from, and the pages this processor
+    converts come back in ``BOTTOMLEFT``: ``t``/``b`` count from the bottom, so the box *highest*
+    on the page carries the *largest* ``t`` and ``as_tuple()`` hands over ``(l, b, r, t)``. A
+    double that reported top-down numbers would let a document whose geometry is upside down pass
+    every test forever — which is exactly how it went unnoticed once.
+    """
 
     # pylint: disable=invalid-name,too-few-public-methods
     # Reason: ``l``/``t``/``r``/``b`` are the engine's own field names; there is nothing else here.
 
-    def __init__(self, left: float, top: float, right: float, bottom: float) -> None:
-        """Record the four coordinates.
+    def __init__(
+        self,
+        left: float,
+        top: float,
+        right: float,
+        bottom: float,
+        *,
+        origin: FakeCoordOrigin = FakeCoordOrigin.TOPLEFT,
+    ) -> None:
+        """Record the four coordinates, in the convention ``origin`` names.
 
         Args:
             left: Left edge.
-            top: Top edge.
+            top: Top edge, in the stated convention.
             right: Right edge.
-            bottom: Bottom edge.
+            bottom: Bottom edge, in the stated convention.
+            origin: Where the vertical numbers are measured from.
         """
         self.l = left
         self.t = top
         self.r = right
         self.b = bottom
+        self.coord_origin = origin
+
+    @classmethod
+    def for_top_down_rect(
+        cls, page_height: float, left: float, top: float, right: float, bottom: float
+    ) -> FakeBoundingBox:
+        """Return the box the engine reports for a rectangle stated **from the top**.
+
+        The fixtures are written the way a reader sees the page — ``top`` above ``bottom`` — while
+        the engine counts both from the bottom of it. Converting here keeps the fixtures readable
+        and the seam's own conversion under test at the same time.
+        """
+        return cls(
+            left,
+            page_height - top,
+            right,
+            page_height - bottom,
+            origin=FakeCoordOrigin.BOTTOMLEFT,
+        )
 
     def as_tuple(self) -> tuple[float, float, float, float]:
-        """Return the box the way the engine's callers read it."""
+        """Return the box the way the engine's callers read it.
+
+        A bottom-left box hands over ``(l, b, r, t)``, so the second value is the one nearer the
+        bottom of the page — the engine's own habit, not this double's invention.
+        """
+        if self.coord_origin == FakeCoordOrigin.BOTTOMLEFT:
+            return (self.l, self.b, self.r, self.t)
         return (self.l, self.t, self.r, self.b)
+
+    def to_top_left_origin(self, page_height: float) -> FakeBoundingBox:
+        """Return the same rectangle in the page's other convention, as the engine does."""
+        if self.coord_origin == FakeCoordOrigin.TOPLEFT:
+            return FakeBoundingBox(self.l, self.t, self.r, self.b)
+        return FakeBoundingBox(
+            self.l, page_height - self.t, self.r, page_height - self.b
+        )
 
 
 class FakeProvenance:
@@ -332,9 +391,11 @@ class FakeConversionResult:
 DocumentFactory = Callable[[float, float], FakeDoclingDocument]
 
 
-def _box(left: float, top: float, right: float, bottom: float) -> FakeBoundingBox:
-    """Return a box, for the factories below."""
-    return FakeBoundingBox(left, top, right, bottom)
+def _box(
+    page_height: float, left: float, top: float, right: float, bottom: float
+) -> FakeBoundingBox:
+    """Return the engine-reported box for a rectangle the factories state from the page's top."""
+    return FakeBoundingBox.for_top_down_rect(page_height, left, top, right, bottom)
 
 
 def prepared_document(width: float, height: float) -> FakeDoclingDocument:
@@ -357,31 +418,31 @@ def prepared_document(width: float, height: float) -> FakeDoclingDocument:
         FakeTextItem(
             FakeDocItemLabel.CAPTION,
             "Source: internal ledger",
-            _box(width * 0.05, tenth * 8, width * 0.85, tenth * 9),
+            _box(height, width * 0.05, tenth * 8, width * 0.85, tenth * 9),
         ),
         FakeTableItem(
             [["Region", "Revenue"], ["North", "120"]],
-            _box(width * 0.05, tenth * 5, width * 0.60, tenth * 8),
+            _box(height, width * 0.05, tenth * 5, width * 0.60, tenth * 8),
         ),
         FakeTextItem(
             FakeDocItemLabel.TEXT,
             "across every region.",
-            _box(width * 0.05, tenth * 4, width * 0.85, tenth * 5),
+            _box(height, width * 0.05, tenth * 4, width * 0.85, tenth * 5),
         ),
         FakeTextItem(
             FakeDocItemLabel.SECTION_HEADER,
             "Quarterly report",
-            _box(width * 0.05, tenth * 1, width * 0.85, tenth * 2),
+            _box(height, width * 0.05, tenth * 1, width * 0.85, tenth * 2),
         ),
         FakeTextItem(
             FakeDocItemLabel.TEXT,
             "Revenue grew by twelve percent",
-            _box(width * 0.05, tenth * 3, width * 0.85, tenth * 4),
+            _box(height, width * 0.05, tenth * 3, width * 0.85, tenth * 4),
         ),
         FakeTextItem(
             FakeDocItemLabel.PICTURE,
             "",
-            _box(width * 0.70, tenth * 5, width * 0.95, tenth * 7),
+            _box(height, width * 0.70, tenth * 5, width * 0.95, tenth * 7),
         ),
     ]
     text = (

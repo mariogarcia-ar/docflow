@@ -23,10 +23,10 @@ from docflow.ocr.primitives.errors import OCRPrimitiveError
 
 #: Subcommands that publish no file: their report is the stdout summary, so the run header
 #: says so instead of naming an output root no run creates. ``run`` publishes the contract's
-#: document, and ``text`` and ``mixed`` publish the reading they report as ``text.txt``; the
-#: remaining five write nothing but their report. Verified by the hand run in
-#: ``docs/plan/bitacora.md`` (2026-09-27), by the ``text`` run of 2026-09-30, and by the ``mixed``
-#: run of the same day.
+#: document, ``text`` publishes the engine's own text as ``text.txt`` and ``mixed`` publishes the
+#: page's rows as ``mixed.txt``; the remaining five write nothing but their report. Verified by the
+#: hand run in ``docs/plan/bitacora.md`` (2026-09-27), by the ``text`` run of 2026-09-30, and by
+#: the ``mixed`` run of the same day.
 REPORT_ONLY: Final[tuple[str, ...]] = (
     "md",
     "json",
