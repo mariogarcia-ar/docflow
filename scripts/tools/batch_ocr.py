@@ -5,11 +5,12 @@ it shares with the other batch tools — the walk, the mirror, the per-input rec
 the exit code — is :mod:`_batch`; what is its own is the suffix set it takes, the layer its methods
 come from (:mod:`_ocr`) and the command a run makes when the caller states none.
 
-With no subcommand stated it runs ``text`` — stated in the run header, never silent — the flag-free
-method that publishes nothing, so a bare run can only report. It is not cheap: every input is
-converted once by the engine, so a corpus of images takes as long as the engine takes. Only ``run``
-publishes artifacts here; ``text``, ``md``, ``json``, ``tables``, ``blocks`` and ``metrics`` write
-nothing but their record.
+With no subcommand stated it runs ``text`` — stated in the run header, never silent. It is not
+cheap: every input is converted once by the engine, so a corpus of images takes as long as the
+engine takes. Two methods publish: ``run`` publishes the contract's document and ``text`` publishes
+each input's ``text.txt`` — the reading its own record states — while ``md``, ``json``, ``tables``,
+``blocks`` and ``metrics`` write nothing but their record. Nothing is derived from the text: no
+render, no table directory, no document.
 """
 
 from __future__ import annotations
@@ -23,9 +24,10 @@ import _ocr
 
 from docflow.ocr.primitives.errors import OCRPrimitiveError
 
-#: The command a run makes when the caller states none. ``text`` reads one representation and
-#: writes no artifact, so a bare run cannot fill the tree; the header says when it was the default
-#: rather than a stated choice.
+#: The command a run makes when the caller states none. ``text`` publishes one ``text.txt`` per
+#: input — the reading the run's own record states — and nothing derived from it, so a bare run
+#: fills at most one small text file per input; the header says when it was the default rather than
+#: a stated choice.
 DEFAULT_COMMAND: Final[str] = "text"
 
 #: The inputs this tool takes: the OCR layer's own set, so the two agree by construction.

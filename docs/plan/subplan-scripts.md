@@ -100,7 +100,7 @@ methods have two callers, and the alternative — the batch tool importing its s
 a second copy of every payload in it — is exactly the drift the guards exist to catch.
 
 **`_batch.py` (`SCR-12`)** is the folder frame, shared by all four batch tools: the walk, the
-mirror (`<root>/<relative folders>/<stem>/`), the per-input `result.json`, the line each input
+mirror (`<root>/<relative folders>/<stem>/`), the per-input `<command>.json`, the line each input
 prints, the summary and the exit code. It names no processor, so a sixth batch tool is a suffix
 set, a layer and a command — and nothing else.
 
@@ -210,7 +210,8 @@ Every row names a symbol that exists today. A row with no symbol would not be a 
 | Subcommand | Calls | Notes |
 |---|---|---|
 | `run` | `ocr.process_ocr_image` | the contract |
-| `text` / `md` / `json` | `ocr.primitives.extract_docling_text` / `extract_docling_markdown` / `build_ocr_document` | one representation each |
+| `text` | `ocr.primitives.extract_docling_text` + `normalize_ocr_text` | one representation, **published** as `text.txt` (§9, decision 19) |
+| `md` / `json` | `ocr.primitives.extract_docling_markdown` / `build_ocr_document` | one representation each, no artifact |
 | `tables` | `ocr.primitives.extract_docling_tables` | table markdown and cells |
 | `blocks` | `ocr.primitives.extract_docling_blocks` + `ocr.primitives.composition.preserve_reading_order` | in reading order |
 | `metrics` | `ocr.primitives.composition.analyze_ocr_result` | over the built document |
@@ -260,16 +261,19 @@ folder, dispatching through the same layers:
 |---|---|---|---|---|
 | `batch_pdf.py` | `_pdf.py` | `.pdf` | `inspect` — flag-free, publishes nothing | — |
 | `batch_image.py` | `_image.py` | `.png .jpg .jpeg .tif .tiff .bmp` | `info` — flag-free, publishes nothing | — |
-| `batch_ocr.py` | `_ocr.py` | the image set, because the OCR processor's input *is* an image | `text` — flag-free, publishes nothing | — |
+| `batch_ocr.py` | `_ocr.py` | the image set, because the OCR processor's input *is* an image | `text` — flag-free, publishes the reading it reports as `text.txt` | — |
 | `batch_llm.py` | `_llm.py` | `.txt .md` | **none** — a subcommand is required | `status`, `models`, `fake`, `resume` |
 
 The four rules the batch tools share:
 
-1. **A default is stated, never silent.** `inspect`, `info` and `text` are the flag-free methods
-   that publish no artifact, so a bare run can only report; the header says
-   `command: <name> (default, none stated)`. The frame takes that fact from the tool rather than
-   reading it back off the parsed arguments, and the default command is *parsed as a subcommand*,
-   so a bare run and a stated one are the same run — its flags included.
+1. **A default is stated, never silent.** `inspect`, `info` and `text` are the flag-free methods a
+   batch tool makes when it has one; the header says `command: <name> (default, none stated)`. A
+   bare run publishes at most the reading it reports — `text` writes one `text.txt` per input, the
+   text its own record states, normalized the way the processor publishes it — and never a render,
+   a split, an extracted image or a contract's document; `inspect` and `info` publish nothing at
+   all. The frame takes that fact from the tool rather than reading it back off the parsed
+   arguments, and the default command is *parsed as a subcommand*, so a bare run and a stated one
+   are the same run — its flags included.
 2. **`batch_llm.py` has no default**, because it has no flag-free command to make: `--provider`
    and `--model` are required on every one of its commands, exactly as on `llm.py`. A bare run is
    refused with exit `2`.
@@ -283,7 +287,7 @@ The four rules the batch tools share:
    and no token spent. It patches the provider seam and nothing above it.
 
 A batch tool does not re-declare a payload, a flag or an artifact path: a method's payload lives in
-its layer, and the frame files it as `result.json` beside whatever the method published.
+its layer, and the frame files it as `<command>.json` beside whatever the method published.
 
 ### 3.5 The fixture map (what the bench actually runs on)
 
@@ -411,7 +415,7 @@ Scenario: A batch runs a whole folder and does not stop at the first bad file
   Given "tests/fixtures/pdf", which holds three readable PDFs and one corrupt one
   When "scripts/tools/batch_pdf.py tests/fixtures/pdf" runs
   Then every readable PDF has a mirror directory under "var/batch_pdf/pdf/<stem>/"
-  And each of those holds the "result.json" of the method that ran
+  And each of those holds the "<command>.json" of the method that ran
   And the corrupt one is printed as "pdf_corrupt.pdf: FAILED" with its typed record and files nothing
   And the summary reads "files: 4 · succeeded: 3 · failed: 1"
   And the exit code is 1
@@ -422,6 +426,15 @@ Scenario: A batch states the command it made instead of assuming one
   Then the header says "command: info (default, none stated)"
   And "info" is the flag-free method that publishes nothing
   And the same run with a stated command prints "command: <name>" with no such note
+
+Scenario: A bare OCR batch writes the text it reports, and one name means one reading
+  Given "scripts/tools/batch_ocr.py tests/fixtures/ocr" with no subcommand
+  When the run finishes
+  Then each input's mirror directory holds "text.txt" beside its "text.json"
+  And that file holds exactly the text the record states
+  And "scripts/tools/ocr.py text" writes byte-identical bytes to the "text.txt" a "run"
+      of the same image writes
+  And no other artifact is written by that default
 
 Scenario: The batch frame is one implementation, not four
   Given "_batch.py" and the four batch tools
@@ -497,6 +510,12 @@ their own; they consume the ones the processors already ship.
    computation, or a payload its layer does not hold. *Observed:* the frame's tests fail (the
    mirrored paths stop matching) and `SCR-12`'s guard on the layer/tool split fails on the
    duplicate symbol.
+9. **The OCR bench's `text` publishes the reading it reports, and one name means one reading.**
+   *Mutation, in two steps:* first drop the `write_text_atomic` call from `_ocr._text`, then
+   publish the engine's raw export while reporting the normalized one. *Observed:* the first
+   leaves `text.txt` missing (2 red, `FileNotFoundError`); the second leaves the file carrying the
+   trailing whitespace the processor's `run` strips, so the artifact and the record of one reading
+   disagree (1 red). Both restored by the inverse edit.
 
 Each invariant leaves the four-field record `docs/plan/README.md` §7 fixes (Invariant /
 Mutation / Observed failure / Restored green) in the root `README.md`, where `GEN-16` audits
@@ -639,18 +658,21 @@ to `var/batch_<processor>/<folder>/`, which is ignored too.
     single-file tool and the folder tool call the same methods, so the methods live in a shared
     `_`-prefixed layer. The alternative — the batch importing its twin — would make one tool's
     private helper another tool's API, and a second copy of every payload would drift.
-15. **The batch's command is the caller's, and a default is stated — RESOLVED:** a batch tool with
-    a flag-free method that publishes nothing makes it, and says so in the header. A tool with no
-    such method (`batch_llm.py`, whose every command requires a provider and a model) makes
+15. **The batch's command is the caller's, and a default is stated — RESOLVED, and its second
+    clause is reworded by decision 19:** a batch tool with a flag-free method makes it, and says so
+    in the header; the default publishes at most the reading it reports (§3.4, rule 1). A tool with
+    no such method (`batch_llm.py`, whose every command requires a provider and a model) makes
     **none** and requires the caller to state one. A default is never silent, and never invented to
     make a bare run succeed.
 16. **The batch's command subset is a decision — RESOLVED (`SCR-15`):** the four commands whose
     answer is a property of the input. `status`, `models`, `fake` and `resume` are not registered
     on `batch_llm.py` at all, so naming one is a usage error rather than a silent no-op.
 17. **One mirror, one record, one exit code — RESOLVED (`SCR-12`):** every batch tool writes
-    `<root>/<relative folders>/<stem>/result.json`, publishes the method's artifacts beside it, and
-    exits `1` when any input failed. The walk skips the run's own root. The frame lives in
-    `_batch.py`, so the fifth batch tool is a suffix set, a layer and a command.
+    `<root>/<relative folders>/<stem>/<command>.json`, publishes the method's artifacts beside it,
+    and exits `1` when any input failed. The record is named after its command, so two commands
+    over one input keep both records instead of the second overwriting the first. The walk skips
+    the run's own root. The frame lives in `_batch.py`, so the fifth batch tool is a suffix set, a
+    layer and a command.
 18. **The page flag is optional, and its absence means every page — RESOLVED, and the question is
     owned by [`subplan-paginas.md`](subplan-paginas.md) (`PAG-01`…`PAG-07`).** This subplan is
     stale on exactly three of its clauses, all now corrected above: §3.3's page-scope bullet (which
@@ -659,6 +681,15 @@ to `var/batch_<processor>/<folder>/`, which is ignored too.
     correction** — no acceptance scenario and no guard in either ever named the page flag, which is
     itself the finding: the refusal was pinned by tests alone, so it moved without a scenario to
     contradict.
+19. **The OCR bench's `text` publishes the text it reports — RESOLVED (`SCR-04`, `SCR-14`), and it
+    revises the wording of decision 15.** `ocr.py text` and `batch_ocr.py … text` write `text.txt`
+    in that input's run root: normalized the way `ocr/entrypoints.py` normalizes it, so the bytes
+    are the ones a `run` of the same image writes under the same name, and the file holds exactly
+    what the payload states. A bare `batch_ocr.py <folder>` therefore fills each mirror directory
+    with one small text file — the reading it reports — which is why decision 15's rule now reads
+    "the default publishes at most the reading it reports" rather than "publishes nothing". `md`,
+    `json`, `tables`, `blocks` and `metrics` still publish nothing, and `text` derives nothing from
+    the text it reads: no render, no table directory, no document.
 
 **Stale documents this subplan creates or leaves (owner in parentheses)**
 

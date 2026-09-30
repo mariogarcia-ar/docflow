@@ -201,7 +201,7 @@ the processor's purpose), `--layout`, `--tables`, `--reading-order`, `--language
 
 | Subcommand | Needs | What it gives you |
 |---|---|---|
-| `text` | — | the extraction's plain text |
+| `text` | — | the extraction's plain text; writes `text.txt` |
 | `md` | — | the extraction's Markdown |
 | `json` | — | the structured document, serialized |
 | `tables` | — | detected tables, in reading order |
@@ -209,7 +209,8 @@ the processor's purpose), `--layout`, `--tables`, `--reading-order`, `--language
 | `metrics` | — | content metrics, over the built document |
 | `run` | — | the processor's contract; `--page` (default `1`) |
 
-Only `run` publishes a file.
+`run` publishes the contract's document and `text` publishes the reading it reports as `text.txt`;
+the other five write nothing but their report.
 
 ### One file
 
@@ -229,6 +230,10 @@ is the built document, `tables` and `blocks` are its ordered views, and `metrics
 document the others build. `tables` states `--tables` because that flag is what asks for the
 detection; the rest run with no flag at all.
 
+`text` publishes the text it reports as `text.txt` — the same file, and the same bytes, a `run` of
+the same image writes. It is normalized the way the processor publishes it, so a page whose engine
+text carries trailing whitespace loses exactly that and nothing else.
+
 The engine writes its own INFO lines to **stdout**, so they can appear ahead of the payload.
 
 ### A folder
@@ -245,7 +250,8 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr run
 
 The same seven subcommands as `ocr.py`, with the folder in place of the file. `tests/fixtures/ocr` is
 two images, both converted, so every command reports `files: 2 · succeeded: 2 · failed: 0` and
-exits `0`.
+exits `0`. The bare run makes `text` and files a `text.txt` beside each input's record, so the
+default is a corpus of readable text files rather than a corpus of JSON.
 
 ---
 

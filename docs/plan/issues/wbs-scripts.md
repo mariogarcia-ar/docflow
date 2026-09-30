@@ -136,9 +136,10 @@ hand (`SCR-07`) and recorded as an observation, never as a gate.
 - **Out of bounds:** No `--engine` flag — Docling is the only OCR engine and is never user-selectable; no `diff` subcommand — comparing two extractions would be a second implementation of the thing under test; no `docling` name in the source; no option the library does not model.
 - **Acceptance criteria:**
   - Given `tests/fixtures/ocr/ocr_prepared_text_and_table.png`, when `run` executes, then text, Markdown and the structured document are published under `ocr/` and their paths are printed.
-  - Given `tests/fixtures/ocr/ocr_blank.png`, when `text` runs, then an empty text with the `EMPTY` status is printed and the exit code is `0` — a blank page is data, not a failure.
+  - Given `tests/fixtures/ocr/ocr_prepared_text_and_table.png`, when `text` executes, then `text.txt` is published in the run root holding exactly the text the payload states — the normalized reading a `run` of the same image writes under that name.
+  - Given `tests/fixtures/ocr/ocr_blank.png`, when `text` runs, then an empty text with the `EMPTY` status is printed, an empty `text.txt` is published and the exit code is `0` — a blank page is data, not a failure.
   - Given `--engine docling`, then the command exits with a usage error, because the flag does not exist.
-- **Evidence / DoD:** The glue test drives `run` through `tests/fakes/processors/` and the representation subcommands through `fake_docling`; the source names no engine module.
+- **Evidence / DoD:** The glue test drives `run` through `tests/fakes/processors/` and the representation subcommands through `fake_docling`; the `text` publication is guarded by the one-name-one-reading test; the source names no engine module.
 - **Tags:** —
 
 ### SCR-05 — `scripts/tools/llm.py`
@@ -270,10 +271,10 @@ hand (`SCR-07`) and recorded as an observation, never as a gate.
 - **Depends on:** SCR-11
 - **Blocks:** SCR-13, SCR-14, SCR-15, SCR-16
 - **Objective:** Run an operator command over every input below a folder and mirror the tree, with the frame written once because three more batch tools are coming.
-- **Scope / Deliverables:** `_batch.py` — `build_parser(tool, description, *, subcommand_required)`, `resolve_command(parser, argv, default)`, `folder`, `default_root`, `inputs_under`, `mirror_dir`, `run_one`, `run_batch(..., suffixes=, default=, header_extra=)`; `batch_pdf.py` — the `.pdf` suffix set, `inspect` as the default, the layer and the error type it catches.
+- **Scope / Deliverables:** `_batch.py` — `build_parser(tool, description, *, subcommand_required)`, `resolve_command(parser, argv, default)`, `folder`, `default_root`, `inputs_under`, `mirror_dir`, `run_one`, `run_batch(..., suffixes=, default=, header_extra=, validate=)`; `batch_pdf.py` — the `.pdf` suffix set, `inspect` as the default, the layer and the error type it catches.
 - **Out of bounds:** No walk, mirror, summary or exit-code computation inside the tool; no parallel execution; no default output root outside `var/`; no `--dry-run`.
 - **Acceptance criteria:**
-  - Given a corpus with nested folders, when the batch runs, then each input has `<root>/<relative folders>/<stem>/result.json`.
+  - Given a corpus with nested folders, when the batch runs, then each input has `<root>/<relative folders>/<stem>/<command>.json`.
   - Given a corpus holding one bad file, then the run reports it, counts it, keeps going and exits `1`.
   - Given no subcommand, then the header says `command: <default> (default, none stated)` and the command's own flags are parsed.
   - Given a file where the folder belongs, then exit `2`.
@@ -304,10 +305,11 @@ hand (`SCR-07`) and recorded as an observation, never as a gate.
 - **Depends on:** SCR-12
 - **Blocks:** SCR-17
 - **Objective:** The OCR bench's seven methods in a shared layer, and the folder twin — where the input *is* an image, so the suffix set is the image one.
-- **Scope / Deliverables:** `_ocr.py` (`SUFFIXES`, the seven methods, `COMMANDS`); `batch_ocr.py` (`text` default, the layer); `ocr.py` reduced to a parser, one handler and `main`.
-- **Out of bounds:** No `--engine`; no `diff`; no Docling name in either file; no second copy of the reading-order composition.
+- **Scope / Deliverables:** `_ocr.py` (`SUFFIXES`, `TEXT_NAME`, the seven methods, `COMMANDS`); `batch_ocr.py` (`text` default, the layer); `ocr.py` reduced to a parser, one handler and `main`.
+- **Out of bounds:** No `--engine`; no `diff`; no Docling name in either file; no second copy of the reading-order composition; no second artifact published by `text` — one file, the reading the run reports.
 - **Acceptance criteria:**
-  - Given `tests/fixtures/ocr`, when `batch_ocr.py` runs with no subcommand, then `files: 2 · succeeded: 2 · failed: 0` and two mirrored records.
+  - Given `tests/fixtures/ocr`, when `batch_ocr.py` runs with no subcommand, then `files: 2 · succeeded: 2 · failed: 0`, two mirrored records, and each mirror holding the `text.txt` its own record states.
+  - Given `text` and `run` over one image, then both `text.txt` files hold the same bytes — one name means one reading.
   - Given an input the engine refuses, then that input fails its own record, the typed failure is printed and the rest of the corpus still runs.
   - Given an input whose contract *returned* `FAILED`, then it is printed as `FAILED`, its own record is shown and it is not reported as `ok`.
 - **Evidence / DoD:** Three glue tests (mirror, engine throw, returned failure) plus the hand run against the real engine.
@@ -339,7 +341,7 @@ hand (`SCR-07`) and recorded as an observation, never as a gate.
 - **Depends on:** SCR-12
 - **Blocks:** —
 - **Objective:** A human who has not read the code can run a batch and predict what lands where.
-- **Scope / Deliverables:** `scripts/tools/readme.md` — a section per batch tool (pairing block, mirror, suffix set, default command, the `result.json` rule, exit codes) and the updated layout table; the ``SCR-11``…``SCR-18`` revision cited where the module set is asserted.
+- **Scope / Deliverables:** `scripts/tools/readme.md` — a section per batch tool (pairing block, mirror, suffix set, default command, the `<command>.json` rule, exit codes) and the updated layout table; the ``SCR-11``…``SCR-18`` revision cited where the module set is asserted.
 - **Out of bounds:** No claim the tools do not keep: every line in the examples is a command that runs as written against a committed fixture.
 - **Acceptance criteria:** Each documented example runs as written; the section names the default each tool makes and what it publishes.
 - **Evidence / DoD:** The readme's own examples, run during `SCR-17`.
@@ -494,7 +496,7 @@ tasks produced.
 | The engine is not installed on the bench | SCR-07 | SCR-07 records what each tool does with the engine absent as a first-class observation; SCR-02/03/04 print the typed error and exit `1` |
 | Six files of argparse nobody re-reads | SCR-02 … SCR-06 | SCR-08 guard 6 parses every documented subcommand; `subplan-scripts.md` §3.4 is the mapping the runbook and the guards both cite |
 | A stale citation survives the phase | SCR-10, SCR-18 | SCR-10's sweep command and its output, recorded in the bitácora; SCR-18 re-derives the module set and the `SCR-` ranges from the tree and the WBS, one pass, no renumbering |
-| A default command fills a batch tree nobody asked to fill | SCR-12 … SCR-15 | The default is the flag-free method that publishes nothing; `batch_llm.py` has none at all; the header states the default whenever one is made, and invariant 6 mutates the statement away and must go red |
+| A default command fills a batch tree nobody asked to fill | SCR-12 … SCR-15 | The default is a flag-free method that publishes at most the reading it reports — `batch_ocr.py`'s `text` writes one `text.txt` per input, and `inspect`/`info` write nothing; `batch_llm.py` has none at all; the header states the default whenever one is made, and invariant 6 mutates the statement away and must go red |
 | Four batch tools drift into four frames | SCR-12 … SCR-15 | `_batch.py` owns the walk, the mirror, the record, the summary and the exit code; a batch tool is a suffix set, a layer and a command — asserted by the frame's tests and by the tools' size |
 
 ## 11. Out of scope

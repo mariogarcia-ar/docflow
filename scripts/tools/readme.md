@@ -138,7 +138,7 @@ collide. Output is **never** written beside the input and never into `out/`; `/v
 [Commands over a folder (batch)](#commands-over-a-folder-batch) describes.
 
 Only a subcommand that **publishes** creates that directory. When the report *is* the stdout
-summary — `pdf.py inspect`, `ocr.py text`, `workflow.py plan` and their peers, eighteen of the
+summary — `pdf.py inspect`, `ocr.py md`, `workflow.py plan` and their peers, seventeen of the
 sixty-four subcommands — the run writes no file at all, and its header states
 `output: (none — this subcommand publishes no file)` instead of naming a directory no run creates.
 That line is declared per tool (`REPORT_ONLY`) and checked twice: the glue test drives the
@@ -252,8 +252,8 @@ There is **no `crop` subcommand**: the library has no `crop_region`
 | Subcommand | Calls | Notes |
 |---|---|---|
 | `run` | `process_ocr_image` | the contract |
-| `text` | `primitives.extract_docling_text` | one conversion, one representation |
-| `md` | `primitives.extract_docling_markdown` | as above |
+| `text` | `primitives.extract_docling_text` + `normalize_ocr_text` | one conversion, one representation; publishes it as `text.txt` |
+| `md` | `primitives.extract_docling_markdown` | as above, no artifact |
 | `json` | `primitives.build_ocr_document` | the structured document, serialized |
 | `tables` | `primitives.extract_docling_tables` | in reading order |
 | `blocks` | `primitives.extract_docling_blocks` + `composition.preserve_reading_order` | in reading order |
@@ -262,6 +262,12 @@ There is **no `crop` subcommand**: the library has no `crop_region`
 There is **no `--engine` flag**. The engine is fixed and never presented as a selectable option.
 There is **no `diff` subcommand** either: comparing two extractions is a reading, and a tool that
 compared them would be a second implementation of the thing under test.
+
+**`text` publishes, and under the processor's own name.** It writes the text it reports as
+`text.txt` in the run's root — the name `run` gives the same content in its `ocr/` namespace — so
+the two commands leave the same bytes for the same image and one name never means two readings. The
+text is normalized before it is written, which is the form the processor publishes and reports;
+there is one published file, never a second spelling of the same reading.
 
 ### `llm.py` — `SCR-05`
 
@@ -334,7 +340,7 @@ python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matr
 |---|---|---|---|---|
 | `batch_pdf.py` `SCR-12` | `_pdf.py` | `.pdf` | `inspect` | — |
 | `batch_image.py` `SCR-13` | `_image.py` | `.png .jpg .jpeg .tif .tiff .bmp` | `info` | — |
-| `batch_ocr.py` `SCR-14` | `_ocr.py` | the image set: the OCR input *is* an image | `text` | — |
+| `batch_ocr.py` `SCR-14` | `_ocr.py` | the image set: the OCR input *is* an image | `text` — publishes the reading it reports as `text.txt` | — |
 | `batch_llm.py` `SCR-15` | `_llm.py` | `.txt .md` | **none** — a command is required | `status`, `models`, `fake`, `resume` |
 
 ### The shape of a batch run
@@ -372,14 +378,16 @@ tool:
   in that directory, beside whatever the method published. Two commands over one input keep both
   records — `inspect.json` beside `classify.json` — instead of the second overwriting the first.
   A page-addressed command's record holds one page's keys when `--page` was stated and a `pages`
-  list when it was not. And a method that publishes no artifact at all — `inspect`, `info`, `text`,
+  list when it was not. And a method that publishes no artifact at all — `inspect`, `info`,
   `tokens` — still leaves something to read, which is the point of running it over a corpus. An
   input whose failure **raised** has no payload and is reported, not filed: its typed record is
   printed and counted, and its directory is never created.
 - **A default command is stated, never silent.** With no subcommand the run makes the tool's own
-  flag-free method — the one that publishes nothing, so a bare run cannot fill the tree — and the
-  header says `command: inspect (default, none stated)`. A tool whose every command needs a flag
-  has no such method and requires the command instead (`batch_llm.py`).
+  flag-free method and the header says `command: inspect (default, none stated)`. A bare run
+  publishes at most the reading it reports — `text` writes one `text.txt` per input, the text its
+  own record states — and never a render, a split, an extracted image or a contract's document;
+  `inspect` and `info` publish nothing at all. A tool whose every command needs a flag has no such
+  method and requires the command instead (`batch_llm.py`).
 - **The line and the summary agree.** An input whose failure **raised** is printed as
   `name: FAILED`, with the library's typed record, and files nothing. An input whose contract
   *returned* a failed status — `run` contains its failures rather than raising them — is printed as
@@ -463,8 +471,10 @@ python scripts/tools/ocr.py metrics tests/fixtures/ocr/ocr_blank.png
 python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics                        # the stated method, per input
 ```
 
-- **The bare run makes `text`** — the flag-free method that publishes nothing. Only `run`
-  publishes artifacts here; the other six methods leave a `<command>.json` and nothing else.
+- **The bare run makes `text`**, the flag-free method, and it publishes one `text.txt` per input:
+  the reading its own record states, normalized the way the processor publishes it, and nothing
+  derived from it. `run` publishes the contract's document; `md`, `json`, `tables`, `blocks` and
+  `metrics` write nothing but their record.
 - **It is not cheap.** Every input is converted once by the engine, so a corpus of images costs
   what the engine costs; the default is safe for the output tree, not for the clock.
 - **An input the engine refuses fails its own record and the walk continues** — that is the whole
@@ -472,7 +482,8 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics                    
   `text`, `md`, `json`, `tables`, `blocks` and `metrics` type the engine's own throw rather than
   letting it end the run at the first bad file.
 - `tests/fixtures/ocr` is that demonstration in one line: two images, both converted,
-  `files: 2 · succeeded: 2 · failed: 0`, exit `0`.
+  `files: 2 · succeeded: 2 · failed: 0`, exit `0`. Its two mirrored directories each hold the
+  record and the `text.txt` the default published.
 
 ### `batch_llm.py` — `SCR-15`
 

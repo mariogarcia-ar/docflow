@@ -33,7 +33,12 @@ import pytest
 
 from docflow.llm import primitives as llm_primitives
 from scripts.tools import _cli
-from tests.fakes.engines.fake_docling import FakeConversionStatus, FakeDocling
+from tests.fakes.engines.fake_docling import (
+    FakeConversionStatus,
+    FakeDocling,
+    FakeDoclingDocument,
+    prepared_document,
+)
 from tests.fakes.engines.fake_opencv import FakeOpenCV
 from tests.fakes.engines.fake_poppler import FakeImage, FakePage, FakePoppler
 from tests.fakes.processors import ProcessorDoubles
@@ -319,7 +324,7 @@ REPORT_ONLY: dict[str, tuple[str, ...]] = {
     "batch_pdf": (),
     "batch_image": (),
     "image": ("info", "metrics", "classify"),
-    "ocr": ("text", "md", "json", "tables", "blocks", "metrics"),
+    "ocr": ("md", "json", "tables", "blocks", "metrics"),
     "batch_ocr": (),
     "llm": ("node", "status", "models", "tokens"),
     "batch_llm": (),
@@ -795,15 +800,63 @@ def install_ocr_engine(monkeypatch: pytest.MonkeyPatch) -> FakeDocling:
 
 
 def test_ocr_reads_through_the_shared_layer(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """``ocr.py`` builds its payload in the layer ``batch_ocr.py`` drives."""
     install_ocr_engine(monkeypatch)
 
-    code = tool_module("ocr").main(["text", str(SAMPLE_OCR)])
+    code = tool_module("ocr").main(["--out", str(tmp_path), "text", str(SAMPLE_OCR)])
 
     assert code == 0
     assert "Quarterly report" in capsys.readouterr().out
+    assert "Quarterly report" in (tmp_path / "text.txt").read_text(encoding="utf-8")
+
+
+def _trailing_space_document(width: float, height: float) -> FakeDoclingDocument:
+    """Return the prepared document, with the engine's text carrying what normalization removes."""
+    prepared = prepared_document(width, height)
+    return FakeDoclingDocument(
+        prepared.items,
+        prepared.export_to_text() + "   \n\n",
+        prepared.export_to_markdown(),
+        width,
+        height,
+    )
+
+
+def test_ocr_text_publishes_the_reading_run_gives_the_same_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``text`` publishes ``text.txt``, holding exactly what a ``run`` would have written there.
+
+    One name means one reading: the two commands leave the same bytes for the same image, so an
+    operator comparing a ``text`` run with a ``run`` cannot be reading two different things under
+    one name. The bytes are the *normalized* text — the form the processor both publishes and
+    reports — and the payload states the same string, because an artifact and the record of the
+    same reading may not disagree.
+    """
+    monkeypatch.setattr(
+        "docflow.ocr.primitives.convert_image_with_docling",
+        FakeDocling(document=_trailing_space_document),
+    )
+    reported = tmp_path / "reported"
+    contract = tmp_path / "contract"
+
+    code = tool_module("ocr").main(
+        ["--json", "--out", str(reported), "text", str(SAMPLE_OCR)]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert (
+        tool_module("ocr").main(["--out", str(contract), "run", str(SAMPLE_OCR)]) == 0
+    )
+
+    published = (reported / "text.txt").read_text(encoding="utf-8")
+    assert published == payload["text"]
+    assert Path(payload["output"]).read_text(encoding="utf-8") == published
+    assert published == (contract / "text.txt").read_text(encoding="utf-8")
+    assert published.endswith("Source: internal ledger")
+    assert "   \n" not in published
 
 
 def test_batch_ocr_mirrors_the_folder_it_walked(
@@ -823,6 +876,10 @@ def test_batch_ocr_mirrors_the_folder_it_walked(
     assert code == 0
     assert sorted(
         record.parent.relative_to(out).as_posix() for record in out.rglob("text.json")
+    ) == ["b", "sub/a"]
+    assert sorted(
+        text_file.parent.relative_to(out).as_posix()
+        for text_file in out.rglob("text.txt")
     ) == ["b", "sub/a"]
     assert "text (default, none stated)" in capsys.readouterr().err
 

@@ -2127,3 +2127,75 @@ entry above (a frozen plan moves in its own pass, subplan and WBS together):
 | `docs/plan/subplan-procesador-pdf.md` §3 | the primitive list and the native-text bullet do not mention the layout read | plan owner |
 | `docs/plan/issues/wbs-procesador-pdf.md` §PDF-06 | the objective says "from one read" and the scope names one primitive; the paired WBS must move with §3/§9 | plan owner |
 | `docs/plan/issues/wbs-procesador-pdf.md` §PDF-05 / PDF-03 range | no task owns the new artifact; whether it is PDF-06's or a new row is the revision's call | plan owner |
+
+---
+
+## 2026-09-30 — Phase 5 · the OCR bench's `text` publishes what it reports (`ocr.py`, `batch_ocr.py`)
+
+**Asked for at the bench, the day after the PDF twin.** `batch_pdf.py <folder> text` publishes
+`page_NNN.txt` per page; `batch_ocr.py <folder>` — whose default **is** `text` — wrote `text.json`
+and nothing else, so parsing a record was the only way to read an extraction back. `text` now
+publishes `text.txt` in that input's run root, and `ocr.py`'s `REPORT_ONLY` loses it: six
+subcommands write, five report.
+
+**No new seam, no new writer.** The write goes through the processor's own
+`ocr.primitives.write_text_atomic` (`.tmp` → rename), so the publication rule is the one every other
+artifact follows — and an empty text is still a legitimate artifact: a blank page publishes a
+zero-byte `text.txt` and is reported `EMPTY`. The layer states the name (`TEXT_NAME = "text.txt"`)
+the way it states `SUFFIXES`: what a processor calls what it publishes is that processor's own fact.
+`_batch.py` and `_cli.py` needed **no line**: the frame files `<command>.json` and the method
+publishes beside it, and `text.txt` cannot collide with `text.json`.
+
+**One name, one reading.** The bytes are the **normalized** text, which is the form
+`ocr/entrypoints.py` gives `text.txt` — so a `text` run and a `run` of the same image write the same
+file, and the payload states the same string the file holds. Publishing the engine's raw export
+instead would have made `text.txt` mean one thing when `text` wrote it and another when `run` did.
+
+**The default changed its *rule*, not its command.** Decision 15 said the default is "the flag-free
+method that publishes nothing". `text` is that default and it now publishes one small file per
+input — the reading its own record states, with nothing derived from it. The rule was reworded
+rather than the default moved: answering a bare corpus run with metrics where the operator's first
+question is "what does this page say?" would be a worse default than one text file per input.
+
+**Mutation evidence** (both applied to `scripts/tools/_ocr.py`, both restored by the inverse edit).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `_ocr._text`: drop the `write_text_atomic` call and the `output` key | `test_ocr_text_publishes_the_reading_run_gives_the_same_name` and `test_ocr_reads_through_the_shared_layer` red — 2 failed, `FileNotFoundError` on `text.txt` | inverse edit; 111 passed in `tests/test_lab_tools.py` |
+| `_ocr._text`: publish the engine's raw export while reporting the normalized one | `test_ocr_text_publishes_the_reading_run_gives_the_same_name` red — `assert 'Quarterly re...ledger   \n\n' == 'Quarterly re...ternal ledger'`: the file kept the trailing whitespace `run` strips | inverse edit; 111 passed |
+
+**Hand run (real engine).** `batch_ocr.py tests/fixtures/ocr` → `files: 2 · succeeded: 2 ·
+failed: 0`, exit `0`, each mirror holding `text.json` **and** `text.txt` (both zero bytes — the
+240×120 synthetic fixtures extract `EMPTY` with the real engine, as recorded above). On a real
+scan, `ocr.py text tests/fixtures/chicos/243a8b81-….png` published a 29-byte `text.txt`
+(`GASTOS VARIOS, FALTA FACTURA.%`) whose bytes are **identical** to the `text.txt` of `ocr.py run`
+over the same image (`cmp` reports no difference).
+
+**Gate evidence.**
+
+```
+pytest                     758 passed
+ruff check .               All checks passed!
+ruff format --check .      181 files already formatted
+pylint src tests           10.00/10 — one message, the pre-existing
+                           src/docflow/pdf/entrypoints.py:475 R0912 (15/12),
+                           untouched by this change and left as it is
+```
+
+**Plan revision applied in the same pass** (`docs/feedback/ocr-text-artifact.md`, D-1…D-4), as the
+convention requires — subplan and WBS together: `subplan-scripts.md` §3.4 (the `ocr.py` `text` row,
+the batch-table row, rule 1), §5 (the new scenario), §6 (invariant 9), §9 (decision 19) and
+`wbs-scripts.md` §SCR-04, §SCR-14 and the risk table. Two owed corrections were closed in the same
+two files because they sit in the sections being edited: the per-input record is `<command>.json`
+(subplan §3.1/§3.3/§5/§9, WBS §SCR-12/§SCR-18) and `run_batch(...)`'s keyword list gained
+`validate=` (WBS §SCR-12).
+
+**Left stale (owner).**
+
+| Document | What is stale | Owner |
+|---|---|---|
+| `docs/feedback/batch-mode-across-processors.md` | still says the per-input record is `result.json` | plan owner |
+| `docs/plan/subplan-paginas.md` §3.3/§3.4, `docs/plan/issues/wbs-paginas.md` | the PDF `text` row still says *Published per page*: "nothing" — owed since 2026-09-29 and deliberately untouched here | plan owner |
+
+**Not taken.** `md` publishing `document.md` is the same question, and a second published
+representation is its own decision.

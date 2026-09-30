@@ -165,7 +165,7 @@ is: it reaches the four processors only through their public contracts.
 | `image.py` | `SCR-03` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run` |
 | `batch_image.py` | `SCR-13` | the same seven over every image below a folder (`info` when none is stated) |
 | `ocr.py` | `SCR-04` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics` |
-| `batch_ocr.py` | `SCR-14` | the same seven over every image below a folder (`text` when none is stated) |
+| `batch_ocr.py` | `SCR-14` | the same seven over every image below a folder (`text` when none is stated, which publishes each input's `text.txt`) |
 | `llm.py` | `SCR-05` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `batch_llm.py` | `SCR-15` | `call`, `graph`, `node`, `tokens` over every text below a folder — a command is **required**, and `--fake` installs the scripted provider |
 | `workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
@@ -564,6 +564,15 @@ restore re-measured:
 |---|---|---|---|
 | An omitted `--page` resolves to every page (`tests/test_lab_tools.py::test_a_page_command_reads_every_page_when_no_page_is_stated`) | `page_scope`'s all-pages branch returned `pages=[1]` instead of `range(1, page_count + 1)` (`scripts/tools/_pdf.py`) | `pytest tests/test_lab_tools.py -q -k "every_page or scope_of_one or images_directory or failing_page or partial_document"` → **5 failed**, 1 passed: the scope, the collision, the partial and both batch runs lost their pages while `label` still read `all pages (3)`, so the run said one thing and did another. The one that stayed green is the one-page case, where a scope of one is the mutation | inverse edit (`git diff` empty), then `pytest tests/test_lab_tools.py` → 109 passed |
 | Two pages never share an artifact directory (`tests/test_lab_tools.py::test_every_page_gets_its_own_images_directory`) | `_images_dir` returned `root / "images"` for every page (`scripts/tools/_pdf.py`) | `pytest tests/test_lab_tools.py -q -k images_directory` → 1 failed: `E AssertionError: assert ['images/image_001.png'] == ['page_001/images/image_001.png', 'page_002/images/image_001.png']` — the second page overwrote the first page's image, which is exactly what the processor's per-call naming predicts | inverse edit, then `pytest tests/test_lab_tools.py` → 109 passed |
+
+And the OCR text-artifact invariant of the bench revision (2026-09-30), same four-field shape. Both
+mutations were applied to `scripts/tools/_ocr.py` and restored by the exact inverse edit, with the
+restore re-measured:
+
+| Invariant | Mutation | Observed failure | Restored green |
+|---|---|---|---|
+| The OCR bench's `text` publishes the reading it reports, under the name `run` gives it (`tests/test_lab_tools.py::test_ocr_text_publishes_the_reading_run_gives_the_same_name`) | the `write_text_atomic` call dropped from `_ocr._text` (`scripts/tools/_ocr.py`) | `pytest tests/test_lab_tools.py -q -k "same_name or shared_layer"` → **2 failed**: `FileNotFoundError` on `text.txt` — the run reported a text and published nothing, and the two tools' payloads gained an `output` key that pointed nowhere | inverse edit, then `pytest tests/test_lab_tools.py` → 111 passed |
+| One name means one reading — the artifact and the record of a `text` run may not disagree (`tests/test_lab_tools.py::test_ocr_text_publishes_the_reading_run_gives_the_same_name`) | `_ocr._text` publishing the engine's raw export (`extract_docling_text`) while reporting the normalized one | `pytest tests/test_lab_tools.py -q -k same_name` → 1 failed: `E AssertionError: assert 'Quarterly re...ledger   \n\n' == 'Quarterly re...ternal ledger'` — the file kept the trailing whitespace the processor's `run` strips, so one name held two readings | inverse edit, then `pytest tests/test_lab_tools.py` → 111 passed |
 
 **Never a silent stand-in.** No empty string, no `0`, no `[]`, no `None`-without-reason, and no
 default engine or threshold used in place of a real answer.

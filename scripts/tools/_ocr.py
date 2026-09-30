@@ -10,6 +10,9 @@ method does the work and returns the payload; the caller decides whether that be
 (:mod:`_cli`'s printers) or a file beside the artifacts. The processor's typed failures are raised,
 never caught here — a tool prints them and exits ``1``.
 
+Two of the seven methods publish: ``run`` publishes the contract's document, and ``text`` publishes
+the reading it reports as ``text.txt``. The other five build a payload and write nothing.
+
 It carries the lab-bench exception of ``subplan-scripts.md`` §3.2 for its own processor: it may
 drive ``docflow.ocr.primitives``.
 
@@ -33,7 +36,7 @@ from docflow.ocr.primitives.errors import OCRPrimitiveError
 
 #: One subcommand per method, with the help text both tools print.
 SUBCOMMANDS: tuple[tuple[str, str], ...] = (
-    ("text", "The extraction's plain text."),
+    ("text", "The extraction's plain text, published as text.txt."),
     ("md", "The extraction's Markdown."),
     ("json", "The structured document, serialized."),
     ("tables", "Detected tables, in reading order."),
@@ -46,6 +49,13 @@ SUBCOMMANDS: tuple[tuple[str, str], ...] = (
 #: set is the one the image processor can decode — stated here rather than imported from the image
 #: bench: which inputs a processor takes is that processor's own fact.
 SUFFIXES: Final[tuple[str, ...]] = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp")
+
+#: The name ``text`` publishes the text it read under. It is the processor's own name for the same
+#: content (``ocr/entrypoints.py`` ``TEXT_NAME``, restated in ``ArtifactPaths.text``), so a ``text``
+#: run and a ``run`` run of one image leave one artifact name for one reading. Stated here rather
+#: than imported: the bench reaches a processor's public surface and its own primitives, and the
+#: package re-exports the contract, not its entry point's private names.
+TEXT_NAME: Final[Path] = Path("text.txt")
 
 #: What one method returns: the payload its caller prints, or writes beside the artifacts.
 Payload = dict[str, Any]
@@ -194,12 +204,21 @@ def _text(
     input_path: Path,
     root: Path,
 ) -> Payload:
-    """Read one conversion's plain text."""
-    del root
+    """Read one conversion's plain text and publish it as the run's ``text.txt``.
+
+    The text is normalized before it is written, which is the form the processor's own ``run``
+    gives ``text.txt`` (``normalize_ocr_text``): the bench publishes the *same* artifact for the
+    same image, under the same name, so two runs of one input cannot be read as two readings. It
+    is what the payload reports, too — the processor's rule is that what the result states is
+    exactly what the file holds.
+    """
     conversion, _ = _conversion(args, parser, input_path)
+    text = primitives.normalize_ocr_text(primitives.extract_docling_text(conversion))
+    published = primitives.write_text_atomic(root / TEXT_NAME, text)
     return {
         "input": str(input_path),
-        "text": primitives.extract_docling_text(conversion),
+        "text": text,
+        "output": str(published),
     }
 
 
