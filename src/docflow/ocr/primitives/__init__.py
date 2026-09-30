@@ -15,13 +15,18 @@ rather than offered as an option.
 The engine is resolved **at call time** and named explicitly — there is no fallback, no probing
 for an installed library and no silent substitution — so ``import docflow.ocr.primitives``
 succeeds with Docling absent and an absent library surfaces as a typed ``ENGINE_ERROR`` from the
-call instead of an import error. Docling is a Python library, and two of its habits shape this
+call instead of an import error. Docling is a Python library, and three of its habits shape this
 module:
 
 * **it reports failure twice.** A conversion that fails may raise, or it may *return* a
   ``ConversionResult`` whose status is ``failure`` with a populated ``errors`` list.
   :func:`conversion_failure` owns that half of the surface, because a returned failure is not an
   exception and would otherwise be read as a successful conversion of an empty page;
+* **its document is layered.** Everything it reads is filed in a content layer, and a page's
+  headers, footers and page numbers go to ``furniture`` — the ``CAE`` of an Argentine invoice
+  among them. Its traversal and its exports read the ``body`` alone unless the layers are asked
+  for, so :data:`CONTENT_LAYERS` is asked for everywhere this module reads the document: a line
+  the engine read and the processor then dropped in silence is the substitute this project forbids;
 * **its structures are rich and its own.** ``DoclingDocument``, ``TextItem``, ``TableItem``,
   ``PageItem`` and their provenance are translated here into the engine-independent
   :class:`~docflow.ocr.contracts.OCRDocument`; nothing downstream — and no other processor —
@@ -114,6 +119,16 @@ GENERATE_PAGE_IMAGES: Final[bool] = False
 #: page. Docling reports it for the pages this processor converts, so a box read as top-down
 #: describes the page upside down (:func:`_engine_box`).
 BOTTOM_LEFT_ORIGIN: Final[str] = "BOTTOMLEFT"
+
+#: The content layers the document is read *from*. The engine sorts what it reads into layers, and
+#: a page's headers, footers and page numbers go to ``furniture`` — the ``CAE`` of an Argentine
+#: invoice is one of them, because the layout model calls the band holding it a ``page_footer``.
+#: The engine's own traversal reads ``body`` alone unless it is told otherwise, so a run that
+#: passed nothing would drop those lines without saying so. Reading the page whole is the point:
+#: what a block's *type* records is that a line came from the margin, and the metrics count it —
+#: neither is a reason to lose it. Plain layer names are enough: the engine's own ``ContentLayer``
+#: is a ``str`` enum, so its members compare and hash as the strings they spell.
+CONTENT_LAYERS: Final[frozenset[str]] = frozenset({"body", "furniture"})
 
 #: The conversion statuses this seam models, and the failure kind each one carries. A status that
 #: is not a key here is not a conversion this processor can describe, so it is an
@@ -411,8 +426,13 @@ def _document(conversion: Any) -> Any:
 
 
 def _items(document: Any) -> list[tuple[Any, int]]:
-    """Return the engine's items and their levels, in the engine's own order."""
-    return list(document.iterate_items())
+    """Return the engine's items and their levels, in the engine's own order.
+
+    Every layer the processor reads is asked for (:data:`CONTENT_LAYERS`), so a header or a footer
+    the engine placed outside the body is translated like any other item instead of being dropped
+    in silence — the engine's default traversal would leave it out of every artifact.
+    """
+    return list(document.iterate_items(included_content_layers=CONTENT_LAYERS))
 
 
 def _label(item: Any) -> str:
@@ -606,6 +626,10 @@ def extract_docling_tables(
 def _export(conversion: Any, method: str, representation: str) -> str:
     """Call one of the engine's export methods and type its failure.
 
+    ``Furniture`` is asked for as well, so the exported text holds what the document holds: an
+    export built from the body alone would drop a page's footer while the blocks beside it kept
+    one, and the two records of one reading would then disagree.
+
     Args:
         conversion: The engine's conversion result.
         method: The export method's name.
@@ -621,7 +645,7 @@ def _export(conversion: Any, method: str, representation: str) -> str:
     """
     document = _document(conversion)
     try:
-        exported = getattr(document, method)()
+        exported = getattr(document, method)(included_content_layers=CONTENT_LAYERS)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         # The engine's export can fail in its own ways and its exception class cannot be named
         # here without importing the engine at call time; the typed failure below is the point.

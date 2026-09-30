@@ -15,12 +15,15 @@ from pathlib import Path
 import pytest
 
 from tests.fakes.engines.fake_docling import (
+    BODY_LAYER,
     FAKE_ENGINE_VERSION,
+    FURNITURE_LAYER,
     FakeConversionStatus,
     FakeCoordOrigin,
     FakeDocling,
     FakeDoclingError,
     empty_document,
+    footer_document,
     prepared_document,
 )
 from tests.ocr.samples import PREPARED
@@ -80,6 +83,30 @@ def test_the_items_come_back_in_adversarial_order() -> None:
 
     assert tops != sorted(tops)
     assert tops[0] < tops[-1]
+
+
+def test_a_page_footer_is_filed_outside_the_body_and_hidden_until_it_is_asked_for() -> (
+    None
+):
+    """The layer rule is modelled, not assumed: ``furniture`` is left out unless it is stated.
+
+    This is the shape that lost a fiscal code in silence. A double that handed the footer over
+    with the body could only ever agree with a seam that asked for nothing.
+    """
+    document = footer_document(240.0, 120.0)
+    both = {BODY_LAYER, FURNITURE_LAYER}
+
+    assert "CAE N°: 86327284406071" not in [
+        item.text for item, _level in document.iterate_items()
+    ]
+    assert "CAE N°: 86327284406071" in [
+        item.text
+        for item, _level in document.iterate_items(included_content_layers=both)
+    ]
+    assert "CAE N°: 86327284406071" not in document.export_to_text()
+    assert "CAE N°: 86327284406071" in document.export_to_text(
+        included_content_layers=both
+    )
 
 
 def test_a_table_is_a_document_item_and_a_table_view_at_once() -> None:

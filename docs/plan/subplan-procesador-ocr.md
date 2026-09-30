@@ -461,3 +461,17 @@ pylint src tests                          # fixme disabled; the rest clean
    producer (`OCR-06`) or a measurement (`OCRMetrics`) that already exists. The list in
    `docs/idea/procesador-ocr.md` names more primitives; that divergence is deliberate and is
    recorded for `GEN-17`.
+8. **The document is read whole — the `furniture` layer included — RESOLVED.** The engine sorts
+   what it reads into content layers, and a page's headers, footers and page numbers go to
+   `furniture`. Its own traversal (`iterate_items()`) and its own exports (`export_to_text()`,
+   `export_to_markdown()`) read the `body` alone unless the layers are stated, so a run that
+   stated nothing dropped those lines without saying so. Measured on
+   `tests/fixtures/casos/66cd35e9-….jpg` (docling 2.126.0): the layout model calls the band
+   carrying the invoice's `CAE` a `page_footer`, the OCR reads all five lines (they are among the
+   page's 75 text-line cells), and the document holds them — **43 items by default against 48**
+   with the layer stated. `primitives.CONTENT_LAYERS` is therefore asked for wherever this
+   processor reads the document, the exports included, because a line the engine read and the
+   processor then dropped in silence is the substitute this project forbids. What keeps the
+   distinction usable is the *block's own type* (`page_header`/`page_footer` → `"other"`): a
+   consumer can still tell a margin from the page's body, and the metrics count what was read.
+   This is content, not a capability the caller claims, so it is not an option.

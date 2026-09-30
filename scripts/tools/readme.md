@@ -275,6 +275,11 @@ the one thing string surgery on an export cannot do: the engine states one regio
 form's label and its value arrive one under the other, and no joining of newlines puts them back
 side by side. A run that claims no layout has no boxes to group and is rendered verbatim instead.
 
+**The reading is the whole page.** The engine files a page's headers, footers and page numbers in a
+content layer of its own and reads the body alone unless the layers are asked for, so both artifacts
+ask for both: a footer the layout model filed as one — an invoice's `CAE`, say — comes back as a
+block and a line like any other instead of a line nobody mentions.
+
 ### `llm.py` — `SCR-05`
 
 `--provider` and `--model` are **required on every inference subcommand** (`call`, `node`,

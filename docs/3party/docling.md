@@ -49,13 +49,25 @@ Mapped to `subplan-procesador-ocr.md` §3.4 (the closed 25-name surface).
 | — hardware | `AcceleratorOptions(num_threads=4, device="auto", cuda_use_flash_attention2=False)` |
 | `normalize_docling_options` | fold the six option flags into the pipeline config **inline** — no `enable_*` / `should_enable_*` predicate per flag |
 | `convert_image_with_docling` | `converter.convert(path)` → `ConversionResult` (the **engine call** and the double's injection point) |
-| `extract_docling_text` / `_markdown` | `result.document.export_to_text()` / `export_to_markdown()` |
+| `extract_docling_text` / `_markdown` | `result.document.export_to_text()` / `export_to_markdown()`, both with `included_content_layers=` (see the layering note below) |
 | `extract_docling_tables` | `result.document.tables` → `normalize_table` → `table_to_markdown` |
-| `extract_docling_blocks` | `result.document.iterate_items()` (reading order) |
+| `extract_docling_blocks` | `result.document.iterate_items(included_content_layers=…)` (engine order) |
 | `extract_docling_layout` | page/block geometry on `result.document.pages` (72 points per inch; `normalize_bbox` converts) |
 | `get_engine_version` | `docling.__version__` (see B) |
 | `build_ocr_metadata` | plus `result.status`, `result.errors`, `result.input` |
 | `validate_ocr_*`, `write_*_atomic`, `ensure_directory` | ours — no Docling call |
+
+**Content layers — measured 2026-09-30 (docling 2.126.0, our pin).** Everything the engine reads is
+filed in a content layer, and a page's headers, footers and page numbers go to `furniture`. Its own
+`ContentLayer` is a `str` enum, so plain names work: `included_content_layers={"body", "furniture"}`
+is the same argument as the enum members. `iterate_items()`, `export_to_text()` and
+`export_to_markdown()` traverse the **`body` alone** unless the layers are stated, and nothing
+announces the omission. Measured on `tests/fixtures/casos/66cd35e9-….jpg`: the layout model calls the
+band holding the invoice's `CAE` a `page_footer`, RapidOCR reads all five lines of that band (they
+are among the page's 75 `textline_cells`), and the document holds them — **43 items by default
+against 48** with the layer stated, `CAE N°: 86327284406071` appearing only in the second. The
+processor therefore asks for both (`docflow.ocr.primitives.CONTENT_LAYERS`); the block's own type
+(`page_header`/`page_footer` → `"other"`) is what still distinguishes a margin from the body.
 
 **Verified imports** (Context7, `/websites/docling-project_github_io_docling`) — the names and their homes, so the seam does not guess a module path:
 

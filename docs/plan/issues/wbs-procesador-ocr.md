@@ -103,10 +103,11 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** OCR-03
 - **Blocks:** OCR-05
 - **Objective:** Run the Docling conversion once and translate its native structures into the engine-independent `OCRDocument`, so the rest of the system never touches Docling types.
-- **Scope / Deliverables:** `convert_image_with_docling`; `extract_docling_text`, `extract_docling_markdown`, `extract_docling_tables`, `extract_docling_blocks`, `extract_docling_layout`; the `OCRDocument` builder. The four `export_docling_*` functions are not built: `OCR-06` is the single producer of the three artifacts.
+- **Scope / Deliverables:** `convert_image_with_docling`; `extract_docling_text`, `extract_docling_markdown`, `extract_docling_tables`, `extract_docling_blocks`, `extract_docling_layout`; the `OCRDocument` builder. The four `export_docling_*` functions are not built: `OCR-06` is the single producer of the three artifacts. Every read of the engine's document asks for the `body` **and** `furniture` content layers (`primitives.CONTENT_LAYERS`): the engine's own traversal and exports read the body alone, and a page's footer — an invoice's `CAE` is one — would otherwise be lost in silence (`subplan-procesador-ocr.md` §9, decision 8).
 - **Out of bounds:** No ordering guarantees here (that is OCR-05); no validation, no persistence; Docling native structures must not leak past `ocr/primitives/`.
 - **Acceptance criteria:**
   - Given `fixtures/ocr_prepared_text_and_table.png`, when extraction runs, then the `OCRDocument` contains a heading, a paragraph and one table with its cells.
+  - Given a page whose layout model filed a line as a `page_footer`, when extraction runs, then the line is a block of the document and of the exported text — never dropped because the engine left it outside the body — and its block type says it came from the margin.
   - Given an engine that raises during conversion, then the failure surfaces as a typed `OCRError` of type `ENGINE_ERROR`, never as an escaping exception.
 - **Evidence / DoD:** Fixture-based test; engine-failure containment test.
 - **Tags:** `# TODO: [MVP]` for richer Docling structure mapping.
@@ -269,7 +270,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
   - Given the fake in place, when the whole suite runs, then every test of this processor passes with zero Docling conversions, and the run needs no engine installed.
   - Given the fake, when blocks are handed to the invariant-1 test, then they are returned in **adversarial (unsorted) order**, so a broken sort fails the test.
   - Given the fake returns an empty document, then the `EMPTY` path is asserted with no live conversion; given the fake raises, then `ENGINE_ERROR` is contained and no `.tmp` residue remains.
-  - Given this seam replaces a symbol of ours rather than an engine namespace, the attribute check of `tests/fakes/engines/convention.py` does not apply here: what this double must model is Docling's **native return shape**, asserted by the invariant tests that consume it.
+  - Given this seam replaces a symbol of ours rather than an engine namespace, the attribute check of `tests/fakes/engines/convention.py` does not apply here: what this double must model is Docling's **native return shape**, asserted by the invariant tests that consume it — the box's coordinate origin and the document's content layers included, since a double that reported top-down boxes or handed the furniture over with the body could only ever agree with a seam that asked for neither.
 - **Evidence / DoD:** The suite green with Docling absent; no engine symbol imported by any test module of this processor; any cached corpus helper's cache key includes **which engine** produced the result.
 - **Tags:** `# TODO: [RELEASE]` for a re-check of the double against the real engine's shape on a pin bump.
 

@@ -48,6 +48,7 @@ from tests.fakes.engines.fake_docling import (
     FakeConversionStatus,
     FakeDocling,
     empty_document,
+    footer_document,
     prepared_document,
 )
 from tests.ocr.samples import PREPARED
@@ -322,6 +323,29 @@ def test_the_exports_are_returned_untranslated() -> None:
     assert extract_docling_markdown(engine_conversion).startswith("# Quarterly report")
 
 
+def test_a_page_footer_is_read_instead_of_being_left_in_its_own_layer() -> None:
+    """The engine files a footer in ``furniture`` and reads the body alone; this seam reads both.
+
+    The operator's invoice is the case: the layout model calls the band holding the ``CAE`` a page
+    footer, the engine files it outside the body, and its traversal and exports would leave it out
+    of every artifact without saying so. A block is where that line stops being invisible — and
+    the page's footer is part of the page.
+    """
+    engine_conversion = conversion(document=footer_document)
+    geometry = extract_docling_layout(engine_conversion)
+    blocks = extract_docling_blocks(engine_conversion, geometry, with_layout=True)
+
+    assert "CAE N°: 86327284406071" in extract_docling_text(engine_conversion)
+    assert [block.text for block in blocks] == [
+        "Quarterly report",
+        "Revenue grew by twelve percent",
+        "CAE N°: 86327284406071",
+    ]
+    footer = blocks[-1]
+    assert footer.type == "other"
+    assert footer.bbox is not None and footer.bbox[1] > 0.8
+
+
 def test_an_export_that_raises_is_an_export_error() -> None:
     """A representation that cannot be produced fails the run; it does not become an empty one."""
 
@@ -331,7 +355,7 @@ def test_an_export_that_raises_is_an_export_error() -> None:
         # pylint: disable=too-few-public-methods
         # Reason: the stub exists to fail the way the engine's exporter does, and nothing else.
 
-        def export_to_text(self) -> str:
+        def export_to_text(self, **_: Any) -> str:
             """Fail the way the engine's exporter does."""
             raise RuntimeError("the exporter gave up")
 
@@ -350,7 +374,7 @@ def test_an_export_that_is_not_text_is_an_export_error() -> None:
         # pylint: disable=too-few-public-methods
         # Reason: the stub exists to answer with the wrong type, and nothing else.
 
-        def export_to_markdown(self) -> list[Any]:
+        def export_to_markdown(self, **_: Any) -> list[Any]:
             """Answer with something that is not text."""
             return []
 

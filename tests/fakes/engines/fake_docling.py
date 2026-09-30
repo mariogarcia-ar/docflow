@@ -57,6 +57,14 @@ FIXTURE_HEIGHT = 120
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
+#: The layer the engine files a page's own content in, and the one its traversal reads by default.
+BODY_LAYER = "body"
+
+#: The layer the engine files a page's headers, footers and page numbers in. Its traversal and its
+#: exports leave it out unless it is asked for — which is how a ``page_footer`` carrying a fiscal
+#: code disappears from a reading that never stated the layers it wanted.
+FURNITURE_LAYER = "furniture"
+
 
 class FakeConversionStatus(StrEnum):
     """The engine's conversion status, modelled as the ``str`` enum the real one is."""
@@ -210,6 +218,7 @@ class FakeTextItem:
         text: str,
         box: FakeBoundingBox | None = None,
         page_no: int = 1,
+        content_layer: str = BODY_LAYER,
     ) -> None:
         """Build an item.
 
@@ -218,9 +227,11 @@ class FakeTextItem:
             text: Its text; empty for a picture.
             box: Where it sits, or ``None`` for an item with no provenance.
             page_no: 1-based page it sits on.
+            content_layer: The layer the engine filed it in.
         """
         self.label = label
         self.text = text
+        self.content_layer = content_layer
         self.prov = [] if box is None else [FakeProvenance(page_no, box)]
 
 
@@ -281,6 +292,7 @@ class FakeTableItem:
         rows: Sequence[Sequence[str]],
         box: FakeBoundingBox | None = None,
         page_no: int = 1,
+        content_layer: str = BODY_LAYER,
     ) -> None:
         """Build a table item.
 
@@ -288,9 +300,11 @@ class FakeTableItem:
             rows: The cell texts, by row and then by column.
             box: Where it sits, or ``None``.
             page_no: 1-based page it sits on.
+            content_layer: The layer the engine filed it in.
         """
         self.label = FakeDocItemLabel.TABLE
         self.text = ""
+        self.content_layer = content_layer
         self.data = FakeTableData(len(rows), len(rows[0]) if rows else 0, rows)
         self.prov = [] if box is None else [FakeProvenance(page_no, box)]
 
@@ -334,18 +348,34 @@ class FakeDoclingDocument:
         self._text = text
         self._markdown = markdown
 
-    def iterate_items(self) -> Iterator[tuple[Any, int]]:
-        """Yield ``(item, level)`` pairs, in the double's adversarial order."""
+    def iterate_items(
+        self, included_content_layers: set[str] | frozenset[str] | None = None
+    ) -> Iterator[tuple[Any, int]]:
+        """Yield ``(item, level)`` pairs, in the double's adversarial order.
+
+        Only the layers the caller asked for, and the ``body`` alone when it asked for none — the
+        engine's own default, and the reason a page's footer can go missing without a word.
+        """
+        wanted = (
+            {BODY_LAYER}
+            if included_content_layers is None
+            else set(included_content_layers)
+        )
         for item in self.items:
-            yield item, 1 if item.label == FakeDocItemLabel.SECTION_HEADER else 0
+            if item.content_layer in wanted:
+                yield item, 1 if item.label == FakeDocItemLabel.SECTION_HEADER else 0
 
-    def export_to_text(self) -> str:
-        """Return the plain-text export."""
-        return self._text
+    def export_to_text(
+        self, included_content_layers: set[str] | frozenset[str] | None = None
+    ) -> str:
+        """Return the plain-text export, with whatever the caller asked the layers for."""
+        return _layered(self._text, self.items, included_content_layers)
 
-    def export_to_markdown(self) -> str:
-        """Return the Markdown export."""
-        return self._markdown
+    def export_to_markdown(
+        self, included_content_layers: set[str] | frozenset[str] | None = None
+    ) -> str:
+        """Return the Markdown export, with whatever the caller asked the layers for."""
+        return _layered(self._markdown, self.items, included_content_layers)
 
 
 class _Page:
@@ -396,6 +426,75 @@ def _box(
 ) -> FakeBoundingBox:
     """Return the engine-reported box for a rectangle the factories state from the page's top."""
     return FakeBoundingBox.for_top_down_rect(page_height, left, top, right, bottom)
+
+
+def _layered(
+    canned: str,
+    items: Sequence[Any],
+    included_content_layers: set[str] | frozenset[str] | None,
+) -> str:
+    """Return the double's canned export, plus the items it holds outside the body.
+
+    The body is the double's own string — the plan fixes it so the seam translates rather than
+    reorders — and what is modelled here is the engine's *layer* rule: it renders the whole tree
+    when the layers are stated, and the body alone when they are not.
+    """
+    wanted = (
+        {BODY_LAYER}
+        if included_content_layers is None
+        else set(included_content_layers)
+    )
+    extra = [
+        item.text
+        for item in items
+        if item.content_layer in wanted
+        and item.content_layer != BODY_LAYER
+        and item.text
+    ]
+    return "\n\n".join([canned, *extra]).strip()
+
+
+def footer_document(width: float, height: float) -> FakeDoclingDocument:
+    """Return a page whose footer carries what the body does not: a fiscal code.
+
+    The layout model files that band as a page footer, and the engine puts a page footer in the
+    ``furniture`` layer, which its traversal and its exports leave out unless they are asked for.
+    This is the document that makes that rule a tested path rather than an assumption — a seam
+    that asked for nothing would lose the line, and the loss would be invisible.
+
+    Args:
+        width: The page's width, taken from the file.
+        height: The page's height, taken from the file.
+
+    Returns:
+        The document.
+    """
+    tenth = height / 10
+    items = [
+        FakeTextItem(
+            FakeDocItemLabel.SECTION_HEADER,
+            "Quarterly report",
+            _box(height, width * 0.05, tenth * 1, width * 0.85, tenth * 2),
+        ),
+        FakeTextItem(
+            FakeDocItemLabel.TEXT,
+            "Revenue grew by twelve percent",
+            _box(height, width * 0.05, tenth * 3, width * 0.85, tenth * 4),
+        ),
+        FakeTextItem(
+            FakeDocItemLabel.PAGE_FOOTER,
+            "CAE N°: 86327284406071",
+            _box(height, width * 0.05, tenth * 9, width * 0.85, tenth * 9.6),
+            content_layer=FURNITURE_LAYER,
+        ),
+    ]
+    return FakeDoclingDocument(
+        items,
+        "Quarterly report\n\nRevenue grew by twelve percent",
+        "# Quarterly report\n\nRevenue grew by twelve percent",
+        width,
+        height,
+    )
 
 
 def prepared_document(width: float, height: float) -> FakeDoclingDocument:

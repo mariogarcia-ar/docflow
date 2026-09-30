@@ -37,6 +37,7 @@ from tests.fakes.engines.fake_docling import (
     FakeConversionStatus,
     FakeDocling,
     FakeDoclingDocument,
+    footer_document,
     prepared_document,
 )
 from tests.fakes.engines.fake_opencv import FakeOpenCV
@@ -856,6 +857,37 @@ def test_only_the_two_table_commands_claim_the_detection(command: str) -> None:
     args = tool_module("batch_ocr").build_parser().parse_args([str(FIXTURES), command])
 
     assert args.tables is (command in {"tables", "mixed"})
+
+
+def test_ocr_mixed_renders_a_page_footer_instead_of_dropping_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A page's footer is part of the page: ``mixed`` renders it, and ``text`` publishes it.
+
+    The engine files a footer in its own content layer and reads the body alone unless the layers
+    are stated, so a reading that never stated them loses the line without a word — on an invoice
+    that is the ``CAE``. Both readings ask for the whole page.
+    """
+    monkeypatch.setattr(
+        "docflow.ocr.primitives.convert_image_with_docling",
+        FakeDocling(document=footer_document),
+    )
+
+    code = tool_module("ocr").main(
+        ["--json", "--out", str(tmp_path), "mixed", str(SAMPLE_OCR)]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert payload["text"].endswith("CAE N°: 86327284406071")
+    assert (tmp_path / "mixed.txt").read_text(encoding="utf-8") == payload["text"]
+
+    assert (
+        tool_module("ocr").main(["--out", str(tmp_path), "text", str(SAMPLE_OCR)]) == 0
+    )
+    assert "CAE N°: 86327284406071" in (tmp_path / "text.txt").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_ocr_mixed_renders_the_pages_rows_and_publishes_them(

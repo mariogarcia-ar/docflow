@@ -2429,3 +2429,70 @@ not a Docling field at all, and the *other* ~30 fields (`ocr_options`, `layout_o
 `table_structure_options`, `images_scale`, …) are unreachable — so the only knobs that could
 influence the OCR model (including the `ch` default upstream #2887 measures at ~3× the CER of the
 English model) are inert. The fix is a library change with its own revision.
+
+---
+
+## 2026-09-30 — Phase 1 · the OCR document is read whole, footer included (`CONTENT_LAYERS`)
+
+**A missing `CAE`, and the OCR was never the problem.** The operator asked why
+`var/batch_ocr/…/mixed.txt` does not show the fiscal block the invoice prints at its foot
+(`Saldo Cta Cte …`, `-1.522,34`, `CAE N°: 86327284406071`, `Venc. de CAE: 17/08/2026`, `Pág.1/1`).
+Traced end to end, on `tests/fixtures/casos/66cd35e9-….jpg` (docling 2.126.0):
+
+| Layer | Observation |
+|---|---|
+| Pixels | **RapidOCR alone reads the band** (cropped at y ≥ 0.86): all five lines, at 1×, 2× and 3× |
+| Layout | The layout model files the band as `page_footer` ×4 plus `Pág.1/1`, with a `picture` for the QR — the totals band above it is `key_value_region` + `text` |
+| OCR | The page's **75 `textline_cells` include all five lines**: the engine read them |
+| Document | The engine files `page_footer` items in the **`furniture` content layer**, and `iterate_items()`, `export_to_text()` and `export_to_markdown()` traverse the **`body` alone** unless told otherwise — **43 items by default against 48** with the layer stated. `doc.furniture` (the group) is empty; the items are ordinary ones carrying `content_layer = FURNITURE` |
+| Our seam | `_items()` was `document.iterate_items()` and `_export()` called the export with no arguments, so those five lines reached **no** artifact — not `document.json`, not `blocks`, not `layout.region_bboxes`, not `text.txt`, not `mixed.txt` |
+
+**The fix is the seam reading the page whole.** `primitives.CONTENT_LAYERS = frozenset({"body",
+"furniture"})` is asked for by `_items()` and by `_export()` — the traversal *and* both exports, so an
+artifact cannot hold a footer the block list beside it dropped. Plain layer names are enough: the
+engine's own `ContentLayer` is a `str` enum, so the set compares and hashes by value and the seam
+needs no `docling_core` import. No flag and no option: this is the page's content, not a capability
+the caller claims, and the *block's own type* (`page_header`/`page_footer` → `"other"`) is what still
+distinguishes a margin from the body (`subplan-procesador-ocr.md` §9, **decision 8**).
+
+**Hand run (real engine).** `ocr.py --out … mixed <invoice>` now ends
+`… 17.898,30` / `Saldo Cta Cte ...   -1.522,34   CAE N°: 86327284406071` / `Venc. de CAE:
+17/08/2026` / `Pág.1/1` — and the first of those rows is the row rendering doing its job: the three
+cells share a band of the page. `ocr.py text <invoice>` carries the same lines, so the two readings
+agree about what the page says.
+
+**The double models the layer rule**, or the fix would be untestable: items carry a `content_layer`,
+`iterate_items()`/`export_to_text()`/`export_to_markdown()` honour the requested set and default to
+`body`, and a new factory (`footer_document`) holds a `page_footer` line the body does not. Three new
+guards: the double's own layer rule, the seam's reading of the footer, and the bench rendering it.
+
+**Mutation evidence** (two rows, each applied to `src/docflow/ocr/primitives/__init__.py` and restored
+by the inverse edit).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `_items`: drop `included_content_layers=CONTENT_LAYERS` | 2 red — `test_a_page_footer_is_read_instead_of_being_left_in_its_own_layer` and `test_ocr_mixed_renders_a_page_footer_instead_of_dropping_it` | inverse edit |
+| `_export`: call the export with no arguments | 2 red — the same pair, this time on the exported text rather than the blocks | inverse edit; `pytest -q` 777 passed |
+
+**Gate evidence.**
+
+```
+pytest                     777 passed
+ruff check .               All checks passed!
+ruff format --check .      181 files already formatted
+pylint src tests           10.00/10 — one message, the pre-existing
+                           src/docflow/pdf/entrypoints.py:475 R0912 (15/12)
+```
+
+**Plan revision applied in the same pass** — this one belongs to the *processor*, not the bench:
+`subplan-procesador-ocr.md` §9 gained **decision 8** (the whole-document read, with the measurement),
+and `wbs-procesador-ocr.md` §OCR-04 gained the layer rule in its scope and an acceptance criterion,
+§OCR-14 the double's obligation to model it. `docs/3party/docling.md` §D records the engine evidence:
+the two `extract_docling_*` rows now name `included_content_layers`, and a note carries the
+measurement (75 cells, 43 vs 48 items, `doc.furniture` empty). `scripts/tools/readme.md` gained the
+one-line rule.
+
+**Cost, stated.** A running head or a page number now enters `blocks`, `text.txt` and the metrics of
+every page that carries one, typed `"other"`. That is the trade: on an invoice the footer is legally
+required content, and a consumer that wants the body alone filters by type rather than losing the
+line by default.
