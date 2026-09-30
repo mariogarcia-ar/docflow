@@ -89,6 +89,7 @@ from docflow.image.primitives.composition import (
     TEXT_REGION_KERNEL,
     VLM_MAX_DIMENSION,
     ImageFileFacts,
+    brightness_shift,
     build_text_regions,
     calculate_text_coverage,
     classify_image,
@@ -535,16 +536,26 @@ def normalize_contrast(gray: Any) -> Any:
 def normalize_brightness(pixels: Any, delta: float) -> Any:
     """Return ``pixels`` shifted in brightness by ``delta`` grey levels.
 
+    The shift saturates at both ends of the 8-bit range and keeps the tone order. It is
+    deliberately not ``convertScaleAbs``: that function answers ``|value + delta|``, so a
+    negative shift mirrors every value below ``|delta|`` around zero — the darkest ink comes
+    back lighter than the paper, and the artifact is folded rather than shifted.
+
     Args:
         pixels: The decoded image.
-        delta: The shift, positive to brighten. The caller computes it from a measurement.
+        delta: The shift, positive to brighten, saturated at the range's ends.
 
     Returns:
-        The shifted image, saturated to the 8-bit range.
+        The shifted image.
     """
+    if delta >= 0:
+        return _apply(
+            lambda cv2: cv2.add(pixels, float(delta)),
+            f"brighten the page by {delta} grey levels",
+        )
     return _apply(
-        lambda cv2: cv2.convertScaleAbs(pixels, alpha=1.0, beta=delta),
-        f"shift the brightness by {delta}",
+        lambda cv2: cv2.subtract(pixels, float(-delta)),
+        f"darken the page by {-delta} grey levels",
     )
 
 
@@ -978,9 +989,9 @@ def normalize_image(
     ):
         transformed = deskew_image(transformed, metrics.skew)
         applied.append("deskew")
-    if not BRIGHTNESS_MIN <= metrics.quality.brightness <= BRIGHTNESS_MAX:
-        shifted = BRIGHTNESS_TARGET - metrics.quality.brightness
-        transformed = normalize_brightness(transformed, shifted)
+    shift = brightness_shift(metrics.quality.brightness)
+    if shift is not None:
+        transformed = normalize_brightness(transformed, shift)
         applied.append("normalize_brightness")
 
     return transformed, applied
@@ -1136,9 +1147,9 @@ def prepare_image_for_vlm(
     if options.correct_orientation and metrics.orientation:
         transformed = rotate_image(transformed, float(metrics.orientation))
         applied.append("correct_orientation")
-    if not BRIGHTNESS_MIN <= metrics.quality.brightness <= BRIGHTNESS_MAX:
-        shifted = BRIGHTNESS_TARGET - metrics.quality.brightness
-        transformed = normalize_brightness(transformed, shifted)
+    shift = brightness_shift(metrics.quality.brightness)
+    if shift is not None:
+        transformed = normalize_brightness(transformed, shift)
         applied.append("normalize_brightness")
 
     width, height = get_image_dimensions(transformed)

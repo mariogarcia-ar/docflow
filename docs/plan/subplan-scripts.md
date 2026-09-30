@@ -199,9 +199,9 @@ Every row names a symbol that exists today. A row with no symbol would not be a 
 |---|---|---|
 | `info` | `image.primitives.get_image_metadata` + `get_image_dimensions` | no pixels decoded |
 | `metrics` | `image.primitives.load_image` + `analyze_image` | the technical analysis |
-| `normalize` | `image.primitives.prepare_normalized_image` | `normalized.png` |
-| `ocr-ready` | `image.primitives.prepare_image_for_ocr` | its own pipeline |
-| `vlm-ready` | `image.primitives.prepare_image_for_vlm` | distinct from `ocr-ready`, never an alias |
+| `normalize` | `image.primitives.prepare_normalized_image` | `normalized.png`, or `normalized.jpg` with `--quality` |
+| `ocr-ready` | `image.primitives.prepare_image_for_ocr` | its own pipeline; always lossless |
+| `vlm-ready` | `image.primitives.prepare_image_for_vlm` | distinct from `ocr-ready`, never an alias; `--quality` publishes it lossy |
 | `classify` | `image.primitives.composition.classify_image` | over the metrics above |
 | `run` | `image.process_image` | the contract; `--from-page` adds `process_image_from_page` |
 

@@ -22,7 +22,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Critical path | `IMG-01 → IMG-02 → IMG-03 → IMG-04 → IMG-06 → IMG-07 → IMG-11 → IMG-12 → IMG-13` |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
-**Scope.** Turn one `ImageRequest` into one `ImageResult`: validate the input, compute technical metrics without mutating the source, produce `normalized.png` plus independent `ocr_ready.png` / `vlm_ready.png` variants, classify technically, validate the outputs and publish everything atomically inside the `image/` namespace with a `metadata.json`. OpenCV (Pillow as fallback) is reached only from `image/primitives/`. No OCR, no LLM, no source selection, no workflow decision.
+**Scope.** Turn one `ImageRequest` into one `ImageResult`: validate the input, compute technical metrics without mutating the source, produce a `normalized` representation plus independent `ocr_ready` / `vlm_ready` variants, classify technically, validate the outputs and publish everything atomically inside the `image/` namespace with a `metadata.json`. A representation is published as `.png` unless the request states a `quality` factor, in which case the tone-preserving representations are `.jpg` and the binarized one stays `.png` (`docs/feedback/image-quality-and-exposure.md` D-1/D-2). OpenCV (Pillow as fallback) is reached only from `image/primitives/`. No OCR, no LLM, no source selection, no workflow decision.
 
 **Test framing.** Every primitive below is exercised with the in-memory OpenCV double in place of the engine call (`IMG-15`): the assertions are about **our** translation, naming, ordering, thresholds and error mapping, never about what OpenCV computes or returns (`README.md` §9.7). A criterion that would assert an engine reading is not a criterion of this programme.
 
@@ -36,8 +36,8 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | IMG-04 | Analysis primitives | M | 2 — Analysis | IMG-03 | `calculate_*_score`, `detect_orientation`, `detect_skew_angle`, `detect_text_regions`, `calculate_text_coverage` | this file §IMG-04 | NOT_STARTED |
 | IMG-05 | Transformation primitives | M | 2 — Analysis | IMG-03 | `rotate_image`, `deskew_image`, `resize_image`, `convert_to_grayscale`, `binarize_image`, `denoise_image`, `sharpen_image`, `normalize_contrast`, `normalize_brightness`, `convert_image_format`, `compress_image` | this file §IMG-05 | NOT_STARTED |
 | IMG-06 | `analyze_image` → `ImageMetrics` | S | 2 — Analysis | IMG-04 | `analyze_image` (side-effect-free) | this file §IMG-06 | NOT_STARTED |
-| IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png` | this file §IMG-07 | NOT_STARTED |
-| IMG-08 | `prepare_image_for_ocr` / `prepare_image_for_vlm` | M | 3 — Outputs | IMG-05, IMG-06 | `image/ocr_ready.png`, `image/vlm_ready.png` (distinct pipelines) | this file §IMG-08 | NOT_STARTED |
+| IMG-07 | `normalize_image` + `prepare_normalized_image` | M | 3 — Outputs | IMG-05, IMG-06 | `image/normalized.png`, or `.jpg` when a quality factor was stated | this file §IMG-07 | NOT_STARTED |
+| IMG-08 | `prepare_image_for_ocr` / `prepare_image_for_vlm` | M | 3 — Outputs | IMG-05, IMG-06 | `image/ocr_ready.png` (always lossless), `image/vlm_ready.png` or `.jpg` (distinct pipelines) | this file §IMG-08 | NOT_STARTED |
 | IMG-09 | `classify_image` | S | 3 — Outputs | IMG-06 | `TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY` | this file §IMG-09 | NOT_STARTED |
 | IMG-10 | `validate_image_result` + typed error classification | S | 3 — Outputs | IMG-06 | `validate_image_result`, `ImageError` kinds | this file §IMG-10 | NOT_STARTED |
 | IMG-11 | Atomic persistence + `metadata.json` | M | 4 — Publish | IMG-07, IMG-08, IMG-10 | `image/.tmp/` → rename; `image/metadata.json` | this file §IMG-11 | NOT_STARTED |
@@ -56,7 +56,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** —
 - **Blocks:** IMG-02
 - **Objective:** Freeze the input/output vocabulary: `ImageRequest` in, `ImageResult` out, with metrics, classification, validation and typed error records. No defaults on required fields.
-- **Scope / Deliverables:** `ImageRequest` (`image_path`, `output_dir`, `options`, `context`), `ImageOptions` (`normalize`, `prepare_for_ocr`, `prepare_for_vlm`, `correct_orientation`, `deskew`), `ImageContext` (`document_id`, `page_number`, `workflow_run_id`), `ImageResult` (`source`, `normalized`, `variants`, `metrics`, `classification`, `transformations`, `validation`, `artifacts`, `metadata`, `status`), `ImageSourceRef`, `ArtifactRef`, `ImageVariants`, `ImageMetrics` (`dimensions`, `resolution`, `format`, `size`, `quality{blur, sharpness, contrast, brightness, noise}`, `orientation`, `skew`, `text_regions[]`, `text_coverage`), `ImageClassification`, `ImageValidation` (`VALID` / `LOW_QUALITY` / `INVALID_OUTPUT` / `UNSUPPORTED` / `ERROR`), `ImageError` (`type`, `message`, `recoverable`, `metadata`) with kinds `INVALID_INPUT`, `UNSUPPORTED_FORMAT`, `DECODE_ERROR`, `TRANSFORMATION_ERROR`, `WRITE_ERROR`, `IO_ERROR`, `INTERNAL_ERROR`, `ImageMetadata`.
+- **Scope / Deliverables:** `ImageRequest` (`image_path`, `output_dir`, `options`, `context`), `ImageOptions` (`normalize`, `prepare_for_ocr`, `prepare_for_vlm`, `correct_orientation`, `deskew`, `quality`), `ImageContext` (`document_id`, `page_number`, `workflow_run_id`), `ImageResult` (`source`, `normalized`, `variants`, `metrics`, `classification`, `transformations`, `validation`, `artifacts`, `metadata`, `status`), `ImageSourceRef`, `ArtifactRef`, `ImageVariants`, `ImageMetrics` (`dimensions`, `resolution`, `format`, `size`, `quality{blur, sharpness, contrast, brightness, noise}`, `orientation`, `skew`, `text_regions[]`, `text_coverage`), `ImageClassification`, `ImageValidation` (`VALID` / `LOW_QUALITY` / `INVALID_OUTPUT` / `UNSUPPORTED` / `ERROR`), `ImageError` (`type`, `message`, `recoverable`, `metadata`) with kinds `INVALID_INPUT`, `UNSUPPORTED_FORMAT`, `DECODE_ERROR`, `TRANSFORMATION_ERROR`, `WRITE_ERROR`, `IO_ERROR`, `INTERNAL_ERROR`, `ImageMetadata`.
 - **Out of bounds:** No engine import, no I/O, no processing logic; `context` is correlation only and must never be read as workflow state.
 - **Acceptance criteria:**
   - Given the contract module, when a required field is omitted, then construction fails (no silent default).
@@ -151,11 +151,13 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Wave:** 3 — Outputs
 - **Depends on:** IMG-05, IMG-06
 - **Blocks:** IMG-11
-- **Objective:** Produce the baseline `image/normalized.png` by applying only the transformations justified by metrics plus explicit configuration, and record each applied transformation.
-- **Scope / Deliverables:** `normalize_image`, `prepare_normalized_image`, population of `ImageResult.transformations`.
+- **Objective:** Produce the baseline `image/normalized.png` (or `.jpg` when the request states a quality factor) by applying only the transformations justified by metrics plus explicit configuration, and record each applied transformation.
+- **Scope / Deliverables:** `normalize_image`, `prepare_normalized_image`, population of `ImageResult.transformations`. The exposure correction is one-sided: a page above the brightness band is left alone (`docs/feedback/image-quality-and-exposure.md` D-4).
 - **Out of bounds:** No OCR/VLM-specific preparation; no unrequested enhancement; no silent default transformation set; no write outside `image/`.
 - **Acceptance criteria:**
   - Given a valid PNG and `normalize=true`, when normalization runs, then `image/normalized.png` exists and `transformations` lists every applied operation.
+  - Given `normalize=true` and `quality=85`, then `image/normalized.jpg` exists and the recorded options carry the factor.
+  - Given a page whose measured brightness is above the band, then no brightness correction appears in `transformations`.
   - Given `normalize=false`, then no normalized artifact is produced and no error is raised.
 - **Evidence / DoD:** Scenario test for the "normalize a valid color input" acceptance criterion.
 - **Tags:** `# TODO: [MVP]` for the deferred transformation catalogue.
@@ -168,10 +170,12 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** IMG-05, IMG-06
 - **Blocks:** IMG-11
 - **Objective:** Build two genuinely independent preparation pipelines, because the OCR-optimal image is not assumed to be the VLM-optimal image.
-- **Scope / Deliverables:** `prepare_image_for_ocr` (may grayscale, deskew, binarize, raise contrast) writing `image/ocr_ready.png`; `prepare_image_for_vlm` (preserves colour, layout and visual context) writing `image/vlm_ready.png`.
+- **Scope / Deliverables:** `prepare_image_for_ocr` (may grayscale, deskew, binarize, raise contrast) writing `image/ocr_ready.png`; `prepare_image_for_vlm` (preserves colour, layout and visual context) writing `image/vlm_ready.png`, or `image/vlm_ready.jpg` when the request states a quality factor. The binarized variant is always lossless: a lossy encoder rings around every glyph edge.
 - **Out of bounds:** The VLM pipeline must never alias or return the OCR path; no decision of which variant is used downstream; no crop of any kind in Phase 1 (`crop_region` / `image/regions/` deferred, `# TODO: [MVP]`).
 - **Acceptance criteria:**
   - Given `color_layout.png` with `prepare_for_ocr=true` and `prepare_for_vlm=true`, when both run, then two distinct files exist and the VLM variant preserves colour channels while the OCR variant may be grayscale.
+  - Given `quality=85` with `prepare_for_ocr=true` and `prepare_for_vlm=true`, then the VLM artifact is `.jpg` and the OCR artifact is `.png`.
+  - Given a quality factor outside the accepted band, then the pipeline refuses it with a typed `TRANSFORMATION_ERROR` and publishes nothing.
   - Given only `prepare_for_vlm=true`, then no `ocr_ready.png` is produced.
 - **Evidence / DoD:** Scenario test for independent variants plus the OCR≠VLM invariant (IMG-13, invariant 2) — both assert **our** pipeline wiring and namespace, never the engine's pixel output (`README.md` §9.7).
 - **Tags:** `# TODO: [MVP]` on binarization thresholds.
@@ -232,7 +236,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** IMG-09, IMG-11
 - **Blocks:** IMG-13
 - **Objective:** Wire the full flow — validate input → load → analyze → normalize → classify → prepare variants → validate → persist — into the single public entry point.
-- **Scope / Deliverables:** `process_image(request) -> ImageResult`; `status == "success"` on the happy path, a typed `ImageError` otherwise; the artifact tree exactly `image/normalized.png`, optional `image/ocr_ready.png`, optional `image/vlm_ready.png`, `image/metadata.json`.
+- **Scope / Deliverables:** `process_image(request) -> ImageResult`; `status == "success"` on the happy path, a typed `ImageError` otherwise; the artifact tree exactly `image/normalized.png` (or `normalized.jpg` when a quality factor was stated), optional `image/ocr_ready.png`, optional `image/vlm_ready.png` (or `.jpg`), `image/metadata.json`.
 - **Out of bounds:** No import of another processor; no workflow decision (skip/force/reuse/resume belongs to the orchestrator's `StageExecution`); no mutation of the input image; no default engine or threshold substitution.
 - **Acceptance criteria:**
   - Given a valid `ImageRequest`, when `process_image` runs, then `status == "success"`, `classification` is one of the four defined values and all outputs live under `image/`.
@@ -248,10 +252,12 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** IMG-12, IMG-15
 - **Blocks:** IMG-14
 - **Objective:** Prove the loop end to end and prove each invariant test fails when its invariant is broken. No test reaches OpenCV (`README.md` §9.7).
-- **Scope / Deliverables:** Happy-path test (`ImageRequest → ImageResult`, real bytes from a committed fixture, engine call doubled); invariant 1 (input immutability), invariant 2 (OCR variant ≠ VLM variant), invariant 3 (namespace ownership); committed fixtures `fixtures/image/color_layout.png`, `skewed_text.png`, `embedded_logo.png`, `corrupt.png`; a unit test over **crafted** `ImageMetrics` for the `LOW_QUALITY` boundary; written mutation-falsification observations.
+- **Scope / Deliverables:** Happy-path test (`ImageRequest → ImageResult`, real bytes from a committed fixture, engine call doubled); invariant 1 (input immutability), invariant 2 (OCR variant ≠ VLM variant), invariant 3 (namespace ownership); committed fixtures `fixtures/image/color_layout.png`, `skewed_text.png`, `embedded_logo.png`, `corrupt.png`; a unit test over **crafted** `ImageMetrics` for the `LOW_QUALITY` boundary; the container guard (the artifact is the container the stated quality factor names, and the binarized variant stays lossless); the shift guard (the brightness shift keeps the tone order and saturates); written mutation-falsification observations.
 - **Out of bounds:** No edge-case matrix beyond the four fixtures; no golden-set quality scoring; no test that invokes, imports or asserts OpenCV, and no assertion about the engine's metric values (`README.md` §9.7); no source change made permanent to satisfy a test.
 - **Acceptance criteria:**
   - Given the happy-path fixture, when the test runs, then `normalized.png` exists, `metadata.json` parses, `status == "success"` and `classification` is one of the four values.
+  - Given a stated `quality=85`, then the published representations are the containers that factor names.
+  - Given a brightness shift mutation, then the tone-order test fails; after restore, it is green.
   - Given invariant 1's mutation (save to `image_path` in place), invariant 2's mutation (VLM aliases the OCR path) and invariant 3's mutation (`metadata.json` redirected outside `image/`), then each corresponding test fails; after restore, all are green.
 - **Evidence / DoD:** Test output for the happy path plus both observations per invariant (fails under mutation, green after restore).
 - **Tags:** `# TODO: [MVP]` where a fixture stands in for a real-world scan.

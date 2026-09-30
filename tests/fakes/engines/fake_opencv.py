@@ -449,6 +449,24 @@ class FakeOpenCV:
             return False, FakeBuffer(b"")
         return True, FakeBuffer(_png_bytes(image))
 
+    # --- Arithmetic -----------------------------------------------------------------
+
+    @_recorded
+    def add(self, image: FakeImage, delta: float) -> FakeImage:
+        """Return the image with ``delta`` added to every value, saturating at the top.
+
+        The engine's saturating add, not a wrapping one: a value pushed past the range's end
+        stays at the end. This is the call a brightness correction is made of, and the double
+        models it because ``convertScaleAbs`` — the one that answers an absolute value — would
+        fold a negative shift instead of performing it.
+        """
+        return _map_image(image, lambda x, y, _c: _at(image, x, y) + delta)
+
+    @_recorded
+    def subtract(self, image: FakeImage, delta: float) -> FakeImage:
+        """Return the image with ``delta`` subtracted from every value, at the floor."""
+        return _map_image(image, lambda x, y, _c: _at(image, x, y) - delta)
+
     # --- Colour and geometry -------------------------------------------------------
 
     @_recorded

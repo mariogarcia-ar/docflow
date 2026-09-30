@@ -22,11 +22,13 @@ from docflow.image.primitives.composition import (
     BLUR_MIN,
     BRIGHTNESS_MAX,
     BRIGHTNESS_MIN,
+    BRIGHTNESS_TARGET,
     CONTRAST_MIN,
     NOISE_MAX,
     SHARPNESS_MIN,
     TEXT_COVERAGE_MIN,
     TEXT_DOMINANT_COVERAGE,
+    brightness_shift,
     build_text_regions,
     calculate_text_coverage,
     classify_image,
@@ -165,3 +167,19 @@ def test_the_quality_rule_reads_the_blur_reading_as_a_floor() -> None:
     assert is_low_quality(build_metrics(blur=BLUR_MIN - 1.0)) is True
     assert is_low_quality(build_metrics(blur=BLUR_MIN)) is False
     assert is_low_quality(build_metrics()) is False
+
+
+def test_a_page_above_the_band_is_reported_and_never_darkened() -> None:
+    """The correction is one-sided on purpose: a white page's paper is not an over-exposure.
+
+    The reading is the page's *mean*, and on a sparse white document the mean is mostly ink
+    coverage — the paper is exactly the white a reader wants. Mutation that must break this:
+    return ``BRIGHTNESS_TARGET - brightness`` for a page above the ceiling too, which repaints
+    that paper mid-grey (measured on the corpus: contrast 45.81 -> 17.04 for 3.98 levels).
+    """
+    dark = BRIGHTNESS_MIN - 5.0
+
+    assert brightness_shift(BRIGHTNESS_MAX + 4.0) is None
+    assert brightness_shift(BRIGHTNESS_MAX) is None
+    assert brightness_shift(BRIGHTNESS_TARGET) is None
+    assert brightness_shift(dark) == BRIGHTNESS_TARGET - dark

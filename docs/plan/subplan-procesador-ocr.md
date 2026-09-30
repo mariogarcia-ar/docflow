@@ -280,7 +280,7 @@ parallel (Wave 3 is the only wave with genuine parallelism in this subplan).
 **Scenario: happy-path extraction from a prepared image**
 
 ```gherkin
-Given a prepared image at "image/normalized.png"
+Given a prepared image at "image/normalized.png" (or the container the image stage published)
   And options enabling OCR, layout, tables, and reading order
 When process_ocr_image is called with a valid OCRRequest
 Then OCRResult.status is "success"

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,7 @@ from docflow.image.primitives import (
     get_image_metadata,
     image_engine_version,
     load_image,
+    normalize_brightness,
     normalize_contrast,
     prepare_image_for_ocr,
     prepare_image_for_vlm,
@@ -226,6 +228,55 @@ def test_a_quality_outside_the_band_is_refused_and_never_reaches_the_encoder(
     }
     assert fake.writes == []
     assert not list(tmp_path.rglob("*"))
+
+
+def test_the_brightness_shift_keeps_the_tone_order_and_saturates(
+    opencv: Callable[..., FakeOpenCV],
+) -> None:
+    """A shift must preserve the tone order: the darkest ink never comes back lighter.
+
+    Mutation that must break this: shift with ``convertScaleAbs``, which answers
+    ``|value + delta|`` — every value below ``|delta|`` is mirrored around zero, so a dark page
+    comes out inverted (on the corpus: contrast 45.81 -> 17.04 and the ink lighter than the
+    paper).
+    """
+    opencv()
+    ramp = FakeImage([float(value) for value in range(0, 256, 17)], 16, 1, 1)
+
+    darkened = normalize_brightness(ramp, -100.0)
+
+    assert darkened.values == sorted(darkened.values)
+    assert darkened.values[0] == 0.0
+    assert normalize_brightness(uniform(4, 4, INK), -200.0).values == [0.0] * 16
+    assert normalize_brightness(uniform(4, 4, PAPER), 120.0).values == [255.0] * 16
+
+
+def test_a_white_page_is_left_alone_and_a_dark_one_is_lifted(tmp_path: Path) -> None:
+    """The pipeline applies the correction the policy asks for, and only then."""
+    pixels = load_image(COLOR_LAYOUT)
+    healthy = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+    options = ImageOptions(
+        normalize=True,
+        prepare_for_ocr=False,
+        prepare_for_vlm=False,
+        correct_orientation=False,
+        deskew=False,
+        quality=None,
+    )
+
+    def with_brightness(value: float) -> ImageMetrics:
+        """Return the measured record with its brightness reading replaced."""
+        return replace(healthy, quality=replace(healthy.quality, brightness=value))
+
+    white = prepare_normalized_image(
+        pixels, with_brightness(244.0), options, tmp_path / "white.png"
+    )
+    dark = prepare_normalized_image(
+        pixels, with_brightness(10.0), options, tmp_path / "dark.png"
+    )
+
+    assert not white.transformations
+    assert dark.transformations == ["normalize_brightness"]
 
 
 def test_the_engine_exception_maps_to_a_transformation_error(
