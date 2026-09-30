@@ -65,6 +65,148 @@ Note the spelling: the **detection** template is `deteccion` (Spanish) while its
 `detection` (English). That is the one pair where the two identifiers do not match, and it is easy
 to get wrong — a mismatched pair is a `DEPENDENCY_ERROR`, not a silent fallback.
 
+## How to use them, step by step
+
+The layered extraction is five calls, not one: each step is its own artifact with its own schema,
+and the order is the contract. Only the three provider flags change between transports — the
+examples below are Ollama, and every one of them works the same against vLLM or a hosted API by
+swapping `--provider` / `--model` / `--option` (see *Local* and *Remote* below).
+
+```bash
+REG=registry
+DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
+M=llama3.1
+
+# 0 — the gate: is this a receipt at all? Run it first and refuse cheaply.
+python scripts/tools/llm.py --assets-dir $REG call $DOC \
+    --provider ollama --model $M --task detection \
+    --template extraction/invoice_deteccion --schema extraction/invoice_detection
+
+# 1 — the base reading: the seven printed fields
+python scripts/tools/llm.py --assets-dir $REG call $DOC \
+    --provider ollama --model $M --task extract \
+    --template extraction/invoice --schema extraction/invoice
+
+# 2 — the tax breakdown
+python scripts/tools/llm.py --assets-dir $REG call $DOC \
+    --provider ollama --model $M --task desglose \
+    --template extraction/invoice_desglose --schema extraction/invoice_desglose
+
+# 3 — the classification judgement
+python scripts/tools/llm.py --assets-dir $REG call $DOC \
+    --provider ollama --model $M --task clasificacion \
+    --template extraction/invoice_clasificacion --schema extraction/invoice_clasificacion
+
+# 4 — the line-of-business fields (Restaurante / Combustible only)
+python scripts/tools/llm.py --assets-dir $REG call $DOC \
+    --provider ollama --model $M --task rubro \
+    --template extraction/invoice_rubro --schema extraction/invoice_rubro
+```
+
+`--task` is a label: it is recorded in the result and never reaches the model. `--template` and
+`--schema` are what select the step. Pin the seed when you want a run you can reproduce:
+
+```bash
+    --option temperature=0 --option seed=7
+```
+
+### Chaining the steps
+
+Steps 4 and 5 read a previous step's answer, and that arrives through `extra_context` — which
+`llm.py` does not expose. So the sequence is driven from the library:
+
+```python
+from pathlib import Path
+
+from docflow.llm import LLMInput, process_llm_request
+
+ASSETS = Path("registry")
+DOC = Path(
+    "tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt"
+).read_text()
+# The provider controls, plus whatever decoding params you want passed through.
+OPTIONS = {"base_url": "http://localhost:11434"}
+
+
+def step(task, template, schema, *, extra=None, document=DOC):
+    """Run one step of the layered extraction."""
+    return process_llm_request(
+        LLMInput(
+            task=task,
+            provider="ollama",
+            model="llama3.1",
+            template=template,
+            document=document,
+            images=[],
+            extra_context=extra or {},
+            schema=schema,
+            options=dict(OPTIONS),
+            graph=None,
+            metadata={"assets_dir": str(ASSETS)},
+        )
+    )
+
+
+def field(result, name):
+    """Return one field of an answer, refusing anything that did not validate."""
+    if not result.schema_valid:
+        raise RuntimeError(f"{result.task}: {result.validation_errors}")
+    return result.parsed_response[name]
+
+
+gate = step("detection", "extraction/invoice_deteccion", "extraction/invoice_detection")
+if not field(gate, "comprobante_valido"):
+    raise SystemExit("the gate refused the document: it is not a receipt")
+
+reading = step("extract", "extraction/invoice", "extraction/invoice")
+breakdown = step(
+    "desglose", "extraction/invoice_desglose", "extraction/invoice_desglose"
+)
+classification = step(
+    "clasificacion",
+    "extraction/invoice_clasificacion",
+    "extraction/invoice_clasificacion",
+)
+
+# Step 4 is conditional, and the condition is decided in code, never asked to the model.
+categoria = field(classification, "categoria_gasto")
+rubro = None
+if categoria in {"Restaurante", "Combustible"}:
+    rubro = step(
+        "rubro",
+        "extraction/invoice_rubro",
+        "extraction/invoice_rubro",
+        extra={"rubro": categoria},
+    )
+
+# Step 5 reviews the reading; the proposal is what the model is asked to agree or disagree with.
+review = step(
+    "review",
+    "review/invoice",
+    "review/invoice",
+    extra={"proposal": reading.parsed_response},
+)
+```
+
+Four things that are not decoration:
+
+- **`metadata["assets_dir"]` is required.** The library has no default asset root, so a request
+  without it is a `DEPENDENCY_ERROR` — the same identifier must not resolve differently depending
+  on the working directory.
+- **`metadata["output_dir"]` is optional, and its absence means "write nothing"**, not "write
+  somewhere guessed". Add `Path("var/run")` and the run persists `final_result.json` there.
+- **`options` is where the provider controls live** (`base_url`, `api_key`, `timeout`,
+  `max_attempts`, `context_window`) — those are consumed by the processor. Every other key in it is
+  copied into the provider's request body as a decoding parameter.
+- **Failures come back inside the result**, typed, in `status` and `errors`; nothing is raised
+  across the contract. So a caller checks `result.schema_valid` before reading a field — which is
+  what `field()` above exists to force.
+
+This sequence was exercised against the scripted provider double: all six calls resolve their
+assets, reach the provider, and `extra` lands in the prompt — `Restaurante` in the line-of-business
+prompt and the proposed extraction in the review prompt, with no raw placeholder surviving into
+either.
+
 ## Local
 
 **Ollama** — native transport (`/api/chat`), no key, default endpoint `http://localhost:11434`:
