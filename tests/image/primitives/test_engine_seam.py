@@ -169,8 +169,8 @@ def test_the_dimensions_follow_the_engine_convention_and_not_ours() -> None:
 def test_a_write_the_engine_refuses_is_a_write_error(
     opencv: Callable[..., FakeOpenCV], tmp_path: Path
 ) -> None:
-    """``imwrite`` answers ``False`` instead of raising; that is refused too."""
-    opencv(write_failures={"normalized.png"})
+    """``imencode`` answers ``False`` instead of raising; that is refused too."""
+    opencv(write_failures={".png"})
 
     with pytest.raises(ImagePrimitiveError) as failure:
         save_image(uniform(8, 8, PAPER), tmp_path / "image" / "normalized.png")
@@ -330,7 +330,7 @@ def test_compression_names_the_quality_factor_it_asked_for(
     published = compress_image(uniform(8, 8, PAPER), destination, quality=71)
 
     assert published.is_file()
-    assert fake.writes == [("variant.jpg", [FakeOpenCV.IMWRITE_JPEG_QUALITY, 71])]
+    assert fake.writes == [(".jpg", [FakeOpenCV.IMWRITE_JPEG_QUALITY, 71])]
 
 
 def test_every_transformation_still_produces_an_image() -> None:
@@ -434,6 +434,26 @@ def test_a_published_variant_carries_its_own_measurements(tmp_path: Path) -> Non
     assert ocr.metrics.format == "png"
 
 
+def test_the_encoder_is_asked_for_the_artifact_format_and_never_for_the_path(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """The format the artifact was named with is what the engine is handed.
+
+    Mutation that must break this: call the engine with the path the publication writes
+    through (``normalized.png.tmp``) instead of the artifact's format. The engine reads the
+    format off the name, finds ``.tmp``, and refuses every artifact this processor publishes.
+    """
+    fake = opencv()
+
+    published = save_image(
+        load_image(EMBEDDED_LOGO), tmp_path / "image" / "normalized.png"
+    )
+
+    assert published.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert fake.writes == [(".png", [])]
+    assert not list(tmp_path.rglob("*.tmp"))
+
+
 def test_the_published_artifacts_are_real_decodable_files(
     opencv: Callable[..., FakeOpenCV], tmp_path: Path
 ) -> None:
@@ -444,7 +464,7 @@ def test_the_published_artifacts_are_real_decodable_files(
     published = save_image(load_image(EMBEDDED_LOGO), destination)
 
     assert published.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
-    assert "imwrite" in fake.calls
+    assert "imencode" in fake.calls
     assert not list(tmp_path.rglob("*.tmp"))
 
 

@@ -16,31 +16,35 @@ quiet second path through it.
 OpenCV is a Python library, not a CLI, so its contract shapes this module differently from
 the PDF seam. Two of its habits drive the design:
 
-* **it fails silently.** ``cv2.imread`` returns ``None`` for an undecodable file and
-  ``cv2.imwrite`` returns ``False`` for a write it could not perform; neither raises. Both are
-  checked here and turned into a typed ``DECODE_ERROR`` / ``WRITE_ERROR``, because treating
-  ``None`` as an empty image is exactly the silent stand-in this project forbids;
+* **it fails silently, and it raises when the question is the format.** ``cv2.imread``
+  returns ``None`` for an undecodable file and ``cv2.imencode`` returns ``False`` for a buffer
+  it could not produce; an extension it has no writer for it refuses by raising. The silence
+  and the exception are both checked here and turned into a typed ``DECODE_ERROR`` /
+  ``WRITE_ERROR``, because treating ``None`` as an empty image is exactly the silent stand-in
+  this project forbids;
 * **it raises ``cv2.error``** for a bad dtype, kernel or depth, which is the one signal that
   carries a message. :func:`_apply` maps it to ``TRANSFORMATION_ERROR``, so no engine
   exception crosses the processor's contract.
 
 Engine signal → failure kind (the mapping this module is the only owner of):
 
-============================= ======================================================
-Engine signal                 ``ImageErrorType``
-============================= ======================================================
-``imread`` returns ``None``   ``DECODE_ERROR`` (never an empty image)
-``imwrite`` returns ``False`` ``WRITE_ERROR``
-missing or empty file         ``INVALID_INPUT`` (decided by ``validate_image_input``)
-unsupported extension         ``UNSUPPORTED_FORMAT`` (decided before the call)
-library absent                ``IO_ERROR``, not recoverable
-``cv2.error``                 ``TRANSFORMATION_ERROR``
-anything else                 ``INTERNAL_ERROR``
-============================= ======================================================
+============================== ======================================================
+Engine signal                  ``ImageErrorType``
+============================== ======================================================
+``imread`` returns ``None``    ``DECODE_ERROR`` (never an empty image)
+``imencode`` returns ``False`` ``WRITE_ERROR``
+``imencode`` raises            ``WRITE_ERROR`` (an extension it cannot encode)
+missing or empty file          ``INVALID_INPUT`` (decided by ``validate_image_input``)
+unsupported extension          ``UNSUPPORTED_FORMAT`` (decided before the call)
+library absent                 ``IO_ERROR``, not recoverable
+``cv2.error``                  ``TRANSFORMATION_ERROR``
+anything else                  ``INTERNAL_ERROR``
+============================== ======================================================
 
 Two rules hold for everything here: the input image is never written to — no primitive takes
 the source path as a destination — and nothing is published except through the atomic writer,
-which the engine's own ``imwrite`` never bypasses.
+which the engine cannot bypass: it is asked to **encode bytes**, never to write a file, so the
+only writer in this processor is ``publication.py``.
 """
 
 from __future__ import annotations
@@ -348,9 +352,16 @@ def load_image(image_path: Path, *, grayscale: bool = False) -> Any:
 def _write_image(pixels: Any, destination: Path, parameters: list[int]) -> Path:
     """Encode decoded pixels at ``destination``, atomically.
 
+    The format is the artifact's own suffix, and it is **stated to the engine** rather than
+    inferred from the path the publication writes through. The engine reads a format off a
+    file name, and the atomic writer writes through ``<destination>.tmp`` — a name whose
+    suffix is ``.tmp``, which no encoder claims, so a path-shaped call refuses every artifact
+    this processor publishes. Encoding in memory and letting the publication store the bytes
+    keeps both rules: the format is the artifact's, and the engine never writes a file.
+
     Args:
         pixels: The image to encode.
-        destination: Final artifact path.
+        destination: Final artifact path; its suffix decides the container.
         parameters: The engine's own encoder parameters; empty means the encoder's default
             for the format the destination's suffix names.
 
@@ -359,29 +370,31 @@ def _write_image(pixels: Any, destination: Path, parameters: list[int]) -> Path:
 
     Raises:
         ImagePrimitiveError: With ``WRITE_ERROR`` when the engine reports that it could not
-            encode or store the image — the boolean it returns instead of raising.
+            encode the image — the boolean it returns, or the exception it raises when it has
+            no writer for the requested format.
     """
 
     def write(temporary: Path) -> None:
-        """Encode the pixels at the temporary path the publication hands us."""
+        """Encode the pixels for the artifact's format and store the bytes at ``temporary``."""
         engine = _engine()
         try:
-            stored = engine.imwrite(str(temporary), pixels, parameters)
+            encoded, buffer = engine.imencode(destination.suffix, pixels, parameters)
         except engine.error as exc:
             # The engine raises instead of returning ``False`` when it cannot decide an
-            # encoder from the path. Left uncaught it escaped the contract as a traceback,
+            # encoder from the format. Left uncaught it escaped the contract as a traceback,
             # which is what the lab bench (`SCR-07`) found: a failure the seam must type.
             raise typed_failure(
                 "WRITE_ERROR",
                 f"the engine could not encode {destination}",
                 metadata={"destination": str(destination), "engine_error": str(exc)},
             ) from exc
-        if not stored:
+        if not encoded:
             raise typed_failure(
                 "WRITE_ERROR",
                 f"the engine could not encode {destination}",
                 metadata={"destination": str(destination)},
             )
+        temporary.write_bytes(buffer.tobytes())
 
     return publish_artifact(destination, write)
 

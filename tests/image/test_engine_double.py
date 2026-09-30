@@ -18,8 +18,15 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
 from tests.fakes.engines.convention import missing_from_double
-from tests.fakes.engines.fake_opencv import FakeImage, FakeOpenCV
+from tests.fakes.engines.fake_opencv import (
+    FakeBuffer,
+    FakeCVError,
+    FakeImage,
+    FakeOpenCV,
+)
 from tests.image.samples import COLOR_LAYOUT, CORRUPT
 
 #: The seam: the one module that reaches the engine, so the one whose calls the double must
@@ -59,21 +66,31 @@ def test_the_seam_reaches_no_other_array_or_engine_library() -> None:
         assert f"import {library}" not in source
 
 
-def test_the_double_answers_with_the_engine_shape_not_with_our_types(
-    tmp_path: Path,
-) -> None:
-    """What the double returns is what the library returns: an array, or a boolean."""
+def test_the_double_answers_with_the_engine_shape_not_with_our_types() -> None:
+    """What the double returns is what the library returns: an array, or an encode pair."""
     fake = FakeOpenCV()
 
     decoded = fake.imread(str(COLOR_LAYOUT), fake.IMREAD_COLOR)
-    written = fake.imwrite(
-        str(tmp_path / "artifact.png"), decoded or FakeImage([1.0], 1, 1)
-    )
+    encoded, buffer = fake.imencode(".png", decoded or FakeImage([1.0], 1, 1))
 
     assert isinstance(decoded, FakeImage)
-    assert written is True
+    assert encoded is True
+    assert isinstance(buffer, FakeBuffer)
     assert not hasattr(fake, "ImageResult")
     assert not hasattr(fake, "ImageMetrics")
+
+
+def test_a_format_the_engine_cannot_encode_is_raised_and_not_answered() -> None:
+    """The engine refuses an extension it has no writer for; it is not a silent skip.
+
+    Mutation that must break this: answer ``(False, FakeBuffer(b""))`` for an unknown
+    extension instead of raising — the drift that let the seam hand the engine a ``.tmp``
+    path, which the real library refuses, without any test noticing.
+    """
+    fake = FakeOpenCV()
+
+    with pytest.raises(FakeCVError):
+        fake.imencode(".tmp", FakeImage([1.0], 1, 1))
 
 
 def test_the_double_does_not_import_our_contract_types() -> None:

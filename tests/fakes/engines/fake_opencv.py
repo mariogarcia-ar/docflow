@@ -21,8 +21,8 @@ Three knobs make the failure paths reachable with no library installed:
 
 * :attr:`FakeOpenCV.undecodable` — file names ``imread`` answers ``None`` for, which is how the
   engine reports a file it cannot decode;
-* :attr:`FakeOpenCV.write_failures` — artifact names ``imwrite`` answers ``False`` for, which
-  is how the engine reports a write it could not perform;
+* :attr:`FakeOpenCV.write_failures` — formats ``imencode`` answers ``False`` for, which is
+  how the engine reports a buffer it could not produce;
 * :attr:`FakeOpenCV.raises` — an exception keyed by engine method name, so ``cv2.error`` and
   the paths that map it are reachable too.
 
@@ -59,9 +59,10 @@ BAND_ROWS = 8
 #: The clamp every 8-bit array is kept inside.
 MAX_LEVEL = 255.0
 
-#: The suffix an atomic publication writes through before it renames. The double only needs it
-#: to name an artifact the way the caller does.
-TEMP_SUFFIX = ".tmp"
+#: The formats the double has an encoder for. The engine reads the format off the argument it
+#: is handed, and an extension it has no writer for is the one it raises for instead of
+#: answering — which is why the seam asks for a format and not for a path.
+ENCODERS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"})
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -325,6 +326,29 @@ class FakeClahe:
         )
 
 
+class FakeBuffer:
+    """An in-memory stand-in for the byte array ``imencode`` answers with.
+
+    The engine hands back a flat 8-bit array; the double hands back the same bytes in a
+    wrapper exposing the one method the seam calls on them, :meth:`tobytes`.
+    """
+
+    # pylint: disable=too-few-public-methods
+    # Reason: the object exists to model the engine's returned buffer and nothing else.
+
+    def __init__(self, data: bytes) -> None:
+        """Hold the encoded image.
+
+        Args:
+            data: The encoded bytes.
+        """
+        self.data = data
+
+    def tobytes(self) -> bytes:
+        """Return the encoded bytes."""
+        return self.data
+
+
 class FakeOpenCV:
     """A plain namespace standing in for ``cv2``, answering entirely in memory."""
 
@@ -369,11 +393,11 @@ class FakeOpenCV:
 
         Args:
             undecodable: File names ``imread`` answers ``None`` for.
-            write_failures: Destination names ``imwrite`` answers ``False`` for.
+            write_failures: Formats ``imencode`` answers ``False`` for.
             raises: An exception per engine method name, raised instead of answering.
         """
         self.undecodable = set(undecodable)
-        self.write_failures = set(write_failures)
+        self.write_failures = {format.lower() for format in write_failures}
         self.raises = dict(raises or {})
         self.calls: list[str] = []
         self.writes: list[tuple[str, list[int]]] = []
@@ -395,22 +419,35 @@ class FakeOpenCV:
         )
 
     @_recorded
-    def imwrite(self, path: str, image: FakeImage, params: Sequence[int] = ()) -> bool:
-        """Encode ``image`` at ``path``; answer ``False`` when the store cannot be done.
+    def imencode(
+        self, extension: str, image: FakeImage, params: Sequence[int] = ()
+    ) -> tuple[bool, FakeBuffer]:
+        """Encode ``image`` for the format ``extension`` names; answer the bytes.
 
-        The call log and :attr:`write_failures` name the artifact by its final name: the
-        temporary sibling the atomic publication writes through is that publication's detail,
-        not something a test should have to spell out.
+        The format is an argument and not a file name, which is the whole reason the seam
+        encodes in memory: the atomic publication writes through ``<artifact>.tmp``, and an
+        encoder handed that path reads ``.tmp`` off it and has no writer for it.
+
+        Args:
+            extension: The container the caller asked for, e.g. ``.png``.
+            image: The image to encode.
+            params: The encoder parameters, recorded and not interpreted.
+
+        Returns:
+            The engine's pair: whether it encoded, and the buffer it produced.
+
+        Raises:
+            FakeCVError: When the engine has no writer for the requested format, which is how
+                the library reports an extension it cannot encode.
         """
-        destination = Path(path)
-        artifact = destination.name.removesuffix(TEMP_SUFFIX)
-        self.writes.append((artifact, [int(value) for value in params]))
-        if artifact in self.write_failures:
-            return False
-        if not destination.parent.is_dir():
-            return False
-        destination.write_bytes(_png_bytes(image))
-        return True
+        self.writes.append((extension, [int(value) for value in params]))
+        if extension.lower() not in ENCODERS:
+            raise self.error(
+                "could not find a writer for the specified extension: " + extension
+            )
+        if extension.lower() in self.write_failures:
+            return False, FakeBuffer(b"")
+        return True, FakeBuffer(_png_bytes(image))
 
     # --- Colour and geometry -------------------------------------------------------
 

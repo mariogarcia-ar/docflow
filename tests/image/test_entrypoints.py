@@ -18,7 +18,7 @@ import pytest
 from docflow.identities import ARTIFACT_METADATA_KEYS
 from docflow.image import ImageError, process_image_from_page
 from docflow.image.entrypoints import PROCESSOR_VERSION, process_image
-from docflow.image.primitives import ImagePrimitiveError
+from docflow.image.primitives import ImagePrimitiveError, publish_artifact
 from tests.fakes.engines.fake_opencv import FakeOpenCV
 from tests.image.samples import (
     COLOR_LAYOUT,
@@ -285,10 +285,31 @@ def test_every_artifact_the_result_declares_lives_under_the_image_namespace(
 
 
 def test_a_variant_that_cannot_be_published_is_reported_and_the_run_is_not_a_success(
-    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+    opencv: Callable[..., FakeOpenCV],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A lost artifact is named, and the run never claims a success with a missing file."""
-    opencv(write_failures={"ocr_ready.png"})
+    opencv()
+
+    def refuse_the_ocr_variant(
+        destination: Path, write: Callable[[Path], None]
+    ) -> Path:
+        """Refuse one destination, the way a store that cannot be written to would."""
+        if destination.name == "ocr_ready.png":
+            raise ImagePrimitiveError(
+                ImageError(
+                    type="WRITE_ERROR",
+                    message="scripted refusal",
+                    recoverable=True,
+                    metadata={},
+                )
+            )
+        return publish_artifact(destination, write)
+
+    monkeypatch.setattr(
+        "docflow.image.primitives.publish_artifact", refuse_the_ocr_variant
+    )
     request = build_request(COLOR_LAYOUT, tmp_path / "image")
 
     result = process_image(request)
@@ -372,8 +393,8 @@ def test_the_double_answered_every_call_the_seam_made(
     process_image(build_request(COLOR_LAYOUT, tmp_path / "image"))
 
     assert "imread" in fake.calls
-    assert "imwrite" in fake.calls
-    assert fake.writes[0][0] == "normalized.png"
+    assert "imencode" in fake.calls
+    assert fake.writes[0][0] == ".png"
 
 
 @pytest.mark.parametrize("fixture_path", [COLOR_LAYOUT, SKEWED_TEXT, EMBEDDED_LOGO])
