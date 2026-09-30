@@ -133,16 +133,19 @@ Inputs: `.png` `.jpg` `.jpeg` `.tif` `.tiff` `.bmp`. No subcommand requires a fl
 |---|---|---|
 | `info` | — | file and pixel facts, read without measuring quality |
 | `metrics` | — | quality, orientation, skew, regions |
-| `normalize` | — | writes `normalized.png` |
+| `normalize` | — | writes `normalized.png`, or `normalized.jpg` with `--quality` |
 | `ocr-ready` | — | writes `ocr_ready.png`, through its own pipeline |
-| `vlm-ready` | — | writes `vlm_ready.png`, colour and layout preserved |
+| `vlm-ready` | — | writes `vlm_ready.png`, or `vlm_ready.jpg` with `--quality` |
 | `classify` | — | the technical classification, over the metrics above |
 | `run` | — | the processor's contract |
 
 `normalize`, `ocr-ready`, `vlm-ready` and `run` accept `--correct-orientation` and `--deskew`; no
-correction is ever applied because a measurement suggested it and nobody asked. `run` additionally
-takes `--from-page`, `--page` (default `1`), `--normalize`, `--prepare-for-ocr` and
-`--prepare-for-vlm`.
+correction is ever applied because a measurement suggested it and nobody asked. `normalize`,
+`vlm-ready` and `run` additionally take `--quality N`: the representation is published as a lossy
+JPEG at that factor instead of a lossless PNG, which is what a VLM's base64 payload wants.
+`ocr-ready` has no such flag on purpose — its pipeline binarizes the page, and a lossy encoder
+rings around every glyph edge. `run` additionally takes `--from-page`, `--page` (default `1`),
+`--normalize`, `--prepare-for-ocr` and `--prepare-for-vlm`.
 
 ### One file
 
@@ -151,6 +154,7 @@ python scripts/tools/image.py info tests/fixtures/image/color_layout.png
 python scripts/tools/image.py --json metrics tests/fixtures/image/skewed_text.png
 python scripts/tools/image.py classify tests/fixtures/image/color_layout.png
 python scripts/tools/image.py normalize tests/fixtures/image/skewed_text.png --deskew
+python scripts/tools/image.py normalize tests/fixtures/image/color_layout.png --quality 85
 python scripts/tools/image.py ocr-ready tests/fixtures/image/skewed_text.png
 python scripts/tools/image.py vlm-ready tests/fixtures/image/color_layout.png
 python scripts/tools/image.py run tests/fixtures/image/color_layout.png \

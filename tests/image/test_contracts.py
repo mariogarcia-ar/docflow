@@ -22,6 +22,7 @@ from docflow.image import (
     ImageValidation,
     ImageVariants,
     TextRegion,
+    representation_suffix,
 )
 from tests.factories import (
     build_image_options,
@@ -175,3 +176,19 @@ def test_a_missing_required_option_is_rejected_instead_of_defaulted() -> None:
 
     with pytest.raises(TypeError):
         incomplete_call(type(complete), incomplete)
+
+
+def test_the_container_follows_the_quality_factor_and_spares_the_binarized_variant() -> (
+    None
+):
+    """The suffix is the option's consequence, decided here once for every caller.
+
+    Mutation that must break this: return ``LOSSLESS_SUFFIX`` unconditionally, or drop
+    ``LOSSLESS_KINDS`` from the rule — either one lets the binarized variant, or a run that
+    stated no factor at all, be published in a container nobody asked for.
+    """
+    assert representation_suffix("normalized", None) == ".png"
+    assert representation_suffix("vlm_ready", None) == ".png"
+    assert representation_suffix("normalized", 85) == ".jpg"
+    assert representation_suffix("vlm_ready", 85) == ".jpg"
+    assert representation_suffix("ocr_ready", 85) == ".png"

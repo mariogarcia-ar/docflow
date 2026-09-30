@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 ImageStatus = Literal["success", "failed"]
 
@@ -50,6 +50,45 @@ ImageErrorType = Literal[
 # Kind of artifact a ref points at, so a caller never has to guess from the file name.
 ImageArtifactKind = Literal["normalized", "ocr_ready", "vlm_ready", "region"]
 
+#: Container suffix a representation is published with when no quality factor was stated.
+#: Lossless: the artifact is the page's pixels, not an approximation of them.
+LOSSLESS_SUFFIX: Final[str] = ".png"
+
+#: Container suffix a representation is published with when a quality factor was stated.
+#: Lossy and tunable: the bytes are the caller's price to name, and the artifact it produced.
+LOSSY_SUFFIX: Final[str] = ".jpg"
+
+#: The band the encoder's quality factor lives in. A factor outside it is refused, never
+#: clamped: the encoder would pull it into range and the artifact would not be what the
+#: options said it was.
+QUALITY_MIN: Final[int] = 1
+QUALITY_MAX: Final[int] = 100
+
+#: The representations a quality factor does not reach, because the pipeline that produces
+#: them binarizes the page: a lossy encoder rings around every glyph edge, which is exactly
+#: the legibility that variant exists to preserve.
+LOSSLESS_KINDS: Final[frozenset[ImageArtifactKind]] = frozenset({"ocr_ready"})
+
+
+def representation_suffix(kind: ImageArtifactKind, quality: int | None) -> str:
+    """Return the container suffix one representation is published with.
+
+    The suffix is not cosmetic: it is what the encoder reads to pick its format, and what a
+    consumer derives the MIME type from. It is therefore decided here once, and every caller
+    composes its artifact name from this answer instead of choosing a container of its own.
+
+    Args:
+        kind: Which representation is being published.
+        quality: The quality factor the caller stated, or ``None`` when it stated none.
+
+    Returns:
+        ``.png`` when no factor was stated or the representation is one of
+        :data:`LOSSLESS_KINDS`; ``.jpg`` when a factor applies to it.
+    """
+    if quality is None or kind in LOSSLESS_KINDS:
+        return LOSSLESS_SUFFIX
+    return LOSSY_SUFFIX
+
 
 @dataclass(frozen=True)
 class ImageOptions:
@@ -65,6 +104,12 @@ class ImageOptions:
         prepare_for_vlm: Produce the VLM-optimized variant.
         correct_orientation: Correct the detected orientation.
         deskew: Correct the detected skew angle.
+        quality: The encoder's quality factor for the representations that keep the page's
+            tone, or ``None`` for a lossless container. It is not a default: the caller
+            states it, and the published artifact's suffix follows it
+            (:func:`representation_suffix`). The binarized ``ocr_ready`` variant is lossless
+            whatever this says. See :data:`QUALITY_MIN` / :data:`QUALITY_MAX` for the band a
+            stated factor has to be inside.
     """
 
     normalize: bool
@@ -72,6 +117,7 @@ class ImageOptions:
     prepare_for_vlm: bool
     correct_orientation: bool
     deskew: bool
+    quality: int | None
 
 
 @dataclass(frozen=True)

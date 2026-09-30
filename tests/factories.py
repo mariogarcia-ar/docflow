@@ -76,13 +76,18 @@ def build_pdf_request(tmp_path: Path) -> PDFRequest:
 
 
 def build_image_options() -> ImageOptions:
-    """Return a fully specified set of image transformations."""
+    """Return a fully specified set of image transformations.
+
+    ``quality`` is ``None``: the shared options ask for the lossless container, so a test that
+    wants the lossy one states a factor through ``tests/image/samples.build_options``.
+    """
     return ImageOptions(
         normalize=True,
         prepare_for_ocr=True,
         prepare_for_vlm=True,
         correct_orientation=True,
         deskew=True,
+        quality=None,
     )
 
 

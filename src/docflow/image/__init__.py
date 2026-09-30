@@ -18,6 +18,10 @@ Symbols are re-exported here, but only :mod:`docflow.image.primitives` may impor
 from __future__ import annotations
 
 from docflow.image.contracts import (
+    LOSSLESS_SUFFIX,
+    LOSSY_SUFFIX,
+    QUALITY_MAX,
+    QUALITY_MIN,
     ArtifactRef,
     ImageArtifactKind,
     ImageClassification,
@@ -37,10 +41,15 @@ from docflow.image.contracts import (
     ImageValidationState,
     ImageVariants,
     TextRegion,
+    representation_suffix,
 )
 from docflow.image.entrypoints import process_image, process_image_from_page
 
 __all__ = [
+    "LOSSLESS_SUFFIX",
+    "LOSSY_SUFFIX",
+    "QUALITY_MAX",
+    "QUALITY_MIN",
     "ArtifactRef",
     "ImageArtifactKind",
     "ImageClassification",
@@ -62,4 +71,5 @@ __all__ = [
     "TextRegion",
     "process_image",
     "process_image_from_page",
+    "representation_suffix",
 ]

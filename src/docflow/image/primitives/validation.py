@@ -6,6 +6,9 @@ Two jobs, one rule: nothing is guessed.
   container this processor does not read is reported as a typed failure instead of being
   handed to an engine that would answer about something else. Its failure kinds are
   ``INVALID_INPUT`` and ``UNSUPPORTED_FORMAT``.
+* :func:`validate_image_options` runs at the same point, for the same reason: an option this
+  processor cannot honour is refused before a pipeline spends work on a representation it
+  would have to throw away.
 * :func:`validate_image_result` checks what exists on disk against what the result declares,
   so an artifact the result claims to have published but did not is an ``INVALID_OUTPUT``
   finding rather than a silent absence, and a failed run maps its typed failure onto the
@@ -21,8 +24,11 @@ from pathlib import Path
 from typing import Final
 
 from docflow.image.contracts import (
+    QUALITY_MAX,
+    QUALITY_MIN,
     ArtifactRef,
     ImageError,
+    ImageOptions,
     ImageResult,
     ImageValidation,
     ImageValidationState,
@@ -84,6 +90,39 @@ def validate_image_input(image_path: Path) -> None:
             recoverable=False,
             metadata={"image_path": str(image_path), "size": 0},
         )
+
+
+def validate_image_options(options: ImageOptions) -> None:
+    """Refuse an option set this processor cannot honour, before anything is produced.
+
+    The quality factor is the one option with a band to check; the rest are booleans, and a
+    boolean cannot be out of range.
+
+    The band is checked rather than clamped on purpose: an encoder pulls an out-of-band factor
+    into its own range without saying so, and the artifact it then produced would not be the
+    one the options named — a silent stand-in wearing the caller's number.
+
+    Args:
+        options: The requested transformations.
+
+    Raises:
+        ImagePrimitiveError: With ``TRANSFORMATION_ERROR`` when a stated quality factor is
+            outside :data:`~docflow.image.contracts.QUALITY_MIN`..
+            :data:`~docflow.image.contracts.QUALITY_MAX`.
+    """
+    quality = options.quality
+    if quality is None or QUALITY_MIN <= quality <= QUALITY_MAX:
+        return
+    raise typed_failure(
+        "TRANSFORMATION_ERROR",
+        f"quality {quality} is outside the encodable band {QUALITY_MIN}-{QUALITY_MAX}",
+        recoverable=False,
+        metadata={
+            "quality": quality,
+            "minimum": QUALITY_MIN,
+            "maximum": QUALITY_MAX,
+        },
+    )
 
 
 def validation_state_for(error: ImageError | None) -> ImageValidationState:

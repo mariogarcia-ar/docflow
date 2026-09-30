@@ -97,6 +97,7 @@ from docflow.image.primitives.errors import ImagePrimitiveError, typed_failure
 from docflow.image.primitives.publication import publish_artifact, publish_json
 from docflow.image.primitives.validation import (
     validate_image_input,
+    validate_image_options,
     validate_image_result,
 )
 
@@ -415,15 +416,13 @@ def save_image(pixels: Any, destination: Path) -> Path:
 def compress_image(pixels: Any, destination: Path, *, quality: int) -> Path:
     """Publish decoded pixels as a lossy JPEG at the requested quality.
 
-    # TODO: [MVP] no Phase 1 caller: both variants are lossless PNG, so nothing on the happy
-    # path asks for a quality factor. The primitive exists because the plan fixes it, and it
-    # is the same writer with one engine parameter.
-
     Args:
         pixels: The image to publish.
         destination: Final artifact path; a ``.jpg`` or ``.jpeg`` suffix is expected.
-        quality: The encoder's quality factor, 0-100, named by the caller rather than taken
-            from the engine's default.
+        quality: The encoder's quality factor, inside :data:`QUALITY_MIN`..:data:`QUALITY_MAX`,
+            named by the caller rather than taken from the engine's default. The band is the
+            caller's to check (:func:`validate_image_options`); this primitive encodes what it
+            is asked for.
 
     Returns:
         ``destination``, once it is complete.
@@ -1011,6 +1010,26 @@ def _prepared(
     )
 
 
+def _publish(transformed: Any, destination: Path, quality: int | None) -> Path:
+    """Publish one representation, losslessly unless the caller stated a quality factor.
+
+    The container follows the option and the artifact name follows the container, so this is
+    the one place that decides which of the two writers runs. A factor outside the encodable
+    band never reaches the encoder: :func:`validate_image_options` refuses it first.
+
+    Args:
+        transformed: The image to publish.
+        destination: Final artifact path; its suffix decides the container.
+        quality: The stated quality factor, or ``None`` for a lossless container.
+
+    Returns:
+        ``destination``, once it is complete.
+    """
+    if quality is None:
+        return save_image(transformed, destination)
+    return compress_image(transformed, destination, quality=quality)
+
+
 def prepare_normalized_image(
     pixels: Any, metrics: ImageMetrics, options: ImageOptions, destination: Path
 ) -> PreparedImage:
@@ -1019,16 +1038,22 @@ def prepare_normalized_image(
     Args:
         pixels: The decoded image.
         metrics: The image's measurements.
-        options: The requested corrections.
-        destination: Where ``normalized.png`` is published.
+        options: The requested corrections and the requested quality factor.
+        destination: Where the representation is published; ``.png`` when no factor was
+            stated, ``.jpg`` when one was (:func:`representation_suffix`).
 
     Returns:
         What the pipeline produced. When nothing needed correcting the artifact is the
         canonical re-encoding of the decoded image, which is still a published
         representation and not a claim that a correction happened.
+
+    Raises:
+        ImagePrimitiveError: With ``TRANSFORMATION_ERROR`` when the stated quality factor is
+            outside the band the encoder accepts.
     """
+    validate_image_options(options)
     transformed, applied = normalize_image(pixels, metrics, options)
-    published = save_image(transformed, destination)
+    published = _publish(transformed, destination, options.quality)
     return _prepared(published, "normalized", transformed, applied)
 
 
@@ -1044,7 +1069,8 @@ def prepare_image_for_ocr(
     Args:
         pixels: The decoded image.
         metrics: The image's measurements.
-        options: The requested corrections.
+        options: The requested corrections. A stated quality factor does not reach this
+            pipeline: binarized ink is the one representation a lossy encoder would ruin.
         destination: Where ``ocr_ready.png`` is published.
 
     Returns:
@@ -1092,12 +1118,18 @@ def prepare_image_for_vlm(
     Args:
         pixels: The decoded image.
         metrics: The image's measurements.
-        options: The requested corrections.
-        destination: Where ``vlm_ready.png`` is published.
+        options: The requested corrections and the requested quality factor.
+        destination: Where the variant is published; ``.png`` when no factor was stated,
+            ``.jpg`` when one was.
 
     Returns:
         What the pipeline produced, with the transformations applied in order.
+
+    Raises:
+        ImagePrimitiveError: With ``TRANSFORMATION_ERROR`` when the stated quality factor is
+            outside the band the encoder accepts.
     """
+    validate_image_options(options)
     transformed = pixels
     applied: list[str] = []
 
@@ -1120,5 +1152,5 @@ def prepare_image_for_vlm(
         )
         applied.append("resize")
 
-    published = save_image(transformed, destination)
+    published = _publish(transformed, destination, options.quality)
     return _prepared(published, "vlm_ready", transformed, applied)

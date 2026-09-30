@@ -19,6 +19,12 @@ output_dir/
 └── metadata.json
 ```
 
+The image representations are published as ``.png`` while ``options.quality`` is ``None``,
+and as ``.jpg`` when the caller stated a quality factor — except ``ocr_ready``, which stays
+lossless because its pipeline binarizes the page (:func:`representation_suffix` decides, and
+it decides once for both the library and the lab bench). ``metadata.json`` keeps the
+``.json`` suffix it always had.
+
 Nothing is written outside that directory, and everything is published atomically through the
 seam's writer (``.tmp`` → validate → rename).
 
@@ -40,6 +46,7 @@ from typing import Any, Final, TypeVar
 
 from docflow.image.contracts import (
     ArtifactRef,
+    ImageArtifactKind,
     ImageContext,
     ImageError,
     ImageMetadata,
@@ -50,6 +57,7 @@ from docflow.image.contracts import (
     ImageSourceRef,
     ImageValidation,
     ImageVariants,
+    representation_suffix,
 )
 from docflow.image.primitives import (
     ENGINE_NAME,
@@ -138,6 +146,7 @@ def _normalized_options(options: ImageOptions) -> dict[str, object]:
         "prepare_for_vlm": options.prepare_for_vlm,
         "correct_orientation": options.correct_orientation,
         "deskew": options.deskew,
+        "quality": options.quality,
     }
 
 
@@ -315,6 +324,24 @@ class _Representations:
     output_metrics: ImageMetrics | None = None
 
 
+def _artifact_name(base: Path, kind: ImageArtifactKind, quality: int | None) -> Path:
+    """Return the name one representation is published under.
+
+    The container is not a second decision to repeat at each call site: it is the quality
+    factor's consequence, and :func:`representation_suffix` owns that rule. It has to be one
+    rule, because a consumer derives the MIME type from the suffix the artifact actually has.
+
+    Args:
+        base: The representation's lossless name, e.g. ``normalized.png``.
+        kind: Which representation it is.
+        quality: The stated quality factor, or ``None``.
+
+    Returns:
+        The name to publish under.
+    """
+    return base.with_suffix(representation_suffix(kind, quality))
+
+
 def _prepare_representations(
     request: ImageRequest,
     pixels: Any,
@@ -367,7 +394,7 @@ def _prepare_representations(
             pixels,
             metrics,
             request.options,
-            request.output_dir / name,
+            request.output_dir / _artifact_name(name, label, request.options.quality),
         )
         if prepared is None:
             continue

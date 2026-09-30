@@ -25,18 +25,36 @@ from typing import Any, Final
 import _cli
 
 from docflow import image as image_processor
-from docflow.image import ImageContext, ImageOptions, ImageRequest, primitives
+from docflow.image import (
+    ImageContext,
+    ImageOptions,
+    ImageRequest,
+    primitives,
+    representation_suffix,
+)
 from docflow.image.primitives import composition
 
 #: One subcommand per method, with the help text both tools print.
 SUBCOMMANDS: tuple[tuple[str, str], ...] = (
     ("info", "File and pixel facts, read without measuring quality."),
     ("metrics", "The technical analysis: quality, orientation, skew, regions."),
-    ("normalize", "Produce normalized.png."),
+    ("normalize", "Produce the normalized representation."),
     ("ocr-ready", "Produce ocr_ready.png through its own pipeline."),
-    ("vlm-ready", "Produce vlm_ready.png through its own pipeline."),
+    ("vlm-ready", "Produce the VLM variant through its own pipeline."),
     ("classify", "The image's descriptive classification."),
     ("run", "Run the image contract."),
+)
+
+#: The subcommands whose representation keeps the page's tone, and which therefore take a
+#: quality factor. ``ocr-ready`` is deliberately absent: its pipeline binarizes the page, and
+#: a lossy encoder would ring around every glyph edge.
+LOSSY_KINDS: Final[tuple[str, ...]] = ("normalize", "vlm-ready")
+
+#: What the ``--quality`` flag means when it is not stated. Named, because the absence is a
+#: decision the caller made and the artifact has to say which container it got.
+QUALITY_HELP: Final[str] = (
+    "Publish the representation as a lossy JPEG at this quality (1-100); "
+    "without it the artifact is a lossless PNG."
 )
 
 #: The inputs the image processor takes, matched case-insensitively: what it can decode.
@@ -62,6 +80,11 @@ def _add_corrections(subparser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_quality(subparser: argparse.ArgumentParser) -> None:
+    """Add the quality factor, on the subcommands whose representation may be lossy."""
+    subparser.add_argument("--quality", type=int, default=None, help=QUALITY_HELP)
+
+
 def build_subcommands(
     subparsers: Any, *, input_argument: bool = True
 ) -> dict[str, argparse.ArgumentParser]:
@@ -82,6 +105,8 @@ def build_subcommands(
         )
         if name in ("normalize", "ocr-ready", "vlm-ready"):
             _add_corrections(parser)
+            if name in LOSSY_KINDS:
+                _add_quality(parser)
         elif name == "run":
             parser.add_argument(
                 "--from-page", action="store_true", help="Use the page-level wrapper."
@@ -105,6 +130,7 @@ def build_subcommands(
                 help="Produce the VLM variant.",
             )
             _add_corrections(parser)
+            _add_quality(parser)
         parsers[name] = parser
     return parsers
 
@@ -114,6 +140,18 @@ def _decoded(input_path: Path) -> tuple[Any, Any, Any]:
     pixels = primitives.load_image(input_path)
     facts = primitives.get_image_metadata(input_path, pixels)
     return pixels, facts, primitives.analyze_image(pixels, facts)
+
+
+def _quality(args: argparse.Namespace, kind: str) -> int | None:
+    """Return the quality factor stated for ``kind``, or ``None`` when none applies.
+
+    Only the kinds whose representation keeps the page's tone take the flag, so the
+    binarized ``ocr-ready`` pipeline is handed ``None`` and cannot quietly degrade it.
+    """
+    if kind not in LOSSY_KINDS:
+        return None
+    stated = args.quality
+    return None if stated is None else int(stated)
 
 
 def _pipeline_options(args: argparse.Namespace, kind: str) -> ImageOptions:
@@ -129,6 +167,7 @@ def _pipeline_options(args: argparse.Namespace, kind: str) -> ImageOptions:
         prepare_for_vlm=kind == "vlm-ready",
         correct_orientation=bool(args.correct_orientation),
         deskew=bool(args.deskew),
+        quality=_quality(args, kind),
     )
 
 
@@ -140,6 +179,7 @@ def _run_options(args: argparse.Namespace) -> ImageOptions:
         prepare_for_vlm=bool(args.prepare_for_vlm),
         correct_orientation=bool(args.correct_orientation),
         deskew=bool(args.deskew),
+        quality=None if args.quality is None else int(args.quality),
     )
 
 
@@ -249,17 +289,21 @@ def _prepared(
     *,
     kind: str,
     pipeline: Callable[..., Any],
-    destination_name: str,
+    base_name: str,
 ) -> Payload:
-    """Run one preparation pipeline and report what it published."""
+    """Run one preparation pipeline and report what it published.
+
+    ``base_name`` is the representation's lossless name; the container actually written follows
+    the quality factor, and ``representation_suffix`` — the processor's own rule — decides it, so
+    the tool and the library cannot disagree about what a run produced.
+    """
     del parser
     pixels, _, metrics = _decoded(input_path)
-    prepared = pipeline(
-        pixels,
-        metrics,
-        _pipeline_options(args, kind),
-        root / destination_name,
+    options = _pipeline_options(args, kind)
+    destination = root / Path(base_name).with_suffix(
+        representation_suffix(kind, options.quality)
     )
+    prepared = pipeline(pixels, metrics, options, destination)
     return {"input": str(input_path), "representation": _artifact_payload(prepared)}
 
 
@@ -277,7 +321,7 @@ def _normalize(
         root,
         kind="normalize",
         pipeline=primitives.prepare_normalized_image,
-        destination_name="normalized.png",
+        base_name="normalized.png",
     )
 
 
@@ -295,7 +339,7 @@ def _ocr_ready(
         root,
         kind="ocr-ready",
         pipeline=primitives.prepare_image_for_ocr,
-        destination_name="ocr_ready.png",
+        base_name="ocr_ready.png",
     )
 
 
@@ -313,7 +357,7 @@ def _vlm_ready(
         root,
         kind="vlm-ready",
         pipeline=primitives.prepare_image_for_vlm,
-        destination_name="vlm_ready.png",
+        base_name="vlm_ready.png",
     )
 
 

@@ -51,6 +51,7 @@ from docflow.image.primitives import (
     normalize_contrast,
     prepare_image_for_ocr,
     prepare_image_for_vlm,
+    prepare_normalized_image,
     resize_image,
     rotate_image,
     save_image,
@@ -63,7 +64,7 @@ from tests.fakes.engines.fake_opencv import (
     FakeImage,
     FakeOpenCV,
 )
-from tests.image.samples import COLOR_LAYOUT, CORRUPT, EMBEDDED_LOGO
+from tests.image.samples import COLOR_LAYOUT, CORRUPT, EMBEDDED_LOGO, build_options
 
 PAPER = 240.0
 INK = 30.0
@@ -178,6 +179,53 @@ def test_a_write_the_engine_refuses_is_a_write_error(
     assert failure.value.error.type == "WRITE_ERROR"
     assert not (tmp_path / "image" / "normalized.png").exists()
     assert not list(tmp_path.rglob("*.tmp"))
+
+
+def test_a_stated_quality_is_the_encoder_parameter_and_the_container(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """The factor the caller named reaches the encoder, and the caller's container is kept.
+
+    What is asserted is the format the seam named and the parameter it handed over — never
+    what the engine encodes, which is its own business and the double's synthetic bytes
+    (`README.md` §9.7). The bytes of a real JPEG are observed by hand on the lab bench.
+    """
+    fake = opencv()
+    pixels = load_image(EMBEDDED_LOGO)
+    metrics = analyze_image(pixels, get_image_metadata(EMBEDDED_LOGO, pixels))
+    destination = tmp_path / "vlm_ready.jpg"
+
+    published = prepare_image_for_vlm(
+        pixels, metrics, build_options(quality=85), destination
+    )
+
+    assert published.artifact.path == destination
+    assert published.artifact.format == "jpg"
+    assert published.artifact.size > 0
+    assert fake.writes == [(".jpg", [FakeOpenCV.IMWRITE_JPEG_QUALITY, 85])]
+
+
+def test_a_quality_outside_the_band_is_refused_and_never_reaches_the_encoder(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """An out-of-band factor is refused, not clamped into the encoder's own range."""
+    fake = opencv()
+    pixels = load_image(COLOR_LAYOUT)
+    metrics = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+
+    with pytest.raises(ImagePrimitiveError) as failure:
+        prepare_normalized_image(
+            pixels, metrics, build_options(quality=101), tmp_path / "normalized.jpg"
+        )
+
+    assert failure.value.error.type == "TRANSFORMATION_ERROR"
+    assert failure.value.error.metadata == {
+        "quality": 101,
+        "minimum": 1,
+        "maximum": 100,
+    }
+    assert fake.writes == []
+    assert not list(tmp_path.rglob("*"))
 
 
 def test_the_engine_exception_maps_to_a_transformation_error(
@@ -409,6 +457,7 @@ def test_a_pipeline_applies_only_what_the_measurements_justify(tmp_path: Path) -
         prepare_for_vlm=True,
         correct_orientation=False,
         deskew=False,
+        quality=None,
     )
 
     ocr = prepare_image_for_ocr(pixels, metrics, options, tmp_path / "ocr_ready.png")

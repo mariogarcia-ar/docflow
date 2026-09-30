@@ -100,9 +100,58 @@ def test_the_metadata_records_the_provenance_the_identities_and_the_transformati
         "prepare_for_vlm": True,
         "correct_orientation": True,
         "deskew": True,
+        "quality": None,
     }
     assert payload["input_metrics"]["dimensions"] == {"width": 160, "height": 120}
     assert payload["output_metrics"]["format"] == "png"
+
+
+def test_a_stated_quality_publishes_the_container_it_names(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """The caller's factor reaches the artifacts, and the binarized variant stays lossless.
+
+    Mutation that must break this: stop composing the artifact name from the quality, or let
+    ``prepare_image_for_ocr`` take the factor — the first publishes a container the caller did
+    not ask for, the second degrades the one variant that exists to be legible.
+    """
+    opencv()
+    request = build_request(COLOR_LAYOUT, tmp_path / "image", quality=85)
+
+    result = process_image(request)
+
+    assert result.status == "success"
+    assert files_under(request.output_dir) == {
+        "metadata.json",
+        "normalized.jpg",
+        "ocr_ready.png",
+        "vlm_ready.jpg",
+    }
+    assert result.normalized is not None and result.normalized.format == "jpg"
+    assert result.variants.ocr_ready is not None
+    assert result.variants.ocr_ready.format == "png"
+    assert metadata_of(request.output_dir)["options"]["quality"] == 85
+
+
+def test_the_processing_key_follows_the_stated_quality(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """Two runs that differ only in the container are two units of work, not one reused.
+
+    Mutation that must break this: drop ``quality`` from ``_normalized_options`` — the reuse
+    check would then hand a JPEG request the PNG artifacts of the run before it.
+    """
+    opencv()
+
+    lossless = process_image(build_request(COLOR_LAYOUT, tmp_path / "a"))
+    lossy = process_image(build_request(COLOR_LAYOUT, tmp_path / "b", quality=85))
+
+    assert lossless.status == "success"
+    assert lossy.status == "success"
+    assert (
+        metadata_of(tmp_path / "a")["processing_key"]
+        != metadata_of(tmp_path / "b")["processing_key"]
+    )
 
 
 def test_the_two_variants_are_written_by_their_own_pipelines(

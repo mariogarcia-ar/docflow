@@ -238,9 +238,9 @@ reading order still does.
 |---|---|---|
 | `info` | `primitives.load_image` + `get_image_metadata` + `get_image_dimensions` | file and pixel facts |
 | `metrics` | `load_image` + `get_image_metadata` + `analyze_image` | quality, orientation, skew, regions |
-| `normalize` | `primitives.prepare_normalized_image` | writes `normalized.png` |
-| `ocr-ready` | `primitives.prepare_image_for_ocr` | its own pipeline; never an alias of the next |
-| `vlm-ready` | `primitives.prepare_image_for_vlm` | colour and layout preserved |
+| `normalize` | `primitives.prepare_normalized_image` | writes `normalized.png`, or `normalized.jpg` with `--quality` |
+| `ocr-ready` | `primitives.prepare_image_for_ocr` | its own pipeline; never an alias of the next, and always lossless |
+| `vlm-ready` | `primitives.prepare_image_for_vlm` | colour and layout preserved; `--quality` publishes it lossy |
 | `classify` | `primitives.composition.classify_image` | over the metrics above |
 | `run` | `process_image`, or `process_image_from_page` with `--from-page` | the contract |
 
@@ -435,11 +435,16 @@ python scripts/tools/image.py info tests/fixtures/image/color_layout.png   # one
 python scripts/tools/batch_image.py tests/fixtures/image                   # every image below it
 python scripts/tools/image.py classify tests/fixtures/image/skewed_text.png
 python scripts/tools/batch_image.py tests/fixtures/image classify          # the stated method, per input
+python scripts/tools/batch_image.py tests/fixtures/image normalize --quality 85   # lossy, at the factor stated
 ```
 
 - **The bare run makes `info`**, the flag-free method that publishes nothing. Every other method
   here writes: `normalize`, `ocr-ready`, `vlm-ready` and `run` all publish, so none of them is a
   safe default.
+- **`--quality N` publishes a lossy JPEG instead of a lossless PNG**, and the mirror then holds
+  `normalized.jpg` / `vlm_ready.jpg`. `ocr-ready` has no such flag: that pipeline binarizes the
+  page, and the binarized representation is always lossless. Without the flag nothing changes —
+  the container is the caller's decision, and its absence is a decision too.
 - **A record is filed per input that produced a payload**, beside whatever the method published:
   `classify` files a record and no artifact, `normalize` files both, and a failed input files
   nothing — its typed record is printed and counted.

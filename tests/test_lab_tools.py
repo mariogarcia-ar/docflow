@@ -763,6 +763,30 @@ def test_image_reads_through_the_shared_layer(
     assert "resolution:" in capsys.readouterr().out
 
 
+def test_batch_image_writes_the_container_a_stated_quality_implies(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The bench's ``--quality`` reaches the processor, and the record agrees with the file."""
+    monkeypatch.setattr("docflow.image.primitives.cv2", FakeOpenCV())
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    shutil.copy(FIXTURES / "image" / "color_layout.png", corpus / "a.png")
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_image").main(
+        ["--out", str(out), str(corpus), "normalize", "--quality", "85"]
+    )
+
+    assert code == 0
+    assert sorted(path.name for path in out.rglob("*") if path.is_file()) == [
+        "normalize.json",
+        "normalized.jpg",
+    ]
+    record = json.loads(next(out.rglob("normalize.json")).read_text(encoding="utf-8"))
+    assert record["representation"]["format"] == "jpg"
+    assert record["representation"]["kind"] == "normalized"
+
+
 def install_ocr_engine(monkeypatch: pytest.MonkeyPatch) -> FakeDocling:
     """Install the Docling double at the seam the OCR layer calls and return it."""
     double = FakeDocling()
