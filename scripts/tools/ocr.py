@@ -2,7 +2,7 @@
 
 A thin caller: its parser, its flags and one handler per subcommand are all it owns. The frame
 around them — where a run writes, how the input resolves, the header, the printers and the exit
-code — lives in :mod:`scripts.tools._cli`, and the seven methods themselves live in
+code — lives in :mod:`scripts.tools._cli`, and the eight methods themselves live in
 :mod:`scripts.tools._ocr`, which ``batch_ocr.py`` drives over a folder tree. One file per run is
 the only thing this tool adds to that layer.
 
@@ -23,9 +23,10 @@ from docflow.ocr.primitives.errors import OCRPrimitiveError
 
 #: Subcommands that publish no file: their report is the stdout summary, so the run header
 #: says so instead of naming an output root no run creates. ``run`` publishes the contract's
-#: document and ``text`` publishes the reading it reports as ``text.txt``; the remaining five
-#: write nothing but their report. Verified by the hand run in ``docs/plan/bitacora.md``
-#: (2026-09-27), and by the ``text`` run of 2026-09-30.
+#: document, and ``text`` and ``mixed`` publish the reading they report as ``text.txt``; the
+#: remaining five write nothing but their report. Verified by the hand run in
+#: ``docs/plan/bitacora.md`` (2026-09-27), by the ``text`` run of 2026-09-30, and by the ``mixed``
+#: run of the same day.
 REPORT_ONLY: Final[tuple[str, ...]] = (
     "md",
     "json",

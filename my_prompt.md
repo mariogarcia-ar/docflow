@@ -2,6 +2,11 @@
 al extraer la imagen de un pdf que solo tiene una imagen, extrajo el original .... esto es genial 
 
 
+
+pdf > texto o render
+imagen > ocr-ready 
+ocr > extrae texto y tabla 
+
 # comandos
 ```bash
 # info

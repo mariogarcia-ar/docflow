@@ -164,8 +164,8 @@ is: it reaches the four processors only through their public contracts.
 | `batch_pdf.py` | `SCR-12` | the same eight commands over every PDF below a folder (`inspect` when none is stated) |
 | `image.py` | `SCR-03` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run` |
 | `batch_image.py` | `SCR-13` | the same seven over every image below a folder (`info` when none is stated) |
-| `ocr.py` | `SCR-04` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics` |
-| `batch_ocr.py` | `SCR-14` | the same seven over every image below a folder (`text` when none is stated, which publishes each input's `text.txt`) |
+| `ocr.py` | `SCR-04` | `run`, `text`, `mixed`, `md`, `json`, `tables`, `blocks`, `metrics` |
+| `batch_ocr.py` | `SCR-14` | the same eight over every image below a folder (`text` when none is stated, which publishes each input's `text.txt`) |
 | `llm.py` | `SCR-05` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `batch_llm.py` | `SCR-15` | `call`, `graph`, `node`, `tokens` over every text below a folder — a command is **required**, and `--fake` installs the scripted provider |
 | `workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |

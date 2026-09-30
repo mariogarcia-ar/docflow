@@ -10,7 +10,7 @@ finished library by hand against the committed fixtures under `tests/fixtures/` 
 |---|---|---|
 | `scripts/tools/pdf.py` | `SCR-02` | `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` |
 | `scripts/tools/image.py` | `SCR-03` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run` |
-| `scripts/tools/ocr.py` | `SCR-04` | `run`, `text`, `md`, `json`, `tables`, `blocks`, `metrics` |
+| `scripts/tools/ocr.py` | `SCR-04` | `run`, `text`, `mixed`, `md`, `json`, `tables`, `blocks`, `metrics` |
 | `scripts/tools/llm.py` | `SCR-05` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `scripts/tools/workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 
@@ -211,6 +211,7 @@ Every row names a symbol that exists today. A row with no symbol would not be a 
 |---|---|---|
 | `run` | `ocr.process_ocr_image` | the contract |
 | `text` | `ocr.primitives.extract_docling_text` + `normalize_ocr_text` | one representation, **published** as `text.txt` (§9, decision 19) |
+| `mixed` | the `text` row's symbols, with `--tables` on | the same reading with every detected table carried as Markdown in place; the same method, a different claim (§9, decision 20) |
 | `md` / `json` | `ocr.primitives.extract_docling_markdown` / `build_ocr_document` | one representation each, no artifact |
 | `tables` | `ocr.primitives.extract_docling_tables` | table markdown and cells |
 | `blocks` | `ocr.primitives.extract_docling_blocks` + `ocr.primitives.composition.preserve_reading_order` | in reading order |
@@ -436,6 +437,14 @@ Scenario: A bare OCR batch writes the text it reports, and one name means one re
       of the same image writes
   And no other artifact is written by that default
 
+Scenario: An OCR reading carries its tables, and no placeholder is substituted
+  Given "scripts/tools/ocr.py mixed" over a page carrying a table, with no flag stated
+  When the run finishes
+  Then "text.txt" holds the reading with the detected table as Markdown where it was read
+  And the detection was asked for by the command, so the caller states no flag to get it
+  And no marker is replaced: the engine writes the table where it was read, never a
+      placeholder for one, so a substitution step would be code that can never fire
+
 Scenario: The batch frame is one implementation, not four
   Given "_batch.py" and the four batch tools
   When their sources are read
@@ -516,6 +525,10 @@ their own; they consume the ones the processors already ship.
    leaves `text.txt` missing (2 red, `FileNotFoundError`); the second leaves the file carrying the
    trailing whitespace the processor's `run` strips, so the artifact and the record of one reading
    disagree (1 red). Both restored by the inverse edit.
+10. **The two commands whose answer needs the detected tables claim the detection themselves.**
+   *Mutation:* drop `mixed` from `_ocr.TABLES_COMMANDS`. *Observed:* the parse guard fails for
+   that one command — `tables=False` where the command's answer needs the tables — while the other
+   seven stay green. Reverted by the inverse edit.
 
 Each invariant leaves the four-field record `docs/plan/README.md` §7 fixes (Invariant /
 Mutation / Observed failure / Restored green) in the root `README.md`, where `GEN-16` audits
@@ -690,6 +703,22 @@ to `var/batch_<processor>/<folder>/`, which is ignored too.
     "the default publishes at most the reading it reports" rather than "publishes nothing". `md`,
     `json`, `tables`, `blocks` and `metrics` still publish nothing, and `text` derives nothing from
     the text it reads: no render, no table directory, no document.
+20. **The OCR bench's `mixed` is the reading with the tables claimed — RESOLVED (`SCR-04`, `SCR-14`),
+    and it adds an eighth command rather than a second reading.** The operator asked for one text
+    artifact holding the text *and* the detected tables, and imagined a placeholder to substitute:
+    Docling writes none. Measured on `tests/fixtures/casos/66cd35e9-….jpg` (docling 2.126.0),
+    `document.export_to_text()` emits the table as Markdown at its reading position when
+    `do_table_structure` is on, and a degenerate single-row pseudo-table when it is off — never a
+    `<table>` marker, and no `<image>` either (that one appears in `export_to_markdown()` only). A
+    substitution step would therefore be code that can never fire, which is the silent stand-in
+    this project forbids. So `mixed` is `text` with `--tables` claimed: same symbols, same
+    `text.txt`, same normalization, one method in `_ocr.COMMANDS` under two names, and the same
+    rule as decision 19 — the file holds exactly what the record states. It is also the second
+    command of `_ocr.TABLES_COMMANDS`: a command whose answer needs the detection asks for it
+    itself, exactly as `tables` does. A rendering of *ours*, splicing `composition.table_to_markdown`
+    into the reading, was rejected: it would re-render the reading (the paragraph merge joins the
+    engine's consecutive text items with spaces), and a faithful line-per-item reading is what an
+    invoice needs.
 
 **Stale documents this subplan creates or leaves (owner in parentheses)**
 

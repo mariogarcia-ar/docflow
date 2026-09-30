@@ -1,16 +1,17 @@
 """Lab tool for the OCR processor over a folder tree (``SCR-14``).
 
-``ocr.py`` runs one image; this runs the same seven methods over every image under a folder. What
+``ocr.py`` runs one image; this runs the same eight methods over every image under a folder. What
 it shares with the other batch tools — the walk, the mirror, the per-input record, the summary and
 the exit code — is :mod:`_batch`; what is its own is the suffix set it takes, the layer its methods
 come from (:mod:`_ocr`) and the command a run makes when the caller states none.
 
 With no subcommand stated it runs ``text`` — stated in the run header, never silent. It is not
 cheap: every input is converted once by the engine, so a corpus of images takes as long as the
-engine takes. Two methods publish: ``run`` publishes the contract's document and ``text`` publishes
-each input's ``text.txt`` — the reading its own record states — while ``md``, ``json``, ``tables``,
-``blocks`` and ``metrics`` write nothing but their record. Nothing is derived from the text: no
-render, no table directory, no document.
+engine takes. Three methods publish: ``run`` publishes the contract's document, and ``text`` and
+``mixed`` publish each input's ``text.txt`` — the reading its own record states, the second of
+them with the detected tables carried as Markdown — while ``md``, ``json``, ``tables``, ``blocks``
+and ``metrics`` write nothing but their record. Nothing is derived from the text: no render, no
+table directory, no document.
 """
 
 from __future__ import annotations

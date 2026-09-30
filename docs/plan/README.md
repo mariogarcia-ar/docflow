@@ -221,7 +221,7 @@ scripts/tools/
 ├── _cli.py         shared plumbing — not a tool; holds no contract and reaches no engine
 ├── pdf.py          pdf      → inspect, split, render, text, blocks, images, classify, run
 ├── image.py        image    → info, metrics, normalize, ocr-ready, vlm-ready, classify, run
-├── ocr.py          ocr      → run, text, md, json, tables, blocks, metrics
+├── ocr.py          ocr      → run, text, mixed, md, json, tables, blocks, metrics
 ├── llm.py          llm      → call, node, graph, resume, status, models, tokens, fake
 └── workflow.py     workflow → run, plan, status, resume, force, skip, stop, context
 ```

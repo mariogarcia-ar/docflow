@@ -114,8 +114,8 @@ DOCUMENTED_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
         "classify",
         "run",
     ),
-    "ocr": ("run", "text", "md", "json", "tables", "blocks", "metrics"),
-    "batch_ocr": ("run", "text", "md", "json", "tables", "blocks", "metrics"),
+    "ocr": ("run", "text", "mixed", "md", "json", "tables", "blocks", "metrics"),
+    "batch_ocr": ("run", "text", "mixed", "md", "json", "tables", "blocks", "metrics"),
     "llm": ("call", "node", "graph", "resume", "status", "models", "tokens", "fake"),
     "batch_llm": ("call", "graph", "node", "tokens"),
     "workflow": (
@@ -842,6 +842,51 @@ def test_ocr_tables_asks_for_the_detection_it_reports(
 
     assert code == 0
     assert not refused["tables"]
+
+
+@pytest.mark.parametrize("command", DOCUMENTED_SUBCOMMANDS["batch_ocr"])
+def test_only_the_two_table_commands_claim_the_detection(command: str) -> None:
+    """``tables`` and ``mixed`` ask for the detection with no flag stated; the other six do not.
+
+    Detection is engine work that only a stated flag starts, so a command whose answer *needs* the
+    tables has to claim them itself or answer with less than it promises: ``tables`` would report
+    an empty list, and ``mixed`` would publish the flat text under a name that says otherwise. The
+    other six are left alone — claiming a capability a caller did not ask for is its own defect.
+    """
+    args = tool_module("batch_ocr").build_parser().parse_args([str(FIXTURES), command])
+
+    assert args.tables is (command in {"tables", "mixed"})
+
+
+def test_ocr_mixed_publishes_the_reading_under_the_text_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``mixed`` files the reading as ``text.txt``, holding what a ``run --tables`` holds there.
+
+    ``mixed`` is ``text`` with the tables claimed, so it is one name for one reading rather than a
+    second spelling of it: the file holds the payload's own string, and the bytes are the ones the
+    contract leaves under the same name for the same request.
+    """
+    install_ocr_engine(monkeypatch)
+    mixed_root = tmp_path / "mixed"
+    contract_root = tmp_path / "contract"
+
+    code = tool_module("ocr").main(
+        ["--json", "--out", str(mixed_root), "mixed", str(SAMPLE_OCR)]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    published = (mixed_root / "text.txt").read_text(encoding="utf-8")
+    assert published == payload["text"]
+
+    assert (
+        tool_module("ocr").main(
+            ["--out", str(contract_root), "run", str(SAMPLE_OCR), "--tables"]
+        )
+        == 0
+    )
+    assert published == (contract_root / "text.txt").read_text(encoding="utf-8")
 
 
 def _trailing_space_document(width: float, height: float) -> FakeDoclingDocument:

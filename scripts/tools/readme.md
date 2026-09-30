@@ -24,14 +24,14 @@ recorded as a gate.
 | `_batch.py` | the shared **folder frame**: the walk, the mirror, the record per input, the summary, the exit codes. Not a tool — every batch tool runs on it |
 | `_pdf.py` | the PDF bench's **command layer**: the eight methods, their payloads and their flags. Not a tool — `pdf.py` and `batch_pdf.py` both call it |
 | `_image.py` | the image bench's **command layer**: the seven methods. Not a tool — `image.py` and `batch_image.py` both call it |
-| `_ocr.py` | the OCR bench's **command layer**: the seven methods. Not a tool — `ocr.py` and `batch_ocr.py` both call it |
+| `_ocr.py` | the OCR bench's **command layer**: the eight methods. Not a tool — `ocr.py` and `batch_ocr.py` both call it |
 | `_llm.py` | the LLM bench's **command layer**: the eight methods. Not a tool — `llm.py` and `batch_llm.py` both call it |
 | `pdf.py` | `SCR-02` — the PDF processor's primitives and its contract, one file per run |
 | `batch_pdf.py` | `SCR-12` — the same eight methods over every PDF below a folder, one record per input |
 | `image.py` | `SCR-03` — the image processor's pipelines and its contract, one file per run |
 | `batch_image.py` | `SCR-13` — the same seven methods over every image below a folder |
 | `ocr.py` | `SCR-04` — the OCR processor's representations and its contract |
-| `batch_ocr.py` | `SCR-14` — the same seven methods over every image below a folder |
+| `batch_ocr.py` | `SCR-14` — the same eight methods over every image below a folder |
 | `llm.py` | `SCR-05` — one inference, the chain, the inventory and the scripted provider |
 | `batch_llm.py` | `SCR-15` — four of the same eight commands over every text below a folder |
 | `workflow.py` | `SCR-06` — the orchestrator: plan, run, resume, force, skip, stop |
@@ -139,7 +139,7 @@ collide. Output is **never** written beside the input and never into `out/`; `/v
 
 Only a subcommand that **publishes** creates that directory. When the report *is* the stdout
 summary — `pdf.py inspect`, `ocr.py md`, `workflow.py plan` and their peers, seventeen of the
-sixty-four subcommands — the run writes no file at all, and its header states
+sixty-six subcommands — the run writes no file at all, and its header states
 `output: (none — this subcommand publishes no file)` instead of naming a directory no run creates.
 That line is declared per tool (`REPORT_ONLY`) and checked twice: the glue test drives the
 report-only subcommands and asserts the filesystem stayed empty, and `tests/test_lab_tools.py`
@@ -253,9 +253,10 @@ There is **no `crop` subcommand**: the library has no `crop_region`
 |---|---|---|
 | `run` | `process_ocr_image` | the contract |
 | `text` | `primitives.extract_docling_text` + `normalize_ocr_text` | one conversion, one representation; publishes it as `text.txt` |
+| `mixed` | the same two symbols, with `--tables` on | the reading with every detected table carried as Markdown in place; one method under two names |
 | `md` | `primitives.extract_docling_markdown` | as above, no artifact |
 | `json` | `primitives.build_ocr_document` | the structured document, serialized |
-| `tables` | `primitives.extract_docling_tables` | in reading order; the one command whose `--tables` is on by default |
+| `tables` | `primitives.extract_docling_tables` | in reading order; `--tables` on by default, as for `mixed` |
 | `blocks` | `primitives.extract_docling_blocks` + `composition.preserve_reading_order` | in reading order |
 | `metrics` | `composition.analyze_ocr_result` | over the built document |
 
@@ -263,11 +264,14 @@ There is **no `--engine` flag**. The engine is fixed and never presented as a se
 There is **no `diff` subcommand** either: comparing two extractions is a reading, and a tool that
 compared them would be a second implementation of the thing under test.
 
-**`text` publishes, and under the processor's own name.** It writes the text it reports as
-`text.txt` in the run's root — the name `run` gives the same content in its `ocr/` namespace — so
-the two commands leave the same bytes for the same image and one name never means two readings. The
-text is normalized before it is written, which is the form the processor publishes and reports;
-there is one published file, never a second spelling of the same reading.
+**`text` and `mixed` publish, and under the processor's own name.** They write the text they
+report as `text.txt` in the run's root — the name `run` gives the same content in its `ocr/`
+namespace — so those commands leave the same bytes for the same image and one name never means two
+readings. The text is normalized before it is written, which is the form the processor publishes
+and reports; there is one published file, never a second spelling of the same reading. `mixed` is
+the same method with the tables claimed, not a second renderer: the engine writes a detected table
+into its own text export where it was read, so a substitution step would be code that can never
+fire — Docling emits no `<table>` marker.
 
 ### `llm.py` — `SCR-05`
 
@@ -461,7 +465,7 @@ python scripts/tools/batch_image.py tests/fixtures/image normalize --quality 85 
 
 ### `batch_ocr.py` — `SCR-14`
 
-`ocr.py` over a folder: the same seven methods, mirrored under `var/batch_ocr/<folder>/`. Its
+`ocr.py` over a folder: the same eight methods, mirrored under `var/batch_ocr/<folder>/`. Its
 inputs are the image suffixes, because the OCR processor's input *is* an image.
 
 ```bash
@@ -473,8 +477,9 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics                    
 
 - **The bare run makes `text`**, the flag-free method, and it publishes one `text.txt` per input:
   the reading its own record states, normalized the way the processor publishes it, and nothing
-  derived from it. `run` publishes the contract's document; `md`, `json`, `tables`, `blocks` and
-  `metrics` write nothing but their record.
+  derived from it. `run` publishes the contract's document; `text` and `mixed` publish each input's
+  `text.txt`, the second with the detected tables carried as Markdown; `md`, `json`, `tables`,
+  `blocks` and `metrics` write nothing but their record.
 - **It is not cheap.** Every input is converted once by the engine, so a corpus of images costs
   what the engine costs; the default is safe for the output tree, not for the clock.
 - **An input the engine refuses fails its own record and the walk continues** — that is the whole

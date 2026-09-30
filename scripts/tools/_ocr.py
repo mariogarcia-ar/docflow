@@ -1,6 +1,6 @@
 """The OCR bench's shared command layer (``SCR-14``).
 
-``ocr.py`` runs one image and ``batch_ocr.py`` runs a folder tree: two callers of the same seven
+``ocr.py`` runs one image and ``batch_ocr.py`` runs a folder tree: two callers of the same eight
 methods. This module holds them, so neither tool owns a second copy of a payload, a flag or a
 conversion — the flags are registered by :func:`build_subcommands` and the methods are reached
 through :data:`COMMANDS`, both by name.
@@ -10,16 +10,22 @@ method does the work and returns the payload; the caller decides whether that be
 (:mod:`_cli`'s printers) or a file beside the artifacts. The processor's typed failures are raised,
 never caught here — a tool prints them and exits ``1``.
 
-Two of the seven methods publish: ``run`` publishes the contract's document, and ``text`` publishes
-the reading it reports as ``text.txt``. The other five build a payload and write nothing.
+Three of the eight methods publish: ``run`` publishes the contract's document, and ``text`` and
+``mixed`` publish the reading they report as ``text.txt``. The other five build a payload and write
+nothing.
 
 It carries the lab-bench exception of ``subplan-scripts.md`` §3.2 for its own processor: it may
 drive ``docflow.ocr.primitives``.
 
 There is no ``--engine`` flag: the engine is fixed and never presented as a selectable option.
-``--tables`` is on for the ``tables`` subcommand and off everywhere else: detection is engine
-work, so the command whose whole answer is the detected tables asks for them itself rather than
-requiring the caller to say it twice.
+``--tables`` is on for the two subcommands whose answer needs the detected tables — ``tables``,
+which reports them, and ``mixed``, which reports the reading that carries them — and off
+everywhere else: detection is engine work, so a command that would otherwise answer with less than
+it promises asks for it itself rather than requiring the caller to say it twice. ``mixed`` is
+``text`` with the tables claimed, and nothing else: the engine's own text export already carries
+every detected table as Markdown where it was read, so the *reading* is the merge and no splicing
+of ours is needed — one that looked for a placeholder to substitute would be code that can never
+fire, because this engine writes none.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ from docflow.ocr.primitives.errors import OCRPrimitiveError
 #: One subcommand per method, with the help text both tools print.
 SUBCOMMANDS: tuple[tuple[str, str], ...] = (
     ("text", "The extraction's plain text, published as text.txt."),
+    ("mixed", "The same reading with detected tables carried as Markdown."),
     ("md", "The extraction's Markdown."),
     ("json", "The structured document, serialized."),
     ("tables", "Detected tables, in reading order."),
@@ -67,9 +74,14 @@ Payload = dict[str, Any]
 #: the directory that input's run writes under.
 Command = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], Payload]
 
-#: The help ``--tables`` prints. The command whose answer *is* the detected tables says so,
-#: instead of reading like a flag the caller has to remember: detection is engine work, and a
-#: ``tables`` run that did not ask for it could only ever report the empty list.
+#: The subcommands whose answer needs the detected tables, so ``--tables`` is on for them when
+#: the caller states nothing: ``tables`` reports them, and ``mixed`` reports the reading that
+#: carries them. Detection is engine work, and a command that never asked for it could report
+#: only a reading with the tables missing — which is the flat text, not what these two promise.
+TABLES_COMMANDS: Final[tuple[str, ...]] = ("tables", "mixed")
+
+#: The help ``--tables`` prints. The commands whose answer needs the detected tables say so,
+#: instead of reading like a flag the caller has to remember.
 TABLE_FLAG_HELP: Final[dict[bool, str]] = {
     False: "Detect and extract tables.",
     True: "Detect and extract tables; on by default, because this command answers with them.",
@@ -84,9 +96,10 @@ def _add_ocr_options(
     Args:
         subparser: The subcommand's parser.
         tables_by_default: Whether table detection is on when the caller states nothing. It is
-            on for ``tables`` and for that command alone — the same shape as ``--ocr`` being on
-            because OCR is the processor's purpose: the capability a command exists to show is
-            not a flag the caller has to remember. ``--no-tables`` still states the opposite.
+            on for the commands of :data:`TABLES_COMMANDS` and for those alone — the same shape
+            as ``--ocr`` being on because OCR is the processor's purpose: the capability a
+            command exists to show is not a flag the caller has to remember. ``--no-tables``
+            still states the opposite.
     """
     subparser.add_argument(
         "--ocr",
@@ -133,7 +146,7 @@ def build_subcommands(
         parser = _cli.add_subcommand(
             subparsers, name, help_text, input_argument=input_argument
         )
-        _add_ocr_options(parser, tables_by_default=name == "tables")
+        _add_ocr_options(parser, tables_by_default=name in TABLES_COMMANDS)
         if name == "run":
             parser.add_argument(
                 "--page", type=int, default=1, help="Logical page number, 1-based."
@@ -235,6 +248,11 @@ def _text(
     same image, under the same name, so two runs of one input cannot be read as two readings. It
     is what the payload reports, too — the processor's rule is that what the result states is
     exactly what the file holds.
+
+    ``text`` and ``mixed`` are one method because they are one reading: the difference between
+    them is the *request*, and it is carried by the flags `build_subcommands` registers
+    (``mixed`` claims the tables, ``text`` does not). Duplicating the body for the second name
+    would be two places to keep agreeing about what ``text.txt`` holds.
     """
     conversion, _ = _conversion(args, parser, input_path)
     text = primitives.normalize_ocr_text(primitives.extract_docling_text(conversion))
@@ -375,10 +393,12 @@ def _run(
     }
 
 
-#: The seven methods by subcommand name. Both tools dispatch through this, so a subcommand's
-#: behaviour lives in exactly one place.
+#: The eight methods by subcommand name. Both tools dispatch through this, so a subcommand's
+#: behaviour lives in exactly one place — ``mixed`` and ``text`` share theirs on purpose, since
+#: what separates them is a flag and not a method.
 COMMANDS: dict[str, Command] = {
     "text": _text,
+    "mixed": _text,
     "md": _md,
     "json": _json,
     "tables": _tables,

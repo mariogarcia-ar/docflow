@@ -2263,3 +2263,66 @@ requirement was the quickstart.
 `metrics.tables` reads `0` unless the caller states the flag. That is the documented claim rule
 rather than a defect — but it is the same papercut one command over, and the defaults of the three
 document-building commands are worth deciding together.
+
+---
+
+## 2026-09-30 — Phase 5 · the OCR bench's `mixed`: the reading with its tables (`_ocr.py`)
+
+**Asked for at the bench, and the premise was false.** The request was a `mixed` command that would
+"put the text and, where the `<table>` mark is, the Markdown of the extracted table". Measured
+before anything was designed, on `tests/fixtures/casos/66cd35e9-….jpg` with docling 2.126.0:
+`document.export_to_text()` writes **no** placeholder — with `do_table_structure=True` it writes the
+real Markdown table where it was read, and with it off a degenerate single-row pseudo-table; the
+only angle-bracket marker this engine emits is `<!-- image -->`, and only in
+`export_to_markdown()`. A sweep of the whole `var/` tree found no `<table>` anywhere either. A
+substitution step would have been code that can never fire — the silent stand-in this project
+forbids.
+
+**So `mixed` is a claim, not a renderer.** `_ocr.TABLES_COMMANDS = ("tables", "mixed")`: the
+`--tables` default the previous entry gave `tables` now covers both commands whose answer needs the
+detection, and `COMMANDS["mixed"]` is `_text` — one method under two names, because what separates
+them is the *request* and not a rendering. `TEXT_NAME` and its normalization are untouched, so "one
+name, one reading" survives: `mixed` and `text --tables` write byte-identical bytes (`cmp` on the
+invoice), while `text` without the flag differs from char 623 (line 41) — that is the degenerate
+pseudo-row the reading would otherwise carry.
+
+**Rejected: a renderer of ours** (`composition.render_mixed_text` over the ordered document,
+splicing `table_to_markdown`). It would agree byte-for-byte with `document.json`, but it re-renders
+the *reading*: `merge_ocr_blocks` joins the engine's consecutive text items into one paragraph with
+spaces, so an invoice's per-line fields (`Punto de Venta: …`, `CUIT: …`) would land on one line. The
+bench's operator chose fidelity over consistency.
+
+**Mutation evidence** (both applied to `scripts/tools/_ocr.py`, restored by the inverse edit).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `TABLES_COMMANDS = ("tables",)` | `test_only_the_two_table_commands_claim_the_detection[mixed]` red — `assert False is ('mixed' in {'mixed', 'tables'})`; the other seven cases green | inverse edit |
+| `_text` publishes to `root / "reading.txt"` | `test_ocr_mixed_publishes_the_reading_under_the_text_name` **and** `test_ocr_text_publishes_the_reading_run_gives_the_same_name` red (2) — the file name is the invariant the two share | inverse edit |
+
+**Hand run (real engine).** `batch_ocr.py tests/fixtures/casos mixed` → `files: 6 · succeeded: 6 ·
+failed: 0`, exit `0`; the invoice's `text.txt` carries the table in place at line 41
+(`| Código   | Detalle …`, `| KL04181 …`).
+
+**Gate evidence.**
+
+```
+pytest                     768 passed
+ruff check .               All checks passed!
+ruff format --check .      181 files already formatted
+pylint src tests           10.00/10 — one message, the pre-existing
+                           src/docflow/pdf/entrypoints.py:475 R0912 (15/12);
+                           `git diff --name-only -- src` is empty
+```
+
+**Plan revision applied in the same pass** (`SCR-04`, `SCR-14`), subplan and WBS together:
+`subplan-scripts.md` §2 (the module table), §3.4 (the new `mixed` row), §5 (a new scenario — the
+reading carries its tables and no placeholder is substituted), §6 (invariant 10) and §9
+(**decision 20**, which records the engine measurement that killed the substitution premise);
+`wbs-scripts.md` §SCR-04 (objective, scope, one acceptance criterion) and §SCR-14 (objective, scope,
+out-of-bounds). Bench docs: `scripts/tools/quickstart.md` (the table, both example blocks, the
+prose), `scripts/tools/readme.md` (the layer row, the batch row, the OCR table, the publication
+paragraph, and the report-only count 64 → **66**), root `README.md`'s tool table and
+`docs/plan/README.md` §4.1.
+
+**Left as it is.** `json` and `metrics` still default `--tables` off — the claim rule, not a defect;
+the note at the end of the previous entry stands.

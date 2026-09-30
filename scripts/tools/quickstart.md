@@ -202,6 +202,7 @@ the processor's purpose), `--layout`, `--tables`, `--reading-order`, `--language
 | Subcommand | Needs | What it gives you |
 |---|---|---|
 | `text` | — | the extraction's plain text; writes `text.txt` |
+| `mixed` | — | the same reading with detected tables carried as Markdown; writes `text.txt` |
 | `md` | — | the extraction's Markdown |
 | `json` | — | the structured document, serialized |
 | `tables` | — | detected tables, in reading order |
@@ -209,13 +210,14 @@ the processor's purpose), `--layout`, `--tables`, `--reading-order`, `--language
 | `metrics` | — | content metrics, over the built document |
 | `run` | — | the processor's contract; `--page` (default `1`) |
 
-`run` publishes the contract's document and `text` publishes the reading it reports as `text.txt`;
-the other five write nothing but their report.
+`run` publishes the contract's document, and `text` and `mixed` publish the reading they report as
+`text.txt`; the other five write nothing but their report.
 
 ### One file
 
 ```bash
 python scripts/tools/ocr.py text tests/fixtures/ocr/ocr_prepared_text_and_table.png
+python scripts/tools/ocr.py mixed tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py md tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py json tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py tables tests/fixtures/ocr/ocr_prepared_text_and_table.png
@@ -225,15 +227,19 @@ python scripts/tools/ocr.py --json run tests/fixtures/ocr/ocr_prepared_text_and_
     --layout --tables --reading-order
 ```
 
-That is all seven subcommands. `text` and `md` are one conversion in two representations, `json`
+That is all eight subcommands. `text` and `md` are one conversion in two representations, `json`
 is the built document, `tables` and `blocks` are its ordered views, and `metrics` measures the
-document the others build. `tables` asks for the detection itself — `--tables` is on for that
-command and off for the rest, because detection is engine work and a run that never asked for it
-could only report the empty list. `--no-tables` still states the opposite.
+document the others build. `mixed` is `text` with the tables claimed — one method, a different
+request — because the engine writes a detected table into its own text export where it was read:
+the reading *is* the merge, so nothing is substituted for a placeholder. `tables` and `mixed`
+ask for the detection themselves — `--tables` is on for those two commands and off for the rest,
+because detection is engine work and a run that never asked for it could only report the empty
+list or a reading with the tables missing. `--no-tables` still states the opposite.
 
-`text` publishes the text it reports as `text.txt` — the same file, and the same bytes, a `run` of
-the same image writes. It is normalized the way the processor publishes it, so a page whose engine
-text carries trailing whitespace loses exactly that and nothing else.
+`text` and `mixed` publish what they report as `text.txt` — the same file, and the same bytes, a
+`run` of the same image writes for the same request. It is normalized the way the processor
+publishes it, so a page whose engine text carries trailing whitespace loses exactly that and
+nothing else.
 
 The engine writes its own INFO lines to **stdout**, so they can appear ahead of the payload.
 
@@ -241,6 +247,7 @@ The engine writes its own INFO lines to **stdout**, so they can appear ahead of 
 
 ```bash
 python scripts/tools/batch_ocr.py tests/fixtures/ocr              # text — the default command
+python scripts/tools/batch_ocr.py tests/fixtures/ocr mixed
 python scripts/tools/batch_ocr.py tests/fixtures/ocr md
 python scripts/tools/batch_ocr.py tests/fixtures/ocr json
 python scripts/tools/batch_ocr.py tests/fixtures/ocr tables
@@ -249,7 +256,7 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics
 python scripts/tools/batch_ocr.py tests/fixtures/ocr run
 ```
 
-The same seven subcommands as `ocr.py`, with the folder in place of the file. `tests/fixtures/ocr` is
+The same eight subcommands as `ocr.py`, with the folder in place of the file. `tests/fixtures/ocr` is
 two images, both converted, so every command reports `files: 2 · succeeded: 2 · failed: 0` and
 exits `0`. The bare run makes `text` and files a `text.txt` beside each input's record, so the
 default is a corpus of readable text files rather than a corpus of JSON.
