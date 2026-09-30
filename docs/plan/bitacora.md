@@ -2199,3 +2199,67 @@ two files because they sit in the sections being edited: the per-input record is
 
 **Not taken.** `md` publishing `document.md` is the same question, and a second published
 representation is its own decision.
+
+---
+
+## 2026-09-30 — Phase 5 · the OCR bench's `tables` asks for the detection it reports (`_ocr.py`)
+
+**Asked for at the bench.** `python scripts/tools/batch_ocr.py <folder> tables` was read as "the
+tables of these images" and answered `"tables": []` for a real invoice photo whose table Docling
+finds in three rows and eight columns. The command was what lied: `--tables` was `store_true`,
+default `False`, and `_ocr._document` builds its table list **only when the option claims tables**
+(`if normalized.tables else []`), so on the `tables` subcommand the answer was structurally always
+empty. Detection is engine work (`do_table_structure` in `configure_image_pipeline`), and a run
+that never asked for it is not a run that found none.
+
+**Checked against the engine first, outside the bench** (the question was "is it Docling?").
+Docling 2.126.0 over `tests/fixtures/casos/66cd35e9-….jpg`: `do_table_structure=False` → 1 table,
+1×1, empty — the degenerate item the engine emits with the structure model off; `do_table_structure
+=True` → 1 table, **3×8**, cells read. Identical in `TableFormerMode.ACCURATE` with
+`do_cell_matching=True`, so the mode changes nothing on this image and no option was touched. The
+library was right; the bench never asked.
+
+**The fix is one default on one subcommand.** `_ocr._add_ocr_options(subparser, *,
+tables_by_default=False)`; `build_subcommands` passes `tables_by_default=name == "tables"`, so
+`--tables` is on for `tables` and off for the other six — the same shape as `--ocr` being on
+because OCR is the processor's purpose, and the same shape as `_pdf.py`'s `blocks`, which calls
+`extract_text_from_page(..., True)` and has no flag of its own. `--tables` became a
+`BooleanOptionalAction`, so `--no-tables` still states the opposite and the flags still decide what
+is *claimed* (decision 7, 2026-09-25). One line fixes both tools: `ocr.py` and `batch_ocr.py` share
+`_ocr.py`. `_cli.py`, `_batch.py` and `src/`: **no line**.
+
+**Mutation evidence** (applied to `scripts/tools/_ocr.py`, restored by the inverse edit).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `build_subcommands`: `tables_by_default=False` (the old behaviour) | `test_ocr_tables_asks_for_the_detection_it_reports` red — `AssertionError: assert [] == [[['Region', 'Revenue'], ['North', '120']]]` | inverse edit; `pytest -q` 759 passed |
+
+**Hand run (real engine).** `batch_ocr.py tests/fixtures/casos tables` → `files: 6 · succeeded: 6 ·
+failed: 0`, exit `0`; `66cd35e9-….jpg` files `table_001`, 3×8 —
+`Código · Detalle · Cant. · Pr.Lista · %1 · % 2 Precio · % IVA · Total`. The other five inputs
+report `0` tables, measured rather than assumed. Note the shape of the trap: before and after, the
+summary was **identical** (`succeeded: 6`, exit `0`), so only the payload distinguished "no table"
+from "never asked".
+
+**Gate evidence.**
+
+```
+pytest                     759 passed
+ruff check .               All checks passed!
+ruff format --check .      181 files already formatted
+pylint src tests           10.00/10 — one message, the pre-existing
+                           src/docflow/pdf/entrypoints.py:475 R0912 (15/12);
+                           `git diff --name-only -- src` is empty
+```
+
+**Docs updated (bench documentation, not a frozen artifact).** `scripts/tools/quickstart.md`: the
+`ocr.py tables` example lost `--tables` and the sentence that said the flag is what asks for the
+detection now says the command asks for it itself. `scripts/tools/readme.md`: the `tables` row
+notes the default. **No plan revision is owed** — `subplan-scripts.md` §3.4's `tables` row names
+the symbol and the representation, never the flag, and the only document that stated the
+requirement was the quickstart.
+
+**Not taken.** `json` and `metrics` still default `--tables` off, so `json` carries no table and
+`metrics.tables` reads `0` unless the caller states the flag. That is the documented claim rule
+rather than a defect — but it is the same papercut one command over, and the defaults of the three
+document-building commands are worth deciding together.

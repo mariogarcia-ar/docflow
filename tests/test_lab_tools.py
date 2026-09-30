@@ -812,6 +812,38 @@ def test_ocr_reads_through_the_shared_layer(
     assert "Quarterly report" in (tmp_path / "text.txt").read_text(encoding="utf-8")
 
 
+def test_ocr_tables_asks_for_the_detection_it_reports(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``tables`` asks the engine for tables with no flag stated; ``--no-tables`` still refuses.
+
+    Detection is engine work, so a command whose whole answer *is* the detected tables has to ask
+    for it. With ``--tables`` off by default that command reported the empty list — the truth about
+    a document nobody asked the engine to look at, printed as if the image held no table at all,
+    which is how a run over a real invoice reads "no tables" when it read nothing. The flag is
+    still the flag: ``--no-tables`` states the opposite and is honoured.
+    """
+    install_ocr_engine(monkeypatch)
+
+    code = tool_module("ocr").main(
+        ["--json", "--out", str(tmp_path), "tables", str(SAMPLE_OCR)]
+    )
+    reported = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert [table["cells"] for table in reported["tables"]] == [
+        [["Region", "Revenue"], ["North", "120"]]
+    ]
+
+    code = tool_module("ocr").main(
+        ["--json", "--out", str(tmp_path), "tables", str(SAMPLE_OCR), "--no-tables"]
+    )
+    refused = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert not refused["tables"]
+
+
 def _trailing_space_document(width: float, height: float) -> FakeDoclingDocument:
     """Return the prepared document, with the engine's text carrying what normalization removes."""
     prepared = prepared_document(width, height)

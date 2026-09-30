@@ -255,7 +255,7 @@ There is **no `crop` subcommand**: the library has no `crop_region`
 | `text` | `primitives.extract_docling_text` + `normalize_ocr_text` | one conversion, one representation; publishes it as `text.txt` |
 | `md` | `primitives.extract_docling_markdown` | as above, no artifact |
 | `json` | `primitives.build_ocr_document` | the structured document, serialized |
-| `tables` | `primitives.extract_docling_tables` | in reading order |
+| `tables` | `primitives.extract_docling_tables` | in reading order; the one command whose `--tables` is on by default |
 | `blocks` | `primitives.extract_docling_blocks` + `composition.preserve_reading_order` | in reading order |
 | `metrics` | `composition.analyze_ocr_result` | over the built document |
 

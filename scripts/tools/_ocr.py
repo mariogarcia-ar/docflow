@@ -17,6 +17,9 @@ It carries the lab-bench exception of ``subplan-scripts.md`` §3.2 for its own p
 drive ``docflow.ocr.primitives``.
 
 There is no ``--engine`` flag: the engine is fixed and never presented as a selectable option.
+``--tables`` is on for the ``tables`` subcommand and off everywhere else: detection is engine
+work, so the command whose whole answer is the detected tables asks for them itself rather than
+requiring the caller to say it twice.
 """
 
 from __future__ import annotations
@@ -64,9 +67,27 @@ Payload = dict[str, Any]
 #: the directory that input's run writes under.
 Command = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], Payload]
 
+#: The help ``--tables`` prints. The command whose answer *is* the detected tables says so,
+#: instead of reading like a flag the caller has to remember: detection is engine work, and a
+#: ``tables`` run that did not ask for it could only ever report the empty list.
+TABLE_FLAG_HELP: Final[dict[bool, str]] = {
+    False: "Detect and extract tables.",
+    True: "Detect and extract tables; on by default, because this command answers with them.",
+}
 
-def _add_ocr_options(subparser: argparse.ArgumentParser) -> None:
-    """Add the OCR capability flags a subcommand builds its options from."""
+
+def _add_ocr_options(
+    subparser: argparse.ArgumentParser, *, tables_by_default: bool = False
+) -> None:
+    """Add the OCR capability flags a subcommand builds its options from.
+
+    Args:
+        subparser: The subcommand's parser.
+        tables_by_default: Whether table detection is on when the caller states nothing. It is
+            on for ``tables`` and for that command alone — the same shape as ``--ocr`` being on
+            because OCR is the processor's purpose: the capability a command exists to show is
+            not a flag the caller has to remember. ``--no-tables`` still states the opposite.
+    """
     subparser.add_argument(
         "--ocr",
         action=argparse.BooleanOptionalAction,
@@ -75,7 +96,10 @@ def _add_ocr_options(subparser: argparse.ArgumentParser) -> None:
     )
     subparser.add_argument("--layout", action="store_true", help="Extract layout.")
     subparser.add_argument(
-        "--tables", action="store_true", help="Detect and extract tables."
+        "--tables",
+        action=argparse.BooleanOptionalAction,
+        default=tables_by_default,
+        help=TABLE_FLAG_HELP[tables_by_default],
     )
     subparser.add_argument(
         "--reading-order", action="store_true", help="Preserve reading order."
@@ -109,7 +133,7 @@ def build_subcommands(
         parser = _cli.add_subcommand(
             subparsers, name, help_text, input_argument=input_argument
         )
-        _add_ocr_options(parser)
+        _add_ocr_options(parser, tables_by_default=name == "tables")
         if name == "run":
             parser.add_argument(
                 "--page", type=int, default=1, help="Logical page number, 1-based."

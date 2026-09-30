@@ -218,7 +218,7 @@ the other five write nothing but their report.
 python scripts/tools/ocr.py text tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py md tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py json tests/fixtures/ocr/ocr_prepared_text_and_table.png
-python scripts/tools/ocr.py tables tests/fixtures/ocr/ocr_prepared_text_and_table.png --tables
+python scripts/tools/ocr.py tables tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py blocks tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py metrics tests/fixtures/ocr/ocr_prepared_text_and_table.png
 python scripts/tools/ocr.py --json run tests/fixtures/ocr/ocr_prepared_text_and_table.png \
@@ -227,8 +227,9 @@ python scripts/tools/ocr.py --json run tests/fixtures/ocr/ocr_prepared_text_and_
 
 That is all seven subcommands. `text` and `md` are one conversion in two representations, `json`
 is the built document, `tables` and `blocks` are its ordered views, and `metrics` measures the
-document the others build. `tables` states `--tables` because that flag is what asks for the
-detection; the rest run with no flag at all.
+document the others build. `tables` asks for the detection itself — `--tables` is on for that
+command and off for the rest, because detection is engine work and a run that never asked for it
+could only report the empty list. `--no-tables` still states the opposite.
 
 `text` publishes the text it reports as `text.txt` — the same file, and the same bytes, a `run` of
 the same image writes. It is normalized the way the processor publishes it, so a page whose engine
