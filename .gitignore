@@ -17,8 +17,11 @@
 /work/
 # Legacy folder kept out of the repo.
 /legacy/
+# Secrets and local config.
 .env
 .env.*
+# ...except the committed template: `.env.*` above would otherwise swallow it.
+!.env.example
 
 # ---- Python ----------------------------------------------------------------------
 __pycache__/
