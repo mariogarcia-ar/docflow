@@ -283,15 +283,65 @@ def install_fake() -> FakeProvider:
     return fake
 
 
+def _artifact_stem(args: argparse.Namespace) -> str | None:
+    """Return the name a call's two step artifacts are keyed by.
+
+    The identifier is the schema's last path component — ``extraction/invoice_detection`` becomes
+    ``invoice_detection`` — so the files say which step produced them. A call that states no schema
+    falls back to its template; one that states neither publishes no step artifact.
+
+    Args:
+        args: The parsed flags, carrying ``--schema`` and ``--template``.
+
+    Returns:
+        The stem, or ``None`` when the call stated no asset identifier.
+    """
+    identifier = getattr(args, "schema", None) or getattr(args, "template", None)
+    return None if not identifier else Path(str(identifier)).name
+
+
+def _publish_step_artifacts(root: Path, stem: str | None, result: Any) -> None:
+    """File a call's result and its raw response under names the step owns.
+
+    The library names its two artifacts after the run directory alone, so two ``call``s over one
+    input — the detection gate and the base reading — land on the same ``final_result.json`` and
+    the second overwrites the first. These two files carry the step's identifier instead:
+    ``<stem>_results.json`` is the run's result, exactly the payload ``final_result.json`` holds,
+    and ``<stem>.json`` is the model's raw response, verbatim. A call that produced no raw response
+    writes no second file rather than an empty one.
+
+    Only ``call`` publishes these: ``graph``, ``resume`` and ``fake`` run the built-in chain, whose
+    descriptor ignores ``--schema``/``--template``, so a step name would be a claim about assets the
+    run never loaded.
+
+    Args:
+        root: The run's output directory.
+        stem: The identifier the step is keyed by, or ``None`` when it stated none.
+        result: The inference result whose payload and raw response are written.
+    """
+    if stem is None:
+        return
+    _cli.write_payload(
+        root / f"{stem}_results.json", persistence.result_to_payload(result)
+    )
+    if result.raw_response is None:
+        return
+    raw = root / f"{stem}.json"
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_text(result.raw_response, encoding="utf-8")
+
+
 def _call(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
     input_path: Path,
     root: Path,
 ) -> Payload:
-    """Run one inference."""
+    """Run one inference, filing its two step-named artifacts beside the run's own."""
     request = _request(args, parser, input_path, root)
-    return _result_payload(llm_processor.process_llm_request(request))
+    result = llm_processor.process_llm_request(request)
+    _publish_step_artifacts(root, _artifact_stem(args), result)
+    return _result_payload(result)
 
 
 def _graph(

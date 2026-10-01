@@ -1093,6 +1093,63 @@ def test_llm_reads_through_the_shared_layer(
     assert "tokens:" in capsys.readouterr().out
 
 
+def test_llm_call_files_step_artifacts_named_after_the_schema(
+    providers: Any, tmp_path: Path
+) -> None:
+    """A ``call`` keeps both its answers under names the schema owns.
+
+    The library's ``final_result.json`` is keyed by the run directory alone, so the detection gate
+    and the base reading over one input would overwrite each other. ``call`` adds ``<schema>.json``
+    (the raw response, verbatim) and ``<schema>_results.json`` (the run's result, the payload
+    ``final_result.json`` holds) — here under the nested identifier
+    ``extraction/invoice_detection``, whose last component is the file stem.
+    """
+    providers()
+    assets = tmp_path / "assets"
+    (assets / "schema" / "extraction").mkdir(parents=True)
+    (assets / "template" / "extraction").mkdir(parents=True)
+    shutil.copy(
+        FIXTURES / "llm" / "schema" / "simple.schema.json",
+        assets / "schema" / "extraction" / "invoice_detection.schema.json",
+    )
+    shutil.copy(
+        FIXTURES / "llm" / "template" / "simple_extract.md",
+        assets / "template" / "extraction" / "invoice_deteccion.md",
+    )
+    out = tmp_path / "run"
+
+    code = tool_module("llm").main(
+        [
+            "--assets-dir",
+            str(assets),
+            "--out",
+            str(out),
+            "call",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "llama3.1",
+            "--task",
+            "detection",
+            "--template",
+            "extraction/invoice_deteccion",
+            "--schema",
+            "extraction/invoice_detection",
+        ]
+    )
+
+    assert code == 0
+    final = json.loads((out / "final_result.json").read_text(encoding="utf-8"))
+    results = json.loads(
+        (out / "invoice_detection_results.json").read_text(encoding="utf-8")
+    )
+    assert results == final
+    assert (out / "invoice_detection.json").read_text(encoding="utf-8") == final[
+        "raw_response"
+    ]
+
+
 def test_batch_llm_mirrors_the_folder_it_walked(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

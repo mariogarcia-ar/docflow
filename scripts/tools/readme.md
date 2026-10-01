@@ -289,7 +289,7 @@ silent stand-in this project forbids — the check is a post-parse refusal, whic
 
 | Subcommand | Calls | Notes |
 |---|---|---|
-| `call` | `process_llm_request` | one inference |
+| `call` | `process_llm_request` | one inference; also files the two step artifacts below |
 | `node` | `process_llm_node` | one node, against a fresh chain state |
 | `graph` | `process_llm_request` with `default_inference_graph()` | the linear chain |
 | `resume` | the same call again, with the same `--run-id` and `--out` | re-invocation **is** the resume; there is no `resume_llm_graph` symbol |
@@ -301,6 +301,24 @@ silent stand-in this project forbids — the check is a post-parse refusal, whic
 `--assets-dir` defaults to the fixture asset root `tests/fixtures/llm/` (templates under
 `template/`, schemas under `schema/`) and the resolved value is printed. The library itself has
 **no** default for `metadata["assets_dir"]`.
+
+**Two artifacts per `call`, keyed by the schema.** The library names its own two files after the
+run directory alone (`state.json`, `final_result.json`), so two `call`s over the *same* input land
+in the same directory and the second overwrites the first — exactly what the layered extraction
+does, running the detection gate and the base reading over one receipt. `call` therefore also
+files two artifacts whose names carry the step's identifier, the schema's last path component
+(`--schema extraction/invoice_detection` → `invoice_detection`):
+
+| File | Holds |
+|---|---|
+| `<stem>_results.json` | the run's result — the same payload `final_result.json` holds |
+| `<stem>.json` | the model's raw response, verbatim — the bytes the provider returned before any parsing |
+
+So the gate and the base reading sit side by side as `invoice_detection.json` and `invoice.json`
+instead of one overwriting the other. A call that states no `--schema` falls back to its
+`--template`, and one that produced no raw response writes no `<stem>.json` rather than an empty
+file. Only `call` publishes them: `graph`, `resume` and `fake` run the built-in chain, whose
+descriptor ignores `--schema`/`--template`, so a step name would claim assets the run never loaded.
 
 ### `workflow.py` — `SCR-06`
 
