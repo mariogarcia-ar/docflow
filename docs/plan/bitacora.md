@@ -2578,3 +2578,75 @@ pylint src tests           10.00/10 — one message, the pre-existing
 `registry/README.md`, and the `pylint` message is in the PDF processor, untouched by this pass. The
 fixture template `tests/fixtures/llm/template/simple_extract.md` keeps its bare `<extra>` on purpose:
 it is a valid form, and several tests render it with `extra_context={}`.
+
+## 2026-10-01 — Phase 5 · the bench reads its own configuration (`.env`)
+
+**Delivered.** `.env.example` said *"nothing reads this file yet"*. Something does now: `llm.py` and
+`batch_llm.py` read it, so the settings an operator otherwise retypes on every command — above all
+the reviewer's window, which is why this exists — live in one place.
+
+| File | Change |
+|---|---|
+| `scripts/tools/_cli.py` | `env_file()`, `dotenv()`, `env_value()`, `typed_value()`: a small `KEY=VALUE` parser (comments, blanks, one layer of quotes, the *first* `=` the separator), and `$DOCFLOW_ENV_FILE` to move the file |
+| `scripts/tools/_llm.py` | `ENVIRONMENT_OPTIONS` — the seven keys the bench honors and the option each sets; `default_assets_dir()`; `config_header()` |
+| `scripts/tools/llm.py`, `batch_llm.py` | the `--assets-dir` default and the `config:` header line |
+| `.env.example` | `DOCFLOW_LLM_NUM_CTX` added; the "nothing reads this file" note replaced by what is read and what is not |
+| `tests/conftest.py` | an autouse fixture pointing `$DOCFLOW_ENV_FILE` at a path that does not exist, so a developer's own `.env` cannot decide a test |
+| `tests/test_lab_tools.py` | six tests |
+
+**The rule that shaped it.** The **library** does not read the file, and must not. It is the same rule
+as `metadata["assets_dir"]` having no default: a request may not mean one thing here and another where
+the file differs. The file configures the *bench*, and the bench prints what it took — a `config:`
+line naming the keys, because the file is not an artifact field.
+
+**Precedence, and what is refused.** A real environment variable first, then the file, then the flag's
+own default; a blank value is nothing stated and passes to the next source. `DOCFLOW_LLM_PROVIDER` and
+`DOCFLOW_LLM_MODEL` are **not** read — `--provider` and `--model` stay required flags, so a
+configuration file cannot become the default model this bench refuses to have. The `DOCFLOW_VLM_*`
+block is not read either, because the bench sends no images; `.env.example` now says both, rather than
+looking half-wired.
+
+**`num_ctx` versus `context_window`.** Not the same knob, and the file says so at each.
+`DOCFLOW_LLM_CONTEXT_WINDOW` is consumed by the processor's own overflow check and never forwarded;
+`DOCFLOW_LLM_NUM_CTX` is Ollama's key, passed through, and is the one that gives a reasoning reviewer
+room to finish.
+
+**Hand run.** A `.env` — the template copied and five values filled, two of them the same window
+stated twice on purpose — and the review step runs with nothing but its identity flags
+(`--provider --model --task --template --schema --extra`), no `--assets-dir` and no `--option`:
+
+```
+DOCFLOW_LLM_TEMPERATURE=0        DOCFLOW_LLM_TIMEOUT=600
+DOCFLOW_LLM_NUM_CTX=16384        DOCFLOW_LLM_CONTEXT_WINDOW=16384
+DOCFLOW_ASSETS_DIR=registry
+```
+
+```
+assets_dir: registry
+config: /…/.env — DOCFLOW_ASSETS_DIR, DOCFLOW_LLM_TIMEOUT, DOCFLOW_LLM_CONTEXT_WINDOW,
+                  DOCFLOW_LLM_NUM_CTX, DOCFLOW_LLM_TEMPERATURE
+status: SUCCESS · schema_valid: True · 300 s (6,990 in / 415 out)
+```
+
+Both read the same file: `batch_llm.py tokens tests/fixtures-txt/chicos` prints the same `config:`
+line and resolves `assets_dir` to `registry` without a flag. The window is stated under both names
+because the two are read by different halves of the call — the processor plans against
+`context_window`, the daemon generates within `num_ctx` — and letting them disagree is how a prompt
+gets refused for a limit it does not have.
+
+**Gate evidence.**
+
+```
+pytest                     791 passed
+ruff check .               All checks passed!
+ruff format --check .      1 file would be reformatted — the pre-existing registry/README.md block
+pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
+```
+
+**Mutation evidence** (three rows, each applied and restored by the inverse edit).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `_llm._options`: drop `_environment_options()` | 1 red — `test_llm_call_takes_its_decoding_options_from_the_configuration_file` | green |
+| `_cli.env_value`: consult the file before the process environment | 1 red — `test_a_real_environment_variable_beats_the_configuration_file` | green |
+| `_llm.default_assets_dir`: ignore `DOCFLOW_ASSETS_DIR` | 1 red — `test_the_asset_root_defaults_to_the_configuration_file` | green |

@@ -138,7 +138,10 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
 `KEY=VALUE` states a value inline and `KEY=@FILE` reads it from a file, so a step that consumes the
 previous one is two commands joined by a path. A `--option` value is read as JSON, so
 `temperature=0` reaches the provider as the number `0` and not as `"0"` — which Ollama rejects
-outright. Pin the seed when you want a run you can reproduce:
+outright. Those options do not have to be retyped on every command: `llm.py` also reads `.env` at
+the repository root, and `DOCFLOW_ASSETS_DIR`, `DOCFLOW_LLM_NUM_CTX` and `DOCFLOW_LLM_TIMEOUT` are
+what keep the two commands below short — `.env.example` is the template, and a run that used it says
+so on its `config:` line. Pin the seed when you want a run you can reproduce:
 
 ```bash
     --option temperature=0 --option seed=7

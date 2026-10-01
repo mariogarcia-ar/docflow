@@ -21,6 +21,7 @@ the silent stand-in this project forbids, and the refusal is a post-parse check
 from __future__ import annotations
 
 import argparse
+import os
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from pathlib import Path
@@ -55,6 +56,31 @@ SUFFIXES: Final[tuple[str, ...]] = (".txt", ".md")
 #: The asset root the template and schema identifiers resolve against by default. The library has no
 #: default for ``metadata["assets_dir"]``; the bench states this one and prints the resolved value.
 DEFAULT_ASSETS_DIR: Final[Path] = _cli.FIXTURES_ROOT / "llm"
+
+#: The ``.env`` names the bench honors, each mapped to the option it sets. Only settings that are
+#: **optional** on the command line are here: ``--provider`` and ``--model`` stay required flags, so
+#: a configuration file can state an endpoint or a window but cannot quietly become a default model.
+#:
+#: ``num_ctx`` is Ollama's own key for the model's window, and it is the one that gives a reasoning
+#: reviewer room to finish. ``context_window`` does **not** do it — the processor consumes that one
+#: for its overflow check and never forwards it to the provider — so both names exist, and the file
+#: explains the difference at each.
+ENVIRONMENT_OPTIONS: Final[tuple[tuple[str, str], ...]] = (
+    ("DOCFLOW_LLM_BASE_URL", "base_url"),
+    ("DOCFLOW_LLM_API_KEY", "api_key"),
+    ("DOCFLOW_LLM_TIMEOUT", "timeout"),
+    ("DOCFLOW_LLM_CONTEXT_WINDOW", "context_window"),
+    ("DOCFLOW_LLM_NUM_CTX", "num_ctx"),
+    ("DOCFLOW_LLM_TEMPERATURE", "temperature"),
+    ("DOCFLOW_LLM_SEED", "seed"),
+)
+
+#: The asset-root setting, which is a flag default rather than a decoding option.
+ENVIRONMENT_ASSETS: Final[str] = "DOCFLOW_ASSETS_DIR"
+
+#: The one option that is a credential: it stays the text it is, so a numeric string is not read as
+#: the number it looks like and sent as one.
+CREDENTIAL_OPTION: Final[str] = "api_key"
 
 #: What one method returns: the payload its caller prints, or writes beside the artifacts.
 Payload = dict[str, Any]
@@ -150,11 +176,80 @@ def asset_root(args: argparse.Namespace) -> Path:
     return Path(args.assets_dir).expanduser().resolve()
 
 
+def default_assets_dir() -> Path:
+    """Return the asset root a run uses when ``--assets-dir`` is not given.
+
+    ``DOCFLOW_ASSETS_DIR`` states it, which is what makes the real registry usable without
+    restating the flag on every command. A blank value states nothing and keeps the fixture root —
+    the one the built-in chain's ``simple_extract`` / ``simple`` identifiers resolve against, so
+    ``graph``, ``fake`` and ``resume`` still work from a template copied verbatim.
+
+    Returns:
+        The configured root, or the bench's own default.
+    """
+    stated = _cli.env_value(ENVIRONMENT_ASSETS)
+    return Path(stated) if stated else DEFAULT_ASSETS_DIR
+
+
+def config_header() -> dict[str, str]:
+    """Return the header entry naming what the configuration file contributed, if anything.
+
+    A run that took settings from a file says so, and names them: the file is not an artifact field,
+    so without this line a takeover would be invisible. A value the *process* environment states is
+    not listed — the caller typed that one, and it is the narrower statement of the two.
+
+    Returns:
+        One header line, or an empty mapping when the file contributed nothing.
+    """
+    taken = [
+        name
+        for name in (ENVIRONMENT_ASSETS, *(name for name, _ in ENVIRONMENT_OPTIONS))
+        if _from_file(name)
+    ]
+    if not taken:
+        return {}
+    return {"config": f"{_cli.env_file()} — {', '.join(taken)}"}
+
+
+def _from_file(name: str) -> bool:
+    """Return whether the run takes ``name`` from the file rather than from the process."""
+    return (
+        bool(_cli.dotenv().get(name, "").strip())
+        and not os.environ.get(name, "").strip()
+    )
+
+
+def _environment_options() -> dict[str, Any]:
+    """Return the decoding options the bench's configuration states.
+
+    Returns:
+        The options, typed as the configuration spells them.
+    """
+    options: dict[str, Any] = {}
+    for name, key in ENVIRONMENT_OPTIONS:
+        value = _cli.env_value(name)
+        if value is not None:
+            options[key] = (
+                value if key == CREDENTIAL_OPTION else _cli.typed_value(value)
+            )
+    return options
+
+
 def _options(
     args: argparse.Namespace, parser: argparse.ArgumentParser
 ) -> dict[str, Any]:
-    """Build the decoding options from the caller's flags."""
-    options = _cli.option_values(args.option, parser, flag="--option")
+    """Build the decoding options from the caller's flags, over the bench's own configuration.
+
+    A flag wins over the file, because the two statements are not the same size: ``--option
+    timeout=60`` is about *this* run and the file is about the bench, and the narrower one has to
+    win or an override would need an edit. ``--context-window`` keeps its own flag rather than
+    joining the table: it is a processor control, not a passthrough.
+
+    Returns:
+        The options, ready for the request.
+    """
+    options = _environment_options()
+    options.update(_cli.option_values(args.option, parser, flag="--option"))
     if args.context_window is not None:
         options["context_window"] = int(args.context_window)
     return options

@@ -60,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--assets-dir",
-        default=str(_llm.DEFAULT_ASSETS_DIR),
+        default=str(_llm.default_assets_dir()),
         help="Template and schema root; printed with every run.",
     )
     parser.add_argument(
@@ -94,7 +94,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         args,
         parser,
         suffixes=SUFFIXES,
-        header_extra={"assets_dir": str(_llm.asset_root(args))},
+        header_extra={
+            "assets_dir": str(_llm.asset_root(args)),
+            **_llm.config_header(),
+        },
     )
 
 

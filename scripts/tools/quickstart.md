@@ -285,9 +285,14 @@ pairs are optional on every inference subcommand. An `--option` value is read as
 `temperature=0` reaches the provider as the number `0` (a string is refused). `--extra` fills a
 template's `<extra:KEY>` placeholder, and `KEY=@FILE` reads the value from a file — how one step's
 saved answer reaches the next. `--run-id` is how a run is pinned — it is what makes `resume` a
-resume
-rather than a fresh call, and it is required by `fake`, whose whole point is showing a graph and
-its resume under one identity.
+resume rather than a fresh call, and it is required by `fake`, whose whole point is showing a graph
+and its resume under one identity.
+
+**Or state them once in `.env`.** `<repo root>/.env` — `cp .env.example .env` — supplies
+`DOCFLOW_ASSETS_DIR`, the endpoint, the credential, the timeout and the decoding options, so
+`--option num_ctx=16384 --option timeout=600` stops being retyped on every command. A real
+environment variable beats the file and `--option` beats both; the run prints a `config:` line
+naming what it took. `--provider` and `--model` are not read from it — they stay required flags.
 
 ### One file
 

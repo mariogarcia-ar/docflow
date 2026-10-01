@@ -299,8 +299,9 @@ silent stand-in this project forbids — the check is a post-parse refusal, whic
 | `fake` | installs `tests/fakes/engines/fake_provider.py` at the provider seam | runs the chain twice under one pinned `--run-id`, so a graph and a resume are demonstrable with no model and no spent token |
 
 `--assets-dir` defaults to the fixture asset root `tests/fixtures/llm/` (templates under
-`template/`, schemas under `schema/`) and the resolved value is printed. The library itself has
-**no** default for `metadata["assets_dir"]`.
+`template/`, schemas under `schema/`) — or to `DOCFLOW_ASSETS_DIR` when the configuration file
+states one — and the value used is printed. The library itself has **no** default for
+`metadata["assets_dir"]`, and does not read that file.
 
 **Two artifacts per `call`, keyed by the schema.** The library names its own two files after the
 run directory alone (`state.json`, `final_result.json`), so two `call`s over the *same* input land
@@ -324,6 +325,21 @@ descriptor ignores `--schema`/`--template`, so a step name would claim assets th
 `review/invoice` both end in `invoice`: run them into one `--out` and the second overwrites the
 first's answer — including when the second is reading that answer through `--extra`, which is why
 each step of the layered extraction takes a directory of its own.
+
+**The bench reads `.env` for its optional settings.** `<repo root>/.env`, or the file
+`$DOCFLOW_ENV_FILE` names, supplies `DOCFLOW_ASSETS_DIR` and the `DOCFLOW_LLM_*` transport, window,
+timeout and decoding values; `.env.example` is the committed template and names every one of them.
+The order is a real environment variable first, then the file, then the flag's own default — so
+`--option timeout=60` beats the file, the file beats nothing, and a blank value states nothing rather
+than a value. A run that took anything from the file says so on its `config:` line, naming the keys:
+the file is not an artifact field, so without that line a takeover would be invisible.
+
+Two names are deliberately **not** read. `DOCFLOW_LLM_PROVIDER` and `DOCFLOW_LLM_MODEL` are ignored,
+because `--provider` and `--model` are required flags and a configuration file must not be able to
+become the default model this bench refuses to have. The `DOCFLOW_VLM_*` block is not read either —
+the bench sends no images — so it belongs to a library caller that states those values itself. The
+**library** never reads the file at all, for the reason it has no default asset root: a request may
+not mean different things in two places.
 
 **`--option KEY=VALUE` is passed through as a decoding parameter, and its value is read as JSON.**
 `temperature=0` has to reach the provider as the number `0`: argparse hands the tool the *string*

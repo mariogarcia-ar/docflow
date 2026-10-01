@@ -32,6 +32,20 @@ TOOLS_DIR = Path(__file__).resolve().parents[1] / "scripts" / "tools"
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+from scripts.tools import _cli  # noqa: E402  # pylint: disable=wrong-import-position
+
+
+@pytest.fixture(autouse=True)
+def isolated_bench_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Keep a developer's own `.env` out of the suite.
+
+    The bench reads ``<repo root>/.env`` — a file git ignores — for its optional settings, so
+    without this every run of the suite would answer to whoever is running it. Pointing the
+    variable at a path that does not exist restores the flags-only bench these tests were written
+    against; a test that wants a configuration file states its own, under ``tmp_path``.
+    """
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(tmp_path / "absent.env"))
+
 
 @pytest.fixture
 def providers(monkeypatch: pytest.MonkeyPatch) -> Callable[..., FakeProvider]:

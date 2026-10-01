@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 
 from docflow.llm import primitives as llm_primitives
-from scripts.tools import _cli
+from scripts.tools import _cli, _llm
 from tests.fakes.engines.fake_docling import (
     FakeConversionStatus,
     FakeDocling,
@@ -1199,6 +1199,217 @@ def test_llm_call_fills_named_extra_placeholders_from_a_flag_and_a_file(
     assert "Restaurante" in prompt
     assert "<extra:proposal>" not in prompt
     assert "<extra:rubro>" not in prompt
+
+
+def test_dotenv_reads_the_configuration_file_and_skips_the_rest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The parser is small on purpose: comments, blanks, quotes, and a value carrying ``=``.
+
+    A file that is not there is an empty mapping, not an error: the bench runs on its flags alone.
+    """
+    config = tmp_path / "config.env"
+    config.write_text(
+        "# a comment\n"
+        "\n"
+        "DOCFLOW_LLM_NUM_CTX=16384\n"
+        'DOCFLOW_LLM_BASE_URL="http://localhost:11434"\n'
+        "DOCFLOW_LLM_API_KEY='sk-not-a-number'\n"
+        "DOCFLOW_LLM_SEED=7=allowed-in-a-value\n"
+        "  DOCFLOW_LLM_TIMEOUT = 600  \n"
+        "#DOCFLOW_LLM_PROVIDER=ollama\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(config))
+
+    assert _cli.dotenv() == {
+        "DOCFLOW_LLM_NUM_CTX": "16384",
+        "DOCFLOW_LLM_BASE_URL": "http://localhost:11434",
+        "DOCFLOW_LLM_API_KEY": "sk-not-a-number",
+        "DOCFLOW_LLM_SEED": "7=allowed-in-a-value",
+        "DOCFLOW_LLM_TIMEOUT": "600",
+    }
+
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(tmp_path / "gone.env"))
+    assert _cli.env_value("DOCFLOW_LLM_NUM_CTX") is None
+
+
+def test_a_real_environment_variable_beats_the_configuration_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The narrower statement wins: this run's variable over the bench's file."""
+    config = tmp_path / "config.env"
+    config.write_text("DOCFLOW_LLM_TIMEOUT=600\n", encoding="utf-8")
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(config))
+    monkeypatch.setenv("DOCFLOW_LLM_TIMEOUT", "60")
+
+    assert _cli.env_value("DOCFLOW_LLM_TIMEOUT") == "60"
+    assert _cli.dotenv()["DOCFLOW_LLM_TIMEOUT"] == "600"
+
+
+def test_llm_call_takes_its_decoding_options_from_the_configuration_file(
+    providers: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The context knob has to reach the request without being retyped on every command.
+
+    ``num_ctx`` is the one that gives a reasoning reviewer room; ``timeout`` is the processor's own
+    control and lands on the call rather than in the passthrough options. The header says what the
+    file contributed, because the file is not an artifact field.
+    """
+    fake = providers()
+    assets = tmp_path / "assets"
+    (assets / "template").mkdir(parents=True)
+    (assets / "template" / "plain.md").write_text("<doc>\n", encoding="utf-8")
+    config = tmp_path / "config.env"
+    config.write_text(
+        "DOCFLOW_LLM_NUM_CTX=16384\n"
+        "DOCFLOW_LLM_TIMEOUT=600\n"
+        "DOCFLOW_LLM_API_KEY=sk-abc\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(config))
+
+    code = tool_module("llm").main(
+        [
+            "--assets-dir",
+            str(assets),
+            "--out",
+            str(tmp_path / "run"),
+            "call",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "llama3.1",
+            "--task",
+            "extract",
+            "--template",
+            "plain",
+        ]
+    )
+
+    assert code == 0
+    sent = fake.calls[-1]
+    assert sent.options["num_ctx"] == 16384
+    assert sent.api_key == "sk-abc"
+    assert sent.timeout == 600
+    assert "config:" in capsys.readouterr().err
+
+
+def test_an_option_flag_beats_the_configuration_file(
+    providers: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--option`` is about this run and the file is about the bench; the narrower one wins."""
+    fake = providers()
+    assets = tmp_path / "assets"
+    (assets / "template").mkdir(parents=True)
+    (assets / "template" / "plain.md").write_text("<doc>\n", encoding="utf-8")
+    config = tmp_path / "config.env"
+    config.write_text("DOCFLOW_LLM_NUM_CTX=16384\n", encoding="utf-8")
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(config))
+
+    code = tool_module("llm").main(
+        [
+            "--assets-dir",
+            str(assets),
+            "--out",
+            str(tmp_path / "run"),
+            "call",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "llama3.1",
+            "--task",
+            "extract",
+            "--template",
+            "plain",
+            "--option",
+            "num_ctx=4096",
+        ]
+    )
+
+    assert code == 0
+    assert fake.calls[-1].options["num_ctx"] == 4096
+
+
+def test_the_asset_root_defaults_to_the_configuration_file(
+    providers: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``DOCFLOW_ASSETS_DIR`` is what makes the real registry usable without restating the flag —
+    and a blank value states nothing, which is what keeps the built-in chain's fixture root."""
+    providers()
+    (tmp_path / "assets" / "template").mkdir(parents=True)
+    (tmp_path / "assets" / "template" / "plain.md").write_text(
+        "<doc>\n", encoding="utf-8"
+    )
+    config = tmp_path / "config.env"
+    config.write_text(f"DOCFLOW_ASSETS_DIR={tmp_path / 'assets'}\n", encoding="utf-8")
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(config))
+
+    def run(template: str, schema: str | None = None) -> str:
+        """Run one call with no ``--assets-dir`` and return the header the run printed."""
+        flags = [
+            "--out",
+            str(tmp_path / "run"),
+            "call",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "llama3.1",
+            "--task",
+            "extract",
+            "--template",
+            template,
+        ]
+        if schema is not None:
+            flags += ["--schema", schema]
+        capsys.readouterr()
+        assert tool_module("llm").main(flags) == 0
+        return capsys.readouterr().err
+
+    assert f"assets_dir: {tmp_path / 'assets'}" in run("plain")
+
+    config.write_text("DOCFLOW_ASSETS_DIR=\n", encoding="utf-8")
+    assert f"assets_dir: {_llm.DEFAULT_ASSETS_DIR}" in run("simple_extract", "simple")
+
+
+def test_the_configuration_file_cannot_supply_a_provider_or_a_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file may state an endpoint or a window; it may not become the default model refused since
+    ``SCR-05`` — ``--provider`` and ``--model`` stay required flags."""
+    assets = tmp_path / "assets"
+    (assets / "template").mkdir(parents=True)
+    (assets / "template" / "plain.md").write_text("<doc>\n", encoding="utf-8")
+    config = tmp_path / "config.env"
+    config.write_text(
+        "DOCFLOW_LLM_PROVIDER=ollama\nDOCFLOW_LLM_MODEL=llama3.1\n", encoding="utf-8"
+    )
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(config))
+
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("llm").main(
+            [
+                "--assets-dir",
+                str(assets),
+                "call",
+                str(CASE_TEXT),
+                "--task",
+                "extract",
+                "--template",
+                "plain",
+            ]
+        )
+
+    assert exit_info.value.code == 2
 
 
 def test_llm_call_reads_an_option_value_as_json_and_leaves_text_alone(

@@ -22,6 +22,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import os
 import sys
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
@@ -44,6 +45,17 @@ TOOLS_OUTPUT_ROOT: Final[Path] = REPO_ROOT / "var" / "tools"
 #: The default output root of the batch driver, which mirrors a folder tree rather than keying a
 #: run by one input's digest: ``var/batch_pdf/<folder>/…``.
 BATCH_OUTPUT_ROOT: Final[Path] = REPO_ROOT / "var" / "batch_pdf"
+
+#: The configuration file the bench reads its optional settings from, at the repository root. It is
+#: git-ignored and ``.env.example`` is the committed template. The **library** never reads it, for
+#: the reason it has no default asset root: a request that meant one thing here and another where
+#: the file differs is the silent stand-in this project refuses. The file configures the bench, and
+#: the bench prints what it took.
+ENV_FILE_NAME: Final[str] = ".env"
+
+#: The variable that moves that file, for a run whose configuration lives elsewhere. It is read
+#: from the process environment alone — a file cannot be named by the file it is.
+ENV_FILE_VARIABLE: Final[str] = "DOCFLOW_ENV_FILE"
 
 #: How many characters of the input's SHA-256 name a run directory. Enough to tell two
 #: inputs apart, short enough to read; the same input always lands in the same directory.
@@ -408,6 +420,84 @@ def required(
     return value
 
 
+def env_file() -> Path:
+    """Return the configuration file the bench reads, whether or not it exists.
+
+    Returns:
+        ``$DOCFLOW_ENV_FILE`` when the process states one, else ``<repo root>/.env``.
+    """
+    named = os.environ.get(ENV_FILE_VARIABLE)
+    return Path(named).expanduser() if named else REPO_ROOT / ENV_FILE_NAME
+
+
+def dotenv() -> dict[str, str]:
+    """Return the values the configuration file itself states, and nothing else.
+
+    The parser is deliberately small: one ``KEY=VALUE`` per line, blank lines and ``#`` comments
+    skipped, one layer of matching quotes removed, and the *first* ``=`` the separator so a value
+    may contain one. It reads the file and never the process environment, so a caller that wants
+    to know what the *file* said can ask without a real variable hiding the answer. A missing or
+    unreadable file is an empty mapping rather than an error: the bench runs on its flags alone,
+    and a file that is not there is not a mistake.
+
+    Returns:
+        The file's values, by name.
+    """
+    try:
+        text = env_file().read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        name, separator, value = line.strip().partition("=")
+        name = name.strip()
+        if separator and name and not name.startswith("#"):
+            values[name] = _unquoted(value.strip())
+    return values
+
+
+def env_value(name: str) -> str | None:
+    """Return one setting: the process environment first, the configuration file second.
+
+    The order is the point. A real variable is a statement about *this* run
+    (``DOCFLOW_LLM_TIMEOUT=60 llm.py …``) and the file is a statement about the bench, so the
+    narrower one wins and a one-off override needs no edit. A blank value is nothing stated rather
+    than a value, which is what the template's empty placeholders mean.
+
+    Args:
+        name: The setting's name.
+
+    Returns:
+        The value, or ``None`` when neither source states one.
+    """
+    for candidate in (os.environ.get(name), dotenv().get(name)):
+        if candidate is not None and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def typed_value(text: str) -> Any:
+    """Return ``text`` as the JSON value it spells, or as the text it is when it does not parse.
+
+    Args:
+        text: The raw value.
+
+    Returns:
+        The value, typed when JSON can type it.
+    """
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return text
+
+
+def _unquoted(value: str) -> str:
+    """Return ``value`` without one layer of matching quotes."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
 def key_values(
     items: Sequence[str] | None,
     parser: argparse.ArgumentParser,
@@ -458,13 +548,10 @@ def option_values(
     Returns:
         The values, in the order the caller gave them.
     """
-    typed: dict[str, Any] = {}
-    for key, value in key_values(items, parser, flag=flag).items():
-        try:
-            typed[key] = json.loads(value)
-        except json.JSONDecodeError:
-            typed[key] = value
-    return typed
+    return {
+        key: typed_value(value)
+        for key, value in key_values(items, parser, flag=flag).items()
+    }
 
 
 def identity_for(
