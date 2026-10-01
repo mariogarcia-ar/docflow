@@ -1,5 +1,6 @@
 # Catálogo de modelos locales menores a 10 GB
 
+> **Alcance:** §1–§9 son los **< 10 GB** (el catálogo original). **§10 extiende a la gama mediana (12B–70B)** y **§11 a los que pasan los 70B**, con el mismo formato — para que el corte se vea, no se suponga.
 > **Criterio:** tamaño del **artefacto descargable** con cuantización Q4 (el default de Ollama/llama.cpp), salvo donde se indique otra cosa (`gpt-oss` va en MXFP4; los tags `-mlx` traen su propia cuantización). No es el tamaño de los pesos BF16.
 > **Ojo:** para ejecutar, sumá 1–4 GB de KV cache según el contexto. Un modelo de 9 GB en disco necesita ~11–12 GB de VRAM/RAM.
 > **Verificación:** cifras contrastadas con búsqueda web el **2026-09-30** contra Ollama Library y las model cards de Hugging Face. `n/d` = no verificado en esa pasada; `≈` = aproximado.
@@ -87,6 +88,7 @@ Leyenda: 👁️ visión · 🧠 razonamiento · 🔧 tool calling · 💻 códi
 | Granite 4 | 3B (micro) | 2.1 GB | 128K | Apache 2.0 | 🔧 enterprise |
 | Granite 4.1 | 3B | 2.1 GB | 128K | Apache 2.0 | 🔧 12 idiomas, JSON |
 | Granite 4.2 | 3B | 2.2 GB | 128K | Apache 2.0 | 🧠 razonamiento nativo + tools |
+| Nemotron 3 Nano | 4B | 2.8 GB | 256K | NVIDIA Open Model | 🧩 256K de contexto por 2,8 GB |
 | SmolLM3 | 3B | ~1.9 GB | 64K | Apache 2.0 | multilingüe, totalmente abierto |
 | Phi-3.5 Mini | 3.8B | ~2.2 GB | 128K | MIT | |
 | Gemma 2 | 2B | 1.6 GB | 8K | Gemma Terms | |
@@ -220,31 +222,57 @@ Leyenda: 👁️ visión · 🧠 razonamiento · 🔧 tool calling · 💻 códi
 
 > **Evitá para producción** los pesos marcados 🔒: Aya Expanse (CC-BY-NC-4.0) y jina-embeddings-v3 (CC-BY-NC-4.0) son solo para investigación y demos. Piper cambió de MIT a GPL-3.0 en el fork activo.
 
-## 10. Quedan fuera (> 10 GB en Q4)
+## 10. Gama mediana (12B–70B) · 16–64 GB de VRAM
 
-Referencia para saber dónde está el corte:
+Mismo formato que el resto del catálogo. Acá **el tamaño en disco y la VRAM dejan de coincidir**: sumá 1–8 GB de KV cache.
 
-| Modelo | Tamaño (Q4) | Notas |
-|---|---|---|
-| Phi-4 reasoning 14B | ~11 GB | |
-| gpt-oss 20B | 13 GB | 🧩 MXFP4, ~3.6B activos |
-| Devstral 24B | 14 GB | 💻 46.8% SWE-Bench Verified |
-| Mistral Small 3.2 24B | 15 GB | 👁️ 🔧 |
-| Gemma 3 27B | 17 GB | 👁️ 128K |
-| Qwen3.5 27B / Qwen3.6 27B | 17 GB | 👁️ 256K |
-| Qwen3-Coder 30B | 18 GB | 💻 MoE, 3.3B activos |
-| Gemma 4 26B MoE | 19 GB | 👁️ 256K, ~4B activos |
-| Qwen3 30B-A3B | 19 GB | 🧩 256K |
-| Gemma 4 31B dense | 20 GB | 👁️ 256K |
-| Qwen2.5 / Qwen3 / R1 32B | 20 GB | |
-| Command-R 35B | 20 GB | |
-| Llama 3.3 70B / DeepSeek R1 70B | 43 GB | a 128K de contexto pasan los 100 GB |
-| gpt-oss 120B | 65 GB | 🧩 entra en una GPU de 80 GB |
-| Llama 4 Scout 109B | 65–67 GB | 🧩 |
-| Mistral Medium 3.5 128B | 80 GB | |
-| Qwen3.5 122B-A10B | 81 GB | 👁️ |
-| Nemotron 3 Super 120B | 86 GB | 🧩 ~12B activos |
-| Qwen3 235B-A22B | 142 GB | 🧩 |
+| Modelo | Params | Tamaño (Q4) | Contexto | Licencia | Notas |
+|---|---|---|---|---|---|
+| Phi-4 reasoning | 14B | 11 GB | 32K | MIT | 🧠 CoT; `:plus` mejora con RL |
+| Mistral Small 3 | 22B | 13 GB | 128K | Apache 2.0 | 🔧 |
+| Codestral | 22B | 13 GB | 32K | Mistral (investigación) | 💻 FIM, 80+ lenguajes |
+| gpt-oss | 20B | 14 GB | 128K | Apache 2.0 | 🧩 MXFP4, ~3.6B activos |
+| Mistral Small 3.2 | 24B | 15 GB | 128K | Apache 2.0 | 👁️ 🔧 el tag `mistral-small:24b` es anterior: 14 GB y 32K |
+| Devstral Small | 24B | 14 GB | 128K | Apache 2.0 | 💻 46.8% SWE-Bench Verified, sin encoder de visión |
+| Gemma 3 | 27B | 17 GB | 128K | Gemma Terms | 👁️ 🌐 |
+| Qwen3.5 | 27B | 17 GB | 256K | Apache 2.0 | 👁️ 🧠 |
+| Qwen3.6 | 27B | 17 GB | 256K | Apache 2.0 | 👁️ 💻 tuning para código |
+| Granite 4.1 | 30B | 17 GB | 128K | Apache 2.0 | 🔧 |
+| Granite 4.2 | 30B | 18 GB | 128K | Apache 2.0 | 🧠 CoT nativo + tools |
+| Qwen3-Coder | 30B | 18 GB | 256K | Apache 2.0 | 💻 🧩 3.3B activos |
+| Qwen3 | 30B-A3B | 19 GB | 256K | Apache 2.0 | 🧩 |
+| Command-R | 35B | 19 GB | 128K | 🔒 CC-BY-NC-4.0 | 🔧 RAG con citas, no comercial |
+| Gemma 4 | 26B MoE | 19 GB | 256K | Apache 2.0 | 👁️ ~4B activos |
+| Qwen3 | 32B | 20 GB | 40K (128K nativo) | Apache 2.0 | 🧠 |
+| QwQ | 32B | 20 GB | 40K | Apache 2.0 | 🧠 el predecesor del thinking de Qwen3 |
+| Qwen2.5 | 32B | 20 GB | 32K | Apache 2.0 | 🌐 |
+| Qwen2.5-Coder | 32B | 20 GB | 32K | Apache 2.0 | 💻 |
+| DeepSeek R1 (destilado Qwen) | 32B | 20 GB | 128K | MIT | 🧠 |
+| Gemma 4 | 31B dense | 20 GB | 256K | Apache 2.0 | 👁️ |
+| Qwen3-VL | 32B | 21 GB | 256K | Apache 2.0 | 👁️ |
+| Qwen3.6 | 35B-A3B | 23 GB | 256K | Apache 2.0 | 🧩 |
+| Nemotron 3 Nano | 30B (🧩 3.5B activos) | 24 GB | **1M** | NVIDIA Open Model | 🧩 el contexto más largo del catálogo |
+| Qwen3.5 | 35B-A3B | 24 GB | 256K | Apache 2.0 | 🧩 |
+| Mixtral | 8x7B | 26 GB | 32K | Apache 2.0 | 🧩 legacy, pero muy probado |
+| Llama 3.3 | 70B | 43 GB | 128K | Llama 3.3 | 🔧 el 70B de referencia |
+| Llama 3.1 | 70B | 43 GB | 128K | Llama 3.1 | |
+| DeepSeek R1 (destilado Llama) | 70B | 43 GB | 128K | MIT | 🧠 |
+| Qwen2.5 | 72B | 47 GB | 32K | Qwen | 🌐 |
+| Qwen2.5-VL | 72B | 49 GB | 125K | Qwen | 👁️ |
+| Mixtral | 8x22B | 80 GB | 64K | Apache 2.0 | 🧩 39B activos |
+
+> **Lo que cambia a esta escala:** el disco es lo de menos. Un 70B necesita ~43 GB sólo para los pesos, y el KV cache lo lleva a ~102 GB a 128K de contexto. Un 8x22B (80 GB) ya es un equipo dedicado, no una laptop. Y dos licencias muerden: **Command-R es no comercial** y **Codestral es de investigación** (su uso comercial va por API).
+
+## 11. Más allá de los 70B
+
+| Modelo | Params | Tamaño (Q4) | Notas |
+|---|---|---|---|
+| gpt-oss | 120B | 65 GB | 🧩 MXFP4, ~5.1B activos; entra en una GPU de 80 GB |
+| Llama 4 Scout | 109B (🧩 ~17B activos) | 65–67 GB | 🧩 |
+| Mistral Medium 3.5 | 128B | 80 GB | |
+| Qwen3.5 | 122B-A10B | 81 GB | 👁️ |
+| Nemotron 3 Super | 120B (🧩 ~12B activos) | 86 GB | 🧩 |
+| Qwen3 | 235B-A22B | 142 GB | 🧩 256K |
 
 ## Notas
 
@@ -253,12 +281,13 @@ Referencia para saber dónde está el corte:
 - **KV cache:** es el costo real que no se ve en la tabla de descargas. Un 70B pasa de 43 GB a ~102 GB entre contexto de chat y 128K.
 - **Cuantizaciones menores:** pasando a Q3 podés meter algunos modelos de ~20B en < 10 GB, a costa de calidad. No lo recomiendo para extracción estructurada.
 - **Licencias:** el tamaño no dice nada sobre el uso comercial. Gemma (Gemma Terms), Llama (licencia comunitaria) y Aya Expanse (CC-BY-NC) tienen restricciones; Phi-4, Qwen y Granite son MIT/Apache 2.0.
+- **Medianos (§10):** la regla de oro cambia — ahí ya no importa el disco sino el KV cache y la licencia. Command-R (35B) es **no comercial**, Codestral (22B) es de **investigación**, y Nemotron 3 Nano trae la **NVIDIA Open Model License**, no Apache.
 - **Granite 4.2 (agosto 2026):** la generación 4.2 volvió a una arquitectura **densa** (abandonó el MoE híbrido Mamba-2 de 4.0) y sumó razonamiento nativo; son 3B (2.2 GB), 8B (5.3 GB) y 30B (18 GB), todos 128K y Apache 2.0. No confundir con `granite4` (350m/1b/3b, el MoE de 4.0).
 - **Verificación:** el catálogo se contrastó el 2026-09-30 contra Ollama Library y las model cards. Las familias nuevas (Gemma 4, Qwen3.5/3.6, Ministral 3, Granite 4.1, Qwen3-VL) ya tienen cifras verificadas; quedan como `n/d` los tamaños que ninguna fuente publicada confirma.
 
 ## Fuentes consultadas (2026-09-30)
 
-- Ollama Library: `qwen3`, `qwen3.5`, `qwen3-vl`, `qwen2.5`, `qwen2.5vl`, `qwen2.5-coder`, `deepseek-r1`, `deepseek-coder-v2`, `gemma2`, `gemma3`, `gemma4`, `llama3.2`, `llama3.2-vision`, `phi4`, `phi4-mini`, `mistral-nemo`, `ministral-3`, `granite3.3`, `granite4`, `granite4.1`, `smollm2`, `minicpm-v`, `llava`, `olmo2`, `codegemma`, `codellama`, `gpt-oss`, `ibm/granite-docling`.
+- Ollama Library: `qwen3`, `qwen3.5`, `qwen3-vl`, `qwen2.5`, `qwen2.5vl`, `qwen2.5-coder`, `deepseek-r1`, `deepseek-coder-v2`, `gemma2`, `gemma3`, `gemma4`, `llama3.2`, `llama3.2-vision`, `llama3.3`, `phi4`, `phi4-mini`, `phi4-reasoning`, `mistral-nemo`, `mistral-small`, `ministral-3`, `devstral`, `codestral`, `mixtral`, `command-r`, `nemotron-3-nano`, `granite3.3`, `granite4`, `granite4.1`, `granite4.2`, `qwq`, `smollm2`, `minicpm-v`, `llava`, `olmo2`, `codegemma`, `codellama`, `gpt-oss`, `ibm/granite-docling`.
 - Model cards: `microsoft/Phi-4-mini-instruct`, `openai/whisper-large-v3-turbo`, `Qwen/Qwen3-Embedding-8B`, `Qwen/Qwen3-Reranker-8B`, `nomic-ai/nomic-embed-text-v1.5`, `BAAI/bge-m3`.
 - Benchmarks y artículos: Artificial Analysis (Qwen3.5 small models, Granite 4.1), Modal (STT/TTS comparados), Docling Model Catalog, PaddleOCR-VL (arXiv 2510.14528), IBM Granite-Docling, roboflow (Florence-2 / Moondream 2).
 - Aritmética de tokens visuales: model card de `Qwen/Qwen2-VL-7B-Instruct` (`min_pixels`/`max_pixels`),
