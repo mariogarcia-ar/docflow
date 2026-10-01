@@ -1150,6 +1150,136 @@ def test_llm_call_files_step_artifacts_named_after_the_schema(
     ]
 
 
+def test_llm_call_fills_named_extra_placeholders_from_a_flag_and_a_file(
+    providers: Any, tmp_path: Path
+) -> None:
+    """``--extra`` is the CLI's only door onto ``extra_context``.
+
+    Without it the tool states ``extra_context={}``, so a template carrying ``<extra:proposal>``
+    cannot resolve and the run stops before the provider. ``KEY=@FILE`` is how one step's answer
+    reaches the next over the shell; ``KEY=VALUE`` covers the rest. Two keys, two sections.
+    """
+    fake = providers()
+    assets = tmp_path / "assets"
+    (assets / "template").mkdir(parents=True)
+    (assets / "template" / "review.md").write_text(
+        "proposal:\n<extra:proposal>\nrubro:\n<extra:rubro>\nreceipt:\n<doc>\n",
+        encoding="utf-8",
+    )
+    proposal = tmp_path / "invoice.json"
+    proposal.write_text('{"moneda":"ARS"}', encoding="utf-8")
+    out = tmp_path / "run"
+
+    code = tool_module("llm").main(
+        [
+            "--assets-dir",
+            str(assets),
+            "--out",
+            str(out),
+            "call",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "qwen3.5:9b",
+            "--task",
+            "review",
+            "--template",
+            "review",
+            "--extra",
+            f"proposal=@{proposal}",
+            "--extra",
+            "rubro=Restaurante",
+        ]
+    )
+
+    assert code == 0
+    prompt = fake.calls[-1].messages[0]["content"]
+    assert '{"moneda":"ARS"}' in prompt
+    assert "Restaurante" in prompt
+    assert "<extra:proposal>" not in prompt
+    assert "<extra:rubro>" not in prompt
+
+
+def test_llm_call_reads_an_option_value_as_json_and_leaves_text_alone(
+    providers: Any, tmp_path: Path
+) -> None:
+    """A decoding option is typed on the way out, because the provider types it on the way in.
+
+    ``--option temperature=0`` used to arrive as the *string* ``"0"``, which Ollama refuses with
+    HTTP 500 (*option "temperature" must be of type float32*) — the readme's own seed example did
+    not run. A value that is not JSON stays the text it is, so nothing needs quoting to stay one.
+    """
+    fake = providers()
+    assets = tmp_path / "assets"
+    (assets / "template").mkdir(parents=True)
+    (assets / "template" / "plain.md").write_text("<doc>\n", encoding="utf-8")
+
+    code = tool_module("llm").main(
+        [
+            "--assets-dir",
+            str(assets),
+            "--out",
+            str(tmp_path / "run"),
+            "call",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "llama3.1",
+            "--task",
+            "extract",
+            "--template",
+            "plain",
+            "--option",
+            "temperature=0",
+            "--option",
+            "keep_alive=5m",
+        ]
+    )
+
+    assert code == 0
+    sent = fake.calls[-1].options
+    assert sent["temperature"] == 0
+    assert not isinstance(sent["temperature"], str)
+    assert sent["keep_alive"] == "5m"
+
+
+def test_llm_call_refuses_an_extra_value_file_that_is_not_there(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A path that cannot be read is a usage error, not a placeholder rendered as nothing."""
+    providers()
+    assets = tmp_path / "assets"
+    (assets / "template").mkdir(parents=True)
+    (assets / "template" / "review.md").write_text(
+        "<extra:proposal>\n<doc>\n", encoding="utf-8"
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("llm").main(
+            [
+                "--assets-dir",
+                str(assets),
+                "call",
+                str(CASE_TEXT),
+                "--provider",
+                "ollama",
+                "--model",
+                "qwen3.5:9b",
+                "--task",
+                "review",
+                "--template",
+                "review",
+                "--extra",
+                f"proposal=@{tmp_path / 'missing.json'}",
+            ]
+        )
+
+    assert exit_info.value.code == 2
+    assert "proposal" in capsys.readouterr().err
+
+
 def test_batch_llm_mirrors_the_folder_it_walked(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

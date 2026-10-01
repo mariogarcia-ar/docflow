@@ -35,16 +35,24 @@ A nested identifier is not special: the loader joins the two path components, so
 just a sub-directory. Nothing is guessed — an identifier that does not resolve is a typed
 `DEPENDENCY_ERROR` naming the path it looked for.
 
-Three placeholders a template may carry, and no others:
+Four spellings of placeholder, and no others:
 
 | Placeholder | Replaced with |
 |---|---|
 | `<doc>` | the request's document text, sanitized |
-| `<extra>` | `extra_context` as canonical JSON |
+| `<extra>` | the whole `extra_context` mapping as canonical JSON |
+| `<extra:key>` | `extra_context["key"]` alone — a string verbatim, anything else as canonical JSON |
 | `<schema>` | the loaded schema as canonical JSON |
+
+`<extra:key>` is how a template takes two or more inputs and gives each its own section: it is the
+same mapping `<extra>` renders whole, addressed one key at a time. The key must be in
+`extra_context` — `review/invoice` carrying `<extra:proposal>` refuses a request that carries no
+`proposal`, because a review prompt with an empty proposal block asks a different question.
 
 A template that asks for a placeholder the request cannot fill is a `DEPENDENCY_ERROR`, never an
 empty substitution: a prompt that reads as if the document were empty is a different question.
+Resolution is one pass over the template, so text that *arrives* in `<doc>` is inserted and never
+scanned again — a receipt that prints `<extra>` prints it.
 
 ## The six steps, and the ids you pass
 
@@ -77,15 +85,18 @@ Ollama, and every one of them works the same against vLLM or a hosted API by swa
 ```bash
 REG=registry
 DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
-T1=gemma3:12b     # the extractor; step 5 runs the reviewer, T2=qwen3.5:9b
+T1=gemma3:12b     # the extractor: steps 0 to 4
+T2=qwen3.5:9b     # the reviewer: step 5
 
 # 0 — the gate: is this a receipt at all? Run it first and refuse cheaply.
 python scripts/tools/llm.py --assets-dir $REG call $DOC \
     --provider ollama --model $T1 --task detection \
     --template extraction/invoice_deteccion --schema extraction/invoice_detection
 
-# 1 — the base reading: the seven printed fields
-python scripts/tools/llm.py --assets-dir $REG call $DOC \
+# 1 — the base reading: the seven printed fields. It takes its own --out because the bench names
+#     each step artifact after the schema's LAST path component, and step 5's schema ends in
+#     `invoice` too: sharing a directory would let the review overwrite the answer it audits.
+python scripts/tools/llm.py --assets-dir $REG --out var/run/reading call $DOC \
     --provider ollama --model $T1 --task extract \
     --template extraction/invoice --schema extraction/invoice
 
@@ -99,14 +110,35 @@ python scripts/tools/llm.py --assets-dir $REG call $DOC \
     --provider ollama --model $T1 --task clasificacion \
     --template extraction/invoice_clasificacion --schema extraction/invoice_clasificacion
 
-# 4 — the line-of-business fields (Restaurante / Combustible only)
+# 4 — the line-of-business fields (Restaurante / Combustible only) — <extra:rubro>.
+#     The condition itself is the classification step's answer, so a literal is stated here.
 python scripts/tools/llm.py --assets-dir $REG call $DOC \
     --provider ollama --model $T1 --task rubro \
-    --template extraction/invoice_rubro --schema extraction/invoice_rubro
+    --template extraction/invoice_rubro --schema extraction/invoice_rubro \
+    --extra rubro=Restaurante
+
+# 5 — the review: a second model audits step 1's reading — <extra:proposal>.
+#     KEY=@FILE reads the value from a file, which is how step 1's answer gets here: it was
+#     written verbatim as invoice.json (the `<stem>.json` the bench readme describes) under the
+#     `--out` step 1 was given. Without --extra this stops at load with "the template asks for
+#     extra_context['proposal'] and the request carries none".
+#     The reviewer reasons before it answers, and that reasoning is what needs the room: on
+#     Ollama's default context the model runs out mid-thought and returns an EMPTY answer
+#     (`done_reason: length`), and the 30 s default expires long before it finishes — this call
+#     measured 302 s. Hence num_ctx and timeout, neither of which has a default that fits.
+python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
+    --provider ollama --model $T2 --task review \
+    --template review/invoice --schema review/invoice \
+    --extra proposal=@var/run/reading/invoice.json \
+    --option temperature=0 --option num_ctx=16384 --option timeout=600
 ```
 
 `--task` is a label: it is recorded in the result and never reaches the model. `--template` and
-`--schema` are what select the step. Pin the seed when you want a run you can reproduce:
+`--schema` are what select the step. `--extra` is what fills `<extra:KEY>`, and it is repeatable:
+`KEY=VALUE` states a value inline and `KEY=@FILE` reads it from a file, so a step that consumes the
+previous one is two commands joined by a path. A `--option` value is read as JSON, so
+`temperature=0` reaches the provider as the number `0` and not as `"0"` — which Ollama rejects
+outright. Pin the seed when you want a run you can reproduce:
 
 ```bash
     --option temperature=0 --option seed=7
@@ -114,9 +146,10 @@ python scripts/tools/llm.py --assets-dir $REG call $DOC \
 
 ### Chaining the steps
 
-Steps 4 and 5 read a previous step's answer, and that arrives through `extra_context` — which
-`llm.py` does not expose. Neither does it send images, which is the whole of the vision path. So the
-four roles are driven from the library:
+Steps 4 and 5 read a previous step's answer, and that arrives through `extra_context`. The CLI
+carries it with `--extra KEY=@FILE` when the answer is already on disk; the library is what you need
+when the value is a live object, as it is in the loop below, and it is the only route that sends
+images, which is the whole of the vision path. So the four roles are driven from the library here:
 
 ```python
 from pathlib import Path
@@ -138,8 +171,15 @@ V2 = "ministral-3:8b"  # reviews the vision reading
 # The provider controls, plus whatever decoding params you want passed through: `temperature=0` is
 # the value the strategy fixes for all four roles, and the timeout is stated well above the 30 s
 # default — a review carries the document, the proposal and the schema, and a vision call carries a
-# whole page as image tokens, so the default is not enough for either.
-OPTIONS = {"base_url": "http://localhost:11434", "temperature": 0, "timeout": 180}
+# whole page as image tokens, so the default is not enough for either. `num_ctx` is the reviewer's
+# other requirement: it reasons before it answers, and on Ollama's default context it runs out
+# mid-thought and returns an empty answer. Neither has a default that fits.
+OPTIONS = {
+    "base_url": "http://localhost:11434",
+    "temperature": 0,
+    "num_ctx": 16384,
+    "timeout": 300,
+}
 
 
 def step(task, template, schema, *, model=T1, extra=None, document=DOC, images=()):
@@ -227,6 +267,26 @@ vision_review = step(
 )
 ```
 
+The other half of every `extra={…}` is the template. `review/invoice` asks for two elements, in two
+sections, and the names are what pair them up:
+
+```markdown
+--- DOCUMENT TEXT ---
+<doc>
+--- END OF TEXT ---
+
+--- PROPOSED EXTRACTION (to review) ---
+<extra:proposal>
+--- END OF EXTRACTION ---
+```
+
+`<doc>` is filled by the `document` argument and `<extra:proposal>` by
+`extra={"proposal": reading.parsed_response}`; `extraction/invoice_rubro` is the same shape with
+`<extra:rubro>`. A template may name as many elements as it has inputs — two `<extra:key>`
+placeholders take two keys of that one mapping, each landing where the template puts it — and a key
+the template names and the caller omits is a `DEPENDENCY_ERROR` naming it, before any provider call.
+A key the caller passes that the template never names is simply not inserted.
+
 Five things that are not decoration:
 
 - **`metadata["assets_dir"]` is required.** The library has no default asset root, so a request
@@ -244,14 +304,26 @@ Five things that are not decoration:
   across the contract. So a caller checks `result.schema_valid` before reading a field — which is
   what `field()` above exists to force.
 
-This sequence was exercised twice. The six text calls ran against the scripted provider double: all
-six resolve their assets, reach the provider, and `extra` lands in the prompt — `Restaurante` in
-the line-of-business prompt and the proposed extraction in the review prompt, with no raw
-placeholder surviving into either. The two vision calls ran against a live Ollama on a real receipt
-image, with `qwen2.5vl:7b` standing in for `qwen3-vl:8b` and `ministral-3:8b` (those two tags are
-not pulled on this bench yet): both returned `SUCCESS` — V1 a reading of the page, V2 a
-`field_verdicts` array over it. The timeout in `OPTIONS` is not decoration either: with the
-default 30 s the text review came back `TIMEOUT`, on this machine, on the fixture above.
+This sequence was exercised twice, and its ends have since been run live. The six text calls first
+ran against the scripted provider double: all six resolve their assets, reach the provider, and each
+`extra={…}` key lands in the placeholder that names it — `<extra:rubro>` resolving to `Restaurante`
+in the line-of-business prompt and `<extra:proposal>` to the proposed extraction in the review
+prompt, with no raw placeholder surviving into either. The two vision calls ran against a live
+Ollama on a real receipt image, with `qwen2.5vl:7b` standing in for `qwen3-vl:8b` and
+`ministral-3:8b` (those two tags are not pulled on this bench yet): both returned `SUCCESS` — V1 a
+reading of the page, V2 a `field_verdicts` array over it.
+
+Steps 1 and 5 have since been run live on the fixture above, through the CLI exactly as *How to use
+them* prints them: the base reading returned `SUCCESS` with a schema-valid seven-field answer, and
+the review returned `SUCCESS` with a `field_verdicts` array — in 302 s, which is why the block states
+a timeout at all. Four of its settings are that run reporting what the harness needs rather than a
+preference: the default 30 s gave `TIMEOUT`; Ollama's default context gave an **empty** answer,
+`done_reason: length`, the reviewer having reasoned 2,861 tokens before the window closed and
+answered nothing; `--option temperature=0` arrived as the string `"0"` — which Ollama refuses with
+HTTP 500 — until the tool learned to read an option value as JSON; and one `--out` for both steps let
+the review overwrite `invoice.json`, the very answer it was auditing, because the two schemas end in
+the same path component. The named placeholders are not among the surprises: `<extra:proposal>`
+carried step 1's answer into step 5's prompt intact, and the reviewer contradicted it field by field.
 
 ## Local
 
@@ -368,10 +440,13 @@ python scripts/tools/llm.py --assets-dir registry node <file.txt> \
   not expressible as the PoC's fixed chain today.
 - **`--template` / `--schema` / `--task` are ignored on `graph` and `resume`** for the same
   reason: the descriptor's values win.
-- **`<extra>` renders `{}` from every caller today.** Both `llm.py` and `workflow.py` pass
-  `extra_context={}`, so `review/invoice`, `review/vision` and `extraction/invoice_rubro` — the
-  three steps that consume a previous step's output — build a prompt with an empty proposal block.
-  They are written and loadable; no caller fills them yet.
+- **`llm.py` reaches `extra_context` only through `--extra`.** A value is text: inline, or the
+  contents of the file `KEY=@FILE` names — nothing parses it, because `<extra:KEY>` renders a string
+  verbatim and a saved answer already is the JSON text. So `review/invoice`, `review/vision` and
+  `extraction/invoice_rubro` — the three steps that consume a previous step's output — run from the
+  CLI only when each named key is stated; a key the caller leaves out stops the run at load time
+  with a `DEPENDENCY_ERROR` naming it, rather than rendering a proposal block that reads as empty.
+  `workflow.py` still fills none of them, and its chain does not read this registry.
 - **`llm.py` cannot send images.** It hardcodes `images=[]`, so `extraction/vision` and
   `review/vision` are not reachable from the CLI: drive them from the library, as in *Chaining the
   steps* above. `workflow.py`'s `--allow-vlm` / `--image-prepare-for-vlm` enable its own chain,
@@ -466,5 +541,5 @@ The registry was restructured from `prompts/` + `schemas/` (`.txt` / `.json`) to
 and those two suffixes.
 
 Templates were also rewired to the loader's placeholders: `{text}` → `<doc>`, and `{proposal}` /
-`{rubro}` → `<extra>`. The brace style was never resolved by anything — it would have been sent to
-the model as the literal string `{text}` in place of the receipt.
+`{rubro}` → `<extra:proposal>` / `<extra:rubro>`. The brace style was never resolved by anything —
+it would have been sent to the model as the literal string `{text}` in place of the receipt.

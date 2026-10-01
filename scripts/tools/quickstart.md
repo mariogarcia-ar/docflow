@@ -280,8 +280,12 @@ substituted stand-in.
 | `tokens` | `--provider` `--model` | offline count; the window comes from `--context-window` |
 | `fake` | `--provider` `--model` `--task` `--template` `--run-id` | the chain under the scripted provider, twice under one pinned identity |
 
-`--schema`, `--context-window` and a repeatable `--option KEY=VALUE` are optional on every
-inference subcommand. `--run-id` is how a run is pinned — it is what makes `resume` a resume
+`--schema`, `--context-window` and the repeatable `--option KEY=VALUE` and `--extra KEY=VALUE`
+pairs are optional on every inference subcommand. An `--option` value is read as JSON, so
+`temperature=0` reaches the provider as the number `0` (a string is refused). `--extra` fills a
+template's `<extra:KEY>` placeholder, and `KEY=@FILE` reads the value from a file — how one step's
+saved answer reaches the next. `--run-id` is how a run is pinned — it is what makes `resume` a
+resume
 rather than a fresh call, and it is required by `fake`, whose whole point is showing a graph and
 its resume under one identity.
 

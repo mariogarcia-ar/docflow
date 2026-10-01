@@ -38,5 +38,5 @@ format).
 --- END OF TEXT ---
 
 --- PROPOSED EXTRACTION (to review) ---
-<extra>
+<extra:proposal>
 --- END OF EXTRACTION ---

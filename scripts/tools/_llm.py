@@ -90,6 +90,15 @@ def _add_inference_arguments(subparser: argparse.ArgumentParser) -> None:
     subparser.add_argument("--task", help="The task to perform; required.")
     subparser.add_argument("--template", help="Template identifier; required.")
     subparser.add_argument("--schema", help="Schema identifier, or omit for none.")
+    subparser.add_argument(
+        "--extra",
+        action="append",
+        metavar="KEY=VALUE",
+        help=(
+            "A value for the template's <extra:KEY> placeholder; may be repeated. "
+            "KEY=@FILE reads the value from a file."
+        ),
+    )
     _add_decode_options(subparser)
 
 
@@ -145,10 +154,42 @@ def _options(
     args: argparse.Namespace, parser: argparse.ArgumentParser
 ) -> dict[str, Any]:
     """Build the decoding options from the caller's flags."""
-    options = _cli.key_values(args.option, parser, flag="--option")
+    options = _cli.option_values(args.option, parser, flag="--option")
     if args.context_window is not None:
         options["context_window"] = int(args.context_window)
     return options
+
+
+def _extra_context(
+    args: argparse.Namespace, parser: argparse.ArgumentParser
+) -> dict[str, Any]:
+    """Build the values the template's ``<extra:KEY>`` placeholders resolve against.
+
+    ``--extra KEY=VALUE`` states one inline and ``--extra KEY=@FILE`` reads it from a file, which is
+    how one step's answer reaches the next over the shell: the run directory holds the answer, and
+    the two commands are joined by that path. The value is inserted as the text it is — a string —
+    because ``<extra:KEY>`` renders a string verbatim, so a saved answer needs no re-encoding.
+
+    Args:
+        args: The parsed flags.
+        parser: The parser to report a usage error through.
+
+    Returns:
+        The values, by key.
+    """
+    extra: dict[str, Any] = {}
+    for key, value in _cli.key_values(args.extra, parser, flag="--extra").items():
+        text = str(value)
+        if not text.startswith("@"):
+            extra[key] = text
+            continue
+        path = Path(text[1:]).expanduser()
+        try:
+            extra[key] = path.read_text(encoding="utf-8")
+        except OSError as unreadable:
+            parser.error(f"--extra {key}=@{path}: {unreadable}")
+            raise  # unreachable: parser.error exits; kept so the return type is honest
+    return extra
 
 
 def _metadata(
@@ -195,7 +236,7 @@ def _request(
         template=str(args.template),
         document=input_path.read_text(encoding="utf-8"),
         images=[],
-        extra_context={},
+        extra_context=_extra_context(args, parser),
         schema=None if args.schema is None else str(args.schema),
         options=_options(args, parser),
         graph=graph,

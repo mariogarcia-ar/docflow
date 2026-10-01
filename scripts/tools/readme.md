@@ -100,7 +100,7 @@ This matters, and it is the one thing that surprises people:
   (`--allow-ocr`, `--allow-vlm`), the execution switches (`--reuse`, `--retry-failed`,
   `--start-from`, `--parallel-pages`, `--dry-run`) and `--fake-llm`.
 - **Subcommand flags go after it.** `--page`, `--dpi`, `--provider`, `--model`, `--task`,
-  `--template`, `--schema`, `--context-window`, `--option`, and each tool's own — on
+  `--template`, `--schema`, `--context-window`, `--option`, `--extra`, and each tool's own — on
   `workflow.py` that is `--stages` (`force`, `skip`) and `--after` (`stop`).
 - **The input positional belongs to the subcommand**: `pdf.py inspect <input>`, while
   `--fixture <name>` is the global spelling of the same thing. Either works; if both are given,
@@ -319,6 +319,27 @@ instead of one overwriting the other. A call that states no `--schema` falls bac
 `--template`, and one that produced no raw response writes no `<stem>.json` rather than an empty
 file. Only `call` publishes them: `graph`, `resume` and `fake` run the built-in chain, whose
 descriptor ignores `--schema`/`--template`, so a step name would claim assets the run never loaded.
+
+**The stem is the schema's last component, so two steps can collide.** `extraction/invoice` and
+`review/invoice` both end in `invoice`: run them into one `--out` and the second overwrites the
+first's answer — including when the second is reading that answer through `--extra`, which is why
+each step of the layered extraction takes a directory of its own.
+
+**`--option KEY=VALUE` is passed through as a decoding parameter, and its value is read as JSON.**
+`temperature=0` has to reach the provider as the number `0`: argparse hands the tool the *string*
+`"0"`, and Ollama answers HTTP 500 for it (*option "temperature" must be of type float32*). A value
+that does not parse as JSON stays the text it is — `keep_alive=5m` — so nothing needs quoting to
+stay a string. This applies to `workflow.py`'s `--llm-option` too, which is the same option under a
+different name.
+
+**`--extra KEY=VALUE` fills the template's `<extra:KEY>` placeholder**, and may be repeated; the
+bare `<extra>` form renders the whole mapping at once. `KEY=@FILE` reads the value from a file
+instead of stating it inline, and that is what makes a layered template runnable from one shell: the
+step that consumes another step's answer points at the file `call` already wrote. Use `<stem>.json`
+— the raw response above — and not `<stem>_results.json`, which is the run's payload and would hand
+the next model the runner's own bookkeeping. Nothing parses the value: `<extra:KEY>` inserts a
+string verbatim, so a saved answer needs no re-encoding. A key the template names and the caller
+leaves out stops the run at load with a `DEPENDENCY_ERROR` naming it, never as an empty block.
 
 ### `workflow.py` — `SCR-06`
 

@@ -111,6 +111,56 @@ def test_a_template_that_does_not_use_a_placeholder_does_not_need_that_input() -
     )
 
 
+def test_named_extra_placeholders_give_each_input_its_own_section() -> None:
+    """Two inputs, two sections: neither placeholder renders the other's value."""
+    rendered = process_template(
+        "read=<extra:reading>\nreviewed=<extra:review>\n",
+        document=None,
+        extra_context={"reading": {"total": "10"}, "review": "disagree"},
+        schema=None,
+    )
+
+    assert rendered == 'read={"total":"10"}\nreviewed=disagree\n'
+
+
+def test_a_named_extra_placeholder_the_request_cannot_fill_is_refused() -> None:
+    """The rule is the document's rule: an absent key is reported, never rendered as nothing."""
+    with pytest.raises(LLMPrimitiveError) as raised:
+        process_template(
+            "<extra:proposal>", document=None, extra_context={}, schema=None
+        )
+
+    assert raised.value.error.type == "DEPENDENCY_ERROR"
+    assert raised.value.error.metadata["placeholder"] == "<extra:proposal>"
+    assert raised.value.error.metadata["key"] == "proposal"
+
+
+def test_a_string_extra_value_is_inserted_verbatim_and_anything_else_as_canonical_json() -> (
+    None
+):
+    """An ``extra_context`` value that is already text is not quoted on the way into the prompt."""
+    rendered = process_template(
+        "rubro=<extra:rubro> proposal=<extra:proposal>",
+        document=None,
+        extra_context={"rubro": "Restaurante", "proposal": {"total": "10"}},
+        schema=None,
+    )
+
+    assert rendered == 'rubro=Restaurante proposal={"total":"10"}'
+
+
+def test_text_that_arrives_from_the_request_is_never_scanned_for_placeholders() -> None:
+    """A receipt that prints ``<extra>`` prints it; resolution does not run over inserted text."""
+    rendered = process_template(
+        "<doc>|<extra:proposal>",
+        document="total <extra> 10 and <doc> again",
+        extra_context={"proposal": "fine"},
+        schema=None,
+    )
+
+    assert rendered == "total <extra> 10 and <doc> again|fine"
+
+
 def test_the_same_inputs_render_the_same_prompt_twice() -> None:
     """Acceptance: the rendered prompt is byte-identical across two renders."""
     request = build_input()

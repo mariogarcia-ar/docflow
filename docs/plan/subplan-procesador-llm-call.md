@@ -268,7 +268,7 @@ graph; a retry always preserves prior attempts (`LLMAttempt` history). Documenta
 | LLM-01 | Contract dataclasses: `LLMInput`, `LLMResult`, `LLMNodeResult`, `LLMGraphState`, `LLMAttempt`, `ComparisonResult`, `Usage`, `Timing`, stage-state enums | S | — |
 | LLM-02 | Provider primitive interface + `LLMProvider` result/error types (in `llm/primitives/`) | S | LLM-01 |
 | LLM-03 | In-memory fake provider implementing the primitive interface + committed template/schema fixtures | S | LLM-02 |
-| LLM-04 | Template render & prompt build: variable injection, `<doc>`/`<extra>`/`<schema>` resolution, sanitize | M | LLM-01 |
+| LLM-04 | Template render & prompt build: variable injection, `<doc>`/`<extra>`/`<extra:key>`/`<schema>` resolution in a single pass, sanitize | M | LLM-01 |
 | LLM-05 | `calculate_request_key` + idempotency helpers (`find_reusable_node_result`, `is_node_reusable`, `validate_cached_result`) | M | LLM-01 |
 | LLM-06 | `process_llm_request` single-call happy path (template → prompt → key → payload → call → parse → validate) | M | LLM-03, LLM-04, LLM-05 |
 | LLM-07 | Parse + schema validation (`load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result`) | M | LLM-06 |

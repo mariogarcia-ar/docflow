@@ -33,5 +33,5 @@ correct value: "uncertain", not "disagree" with an invented value.
 it appears printed (without converting the decimal separator or the date format).
 
 --- PROPOSED EXTRACTION (to review) ---
-<extra>
+<extra:proposal>
 --- END OF EXTRACTION ---

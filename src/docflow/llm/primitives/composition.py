@@ -14,9 +14,9 @@ them — reading a file is not reaching an engine.
 Four rules shape the module, and each one exists because the opposite behaviour is a silent
 stand-in:
 
-* **a placeholder is never resolved to nothing.** ``<doc>``, ``<extra>`` and ``<schema>`` are
-  resolved from the request; a template that asks for a document the request does not carry is a
-  typed ``DEPENDENCY_ERROR``, never an empty string sent to a model;
+* **a placeholder is never resolved to nothing.** ``<doc>``, ``<extra>``, ``<extra:key>`` and
+  ``<schema>`` are resolved from the request; a template that asks for a document the request does
+  not carry is a typed ``DEPENDENCY_ERROR``, never an empty string sent to a model;
 * **the rendered prompt is the one that is hashed.** :func:`calculate_request_key` takes the
   rendered text, so two runs that would send different prompts can never share a key;
 * **identity is absent from the key.** ``run_id``, ``graph_id``, ``node_id`` and ``attempt_id``
@@ -86,11 +86,21 @@ SUPPORTED_NODE_KEYS: Final[frozenset[str]] = frozenset(
     {"node_id", "depends_on", "task", "template", "schema"}
 )
 
-#: The three placeholders a template may carry. Anything else between angle brackets is the
-#: template's own text and is left alone.
+#: The placeholders a template may carry. Anything else between angle brackets is the template's
+#: own text and is left alone. ``<extra>`` renders the whole ``extra_context`` mapping; the named
+#: form ``<extra:key>`` renders one key of it, so a template can give two or more inputs their own
+#: section without a caller having to pre-format them into one blob.
 DOCUMENT_PLACEHOLDER: Final[str] = "<doc>"
 EXTRA_PLACEHOLDER: Final[str] = "<extra>"
 SCHEMA_PLACEHOLDER: Final[str] = "<schema>"
+
+#: Every placeholder in one pattern, applied in one pass. A single pass is what keeps substituted
+#: *content* from being scanned again: a receipt that prints the literal text ``<extra>`` is a
+#: receipt that prints it, not a template asking for one. The named form is matched first so
+#: ``<extra:key>`` never resolves as a bare ``<extra>`` plus leftover text.
+PLACEHOLDER_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"<extra:(?P<key>[A-Za-z_][A-Za-z0-9_]*)>|<extra>|<doc>|<schema>"
+)
 
 #: The metadata keys this processor reads. ``LLMInput`` carries no output directory, no asset
 #: root and no run identity, and none of the three may be guessed: the caller states them in
@@ -399,6 +409,22 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def render_extra_value(value: Any) -> str:
+    """Return one ``extra_context`` value as the text that goes into the prompt.
+
+    A string is inserted exactly as it stands — it is already the text to insert — while every
+    other value is inserted as canonical JSON, the one spelling two runs of the same request are
+    sure to produce.
+
+    Args:
+        value: One ``extra_context`` value.
+
+    Returns:
+        The value's prompt text.
+    """
+    return value if isinstance(value, str) else canonical_json(value)
+
+
 def process_template(
     template: str,
     *,
@@ -408,46 +434,61 @@ def process_template(
 ) -> str:
     """Resolve every placeholder a template carries.
 
+    Every placeholder is resolved in a single pass, so text that comes *from the request* is
+    inserted and never scanned again: a document that prints ``<extra>`` prints it, it does not ask
+    for one.
+
     Args:
         template: The template text, verbatim from the asset.
         document: The document text, or ``None`` when the request carries none.
-        extra_context: Additional values the template may reference.
+        extra_context: Additional values the template may reference. ``<extra>`` renders the whole
+            mapping; ``<extra:key>`` renders ``extra_context[key]`` on its own, so a template can
+            give two or more inputs their own section.
         schema: The loaded schema, or ``None`` when the request names none.
 
     Returns:
-        The template with ``<doc>``, ``<extra>`` and ``<schema>`` resolved. A placeholder the
-        template does not carry is not an error: a template that needs no document simply has no
-        ``<doc>``.
+        The template with every placeholder resolved. A placeholder the template does not carry is
+        not an error: a template that needs no document simply has no ``<doc>``.
 
     Raises:
         LLMPrimitiveError: With ``DEPENDENCY_ERROR`` when the template asks for an input the
             request does not carry. Substituting an empty string would send a model a prompt that
             reads as if the document were empty, which is a different question.
     """
-    resolved = template
-    if DOCUMENT_PLACEHOLDER in resolved:
-        if document is None:
+
+    def resolve(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token == DOCUMENT_PLACEHOLDER:
+            if document is None:
+                raise typed_failure(
+                    "DEPENDENCY_ERROR",
+                    "the template asks for a document and the request carries none",
+                    recoverable=False,
+                    metadata={"placeholder": DOCUMENT_PLACEHOLDER},
+                )
+            return sanitize_text(document)
+        if token == EXTRA_PLACEHOLDER:
+            return canonical_json(dict(extra_context))
+        if token == SCHEMA_PLACEHOLDER:
+            if schema is None:
+                raise typed_failure(
+                    "DEPENDENCY_ERROR",
+                    "the template asks for a schema and the request names none",
+                    recoverable=False,
+                    metadata={"placeholder": SCHEMA_PLACEHOLDER},
+                )
+            return canonical_json(dict(schema))
+        key = match.group("key")
+        if key not in extra_context:
             raise typed_failure(
                 "DEPENDENCY_ERROR",
-                "the template asks for a document and the request carries none",
+                f"the template asks for extra_context[{key!r}] and the request carries none",
                 recoverable=False,
-                metadata={"placeholder": DOCUMENT_PLACEHOLDER},
+                metadata={"placeholder": token, "key": key},
             )
-        resolved = resolved.replace(DOCUMENT_PLACEHOLDER, sanitize_text(document))
-    if EXTRA_PLACEHOLDER in resolved:
-        resolved = resolved.replace(
-            EXTRA_PLACEHOLDER, canonical_json(dict(extra_context))
-        )
-    if SCHEMA_PLACEHOLDER in resolved:
-        if schema is None:
-            raise typed_failure(
-                "DEPENDENCY_ERROR",
-                "the template asks for a schema and the request names none",
-                recoverable=False,
-                metadata={"placeholder": SCHEMA_PLACEHOLDER},
-            )
-        resolved = resolved.replace(SCHEMA_PLACEHOLDER, canonical_json(dict(schema)))
-    return resolved
+        return render_extra_value(extra_context[key])
+
+    return PLACEHOLDER_PATTERN.sub(resolve, template)
 
 
 def count_tokens(text: str) -> int:

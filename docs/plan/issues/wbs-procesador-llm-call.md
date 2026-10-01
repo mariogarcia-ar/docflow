@@ -31,7 +31,7 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | LLM-01 | Contract dataclasses | S | 1 — Contracts & primitives | — | `LLMInput`, `LLMResult`, `LLMNodeResult`, `LLMGraphState`, `LLMAttempt`, `ComparisonResult`, `Usage`, `Timing`, stage-state enums | this file §LLM-01 | NOT_STARTED |
 | LLM-02 | Provider primitive interface + result/error types | S | 1 — Contracts & primitives | LLM-01 | `llm/primitives/`, `LLMProvider` types | this file §LLM-02 | NOT_STARTED |
 | LLM-03 | In-memory fake provider + fixtures | S | 1 — Contracts & primitives | LLM-02 | `fixtures/llm/template/simple_extract.md`, `fixtures/llm/schema/simple.schema.json`, fake provider | this file §LLM-03 | NOT_STARTED |
-| LLM-04 | Template render & prompt build | M | 1 — Contracts & primitives | LLM-01 | variable injection, `<doc>`/`<extra>`/`<schema>` resolution, sanitize | this file §LLM-04 | NOT_STARTED |
+| LLM-04 | Template render & prompt build | M | 1 — Contracts & primitives | LLM-01 | variable injection, `<doc>`/`<extra>`/`<extra:key>`/`<schema>` resolution in a single pass, sanitize | this file §LLM-04 | NOT_STARTED |
 | LLM-05 | `calculate_request_key` + idempotency helpers | M | 1 — Contracts & primitives | LLM-01 | `calculate_request_key`, `find_reusable_node_result`, `is_node_reusable`, `validate_cached_result` | this file §LLM-05 | NOT_STARTED |
 | LLM-06 | `process_llm_request` single-call happy path | M | 2 — Single call | LLM-03, LLM-04, LLM-05 | `process_llm_request` | this file §LLM-06 | NOT_STARTED |
 | LLM-07 | Parse + schema validation | M | 2 — Single call | LLM-06 | `load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result` | this file §LLM-07 | NOT_STARTED |
@@ -105,11 +105,12 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 - **Depends on:** LLM-01
 - **Blocks:** LLM-06
 - **Objective:** Turn `LLMInput` plus a template into a rendered prompt with the document, extra context and schema resolved and sanitized.
-- **Scope / Deliverables:** `process_template`, `process_prompt`, variable injection, `<doc>` / `<extra>` / `<schema>` resolution, sanitize; the rendered prompt is the exact value hashed into `request_key`.
+- **Scope / Deliverables:** `process_template`, `process_prompt`, variable injection, `<doc>` / `<extra>` / `<extra:key>` / `<schema>` resolution in a single pass, sanitize; the rendered prompt is the exact value hashed into `request_key`.
 - **Out of bounds:** No provider call; no schema validation; no silent truncation of the prompt (truncation belongs to LLM-15 and must be explicit); a missing placeholder must not be replaced by an empty string silently.
 - **Acceptance criteria:**
   - Given the committed template and an `LLMInput` with document and schema, when rendering runs, then the prompt contains the document text and the schema and no unresolved placeholder remains.
   - Given the same inputs, when rendering runs twice, then the rendered prompt is byte-identical.
+  - Given a template naming `<extra:key>`, when the request carries that key, then only that key's value is inserted; when it does not, then rendering stops with a `DEPENDENCY_ERROR` naming the key.
 - **Evidence / DoD:** Fixture-based test asserting placeholder resolution and determinism.
 - **Tags:** `# TODO: [MVP]` for richer template features.
 

@@ -25,7 +25,7 @@ Rules, apply in this order:
 4. Return the number exactly as printed, without the unit: "12", not "12 litros".
 
 --- RECEIPT'S LINE OF BUSINESS ---
-<extra>
+<extra:rubro>
 --- END OF LINE OF BUSINESS ---
 
 --- RECEIPT (OCR) ---

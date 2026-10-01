@@ -255,7 +255,7 @@ def _llm_options(
     return {
         **{key: str(value) for key, value in names.items()},
         "schema": args.schema,
-        "options": _cli.key_values(args.llm_option, parser, flag="--llm-option"),
+        "options": _cli.option_values(args.llm_option, parser, flag="--llm-option"),
     }
 
 

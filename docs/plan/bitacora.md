@@ -2496,3 +2496,85 @@ one-line rule.
 every page that carries one, typed `"other"`. That is the trade: on an invoice the footer is legally
 required content, and a consumer that wants the body alone filters by type rather than losing the
 line by default.
+
+## 2026-10-01 — Phase 5 · the registry's examples, run as written
+
+**Delivered.** The registry readme's examples now run, and the ones that did not were fixed at their
+cause — three of the four in code, not in wording.
+
+| File | Change |
+|---|---|
+| `src/docflow/llm/primitives/composition.py` | `process_template` resolves every placeholder in **one** pass, so text that arrives in `<doc>` is inserted rather than scanned again; `<extra:KEY>` renders one key of `extra_context` on its own; `render_extra_value` states the one rendering rule (a string verbatim, anything else canonical JSON) |
+| `scripts/tools/_llm.py` | `--extra KEY=VALUE`, repeatable, `KEY=@FILE` reads a file — the CLI's only route onto `extra_context`; `_request` no longer hardcodes `{}` |
+| `scripts/tools/_cli.py` | `option_values`: a decoding option value is read as JSON, so `temperature=0` reaches the provider as the number `0` |
+| `scripts/tools/workflow.py` | `--llm-option` uses the same parser — it carried the same defect under a different name |
+| `registry/template/{review/invoice,review/vision,extraction/invoice_rubro}.md` | the three consuming steps name their input: `<extra:proposal>`, `<extra:proposal>`, `<extra:rubro>` |
+| `registry/README.md`, `scripts/tools/readme.md`, `scripts/tools/quickstart.md` | the flag, the placeholder pairing, the stem collision, and what the live run needs |
+| `docs/plan/issues/wbs-procesador-llm-call.md`, `wbs-scripts.md`, `subplan-procesador-llm-call.md` | the placeholder set and the SCR-05 flag surface |
+| `tests/test_lab_tools.py`, `tests/llm/primitives/test_composition.py` | six tests, each proven by mutation |
+
+**What the run found.** Four defects, and none of the first three was visible without a live daemon:
+
+1. **A decoding option arrived as a string.** `--option temperature=0` reached Ollama as `"0"`, which
+   it refuses with HTTP 500 (*option "temperature" must be of type float32*) — so the readme's own
+   seed example had never run. Fixed in `_cli.option_values`: read the value as JSON, and keep it as
+   the text it is only when it does not parse (`keep_alive=5m`). The plain parser stays the plain
+   parser, because an `<extra:KEY>` filler of `0` must remain the text `0`.
+2. **The reviewer needs more context than Ollama gives it by default.** The review came back with an
+   **empty** answer — `done_reason: length`, 2,861 tokens of reasoning, and the window closed before
+   it answered anything (`content: ''`, `thinking: 10,683` chars). `num_ctx=16384` is not tuning: it
+   is the difference between an answer and none. `--context-window` does **not** do this, and the
+   readme now says so — it informs the processor's own overflow check and is not forwarded, so Ollama
+   needs the passthrough key by name.
+3. **Two steps collide on the artifact stem.** The bench names a step artifact after the schema's
+   last path component, and `extraction/invoice` and `review/invoice` both end in `invoice`. The
+   review — reading `invoice.json` through `--extra` — overwrote the very answer it was auditing.
+   Each step of the layered extraction now takes its own `--out`, and both readmes state the rule.
+   The gate/reading pair never showed this (their stems differ), which is why it survived.
+4. **`process_template` re-scanned what it had just inserted.** With `.replace()` chained, a receipt
+   printing the literal text `<extra>` had it *resolved*: the document became a template. One pass
+   over one pattern fixes it, and the invariant has a test that fails without it.
+
+**Hand run, the two ends as the readme now prints them** (live Ollama, `gemma3:12b` then
+`qwen3.5:9b`, on `casos/66cd35e9-….txt`).
+
+```
+step 1  --out var/run/reading  --template extraction/invoice --schema extraction/invoice
+  status: SUCCESS · schema_valid: True · 28 s (2,381 in / 100 out)
+  {"tipo_comprobante": "A", "razon_social_emisor": "AIMARO JAVIER ANGEL",
+   "cuit_emisor": "20-22087601-3", "fecha_emision": "07/08/2026",
+   "nro_comprobante": "00037469", "moneda": "ARS", "notas": "null"}
+
+step 5  --out var/run/review  --template review/invoice --schema review/invoice
+        --extra proposal=@var/run/reading/invoice.json
+  status: SUCCESS · schema_valid: True · 302 s (6,990 in / 415 out)
+  the reviewer disagreed with the reading it was handed — "FACTURA" for tipo_comprobante
+  against the extracted "A" — which is the point of the second model, not a defect
+```
+
+Both directories keep their own `invoice.json`, which is the `--out` split doing its job.
+
+**Gate evidence.**
+
+```
+pytest                     785 passed
+ruff check .               All checks passed!
+ruff format --check .      1 file would be reformatted — the pre-existing
+                           registry/README.md OPTIONS block, present at HEAD
+pylint src tests           10.00/10 — one message, the pre-existing
+                           src/docflow/pdf/entrypoints.py:475 R0912 (15/12)
+```
+
+**Mutation evidence** (three rows, each applied and restored by the inverse edit).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `process_template`: resolve sequentially again, re-scanning the result | 1 red — `test_text_that_arrives_from_the_request_is_never_scanned_for_placeholders` | `pytest -q` green |
+| `_llm._request`: `extra_context=_extra_context(...)` → `{}` | 1 red — `test_llm_call_fills_named_extra_placeholders_from_a_flag_and_a_file`, with the same `DEPENDENCY_ERROR` the readme quotes | green |
+| `_llm._options`: `option_values` → `key_values` | 1 red — `test_llm_call_reads_an_option_value_as_json_and_leaves_text_alone` | green |
+
+**Not fixed, and deliberately.** The two gate rows above are pre-existing and unrelated: the
+`ruff format` complaint is a comment-alignment diff inside a fenced Python block in
+`registry/README.md`, and the `pylint` message is in the PDF processor, untouched by this pass. The
+fixture template `tests/fixtures/llm/template/simple_extract.md` keeps its bare `<extra>` on purpose:
+it is a valid form, and several tests render it with `extra_context={}`.

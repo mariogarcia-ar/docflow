@@ -433,6 +433,40 @@ def key_values(
     return values
 
 
+def option_values(
+    items: Sequence[str] | None,
+    parser: argparse.ArgumentParser,
+    *,
+    flag: str,
+) -> dict[str, Any]:
+    """Turn repeated ``KEY=VALUE`` option flags into a mapping of *typed* values.
+
+    A decoding option lands in the provider's request body as a JSON value, so the text argparse
+    hands us is not the value the provider needs: ``temperature=0`` must arrive as the number ``0``
+    and not as ``"0"``, which Ollama refuses outright (*option "temperature" must be of type
+    float32*). Each value is therefore read as JSON, and kept as the text it is only when it does
+    not parse — ``temperature=0`` → ``0``, ``stop=["a"]`` → ``["a"]``, ``keep_alive=5m`` → ``"5m"``.
+
+    :func:`key_values` stays the plain parser: a value that is meant to be text, such as a prompt's
+    ``<extra:KEY>`` filler, must not be reinterpreted on the way to the template.
+
+    Args:
+        items: The repeated flag's values, or ``None`` when the flag was never given.
+        parser: The parser to report a usage error through.
+        flag: The flag as the caller spelled it, for the message.
+
+    Returns:
+        The values, in the order the caller gave them.
+    """
+    typed: dict[str, Any] = {}
+    for key, value in key_values(items, parser, flag=flag).items():
+        try:
+            typed[key] = json.loads(value)
+        except json.JSONDecodeError:
+            typed[key] = value
+    return typed
+
+
 def identity_for(
     args: argparse.Namespace, tool: str, input_path: Path
 ) -> tuple[str, str]:
