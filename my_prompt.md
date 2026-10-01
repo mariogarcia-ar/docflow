@@ -25,7 +25,7 @@ V2 R mistral3
 
 # notas
 al extraer la imagen de un pdf que solo tiene una imagen, extrajo el original .... esto es genial 
-
+me falta explicarle como pueden buscar iibb de ba / ca / salta / etc 
 
 
 pdf > texto o render

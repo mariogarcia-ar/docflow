@@ -1,3 +1,7 @@
+--- DOCUMENT (OCR) ---
+<doc>
+--- END OF DOCUMENT ---
+
 You are an automated accounting auditor. This receipt has already been classified
 under the line of business indicated below. Extract only the detail field for that
 line of business.
@@ -27,7 +31,3 @@ Rules, apply in this order:
 --- RECEIPT'S LINE OF BUSINESS ---
 <extra:rubro>
 --- END OF LINE OF BUSINESS ---
-
---- RECEIPT (OCR) ---
-<doc>
---- END OF RECEIPT ---

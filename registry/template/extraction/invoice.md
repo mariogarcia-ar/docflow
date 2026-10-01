@@ -1,3 +1,7 @@
+--- DOCUMENT (OCR) ---
+<doc>
+--- END OF DOCUMENT ---
+
 You are an automated accounting auditor. This receipt has already been identified
 as valid and legible.
 
@@ -30,11 +34,11 @@ each value from the block you located in step 1:
 
   tipo_comprobante      code or letter printed in the header (rule 2)
   razon_social_emisor   emitter's name, without labels — from the emitter block
-                          in 1b, re-checked against the source text below, not
-                          just copied from your own reading
+                          in 1b, re-checked against the document text at the top,
+                          not just copied from your own reading
   cuit_emisor            emitter's CUIT, format XX-XXXXXXXX-X (rule 1) — from
-                          the emitter block in 1b, re-checked against the source
-                          text below
+                          the emitter block in 1b, re-checked against the
+                          document text at the top
   fecha_emision          printed date, format DD/MM/YYYY
   nro_comprobante        printed number, with the hyphen if it has one (rule 7)
   moneda                 "ARS" or "USD"
@@ -110,7 +114,3 @@ Rules, apply in this order:
    for the other.
 
 Do not invent any absent or illegible value: return "null".
-
---- RECEIPT (OCR) ---
-<doc>
---- END OF RECEIPT ---

@@ -1,3 +1,7 @@
+--- DOCUMENT (OCR) ---
+<doc>
+--- END OF DOCUMENT ---
+
 You are a document-type classifier. Determine whether this text is an expense
 receipt (invoice, ticket, boarding pass, receipt, credit or debit note).
 
@@ -31,7 +35,3 @@ Rules, apply in this order:
    Reading quality is evaluated in another step.
 
 5. motivo_rechazo is a short phrase, only if comprobante_valido is "false".
-
---- TEXT (OCR) ---
-<doc>
---- END OF TEXT ---

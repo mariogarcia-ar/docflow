@@ -1,3 +1,7 @@
+--- DOCUMENT (OCR) ---
+<doc>
+--- END OF DOCUMENT ---
+
 You are the reviewer of an accounting extraction. You receive the original TEXT of
 the receipt and the extraction proposed by another model. Look for errors in that
 extraction: your task is to find problems, not to confirm it is right.
@@ -32,10 +36,6 @@ the correct value: "uncertain", not "disagree" with an invented value.
 5. If you suggest a numeric or date value, return it in the same format in which
 it appears in the text (without converting the decimal separator or the date
 format).
-
---- DOCUMENT TEXT ---
-<doc>
---- END OF TEXT ---
 
 --- PROPOSED EXTRACTION (to review) ---
 <extra:proposal>

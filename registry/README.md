@@ -274,9 +274,9 @@ The other half of every `extra={…}` is the template. `review/invoice` asks for
 sections, and the names are what pair them up:
 
 ```markdown
---- DOCUMENT TEXT ---
+--- DOCUMENT (OCR) ---
 <doc>
---- END OF TEXT ---
+--- END OF DOCUMENT ---
 
 --- PROPOSED EXTRACTION (to review) ---
 <extra:proposal>
@@ -285,7 +285,14 @@ sections, and the names are what pair them up:
 
 `<doc>` is filled by the `document` argument and `<extra:proposal>` by
 `extra={"proposal": reading.parsed_response}`; `extraction/invoice_rubro` is the same shape with
-`<extra:rubro>`. A template may name as many elements as it has inputs — two `<extra:key>`
+`<extra:rubro>`. **Every text template opens with the document and states its instructions after
+it**, never the reverse: the five T1 steps then share a byte-identical prefix — the same block plus
+the same OCR text — and Ollama reuses the KV it cached for that prefix, so the document is tokenized
+once per run instead of once per step. The instructions, which differ from step to step, sit after
+the document where changing them cannot invalidate what is cached. The cache holds only while
+`num_ctx` and `keep_alive` stay the same across the calls: a different window makes Ollama reprocess
+the whole document, so state the window once (`.env`, or `--option num_ctx=…` on every command) and
+keep it there. A template may name as many elements as it has inputs — two `<extra:key>`
 placeholders take two keys of that one mapping, each landing where the template puts it — and a key
 the template names and the caller omits is a `DEPENDENCY_ERROR` naming it, before any provider call.
 A key the caller passes that the template never names is simply not inserted.
