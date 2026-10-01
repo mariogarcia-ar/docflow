@@ -70,6 +70,10 @@ DEFAULT_ASSETS_DIR: Final[Path] = _cli.FIXTURES_ROOT / "llm"
 #: model thinking before it answers, and a small ``min_p`` trims the sampling tail it can wander
 #: into. ``think`` is a request field rather than a model parameter, and the Ollama transport lifts
 #: it out of ``options`` to where ``/api/chat`` reads it.
+#:
+#: ``temperature``, ``top_p``, ``repeat_penalty`` and ``presence_penalty`` are sampling parameters
+#: a model's card may name (deepseek-r1:8b publishes 0.6 / 0.95 / 1.0 / 0.0); blank leaves the
+#: model's own default in charge.
 ENVIRONMENT_OPTIONS: Final[tuple[tuple[str, str], ...]] = (
     ("DOCFLOW_LLM_BASE_URL", "base_url"),
     ("DOCFLOW_LLM_API_KEY", "api_key"),
@@ -78,6 +82,9 @@ ENVIRONMENT_OPTIONS: Final[tuple[tuple[str, str], ...]] = (
     ("DOCFLOW_LLM_NUM_CTX", "num_ctx"),
     ("DOCFLOW_LLM_TEMPERATURE", "temperature"),
     ("DOCFLOW_LLM_MIN_P", "min_p"),
+    ("DOCFLOW_LLM_TOP_P", "top_p"),
+    ("DOCFLOW_LLM_REPEAT_PENALTY", "repeat_penalty"),
+    ("DOCFLOW_LLM_PRESENCE_PENALTY", "presence_penalty"),
     ("DOCFLOW_LLM_SEED", "seed"),
     ("DOCFLOW_LLM_THINK", "think"),
 )

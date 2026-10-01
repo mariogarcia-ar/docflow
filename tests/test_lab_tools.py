@@ -1336,13 +1336,14 @@ def test_an_option_flag_beats_the_configuration_file(
     assert fake.calls[-1].options["num_ctx"] == 4096
 
 
-def test_the_thinking_and_sampling_knobs_reach_the_call_from_the_configuration_file(
+def test_the_sampling_knobs_reach_the_call_from_the_configuration_file(
     providers: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``think`` and ``min_p`` are stated once in the file, as ``num_ctx`` and ``temperature`` are.
+    """``think``, ``min_p`` and the card's sampling values are stated once in the file.
 
-    ``think=false`` is the loop brake for a reasoning reviewer, and ``min_p`` is the sampling
-    floor; neither has a flag of its own, so the file is where an operator states them once.
+    ``think=false`` is the loop brake for a reasoning reviewer, ``min_p`` is the sampling floor, and
+    ``top_p``/``repeat_penalty``/``presence_penalty`` are what a reviewer model's card publishes;
+    none has a flag of its own, so the file is where an operator states them once.
     """
     fake = providers()
     assets = tmp_path / "assets"
@@ -1350,7 +1351,12 @@ def test_the_thinking_and_sampling_knobs_reach_the_call_from_the_configuration_f
     (assets / "template" / "plain.md").write_text("<doc>\n", encoding="utf-8")
     config = tmp_path / "config.env"
     config.write_text(
-        "DOCFLOW_LLM_THINK=false\nDOCFLOW_LLM_MIN_P=0.05\n", encoding="utf-8"
+        "DOCFLOW_LLM_THINK=false\n"
+        "DOCFLOW_LLM_MIN_P=0.05\n"
+        "DOCFLOW_LLM_TOP_P=0.95\n"
+        "DOCFLOW_LLM_REPEAT_PENALTY=1.0\n"
+        "DOCFLOW_LLM_PRESENCE_PENALTY=0.0\n",
+        encoding="utf-8",
     )
     monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(config))
 
@@ -1377,6 +1383,9 @@ def test_the_thinking_and_sampling_knobs_reach_the_call_from_the_configuration_f
     options = fake.calls[-1].options
     assert options["think"] is False
     assert options["min_p"] == 0.05
+    assert options["top_p"] == 0.95
+    assert options["repeat_penalty"] == 1.0
+    assert options["presence_penalty"] == 0.0
 
 
 def test_the_asset_root_defaults_to_the_configuration_file(

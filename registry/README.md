@@ -72,7 +72,7 @@ document is substituted (no literal `{…}` survives into the prompt).
 | Tax breakdown | `extraction/invoice_desglose` | `extraction/invoice_desglose` | T1 extract — `gemma3:12b` |
 | Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` | T1 extract — `gemma3:12b` |
 | Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` | T1 extract — `gemma3:12b` |
-| Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `qwen3.5:9b`, plus `--extra contract=<step schema>` |
+| Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `deepseek-r1:8b`, plus `--extra contract=<step schema>` |
 | Vision | `extraction/vision`, `review/vision` | none — see the limits below | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
 
 Note the spelling: the **detection** template is `deteccion` (Spanish) while its schema is
@@ -92,7 +92,7 @@ Ollama, and every one of them works the same against vLLM or a hosted API by swa
 REG=registry
 DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
 T1=gemma3:12b     # the extractor: steps 0 to 4
-T2=qwen3.5:9b     # the reviewer: step 5
+T2=deepseek-r1:8b # the reviewer: step 5
 
 # 0 — the gate: is this a receipt at all? Run it first and refuse cheaply.
 python scripts/tools/llm.py --assets-dir $REG call $DOC \
@@ -131,16 +131,17 @@ python scripts/tools/llm.py --assets-dir $REG call $DOC \
 #     with no rules, and its suggested_value can break the extraction contract — it once proposed
 #     the word "FACTURA" where rule 2 requires the bare letter "A". A template that asks for either
 #     placeholder and does not receive it stops at load with a DEPENDENCY_ERROR naming the key.
-#     A reasoning reviewer can loop instead of answering, so its thinking is switched off
-#     (`think=false`) and the sampling kept tight (`temperature=0.2`, `min_p=0.05`); `num_ctx`
-#     gives the prompt room on Ollama's small default window, and `timeout` covers a slow local run.
+#     A reasoning reviewer thinks before it answers, so it needs room and time: `num_ctx` gives the
+#     prompt room on Ollama's small default window, and `timeout` covers a slow local run. The
+#     sampling values are the model card's, not a house style — deepseek-r1:8b publishes these four.
+#     A model whose thinking can be switched off (qwen3) states `think=false` there instead.
 python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
     --provider ollama --model $T2 --task review \
     --template review/invoice --schema review/invoice \
     --extra proposal=@var/run/reading/invoice.json \
     --extra contract=@registry/schema/extraction/invoice.schema.json \
-    --option think=false --option temperature=0.2 --option min_p=0.05 \
-    --option num_ctx=16384 --option timeout=600
+    --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
+    --option presence_penalty=0.0 --option num_ctx=16384 --option timeout=600
 ```
 
 `--task` is a label: it is recorded in the result and never reaches the model. `--template` and
@@ -149,10 +150,11 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
 previous one is two commands joined by a path. A `--option` value is read as JSON, so
 `temperature=0` reaches the provider as the number `0` and not as `"0"` — which Ollama rejects
 outright. Those options do not have to be retyped on every command: `llm.py` also reads `.env` at
-the repository root, and `DOCFLOW_ASSETS_DIR`, `DOCFLOW_LLM_NUM_CTX`, `DOCFLOW_LLM_TIMEOUT`,
-`DOCFLOW_LLM_THINK` and `DOCFLOW_LLM_MIN_P` are what keep the commands below short — `.env.example`
-is the template, and a run that used it says so on its `config:` line. Pin the seed when you want a
-run you can reproduce:
+the repository root, and `DOCFLOW_ASSETS_DIR` plus the `DOCFLOW_LLM_*` values — the window, the
+timeout and the reviewer's sampling values (`temperature`, `top_p`, `repeat_penalty`,
+`presence_penalty`) — are what keep the commands below short: `.env.example` names every one of
+them, and a run that used the file says so on its `config:` line. Pin the seed when you want a run
+you can reproduce:
 
 ```bash
     --option temperature=0 --option seed=7
@@ -182,26 +184,39 @@ PAGE = Path(
 )
 # One model per role, never the same one twice: the reviewer audits, it does not agree with itself.
 T1 = "gemma3:12b"      # reads the text
-T2 = "qwen3.5:9b"      # reviews the text reading
+T2 = "deepseek-r1:8b"  # reviews the text reading
 V1 = "qwen3-vl:8b"     # reads the page image
 V2 = "ministral-3:8b"  # reviews the vision reading
-# The provider controls, plus the decoding params all four roles share. A reasoning model is told
-# not to think (`think=False`) — on the reviewer that thinking looped instead of terminating — and
-# the sampling is kept tight (`temperature=0.2`, `min_p=0.05`). The timeout is stated well above
-# the 30 s default: a review carries the document, the proposal and the schema, and a vision call
-# carries a whole page as image tokens. `num_ctx` gives the prompt room on Ollama's small default
-# window. None of them has a default that fits.
+# The provider controls all four roles share: the local endpoint, the window, and a timeout well
+# above the 30 s default (a review carries the document, the proposal and the schema; a vision call
+# carries a whole page as image tokens). `temperature=0` keeps the extractor deterministic.
 OPTIONS = {
     "base_url": "http://localhost:11434",
-    "think": False,
-    "temperature": 0.2,
-    "min_p": 0.05,
+    "temperature": 0,
     "num_ctx": 16384,
     "timeout": 300,
 }
+# The reviewer's decoding values are its model card's, not a house style — deepseek-r1:8b publishes
+# these four. They are layered over the shared options for the review step only.
+REVIEWER_OPTIONS = {
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "repeat_penalty": 1.0,
+    "presence_penalty": 0.0,
+}
 
 
-def step(task, template, schema, *, model=T1, extra=None, document=DOC, images=()):
+def step(
+    task,
+    template,
+    schema,
+    *,
+    model=T1,
+    extra=None,
+    document=DOC,
+    images=(),
+    options=None,
+):
     """Run one step of one path."""
     return process_llm_request(
         LLMInput(
@@ -213,7 +228,7 @@ def step(task, template, schema, *, model=T1, extra=None, document=DOC, images=(
             images=list(images),
             extra_context=extra or {},
             schema=schema,
-            options=dict(OPTIONS),
+            options=dict(OPTIONS if options is None else options),
             graph=None,
             metadata={"assets_dir": str(ASSETS)},
         )
@@ -254,13 +269,15 @@ if categoria in {"Restaurante", "Combustible"}:
     )
 
 # T2 — the reviewer of the text reading: it audits the proposal against the contract step 1 ran
-# under, so a verdict is a rule check and not an opinion.
+# under, so a verdict is a rule check and not an opinion. It is the one step whose model states its
+# own decoding values, so they are layered over the shared options here.
 review = step(
     "review",
     "review/invoice",
     "review/invoice",
     model=T2,
     extra={"proposal": reading.parsed_response, "contract": CONTRACT},
+    options={**OPTIONS, **REVIEWER_OPTIONS},
 )
 
 # The vision path runs when the text path fails the checks, not instead of it. V1 reads the page
@@ -381,9 +398,9 @@ python scripts/tools/llm.py --assets-dir registry \
     --provider ollama --model gemma3:12b
 ```
 
-The four tags above are the recommendation, not an inventory: `gemma3:12b` and `qwen3.5:9b` are the
-text path, `qwen3-vl:8b` and `ministral-3:8b` the vision path — pull the ones your daemon does not
-serve yet before citing them.
+The four tags above are the recommendation, not an inventory: `gemma3:12b` and `deepseek-r1:8b` are
+the text path, `qwen3-vl:8b` and `ministral-3:8b` the vision path — pull the ones your daemon does
+not serve yet before citing them.
 
 **vLLM** — OpenAI-compatible transport, default endpoint `http://localhost:8000/v1`:
 
