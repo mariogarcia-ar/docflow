@@ -131,16 +131,16 @@ python scripts/tools/llm.py --assets-dir $REG call $DOC \
 #     with no rules, and its suggested_value can break the extraction contract — it once proposed
 #     the word "FACTURA" where rule 2 requires the bare letter "A". A template that asks for either
 #     placeholder and does not receive it stops at load with a DEPENDENCY_ERROR naming the key.
-#     The reviewer reasons before it answers, and that reasoning is what needs the room: on
-#     Ollama's default context the model runs out mid-thought and returns an EMPTY answer
-#     (`done_reason: length`), and the 30 s default expires long before it finishes — this call
-#     measured 302 s. Hence num_ctx and timeout, neither of which has a default that fits.
+#     A reasoning reviewer can loop instead of answering, so its thinking is switched off
+#     (`think=false`) and the sampling kept tight (`temperature=0.2`, `min_p=0.05`); `num_ctx`
+#     gives the prompt room on Ollama's small default window, and `timeout` covers a slow local run.
 python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
     --provider ollama --model $T2 --task review \
     --template review/invoice --schema review/invoice \
     --extra proposal=@var/run/reading/invoice.json \
     --extra contract=@registry/schema/extraction/invoice.schema.json \
-    --option temperature=0 --option num_ctx=16384 --option timeout=600
+    --option think=false --option temperature=0.2 --option min_p=0.05 \
+    --option num_ctx=16384 --option timeout=600
 ```
 
 `--task` is a label: it is recorded in the result and never reaches the model. `--template` and
@@ -149,9 +149,10 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
 previous one is two commands joined by a path. A `--option` value is read as JSON, so
 `temperature=0` reaches the provider as the number `0` and not as `"0"` — which Ollama rejects
 outright. Those options do not have to be retyped on every command: `llm.py` also reads `.env` at
-the repository root, and `DOCFLOW_ASSETS_DIR`, `DOCFLOW_LLM_NUM_CTX` and `DOCFLOW_LLM_TIMEOUT` are
-what keep the two commands below short — `.env.example` is the template, and a run that used it says
-so on its `config:` line. Pin the seed when you want a run you can reproduce:
+the repository root, and `DOCFLOW_ASSETS_DIR`, `DOCFLOW_LLM_NUM_CTX`, `DOCFLOW_LLM_TIMEOUT`,
+`DOCFLOW_LLM_THINK` and `DOCFLOW_LLM_MIN_P` are what keep the commands below short — `.env.example`
+is the template, and a run that used it says so on its `config:` line. Pin the seed when you want a
+run you can reproduce:
 
 ```bash
     --option temperature=0 --option seed=7
@@ -184,15 +185,17 @@ T1 = "gemma3:12b"      # reads the text
 T2 = "qwen3.5:9b"      # reviews the text reading
 V1 = "qwen3-vl:8b"     # reads the page image
 V2 = "ministral-3:8b"  # reviews the vision reading
-# The provider controls, plus whatever decoding params you want passed through: `temperature=0` is
-# the value the strategy fixes for all four roles, and the timeout is stated well above the 30 s
-# default — a review carries the document, the proposal and the schema, and a vision call carries a
-# whole page as image tokens, so the default is not enough for either. `num_ctx` is the reviewer's
-# other requirement: it reasons before it answers, and on Ollama's default context it runs out
-# mid-thought and returns an empty answer. Neither has a default that fits.
+# The provider controls, plus the decoding params all four roles share. A reasoning model is told
+# not to think (`think=False`) — on the reviewer that thinking looped instead of terminating — and
+# the sampling is kept tight (`temperature=0.2`, `min_p=0.05`). The timeout is stated well above
+# the 30 s default: a review carries the document, the proposal and the schema, and a vision call
+# carries a whole page as image tokens. `num_ctx` gives the prompt room on Ollama's small default
+# window. None of them has a default that fits.
 OPTIONS = {
     "base_url": "http://localhost:11434",
-    "temperature": 0,
+    "think": False,
+    "temperature": 0.2,
+    "min_p": 0.05,
     "num_ctx": 16384,
     "timeout": 300,
 }
