@@ -284,9 +284,12 @@ substituted stand-in.
 pairs are optional on every inference subcommand. An `--option` value is read as JSON, so
 `temperature=0` reaches the provider as the number `0` (a string is refused). `--extra` fills a
 template's `<extra:KEY>` placeholder, and `KEY=@FILE` reads the value from a file — how one step's
-saved answer reaches the next. `--run-id` is how a run is pinned — it is what makes `resume` a
-resume rather than a fresh call, and it is required by `fake`, whose whole point is showing a graph
-and its resume under one identity.
+saved answer reaches the next. A **review** fills two of them: the proposal it audits and the
+reviewed step's own schema as `contract`
+(`--extra contract=@registry/schema/extraction/invoice.schema.json`), so each verdict is measured
+against that step's rules rather than against what looks plausible. `--run-id` is how a run is
+pinned — it is what makes `resume` a resume rather than a fresh call, and it is required by `fake`,
+whose whole point is showing a graph and its resume under one identity.
 
 **Or state them once in `.env`.** `<repo root>/.env` — `cp .env.example .env` — supplies
 `DOCFLOW_ASSETS_DIR`, the endpoint, the credential, the timeout and the decoding options, so
