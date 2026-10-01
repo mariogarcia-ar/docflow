@@ -131,6 +131,17 @@ def test_an_ollama_request_field_is_lifted_out_of_the_model_options(http) -> Non
     assert sent["options"] == {"temperature": 0.2}
 
 
+def test_an_ollama_call_that_states_no_option_sends_an_empty_map(http) -> None:
+    """Nothing stated is nothing sent: the daemon keeps the model's own defaults."""
+    client = http(body={"message": {"content": "{}"}})
+
+    generate_text(call(options={}))
+
+    body = client.requests[0]["json"]
+    assert body["options"] == {}
+    assert "temperature" not in body and "top_p" not in body
+
+
 def test_an_openai_compatible_call_posts_a_constrained_response_format(http) -> None:
     """The two providers differ in their wire format; that difference is the transport's job."""
     client = http(body={"choices": [{"message": {"content": "{}"}}]})

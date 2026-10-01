@@ -1336,6 +1336,51 @@ def test_an_option_flag_beats_the_configuration_file(
     assert fake.calls[-1].options["num_ctx"] == 4096
 
 
+def test_no_configuration_sends_no_decoding_options(
+    providers: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file with blank values states nothing, so no sampling default is invented for the call.
+
+    The bench adds a key only when a source spells a non-blank value, and a blank placeholder is
+    nothing stated — which is what keeps the provider on the model's own defaults.
+    """
+    fake = providers()
+    assets = tmp_path / "assets"
+    (assets / "template").mkdir(parents=True)
+    (assets / "template" / "plain.md").write_text("<doc>\n", encoding="utf-8")
+    config = tmp_path / "config.env"
+    config.write_text(
+        "DOCFLOW_LLM_NUM_CTX=\n"
+        "DOCFLOW_LLM_TEMPERATURE=\n"
+        "DOCFLOW_LLM_TOP_P=\n"
+        "DOCFLOW_LLM_THINK=\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(config))
+
+    code = tool_module("llm").main(
+        [
+            "--assets-dir",
+            str(assets),
+            "--out",
+            str(tmp_path / "run"),
+            "call",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "llama3.1",
+            "--task",
+            "extract",
+            "--template",
+            "plain",
+        ]
+    )
+
+    assert code == 0
+    assert fake.calls[-1].options == {}
+
+
 def test_the_sampling_knobs_reach_the_call_from_the_configuration_file(
     providers: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
