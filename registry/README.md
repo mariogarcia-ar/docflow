@@ -60,7 +60,7 @@ empty substitution: a prompt that reads as if the document were empty is a diffe
 Resolution is one pass over the template, so text that *arrives* in `<doc>` is inserted and never
 scanned again — a receipt that prints `<extra>` prints it.
 
-## The six steps, and the ids you pass
+## The steps, and the ids you pass
 
 Every pair below was verified against the real loader: template loads, schema validates, and the
 document is substituted (no literal `{…}` survives into the prompt).
@@ -72,7 +72,7 @@ document is substituted (no literal `{…}` survives into the prompt).
 | Tax breakdown | `extraction/invoice_desglose` | `extraction/invoice_desglose` | T1 extract — `gemma3:12b` |
 | Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` | T1 extract — `gemma3:12b` |
 | Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` | T1 extract — `gemma3:12b` |
-| Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `deepseek-r1:8b`, plus `--extra contract=<step schema>` |
+| Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `deepseek-r1:8b`, T3 review — `qwen3.5:9b`, plus `--extra contract=<step schema>` |
 | Vision | `extraction/vision`, `review/vision` | none — see the limits below | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
 
 Note the spelling: the **detection** template is `deteccion` (Spanish) while its schema is
@@ -83,8 +83,8 @@ to get wrong — a mismatched pair is a `DEPENDENCY_ERROR`, not a silent fallbac
 
 The layered extraction is five calls, not one: each step is its own artifact with its own schema,
 and the order is the contract. Each role runs its own model, so the reviewer never shares the
-extractor's biases: **T1** extracts, **T2** reviews, and on the vision path **V1** extracts and
-**V2** reviews. Only the three provider flags change between transports — the examples below are
+extractor's biases: **T1** extracts, **T2** and **T3** review it, and on the vision path **V1**
+extracts and **V2** reviews. Only the three provider flags change between transports — the examples below are
 Ollama, and every one of them works the same against vLLM or a hosted API by swapping `--provider`
 / `--model` / `--option` (see *Local* and *Remote* below).
 
@@ -93,6 +93,7 @@ REG=registry
 DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
 T1=gemma3:12b     # the extractor: steps 0 to 4
 T2=deepseek-r1:8b # the reviewer: step 5
+T3=qwen3.5:9b     # the second reviewer: step 6
 
 # 0 — the gate: is this a receipt at all? Run it first and refuse cheaply.
 python scripts/tools/llm.py --assets-dir $REG call $DOC \
@@ -142,6 +143,19 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
     --extra contract=@registry/schema/extraction/invoice.schema.json \
     --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
     --option presence_penalty=0.0 --option num_ctx=16384 --option timeout=600
+
+# 6 — a second review: step 5's audit run again with qwen, so the two verdicts can be compared.
+#     It takes its own `--out` because both reviews file under the schema's last path component
+#     (`invoice`), and one directory would let this verdict overwrite the one it is checking.
+#     qwen3 can switch its thinking off, so `think=false` replaces deepseek's sampling card and
+#     `min_p` keeps the sampling tight; `num_ctx` and `timeout` are step 5's room and time.
+python scripts/tools/llm.py --assets-dir $REG --out var/run/review-qwen call $DOC \
+    --provider ollama --model $T3 --task review \
+    --template review/invoice --schema review/invoice \
+    --extra proposal=@var/run/reading/invoice.json \
+    --extra contract=@registry/schema/extraction/invoice.schema.json \
+    --option think=false --option temperature=0.2 --option min_p=0.05 \
+    --option num_ctx=16384 --option timeout=600
 ```
 
 `--task` is a label: it is recorded in the result and never reaches the model. `--template` and
@@ -151,10 +165,11 @@ previous one is two commands joined by a path. A `--option` value is read as JSO
 `temperature=0` reaches the provider as the number `0` and not as `"0"` — which Ollama rejects
 outright. Those options do not have to be retyped on every command: `llm.py` also reads `.env` at
 the repository root, and `DOCFLOW_ASSETS_DIR` plus the `DOCFLOW_LLM_*` values — the window, the
-timeout and the reviewer's sampling values (`temperature`, `top_p`, `repeat_penalty`,
-`presence_penalty`) — are what keep the commands below short: `.env.example` names every one of
-them, and a run that used the file says so on its `config:` line. Pin the seed when you want a run
-you can reproduce:
+timeout and sampling values such as `temperature`, `top_p`, `min_p`, `repeat_penalty`,
+`presence_penalty` and `think` — are what keep them short: `.env.example` names every one of them,
+and a run that used the file says so on its `config:` line. The file carries one model's sampling
+set, so when two reviewers disagree on it — as steps 5 and 6 do — the second states its own on the
+command. Pin the seed when you want a run you can reproduce:
 
 ```bash
     --option temperature=0 --option seed=7
@@ -165,7 +180,7 @@ you can reproduce:
 Steps 4 and 5 read a previous step's answer, and that arrives through `extra_context`. The CLI
 carries it with `--extra KEY=@FILE` when the answer is already on disk; the library is what you need
 when the value is a live object, as it is in the loop below, and it is the only route that sends
-images, which is the whole of the vision path. So the four roles are driven from the library here:
+images, which is the whole of the vision path. So the five roles are driven from the library here:
 
 ```python
 import json
@@ -185,9 +200,10 @@ PAGE = Path(
 # One model per role, never the same one twice: the reviewer audits, it does not agree with itself.
 T1 = "gemma3:12b"      # reads the text
 T2 = "deepseek-r1:8b"  # reviews the text reading
+T3 = "qwen3.5:9b"      # reviews the text reading again
 V1 = "qwen3-vl:8b"     # reads the page image
 V2 = "ministral-3:8b"  # reviews the vision reading
-# The provider controls all four roles share: the local endpoint, the window, and a timeout well
+# The provider controls every role shares: the local endpoint, the window, and a timeout well
 # above the 30 s default (a review carries the document, the proposal and the schema; a vision call
 # carries a whole page as image tokens). `temperature=0` keeps the extractor deterministic.
 OPTIONS = {
@@ -196,13 +212,19 @@ OPTIONS = {
     "num_ctx": 16384,
     "timeout": 300,
 }
-# The reviewer's decoding values are its model card's, not a house style — deepseek-r1:8b publishes
-# these four. They are layered over the shared options for the review step only.
-REVIEWER_OPTIONS = {
+# The reviewers' decoding values are their model cards', not a house style. Each is layered over
+# the shared options for its own step — deepseek-r1:8b publishes these four, while qwen3 can switch
+# its thinking off, which is what keeps a reasoning reviewer from looping.
+DEEPSEEK_OPTIONS = {
     "temperature": 0.6,
     "top_p": 0.95,
     "repeat_penalty": 1.0,
     "presence_penalty": 0.0,
+}
+QWEN_OPTIONS = {
+    "temperature": 0.2,
+    "min_p": 0.05,
+    "think": False,
 }
 
 
@@ -269,15 +291,25 @@ if categoria in {"Restaurante", "Combustible"}:
     )
 
 # T2 — the reviewer of the text reading: it audits the proposal against the contract step 1 ran
-# under, so a verdict is a rule check and not an opinion. It is the one step whose model states its
-# own decoding values, so they are layered over the shared options here.
+# under, so a verdict is a rule check and not an opinion.
 review = step(
     "review",
     "review/invoice",
     "review/invoice",
     model=T2,
     extra={"proposal": reading.parsed_response, "contract": CONTRACT},
-    options={**OPTIONS, **REVIEWER_OPTIONS},
+    options={**OPTIONS, **DEEPSEEK_OPTIONS},
+)
+
+# T3 — the same reading audited by a second model: a disagreement between the two is information,
+# which is why the reviewers are never the same model.
+review_qwen = step(
+    "review",
+    "review/invoice",
+    "review/invoice",
+    model=T3,
+    extra={"proposal": reading.parsed_response, "contract": CONTRACT},
+    options={**OPTIONS, **QWEN_OPTIONS},
 )
 
 # The vision path runs when the text path fails the checks, not instead of it. V1 reads the page
