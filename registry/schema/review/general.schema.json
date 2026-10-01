@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "field_verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {"type": "string"},
+          "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain"]},
+          "reason": {"type": "string"},
+          "suggested_value": {"type": "string"}
+        },
+        "required": ["field", "verdict", "reason", "suggested_value"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["field_verdicts"],
+  "additionalProperties": false
+}
