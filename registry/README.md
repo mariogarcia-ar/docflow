@@ -51,15 +51,15 @@ empty substitution: a prompt that reads as if the document were empty is a diffe
 Every pair below was verified against the real loader: template loads, schema validates, and the
 document is substituted (no literal `{…}` survives into the prompt).
 
-| Step | `--template` | `--schema` |
-|---|---|---|
-| Base reading | `extraction/invoice` | `extraction/invoice` |
-| Detection (gate) | `extraction/invoice_deteccion` | `extraction/invoice_detection` |
-| Tax breakdown | `extraction/invoice_desglose` | `extraction/invoice_desglose` |
-| Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` |
-| Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` |
-| Review | `review/invoice` | `review/invoice` |
-| Vision | `extraction/vision`, `review/vision` | none — see the limits below |
+| Step | `--template` | `--schema` | Role — model |
+|---|---|---|---|
+| Base reading | `extraction/invoice` | `extraction/invoice` | T1 extract — `gemma3:12b` |
+| Detection (gate) | `extraction/invoice_deteccion` | `extraction/invoice_detection` | T1 extract — `gemma3:12b` |
+| Tax breakdown | `extraction/invoice_desglose` | `extraction/invoice_desglose` | T1 extract — `gemma3:12b` |
+| Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` | T1 extract — `gemma3:12b` |
+| Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` | T1 extract — `gemma3:12b` |
+| Review | `review/invoice` | `review/invoice` | T2 review — `qwen3.5:9b` |
+| Vision | `extraction/vision`, `review/vision` | none — see the limits below | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
 
 Note the spelling: the **detection** template is `deteccion` (Spanish) while its schema is
 `detection` (English). That is the one pair where the two identifiers do not match, and it is easy
@@ -68,38 +68,40 @@ to get wrong — a mismatched pair is a `DEPENDENCY_ERROR`, not a silent fallbac
 ## How to use them, step by step
 
 The layered extraction is five calls, not one: each step is its own artifact with its own schema,
-and the order is the contract. Only the three provider flags change between transports — the
-examples below are Ollama, and every one of them works the same against vLLM or a hosted API by
-swapping `--provider` / `--model` / `--option` (see *Local* and *Remote* below).
+and the order is the contract. Each role runs its own model, so the reviewer never shares the
+extractor's biases: **T1** extracts, **T2** reviews, and on the vision path **V1** extracts and
+**V2** reviews. Only the three provider flags change between transports — the examples below are
+Ollama, and every one of them works the same against vLLM or a hosted API by swapping `--provider`
+/ `--model` / `--option` (see *Local* and *Remote* below).
 
 ```bash
 REG=registry
 DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
-M=llama3.1
+T1=gemma3:12b     # the extractor; step 5 runs the reviewer, T2=qwen3.5:9b
 
 # 0 — the gate: is this a receipt at all? Run it first and refuse cheaply.
 python scripts/tools/llm.py --assets-dir $REG call $DOC \
-    --provider ollama --model $M --task detection \
+    --provider ollama --model $T1 --task detection \
     --template extraction/invoice_deteccion --schema extraction/invoice_detection
 
 # 1 — the base reading: the seven printed fields
 python scripts/tools/llm.py --assets-dir $REG call $DOC \
-    --provider ollama --model $M --task extract \
+    --provider ollama --model $T1 --task extract \
     --template extraction/invoice --schema extraction/invoice
 
 # 2 — the tax breakdown
 python scripts/tools/llm.py --assets-dir $REG call $DOC \
-    --provider ollama --model $M --task desglose \
+    --provider ollama --model $T1 --task desglose \
     --template extraction/invoice_desglose --schema extraction/invoice_desglose
 
 # 3 — the classification judgement
 python scripts/tools/llm.py --assets-dir $REG call $DOC \
-    --provider ollama --model $M --task clasificacion \
+    --provider ollama --model $T1 --task clasificacion \
     --template extraction/invoice_clasificacion --schema extraction/invoice_clasificacion
 
 # 4 — the line-of-business fields (Restaurante / Combustible only)
 python scripts/tools/llm.py --assets-dir $REG call $DOC \
-    --provider ollama --model $M --task rubro \
+    --provider ollama --model $T1 --task rubro \
     --template extraction/invoice_rubro --schema extraction/invoice_rubro
 ```
 
@@ -124,17 +126,20 @@ ASSETS = Path("registry")
 DOC = Path(
     "tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt"
 ).read_text()
+# One model per role, never the same one twice: the reviewer audits, it does not agree with itself.
+T1 = "gemma3:12b"
+T2 = "qwen3.5:9b"
 # The provider controls, plus whatever decoding params you want passed through.
 OPTIONS = {"base_url": "http://localhost:11434"}
 
 
-def step(task, template, schema, *, extra=None, document=DOC):
+def step(task, template, schema, *, model=T1, extra=None, document=DOC):
     """Run one step of the layered extraction."""
     return process_llm_request(
         LLMInput(
             task=task,
             provider="ollama",
-            model="llama3.1",
+            model=model,
             template=template,
             document=document,
             images=[],
@@ -184,6 +189,7 @@ review = step(
     "review",
     "review/invoice",
     "review/invoice",
+    model=T2,
     extra={"proposal": reading.parsed_response},
 )
 ```
@@ -214,18 +220,23 @@ either.
 ```bash
 python scripts/tools/llm.py --assets-dir registry \
     call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
-    --provider ollama --model llama3.1 --task extract \
+    --provider ollama --model gemma3:12b --task extract \
     --template extraction/invoice --schema extraction/invoice
 ```
 
 Check the model is really there first — `llm.py models` lists what the daemon serves, and the
-tag has to match exactly (`llama3.1:latest` is a different string from `llama3.1`):
+tag has to match exactly (`gemma3:12b` is a different string from `gemma3`, which resolves to
+another size):
 
 ```bash
 python scripts/tools/llm.py --assets-dir registry \
     models tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
-    --provider ollama --model llama3.1
+    --provider ollama --model gemma3:12b
 ```
+
+The four tags above are the recommendation, not an inventory: `gemma3:12b` and `qwen3.5:9b` are the
+text path, `qwen3-vl:8b` and `ministral-3:8b` the vision path — pull the ones your daemon does not
+serve yet before citing them.
 
 **vLLM** — OpenAI-compatible transport, default endpoint `http://localhost:8000/v1`:
 
@@ -297,7 +308,7 @@ prompt was built:
 
 ```bash
 python scripts/tools/llm.py --assets-dir registry node <file.txt> \
-    --provider ollama --model llama3.1 --task extract \
+    --provider ollama --model gemma3:12b --task extract \
     --template extraction/invoice --schema extraction/invoice
 # errors: PROVIDER_ERROR "ollama could not be reached"        ← assets were fine
 #         request_key: c32f1f77…                              ← prompt was built

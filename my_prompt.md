@@ -18,6 +18,10 @@ granite3.1-moe:1b       3269ce3e31ea    1.4 GB    10 days ago
 
 
 
+T1 E gemma3
+T2 R qwen3.5 
+V1 E qwen3-vl 
+V2 R mistral3
 
 # notas
 al extraer la imagen de un pdf que solo tiene una imagen, extrajo el original .... esto es genial 
