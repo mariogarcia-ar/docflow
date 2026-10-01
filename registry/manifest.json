@@ -13,6 +13,10 @@
       "format": "text"
     },
     {
+      "key": "template/review/general.md",
+      "format": "text"
+    },
+    {
       "key": "template/review/vision.md",
       "format": "text"
     },
@@ -39,6 +43,11 @@
     },
     {
       "key": "schema/review/invoice.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/review/general.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },

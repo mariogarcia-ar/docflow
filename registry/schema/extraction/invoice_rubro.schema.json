@@ -7,11 +7,11 @@
     },
     "cantidad_comensales_personas": {
       "type": "string",
-      "description": "only if the line of business is Restaurante"
+      "description": "the number of diners, only when the line of business is Restaurante; otherwise 'null'. Exactly as printed, without the unit; 'null' when it is not printed — never deduced from the number of items"
     },
     "cantidad_litros": {
       "type": "string",
-      "description": "only if the line of business is Combustible"
+      "description": "the litres, only when the line of business is Combustible; otherwise 'null'. Exactly as printed, without the unit; 'null' when it is not printed — never deduced from the amount divided by the price"
     }
   },
   "required": [

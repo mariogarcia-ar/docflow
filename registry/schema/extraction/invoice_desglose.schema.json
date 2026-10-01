@@ -3,7 +3,7 @@
   "properties": {
     "analisis_condicion_iva": {
       "type": "string",
-      "description": "terse note: what IVA condition legend the emitter declares (if any), and whether the document discriminates IVA at all (does it show a rate + amount, or just a bottom-line total?). This decides whether rule 3 (Factura C branch, everything '0') applies below"
+      "description": "terse note: what IVA condition legend the emitter declares (if any), and whether the document discriminates IVA at all (does it show a rate + amount, or just a bottom-line total?). This decides the Factura C branch below: when the emitter is Monotributo or Exento, iva and the other taxes are '0' and subtotal is the total"
     },
     "subtotal": {
       "type": "string",
@@ -11,7 +11,7 @@
     },
     "iva": {
       "type": "string",
-      "description": "IVA amount in pesos, or \"0\" (rule 2)"
+      "description": "the IVA amount in pesos, never the rate: a receipt showing 'IVA 21%: 2.100,00' has iva '2.100,00', and 21 goes in alicuotas_detectadas. '0' when the document does not discriminate IVA"
     },
     "impuestos_internos": {
       "type": "string",
@@ -43,11 +43,11 @@
         "Consumidor Final",
         "null"
       ],
-      "description": "emitter's condition (rule 3), or 'null'. Same conclusion as analisis_condicion_iva above, in the fixed legend form"
+      "description": "the emitter's IVA condition, or 'null' when it is not declared. Same conclusion as analisis_condicion_iva above, in the fixed legend form"
     },
     "alicuotas_detectadas": {
       "type": "string",
-      "description": "printed rates, separated by '|' (rule 4)"
+      "description": "the printed IVA rates, with the AFIP codes: 0, 2_5, 5, 10_5, 21, 27, separated by '|'. The rates, never the amounts"
     }
   },
   "required": [

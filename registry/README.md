@@ -16,6 +16,7 @@ registry/
     extraction/invoice_clasificacion.md         the classification judgement
     extraction/vision.md                        the VLM reading of a page image
     review/invoice.md                           review of a text extraction
+    review/general.md                           review of any step, against its own schema
     review/vision.md                            review of a vision extraction
   schema/                                    response schemas  (see `--schema`)
     extraction/invoice.schema.json
@@ -24,6 +25,7 @@ registry/
     extraction/invoice_rubro.schema.json
     extraction/invoice_clasificacion.schema.json
     review/invoice.schema.json
+    review/general.schema.json
 ```
 
 ## How an identifier resolves
@@ -47,7 +49,11 @@ Four spellings of placeholder, and no others:
 `<extra:key>` is how a template takes two or more inputs and gives each its own section: it is the
 same mapping `<extra>` renders whole, addressed one key at a time. The key must be in
 `extra_context` — `review/invoice` carrying `<extra:proposal>` refuses a request that carries no
-`proposal`, because a review prompt with an empty proposal block asks a different question.
+`proposal`, because a review prompt with an empty proposal block asks a different question. The
+review template also carries `<extra:contract>`, and it is the reviewed step's own **schema**
+(`--extra contract=@registry/schema/extraction/invoice.schema.json`): the reviewer judges each
+proposed value against the same contract the extractor was given, so its verdicts and its
+`suggested_value`s obey the extraction rules instead of second-guessing them from plausibility.
 
 A template that asks for a placeholder the request cannot fill is a `DEPENDENCY_ERROR`, never an
 empty substitution: a prompt that reads as if the document were empty is a different question.
@@ -66,7 +72,7 @@ document is substituted (no literal `{…}` survives into the prompt).
 | Tax breakdown | `extraction/invoice_desglose` | `extraction/invoice_desglose` | T1 extract — `gemma3:12b` |
 | Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` | T1 extract — `gemma3:12b` |
 | Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` | T1 extract — `gemma3:12b` |
-| Review | `review/invoice` | `review/invoice` | T2 review — `qwen3.5:9b` |
+| Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `qwen3.5:9b`, plus `--extra contract=<step schema>` |
 | Vision | `extraction/vision`, `review/vision` | none — see the limits below | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
 
 Note the spelling: the **detection** template is `deteccion` (Spanish) while its schema is
@@ -117,11 +123,14 @@ python scripts/tools/llm.py --assets-dir $REG call $DOC \
     --template extraction/invoice_rubro --schema extraction/invoice_rubro \
     --extra rubro=Restaurante
 
-# 5 — the review: a second model audits step 1's reading — <extra:proposal>.
-#     KEY=@FILE reads the value from a file, which is how step 1's answer gets here: it was
-#     written verbatim as invoice.json (the `<stem>.json` the bench readme describes) under the
-#     `--out` step 1 was given. Without --extra this stops at load with "the template asks for
-#     extra_context['proposal'] and the request carries none".
+# 5 — the review: a second model audits step 1's reading — <extra:proposal>, judged against
+#     <extra:contract>. KEY=@FILE reads the value from a file, which is how step 1's answer gets
+#     here: it was written verbatim as invoice.json (the `<stem>.json` the bench readme describes)
+#     under the `--out` step 1 was given. The contract is step 1's schema, and it is what the
+#     reviewer compares each proposed value against; without it the reviewer re-reads the raw text
+#     with no rules, and its suggested_value can break the extraction contract — it once proposed
+#     the word "FACTURA" where rule 2 requires the bare letter "A". A template that asks for either
+#     placeholder and does not receive it stops at load with a DEPENDENCY_ERROR naming the key.
 #     The reviewer reasons before it answers, and that reasoning is what needs the room: on
 #     Ollama's default context the model runs out mid-thought and returns an EMPTY answer
 #     (`done_reason: length`), and the 30 s default expires long before it finishes — this call
@@ -130,6 +139,7 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
     --provider ollama --model $T2 --task review \
     --template review/invoice --schema review/invoice \
     --extra proposal=@var/run/reading/invoice.json \
+    --extra contract=@registry/schema/extraction/invoice.schema.json \
     --option temperature=0 --option num_ctx=16384 --option timeout=600
 ```
 
@@ -155,11 +165,14 @@ when the value is a live object, as it is in the loop below, and it is the only 
 images, which is the whole of the vision path. So the four roles are driven from the library here:
 
 ```python
+import json
 from pathlib import Path
 
 from docflow.llm import LLMInput, process_llm_request
 
 ASSETS = Path("registry")
+# The reviewed step's schema is the contract the reviewer judges the proposal against.
+CONTRACT = json.loads((ASSETS / "schema/extraction/invoice.schema.json").read_text())
 DOC = Path(
     "tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt"
 ).read_text()
@@ -237,13 +250,14 @@ if categoria in {"Restaurante", "Combustible"}:
         extra={"rubro": categoria},
     )
 
-# T2 — the reviewer of the text reading: the proposal is what it is asked to audit.
+# T2 — the reviewer of the text reading: it audits the proposal against the contract step 1 ran
+# under, so a verdict is a rule check and not an opinion.
 review = step(
     "review",
     "review/invoice",
     "review/invoice",
     model=T2,
-    extra={"proposal": reading.parsed_response},
+    extra={"proposal": reading.parsed_response, "contract": CONTRACT},
 )
 
 # The vision path runs when the text path fails the checks, not instead of it. V1 reads the page
@@ -270,22 +284,30 @@ vision_review = step(
 )
 ```
 
-The other half of every `extra={…}` is the template. `review/invoice` asks for two elements, in two
-sections, and the names are what pair them up:
+The other half of every `extra={…}` is the template. `review/invoice` names each input in its own
+section, and the section name is what pairs an input with a placeholder:
 
 ```markdown
 --- DOCUMENT (OCR) ---
 <doc>
 --- END OF DOCUMENT ---
 
+--- EXTRACTION CONTRACT (the schema the proposed values must satisfy) ---
+<extra:contract>
+--- END OF CONTRACT ---
+
 --- PROPOSED EXTRACTION (to review) ---
 <extra:proposal>
 --- END OF EXTRACTION ---
 ```
 
-`<doc>` is filled by the `document` argument and `<extra:proposal>` by
-`extra={"proposal": reading.parsed_response}`; `extraction/invoice_rubro` is the same shape with
-`<extra:rubro>`. **Every text template opens with the document and states its instructions after
+`<doc>` is filled by the `document` argument, `<extra:proposal>` by
+`extra={"proposal": reading.parsed_response}`, and `<extra:contract>` by the reviewed step's own
+schema; `extraction/invoice_rubro` is the same shape with `<extra:rubro>`. The contract is what
+makes the reviewer the extractor's judge rather than a second opinion: it names each field and
+states what that field must and must not be, so a proposed value is "disagree" when it breaks the
+rule, not when it merely looks unlikely — and a `suggested_value` is only valid when it satisfies
+the same contract. **Every text template opens with the document and states its instructions after
 it**, never the reverse: the five T1 steps then share a byte-identical prefix — the same block plus
 the same OCR text — and Ollama reuses the KV it cached for that prefix, so the document is tokenized
 once per run instead of once per step. The instructions, which differ from step to step, sit after

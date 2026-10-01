@@ -3,7 +3,7 @@
   "properties": {
     "analisis_evidencia_rubro": {
       "type": "string",
-      "description": "terse note: what printed items or concept point to a line of business, as distinct from the provider's name alone. If there is no clear printed evidence, say so here — that is what drives categoria_gasto to 'null' below, per rule 4"
+      "description": "terse note: what printed items or concept point to a line of business, as distinct from the provider's name alone. If there is no clear printed evidence, say so here — that is what drives categoria_gasto to 'null'"
     },
     "categoria_gasto": {
       "type": "string",
@@ -18,7 +18,7 @@
         "Otros",
         "null"
       ],
-      "description": "inferred from the emitter's line of business, or 'null' when there is no clear indication. This value decides whether the rubro step runs"
+      "description": "inferred from the emitter's line of business, or 'null' when there is no clear printed indication. Never invented from the provider's name alone. One of the enum values. This value decides whether the rubro step runs"
     },
     "descripcion": {
       "type": "string",
