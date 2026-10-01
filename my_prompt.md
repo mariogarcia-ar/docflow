@@ -16,6 +16,7 @@ llama3.2-vision:11b
 general
 qwen2.5:7b-instruct    845dbda0ea48    4.7 GB    8 days ago      
 gemma3:4b              a2af6cc3eb7f    3.3 GB    9 days ago      
+gemma3:12b
 
 moe
 granite4.2:8b
