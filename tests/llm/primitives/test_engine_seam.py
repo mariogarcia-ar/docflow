@@ -117,6 +117,20 @@ def test_an_ollama_call_posts_its_own_body_to_its_own_endpoint(http) -> None:
     assert sent["timeout"] == 5.0
 
 
+def test_an_ollama_request_field_is_lifted_out_of_the_model_options(http) -> None:
+    """``think`` and ``keep_alive`` are ``/api/chat`` fields: Ollama reads them at the top level."""
+    client = http(body={"message": {"content": "{}"}, "model": "test-model"})
+
+    generate_structured(
+        call(options={"think": False, "keep_alive": "30m", "temperature": 0.2})
+    )
+
+    sent = client.requests[0]["json"]
+    assert sent["think"] is False
+    assert sent["keep_alive"] == "30m"
+    assert sent["options"] == {"temperature": 0.2}
+
+
 def test_an_openai_compatible_call_posts_a_constrained_response_format(http) -> None:
     """The two providers differ in their wire format; that difference is the transport's job."""
     client = http(body={"choices": [{"message": {"content": "{}"}}]})

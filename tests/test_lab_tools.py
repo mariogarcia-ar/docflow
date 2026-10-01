@@ -1336,6 +1336,49 @@ def test_an_option_flag_beats_the_configuration_file(
     assert fake.calls[-1].options["num_ctx"] == 4096
 
 
+def test_the_thinking_and_sampling_knobs_reach_the_call_from_the_configuration_file(
+    providers: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``think`` and ``min_p`` are stated once in the file, as ``num_ctx`` and ``temperature`` are.
+
+    ``think=false`` is the loop brake for a reasoning reviewer, and ``min_p`` is the sampling
+    floor; neither has a flag of its own, so the file is where an operator states them once.
+    """
+    fake = providers()
+    assets = tmp_path / "assets"
+    (assets / "template").mkdir(parents=True)
+    (assets / "template" / "plain.md").write_text("<doc>\n", encoding="utf-8")
+    config = tmp_path / "config.env"
+    config.write_text(
+        "DOCFLOW_LLM_THINK=false\nDOCFLOW_LLM_MIN_P=0.05\n", encoding="utf-8"
+    )
+    monkeypatch.setenv(_cli.ENV_FILE_VARIABLE, str(config))
+
+    code = tool_module("llm").main(
+        [
+            "--assets-dir",
+            str(assets),
+            "--out",
+            str(tmp_path / "run"),
+            "call",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "llama3.1",
+            "--task",
+            "extract",
+            "--template",
+            "plain",
+        ]
+    )
+
+    assert code == 0
+    options = fake.calls[-1].options
+    assert options["think"] is False
+    assert options["min_p"] == 0.05
+
+
 def test_the_asset_root_defaults_to_the_configuration_file(
     providers: Any,
     tmp_path: Path,

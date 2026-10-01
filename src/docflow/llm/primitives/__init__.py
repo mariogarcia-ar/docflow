@@ -170,6 +170,12 @@ PRIMITIVE_NAMES: Final[tuple[str, ...]] = (
 #: The Ollama parameter that carries a model's context window.
 NUM_CTX = re.compile(r"num_ctx\s+(\d+)")
 
+#: The values a caller states through ``options`` that Ollama reads at the *top* of the
+#: ``/api/chat`` body rather than as model parameters: ``think`` is a reasoning model's thinking
+#: switch, ``keep_alive`` is how long the model stays loaded. Everything else in ``options`` is a
+#: decoding parameter and stays inside ``options``.
+_OLLAMA_REQUEST_FIELDS: Final[tuple[str, ...]] = ("think", "keep_alive")
+
 #: What a provider must mention in a 400/413 body for it to be a context overflow rather than a
 #: malformed request. The wording differs per provider, so the check is on the idea, not a line.
 _CONTEXT_HINTS: Final[tuple[str, ...]] = (
@@ -647,8 +653,12 @@ class OllamaProvider(_HttpProvider):
             "model": call.model,
             "messages": [message],
             "stream": False,
-            "options": dict(call.options),
         }
+        options = dict(call.options)
+        for name in _OLLAMA_REQUEST_FIELDS:
+            if name in options:
+                body[name] = options.pop(name)
+        body["options"] = options
         if call.schema is not None:
             body["format"] = dict(call.schema)
         return _post_json(f"{self._base_url(call)}/api/chat", body, call)

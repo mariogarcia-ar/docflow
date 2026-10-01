@@ -65,6 +65,11 @@ DEFAULT_ASSETS_DIR: Final[Path] = _cli.FIXTURES_ROOT / "llm"
 #: reviewer room to finish. ``context_window`` does **not** do it — the processor consumes that one
 #: for its overflow check and never forwards it to the provider — so both names exist, and the file
 #: explains the difference at each.
+#:
+#: ``think`` and ``min_p`` are the loop brakes for a reasoning reviewer: ``think=false`` stops the
+#: model thinking before it answers, and a small ``min_p`` trims the sampling tail it can wander
+#: into. ``think`` is a request field rather than a model parameter, and the Ollama transport lifts
+#: it out of ``options`` to where ``/api/chat`` reads it.
 ENVIRONMENT_OPTIONS: Final[tuple[tuple[str, str], ...]] = (
     ("DOCFLOW_LLM_BASE_URL", "base_url"),
     ("DOCFLOW_LLM_API_KEY", "api_key"),
@@ -72,7 +77,9 @@ ENVIRONMENT_OPTIONS: Final[tuple[tuple[str, str], ...]] = (
     ("DOCFLOW_LLM_CONTEXT_WINDOW", "context_window"),
     ("DOCFLOW_LLM_NUM_CTX", "num_ctx"),
     ("DOCFLOW_LLM_TEMPERATURE", "temperature"),
+    ("DOCFLOW_LLM_MIN_P", "min_p"),
     ("DOCFLOW_LLM_SEED", "seed"),
+    ("DOCFLOW_LLM_THINK", "think"),
 )
 
 #: The asset-root setting, which is a flag default rather than a decoding option.

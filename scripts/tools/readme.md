@@ -346,7 +346,9 @@ not mean different things in two places.
 `"0"`, and Ollama answers HTTP 500 for it (*option "temperature" must be of type float32*). A value
 that does not parse as JSON stays the text it is — `keep_alive=5m` — so nothing needs quoting to
 stay a string. This applies to `workflow.py`'s `--llm-option` too, which is the same option under a
-different name.
+different name. Two Ollama keys are not model parameters but request fields — `think` (a reasoning
+model's thinking switch) and `keep_alive` (residency) — and the transport lifts them out of
+`options` to the top of the `/api/chat` body, which is where Ollama reads them.
 
 **`--extra KEY=VALUE` fills the template's `<extra:KEY>` placeholder**, and may be repeated; the
 bare `<extra>` form renders the whole mapping at once. `KEY=@FILE` reads the value from a file

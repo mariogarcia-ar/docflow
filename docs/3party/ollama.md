@@ -53,6 +53,7 @@
 
 - `stream: false` is required for a single response object instead of a stream of chunks — the primitive must send it explicitly rather than depend on the default.
 - `options` carries the model parameters (`temperature`, `seed`, `num_ctx`, …). For **reproducible** output the seed must be set explicitly; Ollama documents the seed option for exactly that.
+- `think` (a reasoning model's thinking switch: boolean, or `"low"`/`"medium"`/`"high"`/`"max"`) and `keep_alive` (residency, default `5m`) are **top-level** `/api/chat` fields, not entries in `options`: a value stated in `options` under either name is lifted to the top of the body, because Ollama ignores it where it is not read. Everything else in `options` stays there.
 - Message roles: `system`, `user`, `assistant`, `tool`.
 - Missing/unknown model: HTTP **404** with `{"error": "model ... not found"}` → `MODEL_UNAVAILABLE`; no silent substitution of another installed model.
 
@@ -74,7 +75,8 @@
 | `temperature`, `seed` | yes |
 | `num_ctx` / other `options` | yes |
 | Prompt template version | yes — template version is part of the key by plan |
-| `keep_alive`, `stream` | no (transport/lifetime) |
+| `think`, `keep_alive` | yes — request-level `/api/chat` fields, lifted out of `options` into the body |
+| `stream` | no (transport) |
 | Server version | recorded in metadata; a hosted/quantized variant can change output without a version change |
 
 **Not deterministic by nature:** sampling without a fixed seed. Recorded as an accepted trade-off (`GEN-17`), never as covered by a test.
