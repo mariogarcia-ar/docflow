@@ -548,8 +548,12 @@ returns on an 8B model. It still comes first so the model confirms which field i
 decides null vs. a printed number.
 
 **`review/invoice`** — The shape a review verdict must have. A field_verdict's enum is
-agree | disagree | uncertain; a disagree carries a suggested_value. The model supplies only the
-verdicts, so this file is the MODEL-facing shape. The engine supplies the caller-facing metadata
+agree | disagree | uncertain; a disagree carries a suggested_value. A `disagree` carries a real
+correction — the value the document shows, in the field's contract format — and a `suggested_value`
+of `"null"` is for a field that is genuinely not printed: rejecting a printed value without naming
+what should stand in its place is `uncertain`, not `disagree`, which is why the template forbids it.
+The model supplies only the verdicts, so this file is the MODEL-facing shape. The engine supplies
+the caller-facing metadata
 (reviewer, extractor_reviewed, producer) itself; a model cannot know who it is or whom it reviews.
 `reason` and `suggested_value` are plain strings, not nullable (`["string","null"]`): the pipeline's
 convention everywhere else is the sentinel string `"null"` for 'no value', never a JSON null, and

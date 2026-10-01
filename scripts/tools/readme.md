@@ -363,7 +363,9 @@ leaves out stops the run at load with a `DEPENDENCY_ERROR` naming it, never as a
 (`--extra contract=@registry/schema/extraction/invoice.schema.json`). The contract is what the
 verdict is measured against: a proposed value is `disagree` when it breaks the field's definition,
 not when it merely looks unlikely, and the `suggested_value` obeys the same contract — the bare
-letter `A` where the field is defined as a letter or code, never the word `FACTURA`. Without the
+letter `A` where the field is defined as a letter or code, never the word `FACTURA`. A `disagree`
+must name the corrected printed value; `null` is only for a field the document does not print, so
+rejecting a printed value without naming its replacement is `uncertain`, not `disagree`. Without the
 contract the reviewer would re-read the raw text with no rules and could return a correction that
 the extraction step itself would refuse.
 
