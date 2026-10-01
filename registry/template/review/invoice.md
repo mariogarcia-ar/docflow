@@ -21,6 +21,15 @@ Each field_verdicts object:
                     verdict
   suggested_value   the correct value when verdict is "disagree", otherwise "null"
 
+Input:
+--- EXTRACTION CONTRACT (the schema the proposed values must satisfy) ---
+<extra:contract>
+--- END OF CONTRACT ---
+
+--- PROPOSED EXTRACTION (to review) ---
+<extra:proposal>
+--- END OF EXTRACTION ---
+
 Rules, apply in this order:
 
 1. Review only the fields that are in the proposed extraction. Do not re-extract
@@ -60,11 +69,3 @@ and an internal code printed under its own label is not the AFIP code — the ba
 printed in the header is. If you suggest a numeric or date value, return it in the
 format the contract declares, without converting the decimal separator or the date
 format.
-
---- EXTRACTION CONTRACT (the schema the proposed values must satisfy) ---
-<extra:contract>
---- END OF CONTRACT ---
-
---- PROPOSED EXTRACTION (to review) ---
-<extra:proposal>
---- END OF EXTRACTION ---
