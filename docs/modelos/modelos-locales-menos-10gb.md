@@ -8,6 +8,53 @@ Leyenda: 👁️ visión · 🧠 razonamiento · 🔧 tool calling · 💻 códi
 
 ---
 
+## 0. ¿Cuánto es un contexto? (para dimensionar)
+
+**Las dos reglas de conversión:**
+
+- **Texto:** tokens ≈ palabras × 1,33 (o caracteres ÷ 4). Una página A4 de prosa (500–750 palabras) son **650–1.000 tokens**. En español y en código el mismo texto cuesta ~20–40% más.
+- **Imagen:** en los VLM de Qwen, **1 token visual = 28×28 píxeles** (parche ViT de 14×14 con fusión 2×2). Una página A4 escaneada a 150 dpi (1240×1754 px) ocupa ~2.835 tokens.
+
+### 0.1 Contexto → páginas e imágenes
+
+| Contexto | Páginas A4 de texto | Páginas A4 escaneadas @150 dpi | Imagen cuadrada que llenaría el contexto |
+|---|---|---|---|
+| 2K | 2–3 | no entra ni una | 1267×1267 px · 1,6 Mpx |
+| 4K | 4–6 | 1 | 1792×1792 px · 3,2 Mpx |
+| 8K | 8–12 | 2 | 2534×2534 px · 6,4 Mpx |
+| 16K | 16–25 | 5 | 3584×3584 px · 12,9 Mpx |
+| 32K | 32–49 | 11 | 5069×5069 px · 25,7 Mpx |
+| 40K | 40–62 | 14 | 5667×5667 px · 32,1 Mpx |
+| 64K | 64–98 | 23 | 7168×7168 px · 51,4 Mpx |
+| 128K | 128–197 | 46 | 10137×10137 px · 102,8 Mpx |
+| 200K | 200–308 | 72 | 12671×12671 px · 160,5 Mpx |
+| 256K | 256–394 | 92 | 14336×14336 px · 205,5 Mpx |
+| 1M | 1.000–1.538 | 352 | 28000×28000 px · 784 Mpx |
+
+> **La columna de imágenes es un techo teórico, no un plan.** Por encima de ~16K tokens de imagen el límite lo pone el modelo, no el contexto: `max_pixels` de Qwen2.5-VL topa en 16.384 tokens por imagen (3584×3584, 12,8 Mpx) y Llama 3.2 Vision ni siquiera usa esta regla (topa en 1120×1120 px). El contexto sirve para **sumar varias páginas**, no para meter una foto gigante.
+
+### 0.2 Cuánto pesa una imagen
+
+| Entrada | Píxeles | Tokens visuales @28×28 | Para qué alcanza |
+|---|---|---|---|
+| Miniatura / logo | 384×384 | 196 | clasificar, no leer |
+| Foto cuadrada | 1024×1024 | 1.369 | describir una imagen |
+| Página A4 @150 dpi | 1240×1754 | 2.835 | leer texto impreso |
+| Página A4 @200 dpi | 1654×2339 | 5.040 | el punto dulce para OCR |
+| Página A4 @300 dpi | 2480×3508 | 11.214 | escaneo "de archivo" |
+| Foto 12 Mpx | 4000×3000 | 15.444 | ya supera el tope por defecto |
+| Tope por defecto de Qwen2.5-VL | 3584×3584 | 16.384 | `max_pixels` = 12,8 Mpx |
+
+### 0.3 Lo que se olvida
+
+- **Qwen3-VL cambió la aritmética:** usa **32×32 px por token**, no 28×28. La misma A4 a 150 dpi pasa de ~2.835 a ~2.145 tokens (y a 300 dpi, de ~11.214 a ~8.580). Copiar la config de Qwen2.5-VL y aplicarla a Qwen3-VL redimensiona las imágenes en silencio.
+- **Llama 3.2 Vision cuenta distinto:** cross-attention, 1.601 tokens a 384×384 y 6.404 a 1080p, con tope de 1120×1120 px.
+- **El contexto es entrada + salida.** Si pedís 2.000 tokens de respuesta, también ocupan ventana. Y el KV cache se come 1–4 GB extra de VRAM.
+- **Una factura densa son ~2.000–5.000 tokens** (conceptos, totales, metadatos), no los ~700 de una página de novela.
+- **1 hora de audio transcripto ≈ 9.000–16.000 tokens.**
+
+---
+
 ## 1. Ultra-pequeños (< 2 GB) · edge, Raspberry Pi, CPU
 
 | Modelo | Params | Tamaño (Q4) | Contexto | Licencia | Notas |
@@ -39,6 +86,7 @@ Leyenda: 👁️ visión · 🧠 razonamiento · 🔧 tool calling · 💻 códi
 | Qwen3-VL | 4B | 3.3 GB | 256K | Apache 2.0 | 👁️ |
 | Granite 4 | 3B (micro) | 2.1 GB | 128K | Apache 2.0 | 🔧 enterprise |
 | Granite 4.1 | 3B | 2.1 GB | 128K | Apache 2.0 | 🔧 12 idiomas, JSON |
+| Granite 4.2 | 3B | 2.2 GB | 128K | Apache 2.0 | 🧠 razonamiento nativo + tools |
 | SmolLM3 | 3B | ~1.9 GB | 64K | Apache 2.0 | multilingüe, totalmente abierto |
 | Phi-3.5 Mini | 3.8B | ~2.2 GB | 128K | MIT | |
 | Gemma 2 | 2B | 1.6 GB | 8K | Gemma Terms | |
@@ -62,6 +110,7 @@ Leyenda: 👁️ visión · 🧠 razonamiento · 🔧 tool calling · 💻 códi
 | Gemma 2 | 9B | 5.4 GB | 8K | Gemma Terms | |
 | Granite 3.3 | 8B | 4.9 GB | 128K | Apache 2.0 | 🔧 empresarial / RAG |
 | Granite 4.1 | 8B | 5.3 GB | 128K | Apache 2.0 | 🔧 el más eficiente en tokens de su clase |
+| Granite 4.2 | 8B | 5.3 GB | 128K | Apache 2.0 | 🧠 CoT nativo + tool calling |
 | Aya Expanse | 8B | ~4.8 GB | 8K | 🔒 CC-BY-NC-4.0 | 🌐 23 idiomas, no comercial |
 | Hermes 3 | 8B | ~4.9 GB | 128K | Llama 3.1 | 🔧 |
 | Yi | 9B | ~5.0 GB | n/d | Apache 2.0 | |
@@ -204,6 +253,7 @@ Referencia para saber dónde está el corte:
 - **KV cache:** es el costo real que no se ve en la tabla de descargas. Un 70B pasa de 43 GB a ~102 GB entre contexto de chat y 128K.
 - **Cuantizaciones menores:** pasando a Q3 podés meter algunos modelos de ~20B en < 10 GB, a costa de calidad. No lo recomiendo para extracción estructurada.
 - **Licencias:** el tamaño no dice nada sobre el uso comercial. Gemma (Gemma Terms), Llama (licencia comunitaria) y Aya Expanse (CC-BY-NC) tienen restricciones; Phi-4, Qwen y Granite son MIT/Apache 2.0.
+- **Granite 4.2 (agosto 2026):** la generación 4.2 volvió a una arquitectura **densa** (abandonó el MoE híbrido Mamba-2 de 4.0) y sumó razonamiento nativo; son 3B (2.2 GB), 8B (5.3 GB) y 30B (18 GB), todos 128K y Apache 2.0. No confundir con `granite4` (350m/1b/3b, el MoE de 4.0).
 - **Verificación:** el catálogo se contrastó el 2026-09-30 contra Ollama Library y las model cards. Las familias nuevas (Gemma 4, Qwen3.5/3.6, Ministral 3, Granite 4.1, Qwen3-VL) ya tienen cifras verificadas; quedan como `n/d` los tamaños que ninguna fuente publicada confirma.
 
 ## Fuentes consultadas (2026-09-30)
@@ -211,3 +261,6 @@ Referencia para saber dónde está el corte:
 - Ollama Library: `qwen3`, `qwen3.5`, `qwen3-vl`, `qwen2.5`, `qwen2.5vl`, `qwen2.5-coder`, `deepseek-r1`, `deepseek-coder-v2`, `gemma2`, `gemma3`, `gemma4`, `llama3.2`, `llama3.2-vision`, `phi4`, `phi4-mini`, `mistral-nemo`, `ministral-3`, `granite3.3`, `granite4`, `granite4.1`, `smollm2`, `minicpm-v`, `llava`, `olmo2`, `codegemma`, `codellama`, `gpt-oss`, `ibm/granite-docling`.
 - Model cards: `microsoft/Phi-4-mini-instruct`, `openai/whisper-large-v3-turbo`, `Qwen/Qwen3-Embedding-8B`, `Qwen/Qwen3-Reranker-8B`, `nomic-ai/nomic-embed-text-v1.5`, `BAAI/bge-m3`.
 - Benchmarks y artículos: Artificial Analysis (Qwen3.5 small models, Granite 4.1), Modal (STT/TTS comparados), Docling Model Catalog, PaddleOCR-VL (arXiv 2510.14528), IBM Granite-Docling, roboflow (Florence-2 / Moondream 2).
+- Aritmética de tokens visuales: model card de `Qwen/Qwen2-VL-7B-Instruct` (`min_pixels`/`max_pixels`),
+  guía de fine-tuning de Qwen3-VL (32×32 px/token), arXiv 2504.00557 (tokens de imagen de Llama 3.2 Vision),
+  `ai.meta.com` (Llama 3.2, contexto 128K) y las tablas de conversión página↔token.
