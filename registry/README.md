@@ -115,7 +115,8 @@ python scripts/tools/llm.py --assets-dir $REG call $DOC \
 ### Chaining the steps
 
 Steps 4 and 5 read a previous step's answer, and that arrives through `extra_context` — which
-`llm.py` does not expose. So the sequence is driven from the library:
+`llm.py` does not expose. Neither does it send images, which is the whole of the vision path. So the
+four roles are driven from the library:
 
 ```python
 from pathlib import Path
@@ -126,15 +127,23 @@ ASSETS = Path("registry")
 DOC = Path(
     "tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt"
 ).read_text()
+PAGE = Path(
+    "tests/fixtures/expected-extraction/dbc07b17-2538-4611-9e51-7e161aaf7ba5.jpg"
+)
 # One model per role, never the same one twice: the reviewer audits, it does not agree with itself.
-T1 = "gemma3:12b"
-T2 = "qwen3.5:9b"
-# The provider controls, plus whatever decoding params you want passed through.
-OPTIONS = {"base_url": "http://localhost:11434"}
+T1 = "gemma3:12b"      # reads the text
+T2 = "qwen3.5:9b"      # reviews the text reading
+V1 = "qwen3-vl:8b"     # reads the page image
+V2 = "ministral-3:8b"  # reviews the vision reading
+# The provider controls, plus whatever decoding params you want passed through: `temperature=0` is
+# the value the strategy fixes for all four roles, and the timeout is stated well above the 30 s
+# default — a review carries the document, the proposal and the schema, and a vision call carries a
+# whole page as image tokens, so the default is not enough for either.
+OPTIONS = {"base_url": "http://localhost:11434", "temperature": 0, "timeout": 180}
 
 
-def step(task, template, schema, *, model=T1, extra=None, document=DOC):
-    """Run one step of the layered extraction."""
+def step(task, template, schema, *, model=T1, extra=None, document=DOC, images=()):
+    """Run one step of one path."""
     return process_llm_request(
         LLMInput(
             task=task,
@@ -142,7 +151,7 @@ def step(task, template, schema, *, model=T1, extra=None, document=DOC):
             model=model,
             template=template,
             document=document,
-            images=[],
+            images=list(images),
             extra_context=extra or {},
             schema=schema,
             options=dict(OPTIONS),
@@ -159,6 +168,7 @@ def field(result, name):
     return result.parsed_response[name]
 
 
+# T1 — the text path: the gate first, then the reading and its two extra scopes.
 gate = step("detection", "extraction/invoice_deteccion", "extraction/invoice_detection")
 if not field(gate, "comprobante_valido"):
     raise SystemExit("the gate refused the document: it is not a receipt")
@@ -184,7 +194,7 @@ if categoria in {"Restaurante", "Combustible"}:
         extra={"rubro": categoria},
     )
 
-# Step 5 reviews the reading; the proposal is what the model is asked to agree or disagree with.
+# T2 — the reviewer of the text reading: the proposal is what it is asked to audit.
 review = step(
     "review",
     "review/invoice",
@@ -192,9 +202,32 @@ review = step(
     model=T2,
     extra={"proposal": reading.parsed_response},
 )
+
+# The vision path runs when the text path fails the checks, not instead of it. V1 reads the page
+# image: no document, and no schema ships for vision here, so the template states the answer's
+# shape in prose and nothing compiles it into a grammar.
+vision = step(
+    "vision_extract",
+    "extraction/vision",
+    None,
+    model=V1,
+    document=None,
+    images=[PAGE],
+)
+
+# V2 — the reviewer of that reading: the same page, plus the proposal it audits.
+vision_review = step(
+    "vision_review",
+    "review/vision",
+    None,
+    model=V2,
+    document=None,
+    images=[PAGE],
+    extra={"proposal": vision.parsed_response},
+)
 ```
 
-Four things that are not decoration:
+Five things that are not decoration:
 
 - **`metadata["assets_dir"]` is required.** The library has no default asset root, so a request
   without it is a `DEPENDENCY_ERROR` — the same identifier must not resolve differently depending
@@ -204,14 +237,21 @@ Four things that are not decoration:
 - **`options` is where the provider controls live** (`base_url`, `api_key`, `timeout`,
   `max_attempts`, `context_window`) — those are consumed by the processor. Every other key in it is
   copied into the provider's request body as a decoding parameter.
+- **The vision steps are the same contract minus two fields.** They carry the page in `images`,
+  leave `document` at `None` rather than an empty string, and pass no `schema` — a step reads pixels
+  or it reads text, and a request that pretends to do both is not the step it says it is.
 - **Failures come back inside the result**, typed, in `status` and `errors`; nothing is raised
   across the contract. So a caller checks `result.schema_valid` before reading a field — which is
   what `field()` above exists to force.
 
-This sequence was exercised against the scripted provider double: all six calls resolve their
-assets, reach the provider, and `extra` lands in the prompt — `Restaurante` in the line-of-business
-prompt and the proposed extraction in the review prompt, with no raw placeholder surviving into
-either.
+This sequence was exercised twice. The six text calls ran against the scripted provider double: all
+six resolve their assets, reach the provider, and `extra` lands in the prompt — `Restaurante` in
+the line-of-business prompt and the proposed extraction in the review prompt, with no raw
+placeholder surviving into either. The two vision calls ran against a live Ollama on a real receipt
+image, with `qwen2.5vl:7b` standing in for `qwen3-vl:8b` and `ministral-3:8b` (those two tags are
+not pulled on this bench yet): both returned `SUCCESS` — V1 a reading of the page, V2 a
+`field_verdicts` array over it. The timeout in `OPTIONS` is not decoration either: with the
+default 30 s the text review came back `TIMEOUT`, on this machine, on the fixture above.
 
 ## Local
 
@@ -333,8 +373,12 @@ python scripts/tools/llm.py --assets-dir registry node <file.txt> \
   three steps that consume a previous step's output — build a prompt with an empty proposal block.
   They are written and loadable; no caller fills them yet.
 - **`llm.py` cannot send images.** It hardcodes `images=[]`, so `extraction/vision` and
-  `review/vision` are reachable only through `workflow.py` (`--allow-vlm`,
-  `--image-prepare-for-vlm`).
+  `review/vision` are not reachable from the CLI: drive them from the library, as in *Chaining the
+  steps* above. `workflow.py`'s `--allow-vlm` / `--image-prepare-for-vlm` enable its own chain,
+  and that chain does not read this registry.
+- **No vision schema ships here.** `schema/` holds the six text artifacts only, so `--schema` is
+  omitted on the two vision steps and nothing constrains their decoder — the templates state the
+  answer's shape in prose.
 - **`$comment` is not allowed in a schema.** The validator enforces a closed keyword set and sends
   the schema to the provider verbatim, where OpenAI's `strict: true` rejects unknown keywords; so
   the design notes that used to live in `$comment` are kept below instead.
