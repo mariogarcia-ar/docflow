@@ -92,6 +92,7 @@ def chat(
     *,
     system: str | None = None,
     options: dict[str, Any] | None = None,
+    schema: dict[str, Any] | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
     """Send one non-streaming turn and return the daemon's response body.
@@ -102,6 +103,7 @@ def chat(
         prompt: The user message.
         system: The system message, when one is stated.
         options: Decoding parameters, passed through as the request's ``options``.
+        schema: The schema the answer must satisfy, sent as the request's ``format``.
         timeout: Seconds to wait for the answer.
 
     Returns:
@@ -114,6 +116,8 @@ def chat(
     body: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
     if options:
         body["options"] = options
+    if schema is not None:
+        body["format"] = dict(schema)
     request = urllib.request.Request(
         f"{base_url}/api/chat",
         data=json.dumps(body).encode("utf-8"),

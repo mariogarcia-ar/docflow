@@ -2,18 +2,21 @@
 
 Reads a template from ``registry/template/`` (or any ``.md``), resolves the placeholders the
 library's composition seam defines — ``<doc>``, ``<extra>``, ``<extra:key>``, ``<schema>`` — and
-posts the result as the single user message of a ``POST /api/chat``.
+posts the result as the single user message of a ``POST /api/chat``. ``--schema`` does both
+things the seam does with a schema: it renders ``<schema>`` and it constrains the answer, which
+is sent as the request's ``format``.
+
+    DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
 
     python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --print-prompt \
-        --template registry/template/extraction/invoice_deteccion.md \
-        --doc 'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt'
+        --template registry/template/extraction/invoice_deteccion.md --doc $DOC
 
     python scripts/tmp/ollama_md_prompt.py --model gemma3:12b \
-        --template registry/template/extraction/invoice_deteccion.md \
-        --doc 'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt'
+        --template registry/template/extraction/invoice_deteccion.md --doc $DOC \
+        --schema registry/schema/extraction/invoice_detection.schema.json
 
     python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b \
-        --template registry/template/review/invoice.md --doc 'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
+        --template registry/template/review/invoice.md --doc $DOC \
         --extra proposal=@var/run/reading/invoice.json \
         --extra contract=@registry/schema/extraction/invoice.schema.json
 
@@ -185,7 +188,10 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="KEY=VALUE",
         help="a value for <extra> or <extra:key>, repeatable; @FILE reads it from a file",
     )
-    parser.add_argument("--schema", help="the JSON file that renders <schema>")
+    parser.add_argument(
+        "--schema",
+        help="the JSON file that constrains the answer's format and renders <schema>",
+    )
     add_connection_arguments(parser)
     parser.add_argument(
         "--print-prompt",
@@ -208,11 +214,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.print_prompt and not args.model:
         parser.error("--model is required unless --print-prompt")
+    schema = _read_schema(args.schema) if args.schema is not None else None
     prompt = render(
         _read_text(args.template, what="--template"),
         document=None if args.doc is None else _read_text(args.doc, what="--doc"),
         extra_context=_extra_context(args.extra),
-        schema=_read_schema(args.schema) if args.schema is not None else None,
+        schema=schema,
     )
     if args.print_prompt:
         print(prompt)
@@ -224,6 +231,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         prompt,
         system=args.system,
         options=dict(args.option),
+        schema=schema,
         timeout=args.timeout,
     )
     print_answer(body, raw=args.raw)
