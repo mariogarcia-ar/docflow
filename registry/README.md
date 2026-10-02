@@ -132,23 +132,26 @@ python scripts/tools/llm.py --assets-dir $REG call $DOC \
 #     with no rules, and its suggested_value can break the extraction contract — it once proposed
 #     the word "FACTURA" where rule 2 requires the bare letter "A". A template that asks for either
 #     placeholder and does not receive it stops at load with a DEPENDENCY_ERROR naming the key.
-#     A reasoning reviewer thinks before it answers, so it needs room and time: `num_ctx` gives the
-#     prompt room on Ollama's small default window, and `timeout` covers a slow local run. The
-#     sampling values are the model card's, not a house style — deepseek-r1:8b publishes these four.
-#     A model whose thinking can be switched off (qwen3) states `think=false` there instead.
+#     A reasoning reviewer loops instead of answering unless its thinking is switched off: with
+#     `think` left unset, deepseek-r1:8b put all 2,000 tokens of a bounded run into the reasoning
+#     channel and emitted no content at all, and with no `num_predict` ceiling that trace can only
+#     end by filling `num_ctx` — ten minutes for this prompt, well past `timeout`. `think=false` is
+#     the brake that makes it stop; the sampling values are the model card's, not a house style, and
+#     `num_ctx` plus `timeout` are the room and the time the answer needs.
 python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
     --provider ollama --model $T2 --task review \
     --template review/invoice --schema review/invoice \
     --extra proposal=@var/run/reading/invoice.json \
     --extra contract=@registry/schema/extraction/invoice.schema.json \
+    --option think=false \
     --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
     --option presence_penalty=0.0 --option num_ctx=16384 --option timeout=600
 
 # 6 — a second review: step 5's audit run again with qwen, so the two verdicts can be compared.
 #     It takes its own `--out` because both reviews file under the schema's last path component
 #     (`invoice`), and one directory would let this verdict overwrite the one it is checking.
-#     qwen3 can switch its thinking off, so `think=false` replaces deepseek's sampling card and
-#     `min_p` keeps the sampling tight; `num_ctx` and `timeout` are step 5's room and time.
+#     qwen3.5:9b states `think=false` too, for the same reason step 5 does, and `min_p` keeps the
+#     sampling tight; `num_ctx` and `timeout` are step 5's room and time.
 python scripts/tools/llm.py --assets-dir $REG --out var/run/review-qwen call $DOC \
     --provider ollama --model $T3 --task review \
     --template review/invoice --schema review/invoice \
@@ -213,9 +216,11 @@ OPTIONS = {
     "timeout": 300,
 }
 # The reviewers' decoding values are their model cards', not a house style. Each is layered over
-# the shared options for its own step — deepseek-r1:8b publishes these four, while qwen3 can switch
-# its thinking off, which is what keeps a reasoning reviewer from looping.
+# the shared options for its own step. `think=False` is not a decoding value but the brake both
+# reviewers need: it is what keeps a reasoning reviewer from spending its whole window in the
+# reasoning channel instead of answering, and deepseek-r1:8b loops without it.
 DEEPSEEK_OPTIONS = {
+    "think": False,
     "temperature": 0.6,
     "top_p": 0.95,
     "repeat_penalty": 1.0,
