@@ -10,18 +10,23 @@ Every answer is saved to ``var/tmp/`` — the raw response body, timings and tok
 — and the answer itself still goes to stdout, so a pipe keeps working. ``--print-prompt`` renders
 without sending and saves nothing.
 
+``--name`` pins the output's name, which is how one step's answer reaches the next: the reading
+is saved as ``reading``, and the review two commands later reads ``@var/tmp/reading.json``. With
+no ``--name`` the file is named after the schema (or the template when no schema is stated) and
+the document.
+
     DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
 
     python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --print-prompt \
         --template registry/template/extraction/invoice_deteccion.md --doc $DOC
 
-    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b \
-        --template registry/template/extraction/invoice_deteccion.md --doc $DOC \
-        --schema registry/schema/extraction/invoice_detection.schema.json
+    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --name reading \
+        --template registry/template/extraction/invoice.md --doc $DOC \
+        --schema registry/schema/extraction/invoice.schema.json
 
-    python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b \
+    python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b --name review \
         --template registry/template/review/invoice.md --doc $DOC \
-        --extra proposal=@var/run/reading/invoice.json \
+        --extra proposal=@var/tmp/reading.json \
         --extra contract=@registry/schema/extraction/invoice.schema.json
 
 The transport is its sibling :mod:`_ollama`, so a probe runs from this folder.
@@ -205,6 +210,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=str(DEFAULT_OUT),
         help="the directory the raw response is saved in (default: var/tmp)",
     )
+    parser.add_argument(
+        "--name",
+        help="the output's name, without the .json suffix (default: "
+        "<schema-or-template>[.<document>]); name it to hand the file to a later step",
+    )
     add_connection_arguments(parser)
     parser.add_argument(
         "--print-prompt",
@@ -214,29 +224,40 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _answer_path(out: str, asset: str, doc: str | None) -> Path:
-    """Return where a response lands: ``<out>/<asset>[.<document>].json``.
+def _default_name(asset: str, doc: str | None) -> str:
+    """Return the name a response lands under when ``--name`` states none.
 
     The asset names the step the same way the lab bench does — the schema's name when one is
     stated, the template's otherwise — and the document's own name qualifies it, so two documents
     read through one template do not overwrite each other's answer in the shared default folder.
 
     Args:
-        out: The directory the response is saved in.
         asset: The schema or template the call was made with.
         doc: The document the answer is about, or ``None`` when the call carried none.
 
     Returns:
-        The file the response is saved as, with the directory created.
+        The name, without the ``.json`` suffix.
     """
     stem = Path(asset).stem.removesuffix(".schema")
-    name = f"{stem}.{Path(doc).stem}.json" if doc is not None else f"{stem}.json"
+    return stem if doc is None else f"{stem}.{Path(doc).stem}"
+
+
+def _answer_path(out: str, name: str) -> Path:
+    """Return the file a response lands in, with the directory created.
+
+    Args:
+        out: The directory the response is saved in.
+        name: The name to save under, with or without its ``.json`` suffix.
+
+    Returns:
+        The absolute file the response is saved as.
+    """
     directory = Path(out).expanduser()
     directory.mkdir(parents=True, exist_ok=True)
-    return directory / name
+    return directory / (name if name.endswith(".json") else f"{name}.json")
 
 
-def _save(out: str, asset: str, doc: str | None, body: dict[str, Any]) -> Path:
+def _save(out: str, name: str, body: dict[str, Any]) -> Path:
     """Save the daemon's raw response and return where it landed.
 
     The body is saved verbatim, timings and token counts included: they are what a run is judged
@@ -244,8 +265,7 @@ def _save(out: str, asset: str, doc: str | None, body: dict[str, Any]) -> Path:
 
     Args:
         out: The directory the response is saved in.
-        asset: The schema or template the call was made with.
-        doc: The document the answer is about, or ``None`` when the call carried none.
+        name: The name to save under, with or without its ``.json`` suffix.
         body: The parsed response body.
 
     Returns:
@@ -254,7 +274,7 @@ def _save(out: str, asset: str, doc: str | None, body: dict[str, Any]) -> Path:
     Raises:
         SystemExit: When the file cannot be written.
     """
-    path = _answer_path(out, asset, doc)
+    path = _answer_path(out, name)
     try:
         path.write_text(
             json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -277,6 +297,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.print_prompt and not args.model:
         parser.error("--model is required unless --print-prompt")
+    if args.name is not None and not args.name.strip():
+        parser.error("--name states no name")
     schema = _read_schema(args.schema) if args.schema is not None else None
     prompt = render(
         _read_text(args.template, what="--template"),
@@ -298,10 +320,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         timeout=args.timeout,
     )
     print_answer(body, raw=args.raw)
-    print(
-        f"saved {_save(args.out, args.schema or args.template, args.doc, body)}",
-        file=sys.stderr,
-    )
+    asset = args.schema if args.schema is not None else args.template
+    name = args.name if args.name is not None else _default_name(asset, args.doc)
+    print(f"saved {_save(args.out, name, body)}", file=sys.stderr)
     return 0
 
 
