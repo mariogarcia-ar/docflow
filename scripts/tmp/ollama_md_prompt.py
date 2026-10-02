@@ -10,24 +10,60 @@ Every answer is saved to ``var/tmp/`` — the raw response body, timings and tok
 — and the answer itself still goes to stdout, so a pipe keeps working. ``--print-prompt`` renders
 without sending and saves nothing.
 
-``--name`` pins the output's name, which is how one step's answer reaches the next: the reading
-is saved as ``reading``, and the review two commands later reads ``@var/tmp/reading.json``. With
-no ``--name`` the file is named after the schema (or the template when no schema is stated) and
-the document.
+``--name`` pins the output's name, which is how one step's answer reaches the next. The invoice
+flow, one command per step, mirroring the lab bench's assets and options — and every step names
+its output so the next one reads it back through ``@var/tmp/<name>.json``:
 
     DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
+    R=registry
 
-    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --print-prompt \
-        --template registry/template/extraction/invoice_deteccion.md --doc $DOC
+    # what the flow asks, without sending anything: the rendered prompt
+    python scripts/tmp/ollama_md_prompt.py --print-prompt \
+        --template $R/template/extraction/invoice_deteccion.md --doc $DOC
 
+    # 1. the detection gate: a receipt, or something else?
+    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --name detection \
+        --template $R/template/extraction/invoice_deteccion.md --doc $DOC \
+        --schema $R/schema/extraction/invoice_detection.schema.json
+
+    # 2. the base reading the rest of the flow refines, and the one the review judges
     python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --name reading \
-        --template registry/template/extraction/invoice.md --doc $DOC \
-        --schema registry/schema/extraction/invoice.schema.json
+        --template $R/template/extraction/invoice.md --doc $DOC \
+        --schema $R/schema/extraction/invoice.schema.json
 
+    # 3. the breakdown of items and amounts
+    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --name desglose \
+        --template $R/template/extraction/invoice_desglose.md --doc $DOC \
+        --schema $R/schema/extraction/invoice_desglose.schema.json
+
+    # 4. the receipt class, and 5. the line of business the caller states
+    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --name clasificacion \
+        --template $R/template/extraction/invoice_clasificacion.md --doc $DOC \
+        --schema $R/schema/extraction/invoice_clasificacion.schema.json
+
+    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --name rubro \
+        --template $R/template/extraction/invoice_rubro.md --doc $DOC \
+        --schema $R/schema/extraction/invoice_rubro.schema.json --extra rubro=Restaurante
+
+    # 6. the review reads step 2's saved answer and contradicts it field by field
     python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b --name review \
-        --template registry/template/review/invoice.md --doc $DOC \
+        --template $R/template/review/invoice.md --doc $DOC \
+        --schema $R/schema/review/invoice.schema.json \
         --extra proposal=@var/tmp/reading.json \
-        --extra contract=@registry/schema/extraction/invoice.schema.json
+        --extra contract=@$R/schema/extraction/invoice.schema.json \
+        --option temperature=0.1 --option top_p=0.95 --option repeat_penalty=1.0 \
+        --option presence_penalty=0.0 --option num_ctx=16384 --timeout 600
+
+The same review on a reasoning model: ``--option think=false`` reaches the top of the request,
+the way the library sends it, and ``--timeout`` states the wait the lab tool states as an option.
+
+    python scripts/tmp/ollama_md_prompt.py --model qwen3.5:9b --name review-qwen \
+        --template $R/template/review/invoice.md --doc $DOC \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading.json \
+        --extra contract=@$R/schema/extraction/invoice.schema.json \
+        --option think=false --option temperature=0.2 --option min_p=0.05 \
+        --option num_ctx=16384 --timeout 600
 
 The transport is its sibling :mod:`_ollama`, so a probe runs from this folder.
 

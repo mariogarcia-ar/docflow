@@ -23,6 +23,11 @@ DEFAULT_BASE_URL: Final[str] = os.environ.get(
 #: How long to wait for an answer, in seconds.
 DEFAULT_TIMEOUT: Final[float] = 600.0
 
+#: The values Ollama reads at the *top* of the ``/api/chat`` body rather than as model parameters:
+#: ``think`` is a reasoning model's thinking switch, ``keep_alive`` is how long the model stays
+#: loaded. Everything else stated as an option is a decoding parameter and stays inside ``options``.
+REQUEST_FIELDS: Final[tuple[str, ...]] = ("think", "keep_alive")
+
 
 def parse_option(raw: str) -> tuple[str, Any]:
     """Split one ``key=value`` flag value, numbers and booleans included.
@@ -102,7 +107,8 @@ def chat(
         model: The model tag to reach.
         prompt: The user message.
         system: The system message, when one is stated.
-        options: Decoding parameters, passed through as the request's ``options``.
+        options: Decoding parameters, passed through as the request's ``options``; the names in
+            :data:`REQUEST_FIELDS` are lifted to the top of the body, where Ollama reads them.
         schema: The schema the answer must satisfy, sent as the request's ``format``.
         timeout: Seconds to wait for the answer.
 
@@ -113,9 +119,12 @@ def chat(
     if system is not None:
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
+    params = dict(options or {})
     body: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
-    if options:
-        body["options"] = options
+    for name in REQUEST_FIELDS:
+        if name in params:
+            body[name] = params.pop(name)
+    body["options"] = params
     if schema is not None:
         body["format"] = dict(schema)
     request = urllib.request.Request(
