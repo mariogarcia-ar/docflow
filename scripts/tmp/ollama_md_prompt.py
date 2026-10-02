@@ -6,13 +6,21 @@ posts the result as the single user message of a ``POST /api/chat``. ``--schema`
 things the seam does with a schema: it renders ``<schema>`` and it constrains the answer, which
 is sent as the request's ``format``.
 
-Every answer is saved to ``var/tmp/`` — the raw response body, timings and token counts included
-— and the answer itself still goes to stdout, so a pipe keeps working. ``--print-prompt`` renders
-without sending and saves nothing.
+Every answer is saved twice in ``var/tmp/``, and the answer itself still goes to stdout, so a pipe
+keeps working. ``--print-prompt`` renders without sending and saves nothing.
 
-``--name`` pins the output's name, which is how one step's answer reaches the next. The invoice
-flow, one command per step, mirroring the lab bench's assets and options — and every step names
-its output so the next one reads it back through ``@var/tmp/<name>.json``:
+* ``<name>.json`` is the **answer alone** — the object a later step reads through
+  ``@var/tmp/<name>.json``. A fence around a JSON answer is unwrapped; an answer that is not JSON
+  is saved as ``<name>.txt`` rather than called a ``.json`` it is not.
+* ``<name>_full.json`` is the **full response**, verbatim: the answer plus the timings and token
+  counts a run is judged by.
+
+``--name`` pins the base name both files share — that is how one step's answer reaches the next.
+With no ``--name`` the files are named after the schema (or the template when no schema is
+stated) and the document.
+
+The invoice flow, one command per step, mirroring the lab bench's assets and options — each step
+names its output, so the next one reads the answer back through ``@var/tmp/<name>.json``:
 
     DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
     R=registry
@@ -45,7 +53,7 @@ its output so the next one reads it back through ``@var/tmp/<name>.json``:
         --template $R/template/extraction/invoice_rubro.md --doc $DOC \
         --schema $R/schema/extraction/invoice_rubro.schema.json --extra rubro=Restaurante
 
-    # 6. the review reads step 2's saved answer and contradicts it field by field
+    # 6. the review reads step 2's answer — the bare object, not the daemon's envelope
     python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b --name review \
         --template $R/template/review/invoice.md --doc $DOC \
         --schema $R/schema/review/invoice.schema.json \
@@ -89,6 +97,11 @@ from _ollama import (
 
 #: Where a response lands unless ``--out`` says otherwise. Ignored by git like the rest of ``var/``.
 DEFAULT_OUT: Final[Path] = Path("var/tmp")
+
+#: A whole answer fenced as one Markdown block, which models wrap JSON in.
+FENCE: Final[re.Pattern[str]] = re.compile(
+    r"```[a-zA-Z]*\s*\n(?P<body>.*?)\n?\s*```", re.DOTALL
+)
 
 #: The placeholders a template may carry, in the same grammar the library's composition seam uses:
 #: ``<extra:key>`` is matched first so a keyed placeholder never resolves as a bare ``<extra>``
@@ -244,11 +257,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--out",
         default=str(DEFAULT_OUT),
-        help="the directory the raw response is saved in (default: var/tmp)",
+        help="the directory the response is saved in (default: var/tmp)",
     )
     parser.add_argument(
         "--name",
-        help="the output's name, without the .json suffix (default: "
+        help="the base name of the two output files, without a suffix (default: "
         "<schema-or-template>[.<document>]); name it to hand the file to a later step",
     )
     add_connection_arguments(parser)
@@ -261,7 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _default_name(asset: str, doc: str | None) -> str:
-    """Return the name a response lands under when ``--name`` states none.
+    """Return the base name outputs land under when ``--name`` states none.
 
     The asset names the step the same way the lab bench does — the schema's name when one is
     stated, the template's otherwise — and the document's own name qualifies it, so two documents
@@ -272,52 +285,89 @@ def _default_name(asset: str, doc: str | None) -> str:
         doc: The document the answer is about, or ``None`` when the call carried none.
 
     Returns:
-        The name, without the ``.json`` suffix.
+        The base name, without a suffix.
     """
     stem = Path(asset).stem.removesuffix(".schema")
     return stem if doc is None else f"{stem}.{Path(doc).stem}"
 
 
-def _answer_path(out: str, name: str) -> Path:
-    """Return the file a response lands in, with the directory created.
+def _answer_text(body: dict[str, Any]) -> str:
+    """Return the text the model answered with.
 
     Args:
-        out: The directory the response is saved in.
-        name: The name to save under, with or without its ``.json`` suffix.
-
-    Returns:
-        The absolute file the response is saved as.
-    """
-    directory = Path(out).expanduser()
-    directory.mkdir(parents=True, exist_ok=True)
-    return directory / (name if name.endswith(".json") else f"{name}.json")
-
-
-def _save(out: str, name: str, body: dict[str, Any]) -> Path:
-    """Save the daemon's raw response and return where it landed.
-
-    The body is saved verbatim, timings and token counts included: they are what a run is judged
-    by, and re-encoding the answer alone would drop them.
-
-    Args:
-        out: The directory the response is saved in.
-        name: The name to save under, with or without its ``.json`` suffix.
         body: The parsed response body.
 
     Returns:
-        The file that was written.
+        The answer text.
 
     Raises:
-        SystemExit: When the file cannot be written.
+        SystemExit: When the body carries no answer. An answer that is not there is not an empty
+            answer, and saving one would read as if the model had said nothing.
     """
-    path = _answer_path(out, name)
+    text = (body.get("message") or {}).get("content") or body.get("response")
+    if not text:
+        raise SystemExit("the daemon answered without any text")
+    return str(text)
+
+
+def _unfenced(text: str) -> str:
+    """Return the answer without a Markdown fence wrapped around it.
+
+    Models fence a JSON answer in ``\\`\\`\\`json`` often enough that the reviewer would receive a
+    fenced blob instead of the object the contract describes. The full response keeps the answer
+    verbatim, so unwrapping here loses nothing.
+
+    Args:
+        text: The answer text.
+
+    Returns:
+        The fenced block's contents when the whole answer is one fenced block, the text otherwise.
+    """
+    match = FENCE.match(text.strip())
+    return match.group("body").strip() if match else text
+
+
+def _save(out: str, name: str, body: dict[str, Any]) -> list[Path]:
+    """Save the answer alone and the full response, and return both paths.
+
+    ``<name>.json`` is the answer only — the file a later step reads through
+    ``@var/tmp/<name>.json`` — and an answer that is not JSON is saved as ``<name>.txt`` rather
+    than called a ``.json`` it is not. ``<name>_full.json`` is the daemon's whole response,
+    verbatim: timings and token counts included, because they are what a run is judged by.
+
+    Args:
+        out: The directory the files are saved in.
+        name: The base name, without a suffix.
+        body: The parsed response body.
+
+    Returns:
+        The files that were written, the answer first.
+
+    Raises:
+        SystemExit: When a file cannot be written.
+    """
+    directory = Path(out).expanduser()
+    answer = _unfenced(_answer_text(body))
     try:
-        path.write_text(
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            parsed = json.loads(answer)
+        except json.JSONDecodeError:
+            answer_path = directory / f"{name}.txt"
+            answer_path.write_text(answer + "\n", encoding="utf-8")
+        else:
+            answer_path = directory / f"{name}.json"
+            answer_path.write_text(
+                json.dumps(parsed, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        full_path = directory / f"{name}_full.json"
+        full_path.write_text(
             json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
     except OSError as unwritable:
         raise SystemExit(f"--out {out}: {unwritable}") from unwritable
-    return path
+    return [answer_path, full_path]
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -358,7 +408,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     print_answer(body, raw=args.raw)
     asset = args.schema if args.schema is not None else args.template
     name = args.name if args.name is not None else _default_name(asset, args.doc)
-    print(f"saved {_save(args.out, name, body)}", file=sys.stderr)
+    name = name.removesuffix(".json")
+    for path in _save(args.out, name, body):
+        print(f"saved {path}", file=sys.stderr)
     return 0
 
 
