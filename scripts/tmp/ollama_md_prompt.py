@@ -6,6 +6,10 @@ posts the result as the single user message of a ``POST /api/chat``. ``--schema`
 things the seam does with a schema: it renders ``<schema>`` and it constrains the answer, which
 is sent as the request's ``format``.
 
+Every answer is saved to ``var/tmp/`` — the raw response body, timings and token counts included
+— and the answer itself still goes to stdout, so a pipe keeps working. ``--print-prompt`` renders
+without sending and saves nothing.
+
     DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
 
     python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --print-prompt \
@@ -30,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Final
@@ -40,6 +45,9 @@ from _ollama import (
     parse_option,
     print_answer,
 )
+
+#: Where a response lands unless ``--out`` says otherwise. Ignored by git like the rest of ``var/``.
+DEFAULT_OUT: Final[Path] = Path("var/tmp")
 
 #: The placeholders a template may carry, in the same grammar the library's composition seam uses:
 #: ``<extra:key>`` is matched first so a keyed placeholder never resolves as a bare ``<extra>``
@@ -192,6 +200,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--schema",
         help="the JSON file that constrains the answer's format and renders <schema>",
     )
+    parser.add_argument(
+        "--out",
+        default=str(DEFAULT_OUT),
+        help="the directory the raw response is saved in (default: var/tmp)",
+    )
     add_connection_arguments(parser)
     parser.add_argument(
         "--print-prompt",
@@ -199,6 +212,56 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the rendered prompt and send nothing",
     )
     return parser
+
+
+def _answer_path(out: str, asset: str, doc: str | None) -> Path:
+    """Return where a response lands: ``<out>/<asset>[.<document>].json``.
+
+    The asset names the step the same way the lab bench does — the schema's name when one is
+    stated, the template's otherwise — and the document's own name qualifies it, so two documents
+    read through one template do not overwrite each other's answer in the shared default folder.
+
+    Args:
+        out: The directory the response is saved in.
+        asset: The schema or template the call was made with.
+        doc: The document the answer is about, or ``None`` when the call carried none.
+
+    Returns:
+        The file the response is saved as, with the directory created.
+    """
+    stem = Path(asset).stem.removesuffix(".schema")
+    name = f"{stem}.{Path(doc).stem}.json" if doc is not None else f"{stem}.json"
+    directory = Path(out).expanduser()
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / name
+
+
+def _save(out: str, asset: str, doc: str | None, body: dict[str, Any]) -> Path:
+    """Save the daemon's raw response and return where it landed.
+
+    The body is saved verbatim, timings and token counts included: they are what a run is judged
+    by, and re-encoding the answer alone would drop them.
+
+    Args:
+        out: The directory the response is saved in.
+        asset: The schema or template the call was made with.
+        doc: The document the answer is about, or ``None`` when the call carried none.
+        body: The parsed response body.
+
+    Returns:
+        The file that was written.
+
+    Raises:
+        SystemExit: When the file cannot be written.
+    """
+    path = _answer_path(out, asset, doc)
+    try:
+        path.write_text(
+            json.dumps(body, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError as unwritable:
+        raise SystemExit(f"--out {out}: {unwritable}") from unwritable
+    return path
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -235,6 +298,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         timeout=args.timeout,
     )
     print_answer(body, raw=args.raw)
+    print(
+        f"saved {_save(args.out, args.schema or args.template, args.doc, body)}",
+        file=sys.stderr,
+    )
     return 0
 
 
