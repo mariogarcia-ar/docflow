@@ -19,6 +19,11 @@ keeps working. ``--print-prompt`` renders without sending and saves nothing.
 With no ``--name`` the files are named after the schema (or the template when no schema is
 stated) and the document.
 
+``--stream`` answers the question a saved file cannot: what was the model doing. The deltas go to
+stderr — a reasoning model's ``thinking`` under a ``[thinking]`` header, its answer under
+``[answer]`` — while stdout stays the finished answer, so the two files above hold exactly what a
+non-streaming call would have produced.
+
 The invoice flow, one command per step, mirroring the lab bench's assets and options — each step
 names its output, so the next one reads the answer back through ``@var/tmp/<name>.json``:
 
@@ -62,6 +67,14 @@ names its output, so the next one reads the answer back through ``@var/tmp/<name
         --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
         --option num_ctx=16384 --option num_predict=4096 --timeout 300
 
+Watching that same review happen, which a saved file cannot show:
+
+    python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b --name review --stream \
+        --template $R/template/review/invoice.md --doc $DOC \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading.json \
+        --extra contract=@$R/schema/extraction/invoice.schema.json
+
 The same review on a reasoning model: ``--option think=false`` reaches the top of the request,
 the way the library sends it, and ``--timeout`` states the wait the lab tool states as an option.
 
@@ -69,8 +82,8 @@ the way the library sends it, and ``--timeout`` states the wait the lab tool sta
         --template $R/template/review/invoice.md --doc $DOC --print-prompt \
         --schema $R/schema/review/invoice.schema.json \
         --extra proposal=@var/tmp/reading.json \
-        --extra contract=@$R/schema/extraction/invoice.schema.json 
-        
+        --extra contract=@$R/schema/extraction/invoice.schema.json
+
     python scripts/tmp/ollama_md_prompt.py --model qwen3.5:9b --name review-qwen \
         --template $R/template/review/invoice.md --doc $DOC \
         --schema $R/schema/review/invoice.schema.json \
@@ -409,6 +422,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         system=args.system,
         options=dict(args.option),
         schema=schema,
+        stream=args.stream,
         timeout=args.timeout,
     )
     print_answer(body, raw=args.raw)

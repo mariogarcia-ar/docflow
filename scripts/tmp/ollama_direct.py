@@ -6,6 +6,9 @@ It is not the lab bench: nothing here is reused by ``scripts/tools/``.
     python scripts/tmp/ollama_direct.py --list-models
     python scripts/tmp/ollama_direct.py --model gemma3:12b "What is an invoice?"
 
+The answer streams as it is written — the model's thinking and its answer echo to stderr — so a
+long answer never looks like a freeze. ``--no-stream`` waits for it and prints it once instead.
+
 The transport is its sibling :mod:`_ollama`, so a probe runs from this folder.
 
 ``--model`` is required: a default model is the silent stand-in this project forbids.
@@ -38,7 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model", help="the model tag to reach (required unless --list-models)"
     )
-    add_connection_arguments(parser)
+    add_connection_arguments(parser, stream_default=True)
     parser.add_argument(
         "--list-models",
         action="store_true",
@@ -91,6 +94,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.prompt,
         system=args.system,
         options=dict(args.option),
+        stream=args.stream,
         timeout=args.timeout,
     )
     print_answer(body, raw=args.raw)
