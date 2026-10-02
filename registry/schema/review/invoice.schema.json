@@ -3,15 +3,28 @@
   "properties": {
     "field_verdicts": {
       "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
       "items": {
         "type": "object",
         "properties": {
-          "field": {"type": "string"},
+          "field": {
+            "type": "string",
+            "enum": [
+              "tipo_comprobante",
+              "razon_social_emisor",
+              "cuit_emisor",
+              "fecha_emision",
+              "nro_comprobante",
+              "moneda",
+              "notas"
+            ]
+          },
+          "reason": {"type": "string", "maxLength": 200},
           "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain"]},
-          "reason": {"type": "string"},
-          "suggested_value": {"type": "string"}
+          "suggested_value": {"type": "string", "maxLength": 100}
         },
-        "required": ["field", "verdict", "reason", "suggested_value"],
+        "required": ["field", "reason", "verdict", "suggested_value"],
         "additionalProperties": false
       }
     }

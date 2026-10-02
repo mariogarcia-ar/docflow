@@ -59,12 +59,18 @@ names its output, so the next one reads the answer back through ``@var/tmp/<name
         --schema $R/schema/review/invoice.schema.json \
         --extra proposal=@var/tmp/reading.json \
         --extra contract=@$R/schema/extraction/invoice.schema.json \
-        --option temperature=0.1 --option top_p=0.95 --option repeat_penalty=1.0 \
-        --option presence_penalty=0.0 --option num_ctx=16384 --timeout 600
+        --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
+        --option num_ctx=16384 --option num_predict=4096 --timeout 300
 
 The same review on a reasoning model: ``--option think=false`` reaches the top of the request,
 the way the library sends it, and ``--timeout`` states the wait the lab tool states as an option.
 
+    python scripts/tmp/ollama_md_prompt.py --model qwen3.5:9b --name review-qwen \
+        --template $R/template/review/invoice.md --doc $DOC --print-prompt \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading.json \
+        --extra contract=@$R/schema/extraction/invoice.schema.json 
+        
     python scripts/tmp/ollama_md_prompt.py --model qwen3.5:9b --name review-qwen \
         --template $R/template/review/invoice.md --doc $DOC \
         --schema $R/schema/review/invoice.schema.json \

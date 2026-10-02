@@ -52,3 +52,4 @@ env/
 .DS_Store
 .idea/
 
+*.log
