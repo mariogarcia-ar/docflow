@@ -4,13 +4,17 @@ Reads a template from ``registry/template/`` (or any ``.md``), resolves the plac
 library's composition seam defines — ``<doc>``, ``<extra>``, ``<extra:key>``, ``<schema>`` — and
 posts the result as the single user message of a ``POST /api/chat``.
 
-    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --print-prompt \\
-        --template registry/template/extraction/invoice_deteccion.md \\
-        --doc var/tools/ocr/doc.txt
+    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b --print-prompt \
+        --template registry/template/extraction/invoice_deteccion.md \
+        --doc 'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt'
 
-    python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b \\
-        --template registry/template/review/invoice.md --doc var/tools/ocr/doc.txt \\
-        --extra proposal=@var/run/reading/invoice.json \\
+    python scripts/tmp/ollama_md_prompt.py --model gemma3:12b \
+        --template registry/template/extraction/invoice_deteccion.md \
+        --doc 'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt'
+
+    python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b \
+        --template registry/template/review/invoice.md --doc 'tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt' \
+        --extra proposal=@var/run/reading/invoice.json \
         --extra contract=@registry/schema/extraction/invoice.schema.json
 
 The transport is its sibling :mod:`_ollama`, so a probe runs from this folder.
