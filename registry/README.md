@@ -56,6 +56,13 @@ Four spellings of placeholder, and no others:
 | `<extra:key>` | `extra_context["key"]` alone — a string verbatim, anything else as canonical JSON |
 | `<schema>` | the loaded schema as canonical JSON |
 
+Those four are the only spellings the loader *resolves*, and it resolves them in one pass. Any other
+angle-bracketed tag is left exactly as it is written, which is what delimits the data: each template
+wraps its inputs in XML tags — `<document>`, `<contract>`, `<proposal>`, `<line_of_business>` — and
+the placeholder sits inside the pair (`<document>` / `<doc>` / `</document>`). The tag separates
+instructions from data for the model, and after substitution nothing but the tag and the request's
+own text remains: no banner, no marker line, and no literal `<doc>`.
+
 `<extra:key>` is how a template takes two or more inputs and gives each its own section: it is the
 same mapping `<extra>` renders whole, addressed one key at a time. The key must be in
 `extra_context` — `review/invoice` carrying `<extra:proposal>` refuses a request that carries no
