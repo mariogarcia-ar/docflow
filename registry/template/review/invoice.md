@@ -72,14 +72,13 @@ reached it.
 plausible.
 
 7. suggested_value is the field's content, never the raw text it came from. For
-`tipo_comprobante` the class is the bare letter printed in the header: "FACTURA" is not
-the class. Whenever a letter 'A', 'B' or 'C' is legible in the header, that letter is
-the correct value and a proposed letter is "agree" — even when a code is printed
-elsewhere. A short internal code under its own label (such as "COD.01") is not an AFIP
-code: never translate it or pad it into "001", "006" or "011". Suggest a three-digit
-code only when no letter is legible and that code is the one printed. For numeric or
-date values, use the format the contract declares, without converting the decimal
-separator or the date format.
+`tipo_comprobante` the class is printed as the bare letter in the header ("FACTURA" is
+not the class) or as a code ("001", "006", "011") — including a short labelled form of
+the code, such as "COD.01" or "COD 01", which stands for "001".
+Whenever a letter 'A', 'B' or 'C' is legible in the header, that letter is the correct
+value and a proposed letter is "agree" — even when a code is printed elsewhere; do not
+swap the letter for the code. For numeric or date values, use the format the contract
+declares, without converting the decimal separator or the date format.
 
 8. `notas` is an open field and is never adjudicated: its verdict is "ignored", never
 "agree", "disagree" or "uncertain". Do not judge its content against the contract, do

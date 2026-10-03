@@ -44,12 +44,13 @@ LIMITS.
 - If the text contradicts the proposed value, the verdict is "disagree".
 - A value that IS printed is never rejected with "null": if you cannot name the
   replacement, the verdict is "uncertain".
-- tipo_comprobante: the bare letter printed in the header is the class. "FACTURA" is
-  not the class. Whenever a letter 'A', 'B' or 'C' is legible in the header, that
-  letter is the correct value and a proposed letter is "agree" — even when a code is
-  printed elsewhere. A short internal code under its own label (such as "COD.01") is
-  not an AFIP code: never translate it or pad it into "001", "006" or "011". Suggest a
-  three-digit code only when no letter is legible and that code is the one printed.
+- tipo_comprobante: the class is the bare letter printed in the header ("FACTURA" is
+  not the class) or a code ("001", "006", "011"), including a short labelled form of
+  the code, such as "COD.01" or "COD 01", which stands for "001".
+  Whenever a letter 'A', 'B' or 'C' is legible in the header, that letter is the
+  correct value and a proposed letter is "agree" — even when a code is printed
+  elsewhere; do not swap the letter for the code. A three-digit code is the value only
+  when no letter is legible and that code (in any of its forms) is printed.
 - notas is an open field and is never adjudicated: its verdict is "ignored", never
   "agree", "disagree" or "uncertain". Do not judge its content against the contract and
   set its suggested_value to "null".

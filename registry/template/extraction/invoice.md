@@ -61,21 +61,21 @@ Rules, apply in this order:
    require the mark to be adjacent to "FACTURA", and do not skip a line whose
    only content is "A" — that line is exactly where the class is.
 
-   The class is written two ways across documents, and both name this field:
+   The class is written in these ways across documents, and all name this field:
      - the letter:      "A", "B", "C"
      - the AFIP code:   "001", "006", "011"
+     - a short labelled form of that code, with any separator and the leading
+       zero optional: "COD.01", "COD 01", "COD01", "COD.1". That label IS the
+       code — give it in its three-digit AFIP form ("01" -> "001",
+       "06" -> "006", "11" -> "011").
    Answer the letter whenever a letter is legible, even if a code is printed
-   elsewhere. Answer the three-digit code only when no letter is legible and the
-   code is. When both appear the LETTER is the answer: it is the printed class,
-   and the code is that class encoded.
+   elsewhere. Answer the code only when no letter is legible and the code (in
+   any of its forms) is. When both appear the LETTER is the answer: it is the
+   printed class, and the code is that class encoded.
 
    WHAT IT IS NOT. These stand beside the class and are not the answer:
      - the point of sale number, usually labelled "Punto de Venta". Its digits
        are not a class.
-     - a short internal code printed under its own label near the header — a
-       product or classification code, not a receipt class. This field accepts
-       the three-digit forms of the table above and the letters only, so a
-       shorter number is not one of them: do not pad it, do not translate it.
      - "090" and "099": comprobantes that do not comply with RG 1415. They are
        not a letter, not an A/B/C class, not a ticket, not a boarding pass.
      - a date, a CUIT, an amount, or an item code.
@@ -93,11 +93,7 @@ Rules, apply in this order:
    nro_comprobante.
 
 6. Ignore column headers that the OCR pasted into the running text (e.g.
-   "Cant./Precio Unit. Descripcion (%IVA)[%BI]"). They are not data. Also ignore
-   a short internal code printed near the header under its own label: it is not
-   the receipt number, not the class, and not any field here. It belongs to the
-   document's own coding, and copying it into a field is answering with a value
-   the field does not mean.
+   "Cant./Precio Unit. Descripcion (%IVA)[%BI]"). They are not data.
 
 7. Extract nro_comprobante from the label that carries it, wherever it sits: it
    is printed beside a nearby label such as "Comp.Nro.", "Nro.", "Número" or
@@ -107,10 +103,10 @@ Rules, apply in this order:
    that line.
 
    Take the number from ITS OWN label, never from one of these near misses:
-   the point-of-sale number ("Punto de Venta", often four digits), the class, a
-   short internal code under its own label near the header, the CAE (a long
-   number beside "CAE N°"), and the code of the receipt type itself. A receipt
-   number is not the class and a class is not a number, so do not substitute one
-   for the other.
+   the point-of-sale number ("Punto de Venta", often four digits), the class
+   (a letter or a code, including a short labelled form such as "COD.01"), the
+   CAE (a long number beside "CAE N°"), and the code of the receipt type itself.
+   A receipt number is not the class and a class is not a number, so do not
+   substitute one for the other.
 
 Do not invent any absent or illegible value: return "null".
