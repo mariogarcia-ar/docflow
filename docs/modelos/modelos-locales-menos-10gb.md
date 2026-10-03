@@ -1,6 +1,6 @@
 # Catálogo de modelos locales menores a 10 GB
 
-> **Alcance:** §1–§9 son los **< 10 GB** (el catálogo original). **§10 extiende a la gama mediana (12B–70B)** y **§11 a los que pasan los 70B**, con el mismo formato — para que el corte se vea, no se suponga.
+> **Alcance:** §1–§9 son los **< 10 GB** (el catálogo original). **§10 extiende a la gama mediana (12B–70B)** y **§11 a los que pasan los 70B**, con el mismo formato — para que el corte se vea, no se suponga. **§12 corta el catálogo por otra arista: los que invocan tools**, en toda la franja < 10 GB.
 > **Criterio:** tamaño del **artefacto descargable** con cuantización Q4 (el default de Ollama/llama.cpp), salvo donde se indique otra cosa (`gpt-oss` va en MXFP4; los tags `-mlx` traen su propia cuantización). No es el tamaño de los pesos BF16.
 > **Ojo:** para ejecutar, sumá 1–4 GB de KV cache según el contexto. Un modelo de 9 GB en disco necesita ~11–12 GB de VRAM/RAM.
 > **Verificación:** cifras contrastadas con búsqueda web el **2026-09-30** contra Ollama Library y las model cards de Hugging Face. `n/d` = no verificado en esa pasada; `≈` = aproximado.
@@ -311,6 +311,90 @@ Mismo formato que el resto del catálogo. Acá **el tamaño en disco y la VRAM d
 > **Acá se termina el hardware de consumo.** Una placa de 24 GB no puede con un 70B en Q4 (pide 40–48 GB), y ninguno de estos baja de 65 GB. Las opciones reales son tres: **dos placas** (2×5090 = 64 GB, con PSU de 1.200 W+ y tensor parallelism), **una placa de servidor** de 48–80 GB, o **memoria unificada** (un Mac de 128 GB corre un 70B, pero a ~12–15 tok/s contra ~118 tok/s de una GPU). El offload a RAM funciona y baja por debajo del umbral interactivo.
 > **Y ojo con el KV cache:** a 256K de contexto, un denso de 128B pasa de ~80 GB a ~122 GB. El disco que descargás no es el RAM que necesitás.
 
+## 12. Tool calling / function calling (< 10 GB)
+
+**Tool calling no es una propiedad de la inteligencia: es una propiedad de la plantilla de chat.** Si el template del modelo no trae el bloque de herramientas (`.Tools` / `.ToolCalls`), Ollama devuelve `does not support tools` aunque el modelo razone de sobra. El chequeo es de **capacidad**, no de calidad — un 70B sin template de tools pierde contra un 1,7B que sí lo tiene.
+
+Verificación en tu propia máquina:
+
+```bash
+ollama show qwen3.5:9b          # columna «Capabilities»: buscá «tools»
+```
+
+> **Tres trampas que cuestan horas:**
+> - **La página de la familia miente.** `deepseek-r1` exhibe el badge de tools, pero solo los pesos completos (671B) traen el template; los destilados de 7B–70B suelen rechazarlo. El mismo salto es `llama3` (sin tools) contra `llama3.1` (con tools).
+> - **Visión ≈ sin tools.** `qwen2.5vl`, `llama3.2-vision`, `llava`, `minicpm-v` y `moondream` no aceptan tools. La excepción es **Qwen3-VL**, que lleva visión y tools en el mismo modelo.
+> - **GGUF importado de Hugging Face.** `ollama run hf.co/...` regenera el template y suele perder el bloque de tools, aunque la model card anuncie function calling.
+
+> **Capacidad declarada ≠ obediencia.** `llama3.2:3b` declara `tools`, llama la función con los argumentos correctos… y después **ignora el resultado y alucina** la respuesta (ver §12.3). Para agentes no alcanza con «sabe llamar»: hay que mirar si **usa** lo que la tool devolvió.
+
+### 12.1 Modelos < 10 GB que sí invocan tools
+
+Ordenados por tamaño. «Tools desde» = versión mínima de Ollama que expone la capacidad (n/d = no confirmada por fuente publicada).
+
+| Modelo | Params | Tamaño (Q4) | Tools desde | Notas |
+|---|---|---|---|---|
+| SmolLM2 | 135M / 360M / 1.7B | 271 MB / 726 MB / 1.8 GB | 0.4.0+ | 🔧 el invocador más liviano de la lista |
+| FunctionGemma | 270M | 301 MB | 0.13.5+ | 🔧 especialista: Gemma 3 270M afinado solo para function calling, 32K |
+| Qwen3 | 0.6B | 523 MB | 0.6.7+ | 🧠 🔧 thinking híbrido |
+| Granite 3.1 MoE | 1B | ~0.7 GB | 0.3.0+ | 🔧 ✔ local (`granite3.1-moe:1b`) |
+| Llama 3.2 | 1B | 1.3 GB | 0.3.12+ | 🔧 |
+| Qwen3 | 1.7B | 1.4 GB | 0.6.7+ | 🧠 🔧 |
+| Qwen3-VL | 2B | 1.9 GB | 0.12.0+ | 👁️ 🔧 OCR + tools |
+| Llama 3.2 | 3B | 2.0 GB | 0.3.12+ | 🔧 ✔ local; **obedece mal el resultado**, ver §12.3 |
+| Granite 4 | 3B (micro) | 2.1 GB | 0.3.0+ | 🔧 ✔ local (`granite4:3b`) |
+| Granite 4.1 | 3B | 2.1 GB | 0.5.0+ | 🔧 12 idiomas, JSON |
+| Granite 4.2 | 3B | 2.2 GB | n/d | 🧠 🔧 razonamiento antes de la llamada |
+| Phi-4 Mini | 3.8B | 2.5 GB | 0.5.13+ | 🧠 🔧 MIT |
+| Qwen3 | 4B | 2.5 GB | 0.6.7+ | 🧠 🔧 🌐 |
+| Nemotron 3 Nano | 4B | 2.8 GB | n/d | 🧩 🔧 256K de contexto por 2,8 GB |
+| Ministral 3 | 3B | 3.0 GB | n/d | 👁️ 🔧 edge |
+| Command-R7B | 7B | ~4.1 GB | 0.1.30+ | 🔧 128K nativo; fiabilidad de tools reportada como mixta |
+| Mistral | 7B | 4.4 GB | 0.3.0+ | 🔧 function calling de fábrica |
+| Qwen2.5 | 7B | 4.7 GB | 0.3.11+ | 🔧 🌐 |
+| Qwen2.5-Coder | 7B | 4.7 GB | 0.3.11+ | 💻 🔧 |
+| Llama 3.1 | 8B | 4.9 GB | 0.3.0+ | 🔧 el referente para RAG |
+| Granite 3.3 | 8B | 4.9 GB | 0.5.0+ | 🔧 empresarial / RAG |
+| Hermes 3 | 8B | ~4.9 GB | 0.3.0+ | 🔧 |
+| Qwen3 | 8B | 5.2 GB | 0.6.7+ | 🧠 🔧 🌐 recomendado general |
+| Granite 4.1 | 8B | 5.3 GB | 0.5.0+ | 🔧 el más eficiente en tokens de su clase |
+| Granite 4.2 | 8B | 5.3 GB | n/d | 🧠 🔧 ✔ local (`granite4.2:8b`) |
+| Ministral 3 | 8B | 6.0 GB | n/d | 👁️ 🔧 |
+| Qwen3-VL | 8B | 6.1 GB | 0.12.0+ | 👁️ 🔧 la VL más capaz con tools |
+| Qwen3.5 | 9B | 6.6 GB | 0.17.5+ | 👁️ 🧠 🔧 ✔ local (`qwen3.5:9b`) |
+| Mistral Nemo | 12B | 7.1 GB | 0.3.0+ | 🔧 🌐 |
+| Gemma 4 | E2B | 7.2 GB | 0.20.0+ | 👁️ 🧠 🔧 la primera Gemma con tools |
+| Gemma 4 | 12B Unified | 7.6 GB | 0.20.0+ | 👁️ audio + imagen, encoder-free |
+| Qwen2.5 | 14B | 9.0 GB | 0.3.11+ | 🔧 🌐 |
+| Qwen2.5-Coder | 14B | 9.0 GB | 0.3.11+ | 💻 🔧 |
+| Ministral 3 | 14B | 9.1 GB | n/d | 👁️ 🔧 |
+| Qwen3 | 14B | 9.3 GB | 0.6.7+ | 🧠 🔧 🌐 |
+| Gemma 4 | E4B | 9.6 GB | 0.20.0+ | 👁️ 🧠 🔧 en el borde del límite |
+| Hermes 4 | 14B | ~8–9 GB | importar GGUF | 🧠 🔧 sin tag oficial en Ollama: la plantilla la generás vos |
+
+> **Relación con §1–§4:** el `🔧` de las tablas anteriores quedó revalidado acá. Las ausencias de 🔧 (Gemma 3, Phi-4 14B, Qwen2.5-VL, destilados R1) no son descuidos: son modelos que **no** pasan el chequeo de capacidad.
+
+### 12.2 Los que **no** invocan tools (aunque lo parezcan)
+
+| Familia | Resultado | Por qué |
+|---|---|---|
+| Gemma 2, Gemma 3 (270M/1B/4B/12B), gemma3n | No | Google dejó function calling afuera de toda la línea 3; ninguna talla zafa |
+| Phi-4 | No | solo Phi-4 Mini trae template de tools |
+| DeepSeek R1 destilados (7B/8B/14B) | No | el badge de la familia corresponde a los 671B, no a los destilados |
+| DeepSeek Coder V2 Lite | No | base de código, sin template de tools |
+| Qwen2.5-VL, Llama 3.2 Vision, LLaVA, MiniCPM-V, Moondream | No | visión pura: la plantilla multimodal no mantiene el segundo path de tools |
+| CodeLlama, StarCoder2, CodeGemma | No | modelos de código, sin function calling |
+| Aya Expanse 8B, Yi 9B, InternLM 2.5 7B, OLMo 2 7B | No | instruct puro, sin template de tools |
+| SmolLM3 | n/d | soporta tools en Hugging Face, pero el tag de Ollama no lo declara |
+
+### 12.3 Recomendación y fiabilidad
+
+- **Mínimo absoluto:** FunctionGemma 270M y SmolLM2 1.7B — entran en CPU y ya aceptan un array de tools.
+- **8 GB (la franja útil):** Qwen3.5 9B, Qwen3 8B, Granite 4.2 8B, Phi-4 Mini.
+- **Con visión + tools en un solo modelo:** Qwen3-VL 8B, o Qwen3.5 9B si además querés thinking.
+- **Mejor obediencia del resultado:** Qwen2.5/3 en 7B–14B y Mistral Nemo; **evitá `llama3.2:3b` para agentes** — llama la función pero descarta lo que vuelve.
+- **Regla práctica:** elegí por *template*, no por parámetros. Un MoE o un denso grande sin tools no te sirve para un agente; un 1.7B con tools, sí.
+
 ## Notas
 
 - **MoE en disco:** los modelos MoE pesan según el total de parámetros, no los activos. Por eso DeepSeek Coder V2 Lite (16B) pesa ~9 GB aunque corra rápido, y gpt-oss 20B (3.6B activos) pesa 14 GB.
@@ -320,6 +404,7 @@ Mismo formato que el resto del catálogo. Acá **el tamaño en disco y la VRAM d
 - **Licencias:** el tamaño no dice nada sobre el uso comercial. Gemma (Gemma Terms), Llama (licencia comunitaria) y Aya Expanse (CC-BY-NC) tienen restricciones; Phi-4, Qwen y Granite son MIT/Apache 2.0.
 - **Medianos (§10):** la regla de oro cambia — ahí ya no importa el disco sino el KV cache y la licencia. Command-R (35B) es **no comercial**, Codestral (22B) es de **investigación**, y Nemotron 3 Nano trae la **NVIDIA Open Model License**, no Apache.
 - **Grandes (§11):** ninguno entra en hardware de consumo. Y la licencia se vuelve el filtro real: **Llama 4 tiene licencia comunitaria** (cláusula de 700 M de usuarios) y **Nemotron 3 Super es NVIDIA Open Model**, no Apache. Las dos excepciones permisivas de la franja son **gpt-oss 120B (Apache 2.0)** y **Mistral Medium 3.5 (MIT modificada)**.
+- **Tool calling (§12):** la capacidad la declara el **template**, no los parámetros. Verificado el **2026-10-02** con `ollama show` sobre los tags locales (`granite4:3b`, `granite3.1-moe:1b`, `granite4.2:8b`, `qwen3.5:9b`, `qwen2.5:7b-instruct`, `llama3.2:3b`) y contraste web. Declarar `tools` no implica usarlas bien: la obediencia del resultado se mide aparte.
 - **Granite 4.2 (agosto 2026):** la generación 4.2 volvió a una arquitectura **densa** (abandonó el MoE híbrido Mamba-2 de 4.0) y sumó razonamiento nativo; son 3B (2.2 GB), 8B (5.3 GB) y 30B (18 GB), todos 128K y Apache 2.0. No confundir con `granite4` (350m/1b/3b, el MoE de 4.0).
 - **Verificación:** el catálogo se contrastó el 2026-09-30 contra Ollama Library y las model cards. Las familias nuevas (Gemma 4, Qwen3.5/3.6, Ministral 3, Granite 4.1, Qwen3-VL) ya tienen cifras verificadas; quedan como `n/d` los tamaños que ninguna fuente publicada confirma.
 
@@ -332,3 +417,11 @@ Mismo formato que el resto del catálogo. Acá **el tamaño en disco y la VRAM d
 - Aritmética de tokens visuales: model card de `Qwen/Qwen2-VL-7B-Instruct` (`min_pixels`/`max_pixels`),
   guía de fine-tuning de Qwen3-VL (32×32 px/token), arXiv 2504.00557 (tokens de imagen de Llama 3.2 Vision),
   `ai.meta.com` (Llama 3.2, contexto 128K) y las tablas de conversión página↔token.
+
+## Fuentes consultadas (§12 · 2026-10-02)
+
+- **Verificación local:** `ollama show <tag>` (columna «Capabilities», campo `tools`) sobre los modelos ya descargados: `granite4:3b`, `granite3.1-moe:1b`, `granite4.2:8b`, `qwen3.5:9b`, `qwen2.5:7b-instruct`, `llama3.2:3b` (con tools) y `qwen2.5vl:7b`, `qwen2.5vl:3b`, `gemma3:4b`, `gemma3:12b` (sin tools).
+- **Ollama Library (búsqueda web):** `functiongemma` (301 MB · 32K), `command-r7b`, `qwen3-vl`, `smollm2:1.7b` (1.8 GB), `ministral-3`, `nemotron-3-nano`, `granite4`/`4.1`/`4.2` y el filtro `ollama.com/search?c=tools`.
+- **Guías de compatibilidad:** «Does Not Support Tools in Ollama» (BetterClaw) — tabla por modelo y versión mínima de Ollama, y el detalle del template `.ToolCalls`; «Best Ollama Models for Function Calling» (Collabnix); guía de MCP tool calling con Ministral 3B (Composio); tutorial de Nemotron 3 Nano con Ollama (DataCamp); guía de function calling de Phi-4-mini (Microsoft).
+- **Model cards y notas de release:** `ibm-granite/granite-4.1-8b` y `granite-4.2-8b` (tool calling / *reasoning-augmented tool calling*), IBM Granite 4.2 en Ollama, Gemma 4 (tool calling en E2B/E4B), `microsoft/Phi-4-mini-instruct`, SmolLM3 (tool calling nativo en Hugging Face).
+- **Avisos de inconsistencia:** issue `ollama/ollama#13768` (GGUF de Hugging Face que pierden el template de tools) y el caso de los destilados `deepseek-r1` (badge de familia sin template en los pesos chicos).
