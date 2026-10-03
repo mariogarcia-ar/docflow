@@ -67,17 +67,19 @@ names its output, so the next one reads the answer back through ``@var/tmp/<name
         --template $R/template/extraction/invoice_rubro.md --doc $DOC \
         --schema $R/schema/extraction/invoice_rubro.schema.json --extra rubro=Restaurante
 
-    # 6. the review reads step 2's answer — the bare object, not the daemon's envelope
+    # 6. the review reads step 2's answer — the bare object, not the daemon's envelope. T2 is a
+    #    reasoning model, so it is asked the reasoning variant of the pair: same schema, criteria
+    #    instead of rules (registry/README.md, "Instruct and reasoning: one schema, two prompts").
     python scripts/tmpref/md_prompt.py --provider ollama --model deepseek-r1:8b --name review \
-        --template $R/template/review/invoice.md --doc $DOC \
+        --template $R/template/review/invoice.reasoning.md --doc $DOC \
         --schema $R/schema/review/invoice.schema.json \
         --extra proposal=@var/tmp/reading.json \
         --extra contract=@$R/schema/extraction/invoice.schema.json \
         --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
         --option num_ctx=16384 --option num_predict=4096 --timeout 300
 
-The same review on a reasoning model: ``--option think=false`` reaches the top of the request,
-the way the library sends it, and ``--timeout`` states the wait.
+Step 6's review again, on T3, with the thinking channel braked: ``--option think=false`` reaches
+the top of the request, the way the library sends it, and ``--timeout`` states the wait.
 
     python scripts/tmpref/md_prompt.py --provider ollama --model qwen3.5:9b --name review-qwen \
         --template $R/template/review/invoice.md --doc $DOC \
