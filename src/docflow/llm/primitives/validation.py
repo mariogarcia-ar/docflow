@@ -19,7 +19,9 @@ Three jobs, one rule: nothing is guessed.
 
 The supported subset is stated rather than implied: ``type``, ``required``, ``properties``,
 ``additionalProperties``, ``items`` and ``enum``, plus the annotation keywords ``title``,
-``description`` and ``default``, which carry no rule. Anything else is reported by name.
+``description`` and ``default``, which carry no rule. Anything else is reported by name. A
+``type`` is a name or a union of names (``["string", "null"]`` is how a nullable field is
+declared), and a value satisfies it when it satisfies any one of them.
 
 Failure kinds: a request or an asset that does not resolve is a ``DEPENDENCY_ERROR``; a schema
 this processor cannot enforce and an answer that violates one are both ``SCHEMA_ERROR``.
@@ -215,8 +217,8 @@ def _violations(value: Any, schema: Mapping[str, Any], *, path: str) -> list[str
     """Return the violations of ``schema`` at ``path``, recursion included."""
     found: list[str] = []
     expected = schema.get("type")
-    if isinstance(expected, str) and not _matches_type(value, expected):
-        return [f"{path}: expected {expected}, got {_type_name(value)}"]
+    if expected is not None and not _matches_declared_type(value, expected):
+        return [f"{path}: expected {_type_label(expected)}, got {_type_name(value)}"]
     if "enum" in schema and value not in schema["enum"]:
         found.append(f"{path}: {value!r} is not one of {schema['enum']!r}")
     if isinstance(value, Mapping):
@@ -299,6 +301,26 @@ def _matches_type(value: Any, expected: str) -> bool:
     """
     check = _TYPE_CHECKS.get(expected)
     return True if check is None else check(value)
+
+
+def _matches_declared_type(value: Any, expected: Any) -> bool:
+    """Return whether ``value`` has a JSON type the schema's ``type`` declares.
+
+    A ``type`` is a name or a union of names, and a union is satisfied by any one of them — so
+    ``["string", "null"]`` admits a string and the real JSON ``null``, and nothing else.
+    """
+    if isinstance(expected, str):
+        return _matches_type(value, expected)
+    if isinstance(expected, Sequence) and not isinstance(expected, (str, bytes)):
+        return any(_matches_type(value, name) for name in expected)
+    return True
+
+
+def _type_label(expected: Any) -> str:
+    """Return the schema's ``type`` as a violation message reads it."""
+    if isinstance(expected, str):
+        return expected
+    return " or ".join(str(name) for name in expected)
 
 
 def _type_name(value: Any) -> str:

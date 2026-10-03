@@ -5,7 +5,7 @@
       "format": "text"
     },
     {
-      "key": "template/extraction/invoice_reason.md",
+      "key": "template/extraction/invoice.reasoning.md",
       "format": "text"
     },
     {
@@ -17,7 +17,7 @@
       "format": "text"
     },
     {
-      "key": "template/review/invoice_reason.md",
+      "key": "template/review/invoice.reasoning.md",
       "format": "text"
     },
     {

@@ -23,7 +23,7 @@
             "type": "string",
             "enum": ["agree", "disagree", "uncertain", "ignored"]
           },
-          "suggested_value": {"type": "string"}
+          "suggested_value": {"type": ["string", "null"]}
         },
         "required": ["field", "reason", "verdict", "suggested_value"],
         "additionalProperties": false

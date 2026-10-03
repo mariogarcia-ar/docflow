@@ -2,18 +2,18 @@
   "type": "object",
   "properties": {
     "tipo_comprobante": {
-      "type": "string",
-      "enum": ["A", "B", "C", "090", "099", "null"]
+      "type": ["string", "null"],
+      "enum": ["A", "B", "C", "001", "006", "011", null]
     },
-    "razon_social_emisor": {"type": "string"},
-    "cuit_emisor": {"type": "string"},
-    "fecha_emision": {"type": "string"},
-    "nro_comprobante": {"type": "string"},
+    "razon_social_emisor": {"type": ["string", "null"]},
+    "cuit_emisor": {"type": ["string", "null"]},
+    "fecha_emision": {"type": ["string", "null"]},
+    "nro_comprobante": {"type": ["string", "null"]},
     "moneda": {
       "type": "string",
       "enum": ["ARS", "USD"]
     },
-    "notas": {"type": "string"}
+    "notas": {"type": ["string", "null"]}
   },
   "required": [
     "tipo_comprobante",

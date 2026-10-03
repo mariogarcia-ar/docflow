@@ -10,14 +10,14 @@ registry/
   manifest.json                              the inventory of what lives here
   template/                                  prompt templates  (see `--template`)
     extraction/invoice.md                       the base reading
-    extraction/invoice_reason.md                the base reading — reasoning variant
+    extraction/invoice.reasoning.md             the base reading — reasoning variant
     extraction/invoice_deteccion.md             the fast-fail gate
     extraction/invoice_desglose.md              the tax breakdown
     extraction/invoice_rubro.md                 the line-of-business fields
     extraction/invoice_clasificacion.md         the classification judgement
     extraction/vision.md                        the VLM reading of a page image
     review/invoice.md                           review of a text extraction
-    review/invoice_reason.md                    review of a text extraction — reasoning variant
+    review/invoice.reasoning.md                 review of a text extraction — reasoning variant
     review/general.md                           review of any step, against its own schema
     review/vision.md                            review of a vision extraction
   schema/                                    response schemas  (see `--schema`)
@@ -72,13 +72,13 @@ document is substituted (no literal `{…}` survives into the prompt).
 | Step | `--template` | `--schema` | Role — model |
 |---|---|---|---|
 | Base reading | `extraction/invoice` | `extraction/invoice` | T1 extract — `gemma3:12b` |
-| Base reading — reasoning | `extraction/invoice_reason` | `extraction/invoice` | T1 extract — a reasoning model, `think:true` |
+| Base reading — reasoning | `extraction/invoice.reasoning` | `extraction/invoice` | T1 extract — a reasoning model, `think:true` |
 | Detection (gate) | `extraction/invoice_deteccion` | `extraction/invoice_detection` | T1 extract — `gemma3:12b` |
 | Tax breakdown | `extraction/invoice_desglose` | `extraction/invoice_desglose` | T1 extract — `gemma3:12b` |
 | Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` | T1 extract — `gemma3:12b` |
 | Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` | T1 extract — `gemma3:12b` |
 | Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `deepseek-r1:8b`, T3 review — `qwen3.5:9b`, plus `--extra contract=<step schema>` |
-| Review — reasoning | `review/invoice_reason` | `review/invoice` | T2/T3 review — a reasoning model, `think:true`, plus `--extra contract=<step schema>` |
+| Review — reasoning | `review/invoice.reasoning` | `review/invoice` | T2/T3 review — a reasoning model, `think:true`, plus `--extra contract=<step schema>` |
 | Vision | `extraction/vision`, `review/vision` | none — see the limits below | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
 
 Note the spelling: the **detection** template is `deteccion` (Spanish) while its schema is
@@ -90,7 +90,10 @@ to get wrong — a mismatched pair is a `DEPENDENCY_ERROR`, not a silent fallbac
 Every step that reads or judges text exists twice — an instruct prompt and a reasoning prompt — and
 both drive the **same** schema: the schema fixes the shape of the answer, the prompt fixes how the
 model is asked to reach it. They are separate files on purpose: flipping `think` over one prompt is
-not the same thing as asking the question the other architecture answers.
+not the same thing as asking the question the other architecture answers. The reasoning variant of a
+pair is the same identifier with a `.reasoning` suffix — `extraction/invoice` →
+`extraction/invoice.reasoning`, `review/invoice` → `review/invoice.reasoning` — and the two share
+the schema.
 
 | | instruct prompt | reasoning prompt |
 |---|---|---|
@@ -654,19 +657,24 @@ decides null vs. a printed number.
 
 **`review/invoice`** — The shape a review verdict must have. A field_verdict's enum is
 agree | disagree | uncertain | ignored; a disagree carries a suggested_value. `ignored` marks an
-open field the review does not adjudicate (`notas`) and carries the sentinel `"null"`. A `disagree`
+open field the review does not adjudicate (`notas`). A `disagree`
 carries a real
 correction — the value the document shows, in the field's contract format — and a `suggested_value`
-of `"null"` is for a field that is genuinely not printed: rejecting a printed value without naming
+of `null` is for a field that is genuinely not printed: rejecting a printed value without naming
 what should stand in its place is `uncertain`, not `disagree`, which is why the template forbids it.
 The model supplies only the verdicts, so this file is the MODEL-facing shape. The engine supplies
 the caller-facing metadata
 (reviewer, extractor_reviewed, producer) itself; a model cannot know who it is or whom it reviews.
-`reason` and `suggested_value` are plain strings, not nullable (`["string","null"]`): the pipeline's
-convention everywhere else is the sentinel string `"null"` for 'no value', never a JSON null, and
-mixing the two broke grammar-constrained generation on Ollama (type as an array is poorly supported
-by its GBNF compiler). Both are `required` so the model always fills them, using `"null"` as the
-not-applicable case.
+Both `reason` and `suggested_value` are `required`, so the model always fills them. `reason` is a
+plain string — it is the support for a verdict, and there is always one. `suggested_value` is
+nullable (`["string","null"]`): the correcting value on a `disagree`, and the real JSON `null`
+otherwise. That is the pipeline's convention for 'no value' — never the string `"null"` — and the
+same declaration carries into `extraction/invoice`, where every field that may be absent is
+`["string","null"]` and `tipo_comprobante`'s enum lists the `null` itself. Type-array nullability
+was re-verified against Ollama 0.31.1 (`gemma3:4b`, `qwen3.5:9b`) with `format` set to these
+schemas: the GBNF compiler accepts the union and the model emits a real `null`, so the absent value
+the prompts ask for is the one the grammar produces. `validate_schema` enforces a union `type` like
+any other, so a nullable declaration is a rule the answer is checked against, not an annotation.
 
 ## Manifest
 
