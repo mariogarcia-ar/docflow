@@ -16,6 +16,10 @@ shares one identity across many inputs.
 ``--model`` are required on every command, so there is no flag-free method to make. Stating the
 command is the caller's job, and the parser enforces it.
 
+**``--stream`` reads each input's answer as it is written**, under that input's own header — the
+walk is sequential, so the deltas of one input never interleave with the next one's. The record
+filed for an input is the one a waiting call would have produced either way.
+
 **``--fake`` installs the scripted provider**, so a corpus chain is demonstrable with no model
 served and no token spent. It replaces the provider seam and nothing else; the refusal on a missing
 ``--provider``/``--model`` stands either way.

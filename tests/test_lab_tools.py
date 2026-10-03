@@ -1096,13 +1096,13 @@ def test_llm_reads_through_the_shared_layer(
 def test_llm_call_files_step_artifacts_named_after_the_schema(
     providers: Any, tmp_path: Path
 ) -> None:
-    """A ``call`` keeps both its answers under names the schema owns.
+    """A ``call`` files its answer alone, and the run that produced it, under the step's names.
 
     The library's ``final_result.json`` is keyed by the run directory alone, so the detection gate
-    and the base reading over one input would overwrite each other. ``call`` adds ``<schema>.json``
-    (the raw response, verbatim) and ``<schema>_results.json`` (the run's result, the payload
-    ``final_result.json`` holds) — here under the nested identifier
-    ``extraction/invoice_detection``, whose last component is the file stem.
+    and the base reading over one input would overwrite each other. ``call`` adds ``<stem>.json``
+    (the answer alone — the object a later step reads back through ``--extra KEY=@FILE``) and
+    ``<stem>_full.json`` (the run's result, the payload ``final_result.json`` holds) — here under
+    the nested identifier ``extraction/invoice_detection``, whose last component is the file stem.
     """
     providers()
     assets = tmp_path / "assets"
@@ -1141,13 +1141,137 @@ def test_llm_call_files_step_artifacts_named_after_the_schema(
 
     assert code == 0
     final = json.loads((out / "final_result.json").read_text(encoding="utf-8"))
-    results = json.loads(
-        (out / "invoice_detection_results.json").read_text(encoding="utf-8")
+    answer = json.loads((out / "invoice_detection.json").read_text(encoding="utf-8"))
+    full = json.loads((out / "invoice_detection_full.json").read_text(encoding="utf-8"))
+    assert answer == final["parsed_response"]
+    assert full == final
+
+
+def test_llm_call_names_its_step_artifacts_when_the_caller_pins_one(
+    providers: Any, tmp_path: Path
+) -> None:
+    """``--name`` is the pencil on the stem, so two steps can share one schema's last component.
+
+    ``extraction/invoice`` and ``review/invoice`` both end in ``invoice``, so the review would
+    overwrite the very answer it was handed. Naming the step is the smaller statement of the same
+    remedy ``--out`` is.
+    """
+    providers()
+    out = tmp_path / "run"
+
+    code = tool_module("llm").main(
+        [
+            "--fixture",
+            f"casos/{CASE_TEXT.name}",
+            "--out",
+            str(out),
+            "call",
+            "--provider",
+            "ollama",
+            "--model",
+            "example-model",
+            "--task",
+            "extract",
+            "--template",
+            "simple_extract",
+            "--schema",
+            "simple",
+            "--name",
+            "review.json",
+        ]
     )
-    assert results == final
-    assert (out / "invoice_detection.json").read_text(encoding="utf-8") == final[
-        "raw_response"
-    ]
+
+    assert code == 0
+    assert (out / "review.json").is_file()
+    assert (out / "review_full.json").is_file()
+    assert not (out / "simple.json").exists()
+
+
+def test_llm_call_publishes_no_answer_when_the_provider_never_answered_in_json(
+    providers: Any, tmp_path: Path
+) -> None:
+    """An answer the processor could not parse leaves the run's record and no answer file.
+
+    The library keeps an answer's text only once it has parsed, so a non-JSON answer is a typed
+    ``INVALID_JSON`` failure with nothing to publish as the answer. ``<stem>_full.json`` still
+    holds the run — and the failure it carries — and the exit code is the failure's.
+    """
+    fake = providers(answers=["no json here", "no json either"])
+    out = tmp_path / "run"
+
+    code = tool_module("llm").main(
+        [
+            "--fixture",
+            f"casos/{CASE_TEXT.name}",
+            "--out",
+            str(out),
+            "call",
+            "--provider",
+            "ollama",
+            "--model",
+            "example-model",
+            "--task",
+            "extract",
+            "--template",
+            "simple_extract",
+            "--schema",
+            "simple",
+        ]
+    )
+
+    assert code == 1
+    assert len(fake.calls) == 2
+    assert not (out / "simple.json").exists()
+    assert not (out / "simple.txt").exists()
+    full = json.loads((out / "simple_full.json").read_text(encoding="utf-8"))
+    assert full["status"] == "FAILED"
+    assert full["errors"][0]["type"] == "INVALID_JSON"
+
+
+def test_llm_call_streams_the_answer_to_stderr_and_files_the_same_run(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--stream`` shows the answer arriving and records the body a waiting call would have got.
+
+    The deltas go to stderr under their channel's header while stdout stays the payload, so a pipe
+    keeps working, and the two step artifacts are the ones the same call writes without the switch.
+    """
+    providers()
+    out = tmp_path / "run"
+
+    code = tool_module("llm").main(
+        [
+            "--json",
+            "--fixture",
+            f"casos/{CASE_TEXT.name}",
+            "--out",
+            str(out),
+            "call",
+            "--provider",
+            "ollama",
+            "--model",
+            "example-model",
+            "--task",
+            "extract",
+            "--template",
+            "simple_extract",
+            "--schema",
+            "simple",
+            "--stream",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "[content]" in captured.err
+    assert "schema_valid" in captured.out
+    streamed = json.loads((out / "simple.json").read_text(encoding="utf-8"))
+    assert (
+        streamed
+        == json.loads((out / "final_result.json").read_text(encoding="utf-8"))[
+            "parsed_response"
+        ]
+    )
 
 
 def test_llm_call_fills_named_extra_placeholders_from_a_flag_and_a_file(

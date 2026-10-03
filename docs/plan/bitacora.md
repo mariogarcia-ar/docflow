@@ -2650,3 +2650,73 @@ pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
 | `_llm._options`: drop `_environment_options()` | 1 red — `test_llm_call_takes_its_decoding_options_from_the_configuration_file` | green |
 | `_cli.env_value`: consult the file before the process environment | 1 red — `test_a_real_environment_variable_beats_the_configuration_file` | green |
 | `_llm.default_assets_dir`: ignore `DOCFLOW_ASSETS_DIR` | 1 red — `test_the_asset_root_defaults_to_the_configuration_file` | green |
+
+## 2026-10-03 — Phase 1 · the LLM seam carries a stream, and the bench is rebuilt on it
+
+**Delivered.** The scratch probes under `scripts/tmpref/` — which reach a provider only through
+`docflow.llm.primitives` — proved the seam's shape for a call. Their lesson was not a new primitive
+but a missing connection: `ProviderCall.stream` and `ProviderCall.observer` existed, and no entry
+point *above* the seam could set them. The probes are scratch and are not the deliverable; the
+connection is.
+
+| File | Change |
+|---|---|
+| `src/docflow/llm/primitives/composition.py` | `STREAM_OPTION`, a **control option**: `normalize_llm_options` drops it, so a streamed call and a waiting one key the same request |
+| `src/docflow/llm/primitives/__init__.py` | `DeltaObserver` becomes a real alias — `StreamDelta` is defined before it — so a signature that names the observer is resolvable outside the seam |
+| `src/docflow/llm/entrypoints.py` | `process_llm_request`, `process_llm_node` and `execute_llm_graph` take `observer=`; `_plan_call` reads `options["stream"]` into the call it builds |
+| `src/docflow/llm/contracts.py` | `LLMInput.options` documents the switch |
+| `scripts/tools/_llm.py`, `llm.py`, `batch_llm.py` | deleted and written again: the layer owns the flags, the `@FILE` extras, `--stream`, `--name` and the two step artifacts a `call` publishes; the call, the answer and the wire shape stay the library's |
+| `docs/plan/issues/wbs-procesador-llm-call.md` | **reopened**: the fifteen owed status flips applied, the ID range unchanged, and §12 records this second pass |
+| `scripts/tools/readme.md`, `scripts/tools/quickstart.md` | the switch, `--name`, and both artifacts |
+| `docs/plan/subplan-scripts.md`, `docs/plan/issues/wbs-scripts.md` | the same three, in the bench's source of truth and its task rows |
+| `tests/llm/test_entrypoints.py`, `tests/test_lab_tools.py` | three library tests and three glue tests |
+
+**The publication, in the probes' shape.** `call` files `<stem>.json` — the **answer alone**, the
+object a later step reads back through `--extra KEY=@FILE` — and `<stem>_full.json`, the whole run,
+both through the library's atomic writer. That replaces `<stem>.json` (the raw response text) and
+`<stem>_results.json` (the run payload). `--name` pins the stem, which is the smaller remedy for the
+two-steps-one-name collision the layered extraction hit in the 2026-10-01 entry.
+
+**Hand run** (live Ollama, `gemma3:4b`, `--assets-dir registry`, `--stream --name detection`, on
+`casos/66cd35e9-….txt`):
+
+```
+[content] {...}                     the deltas on stderr, the payload on stdout
+status: SUCCESS · schema_valid: True · 1,168 in / 67 out
+detection.json        the answer alone, keys sorted; == final_result.json's parsed_response
+detection_full.json   byte-identical to final_result.json
+no *.tmp left behind
+```
+
+**Gate evidence.**
+
+```
+pytest                     807 passed
+ruff check .               All checks passed!
+ruff format --check .      1 file would be reformatted — the pre-existing registry/README.md
+                           block, present at HEAD and unrelated to this pass
+pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
+```
+
+`ruff format .` was run on the changed files only, and the one pre-existing block it would have
+rewritten (`registry/README.md`, a comment-alignment diff inside a fenced Python example) was
+reverted rather than carried along: a frozen artifact is not this pass's to reformat.
+
+**Mutation evidence** (five rows, each applied and restored by the inverse edit).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `normalize_llm_options`: keep `stream` among the keyed options | 1 red — `test_a_streamed_call_is_the_same_logical_request_as_a_waiting_one`; the two keys differ | green |
+| `_plan_call`: `observer=observer` → `observer=None` | 2 red — the single call's observer and the chain's, both fed nothing | green |
+| `_resolve_node`: drop the observer on the way into `process_llm_node` | 1 red — `test_every_node_that_reaches_the_provider_is_observed_and_a_reused_one_is_not`: 6 calls, 0 deltas | green |
+| `_llm._options`: drop the `--stream` switch | 1 red — `test_llm_call_streams_the_answer_to_stderr_and_files_the_same_run`: no `[content]` on stderr | green |
+| `_llm._artifact_stem`: ignore `--name` | 1 red — `test_llm_call_names_its_step_artifacts_when_the_caller_pins_one` | green |
+
+**Not fixed, and deliberately.** The bench publishes no answer file when the answer never parsed:
+the library keeps an answer's text only once it has parsed — `_call_provider` returns
+`raw_response=None` for `INVALID_JSON` — so there is nothing to file, and an empty file is the
+silent stand-in this project forbids. The probes could save the text because they held the
+`ProviderResponse` whole; keeping it here would be a change to `LLM-07`'s attempt record, and it is
+named in §12 of the reopened WBS rather than made silently. The pre-existing `ruff format` and
+`pylint` rows are untouched, and the two scratch folders (`scripts/tmp/`, `scripts/tmpref/`) are
+left where they are: they are the evidence for this pass and removing them is the plan owner's call.

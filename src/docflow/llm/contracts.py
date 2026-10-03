@@ -171,7 +171,9 @@ class LLMInput:
         images: Images to send, in order.
         extra_context: Additional values available to the template.
         schema: Schema identifier to validate the response against, or ``None``.
-        options: Provider and decoding options.
+        options: Provider and decoding options. ``options["stream"]`` asks to read the answer as it
+            is written; the processor reads it rather than passing it on, and it is deliberately
+            absent from the request key, because a streamed answer is the same answer.
         graph: The inference graph to execute, or ``None`` for a single call.
         metadata: Correlation metadata.
     """

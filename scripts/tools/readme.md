@@ -303,28 +303,35 @@ silent stand-in this project forbids — the check is a post-parse refusal, whic
 states one — and the value used is printed. The library itself has **no** default for
 `metadata["assets_dir"]`, and does not read that file.
 
-**Two artifacts per `call`, keyed by the schema.** The library names its own two files after the
+**Two artifacts per `call`, keyed by the step.** The library names its own two files after the
 run directory alone (`state.json`, `final_result.json`), so two `call`s over the *same* input land
 in the same directory and the second overwrites the first — exactly what the layered extraction
 does, running the detection gate and the base reading over one receipt. `call` therefore also
-files two artifacts whose names carry the step's identifier, the schema's last path component
-(`--schema extraction/invoice_detection` → `invoice_detection`):
+files two artifacts whose names carry the step's identifier: `--name` when the caller states one,
+the schema's last path component otherwise (`--schema extraction/invoice_detection` →
+`invoice_detection`):
 
 | File | Holds |
 |---|---|
-| `<stem>_results.json` | the run's result — the same payload `final_result.json` holds |
-| `<stem>.json` | the model's raw response, verbatim — the bytes the provider returned before any parsing |
+| `<stem>.json` | the answer alone — the parsed object, which is the file a later step reads back through `--extra KEY=@FILE` |
+| `<stem>_full.json` | the whole run — the same payload `final_result.json` holds |
 
 So the gate and the base reading sit side by side as `invoice_detection.json` and `invoice.json`
-instead of one overwriting the other. A call that states no `--schema` falls back to its
-`--template`, and one that produced no raw response writes no `<stem>.json` rather than an empty
-file. Only `call` publishes them: `graph`, `resume` and `fake` run the built-in chain, whose
-descriptor ignores `--schema`/`--template`, so a step name would claim assets the run never loaded.
+instead of one overwriting the other. Both files go through the library's atomic writer — a `.tmp`
+sibling, then a rename — so a reader never sees half an answer. A call that states no `--schema`
+falls back to its `--template`, and a call whose answer was never parsed — every attempt ending as
+an `INVALID_JSON` failure — writes no `<stem>.json` rather than an empty one: the typed failure is
+what `<stem>_full.json` holds. Only `call` publishes them: `graph`, `resume` and `fake` run the
+built-in chain, whose descriptor ignores `--schema`/`--template`, so a step name would claim assets
+the run never loaded.
 
-**The stem is the schema's last component, so two steps can collide.** `extraction/invoice` and
-`review/invoice` both end in `invoice`: run them into one `--out` and the second overwrites the
-first's answer — including when the second is reading that answer through `--extra`, which is why
-each step of the layered extraction takes a directory of its own.
+**The stem is the schema's last component, so two steps can collide — `--name` is the remedy.**
+`extraction/invoice` and `review/invoice` both end in `invoice`: run them into one `--out` and
+the second overwrites the first's answer — including when the second is *reading* that answer
+through `--extra`, which is the defect the layered extraction hit. A directory per step (`--out`)
+is one remedy and the bench's own flag; `--name review` is the smaller one — the two files are
+`review.json` and `review_full.json` however the schema is named, and a `--name` carrying a
+suffix states the same step (`review.json` and `review` are one name).
 
 **The bench reads `.env` for its optional settings.** `<repo root>/.env`, or the file
 `$DOCFLOW_ENV_FILE` names, supplies `DOCFLOW_ASSETS_DIR` and the `DOCFLOW_LLM_*` transport, window,
@@ -350,11 +357,20 @@ different name. Two Ollama keys are not model parameters but request fields — 
 model's thinking switch) and `keep_alive` (residency) — and the transport lifts them out of
 `options` to the top of the `/api/chat` body, which is where Ollama reads them.
 
+**`--stream` reads the answer as it is written.** The flag is a *control option*, not a second way
+to reach a provider: it joins the request's `options`, the processor reads it into the call, and the
+deltas are echoed to stderr under a header per channel — `[content]` for the answer, `[thinking]`
+for the trace a reasoning model writes first — while stdout stays the payload, so a pipe keeps
+working. What the run records is the body a waiting call would have received, which is why the
+switch is deliberately absent from the request key: a node answered over a stream is a node a later
+run still reuses. It is registered on every inference subcommand, `batch_llm.py` included, whose
+walk is sequential — one input's deltas never run into the next one's.
+
 **`--extra KEY=VALUE` fills the template's `<extra:KEY>` placeholder**, and may be repeated; the
 bare `<extra>` form renders the whole mapping at once. `KEY=@FILE` reads the value from a file
 instead of stating it inline, and that is what makes a layered template runnable from one shell: the
 step that consumes another step's answer points at the file `call` already wrote. Use `<stem>.json`
-— the raw response above — and not `<stem>_results.json`, which is the run's payload and would hand
+— the answer alone — and not `<stem>_full.json`, which is the run's payload and would hand
 the next model the runner's own bookkeeping. Nothing parses the value: `<extra:KEY>` inserts a
 string verbatim, so a saved answer needs no re-encoding. A key the template names and the caller
 leaves out stops the run at load with a `DEPENDENCY_ERROR` naming it, never as an empty block.
@@ -593,6 +609,9 @@ python scripts/tools/batch_llm.py tests/fixtures-txt/casos call \
   token spent. The refusal on a missing `--provider`/`--model` stands either way.
 - **`--assets-dir`** is the same flag with the same default as `llm.py`, and the resolved value is
   stated in the run header, exactly as `llm.py` states it.
+- **`--stream`** is the same switch as `llm.py`'s, on the same three inference commands. The walk is
+  sequential, so an input's deltas arrive under that input's own header and never run into the next
+  one's; the record filed for each input is the one a waiting call would have produced.
 - The third command is the honest failure the bench exists for: nothing is served on this machine,
   so **every** input returns a typed `MODEL_UNAVAILABLE` — each printed as `name: FAILED` with its
   own record, `files: 3 · succeeded: 0 · failed: 3`, exit `1`. The second, with `--fake`, is the

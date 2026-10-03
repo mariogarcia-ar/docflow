@@ -118,6 +118,11 @@ SCHEMA_SUBDIR: Final[str] = "schema"
 
 #: The option keys this processor reads out of the free-form ``options`` mapping.
 API_KEY_OPTION: Final[str] = "api_key"
+#: Whether to read the answer as it is written rather than wait for the whole of it. It is read
+#: into :attr:`~docflow.llm.primitives.ProviderCall.stream` and never sent as a decoding option —
+#: the transport states the wire's own ``stream`` field itself — and it does *not* participate in
+#: the request key, because the body a streamed call returns is the body a waiting one receives.
+STREAM_OPTION: Final[str] = "stream"
 TIMEOUT_OPTION: Final[str] = "timeout"
 MAX_ATTEMPTS_OPTION: Final[str] = "max_attempts"
 CONTEXT_WINDOW_OPTION: Final[str] = "context_window"
@@ -583,18 +588,25 @@ def normalize_llm_options(options: Mapping[str, Any]) -> dict[str, Any]:
     """Return the canonical form of the requested options.
 
     Two equivalent requests have to produce the same options — and therefore the same request key
-    — so the mapping is copied into a plain dict and the *credential* is removed. A key is
-    persisted in ``state.json`` and ``final_result.json``; an API key must never be in either, and
-    two calls that differ only in the credential are the same logical request.
+    — so the mapping is copied into a plain dict and two values are removed. The *credential* is
+    one: a key is persisted in ``state.json`` and ``final_result.json``, an API key must never be
+    in either, and two calls that differ only in the credential are the same logical request. The
+    *stream switch* is the other: reading an answer as it is written returns the same body as
+    waiting for it, so a node answered over a stream is one a later run may still reuse.
 
     Args:
         options: The raw options as requested.
 
     Returns:
-        A new mapping with ``api_key`` absent. Key *order* is not fixed here — the key formula
-        serializes canonically — and the credential is the only value deliberately dropped.
+        A new mapping with ``api_key`` and ``stream`` absent. Key *order* is not fixed here — the
+        key formula serializes canonically — and those two are the only values deliberately
+        dropped.
     """
-    return {key: value for key, value in options.items() if key != API_KEY_OPTION}
+    return {
+        key: value
+        for key, value in options.items()
+        if key not in (API_KEY_OPTION, STREAM_OPTION)
+    }
 
 
 def max_attempts(options: Mapping[str, Any]) -> int:

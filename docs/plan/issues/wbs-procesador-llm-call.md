@@ -7,9 +7,16 @@
 | Derived from | `docs/plan/subplan-procesador-llm-call.md` §4 (WBS table, waves) |
 | Source of truth | `docs/plan/subplan-procesador-llm-call.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `LLM-01` … `LLM-15` |
-| Status | All issues `NOT_STARTED` |
+| Status | `LLM-01` … `LLM-15` **DONE** (delivered 2026-09-26); **reopened 2026-10-03** — the streaming seam, §12 |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-llm-call.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
+
+> **Reopened.** The header said `NOT_STARTED` for all fifteen tasks; that was the owed flip
+> `docs/plan/bitacora.md` (2026-09-26) records — the tasks were delivered, and a WBS is a frozen
+> artifact, so flipping one is a plan revision. This pass makes that revision **and** reopens the
+> document, because the seam those tasks froze was extended afterwards. §12 is the second pass; the
+> §2 index carries the corrected status per task. The ID range is unchanged: the second pass is a
+> pass over rows that already exist, not new scope.
 
 ## 1. Summary
 
@@ -28,21 +35,21 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 
 | ID | Task (short) | Effort | Wave | Depends on | Deliverable artifact(s) | Issue file | Status |
 |---|---|---|---|---|---|---|---|
-| LLM-01 | Contract dataclasses | S | 1 — Contracts & primitives | — | `LLMInput`, `LLMResult`, `LLMNodeResult`, `LLMGraphState`, `LLMAttempt`, `ComparisonResult`, `Usage`, `Timing`, stage-state enums | this file §LLM-01 | NOT_STARTED |
-| LLM-02 | Provider primitive interface + result/error types | S | 1 — Contracts & primitives | LLM-01 | `llm/primitives/`, `LLMProvider` types | this file §LLM-02 | NOT_STARTED |
-| LLM-03 | In-memory fake provider + fixtures | S | 1 — Contracts & primitives | LLM-02 | `fixtures/llm/template/simple_extract.md`, `fixtures/llm/schema/simple.schema.json`, fake provider | this file §LLM-03 | NOT_STARTED |
-| LLM-04 | Template render & prompt build | M | 1 — Contracts & primitives | LLM-01 | variable injection, `<doc>`/`<extra>`/`<extra:key>`/`<schema>` resolution in a single pass, sanitize | this file §LLM-04 | NOT_STARTED |
-| LLM-05 | `calculate_request_key` + idempotency helpers | M | 1 — Contracts & primitives | LLM-01 | `calculate_request_key`, `find_reusable_node_result`, `is_node_reusable`, `validate_cached_result` | this file §LLM-05 | NOT_STARTED |
-| LLM-06 | `process_llm_request` single-call happy path | M | 2 — Single call | LLM-03, LLM-04, LLM-05 | `process_llm_request` | this file §LLM-06 | NOT_STARTED |
-| LLM-07 | Parse + schema validation | M | 2 — Single call | LLM-06 | `load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result` | this file §LLM-07 | NOT_STARTED |
-| LLM-08 | Retry + attempt history | M | 2 — Single call | LLM-07 | `retry_llm_request`, `should_retry`, `increment_attempt` | this file §LLM-08 | NOT_STARTED |
-| LLM-09 | Provider primitives: Ollama + OpenAI-compatible | L | 2 — Single call | LLM-02 | `generate_text`, `generate_multimodal`, `generate_structured`, `list_models`, `check_model_available`, `get_context_window` | this file §LLM-09 | NOT_STARTED |
-| LLM-10 | Node execution | M | 3 — Linear chain | LLM-06 | `process_llm_node`, node-state transitions (`claim_node` deferred) | this file §LLM-10 | NOT_STARTED |
-| LLM-11 | Graph persistence in `llm/` | L | 3 — Linear chain | LLM-01 | `llm/run_001/{state.json, final_result.json}`, atomic writes, load/save `LLMGraphState` | this file §LLM-11 | NOT_STARTED |
-| LLM-12 | `execute_llm_graph` | L | 3 — Linear chain | LLM-10, LLM-11 | fixed chain order, node reuse, completion detection | this file §LLM-12 | NOT_STARTED |
-| LLM-13 | Node reuse on restart | L | 3 — Linear chain | LLM-12 | resume over the saved chain state: `REUSED` nodes, pending nodes executed | this file §LLM-13 | NOT_STARTED |
-| LLM-14 | Per-field comparison + consolidation | M | 3 — Linear chain | LLM-12 | `compare_outputs` (`calculate_consensus` deferred) | this file §LLM-14 | NOT_STARTED |
-| LLM-15 | Usage, timing and context-window control | M | 2 — Single call | LLM-06 | `count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded` | this file §LLM-15 | NOT_STARTED |
+| LLM-01 | Contract dataclasses | S | 1 — Contracts & primitives | — | `LLMInput`, `LLMResult`, `LLMNodeResult`, `LLMGraphState`, `LLMAttempt`, `ComparisonResult`, `Usage`, `Timing`, stage-state enums | this file §LLM-01 | DONE |
+| LLM-02 | Provider primitive interface + result/error types | S | 1 — Contracts & primitives | LLM-01 | `llm/primitives/`, `LLMProvider` types | this file §LLM-02 | DONE |
+| LLM-03 | In-memory fake provider + fixtures | S | 1 — Contracts & primitives | LLM-02 | `fixtures/llm/template/simple_extract.md`, `fixtures/llm/schema/simple.schema.json`, fake provider | this file §LLM-03 | DONE |
+| LLM-04 | Template render & prompt build | M | 1 — Contracts & primitives | LLM-01 | variable injection, `<doc>`/`<extra>`/`<extra:key>`/`<schema>` resolution in a single pass, sanitize | this file §LLM-04 | DONE |
+| LLM-05 | `calculate_request_key` + idempotency helpers | M | 1 — Contracts & primitives | LLM-01 | `calculate_request_key`, `find_reusable_node_result`, `is_node_reusable`, `validate_cached_result` | this file §LLM-05 | DONE |
+| LLM-06 | `process_llm_request` single-call happy path | M | 2 — Single call | LLM-03, LLM-04, LLM-05 | `process_llm_request` | this file §LLM-06 | DONE |
+| LLM-07 | Parse + schema validation | M | 2 — Single call | LLM-06 | `load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result` | this file §LLM-07 | DONE |
+| LLM-08 | Retry + attempt history | M | 2 — Single call | LLM-07 | `retry_llm_request`, `should_retry`, `increment_attempt` | this file §LLM-08 | DONE |
+| LLM-09 | Provider primitives: Ollama + OpenAI-compatible | L | 2 — Single call | LLM-02 | `generate_text`, `generate_multimodal`, `generate_structured`, `list_models`, `check_model_available`, `get_context_window` | this file §LLM-09 | DONE |
+| LLM-10 | Node execution | M | 3 — Linear chain | LLM-06 | `process_llm_node`, node-state transitions (`claim_node` deferred) | this file §LLM-10 | DONE |
+| LLM-11 | Graph persistence in `llm/` | L | 3 — Linear chain | LLM-01 | `llm/run_001/{state.json, final_result.json}`, atomic writes, load/save `LLMGraphState` | this file §LLM-11 | DONE |
+| LLM-12 | `execute_llm_graph` | L | 3 — Linear chain | LLM-10, LLM-11 | fixed chain order, node reuse, completion detection | this file §LLM-12 | DONE |
+| LLM-13 | Node reuse on restart | L | 3 — Linear chain | LLM-12 | resume over the saved chain state: `REUSED` nodes, pending nodes executed | this file §LLM-13 | DONE |
+| LLM-14 | Per-field comparison + consolidation | M | 3 — Linear chain | LLM-12 | `compare_outputs` (`calculate_consensus` deferred) | this file §LLM-14 | DONE |
+| LLM-15 | Usage, timing and context-window control | M | 2 — Single call | LLM-06 | `count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded` | this file §LLM-15 | DONE |
 
 > The subplan records LLM-01, LLM-02 and LLM-03 as `S`; LLM-04 … LLM-08, LLM-10, LLM-14, LLM-15 as `M`; and LLM-09, LLM-11, LLM-12, LLM-13 as `L`.
 
@@ -381,3 +388,47 @@ It is critical because the contracts (LLM-01) and the provider seam (LLM-02) pre
 - Domain-specific extraction rules; prompts and schemas are data assets, not code.
 - Observability/telemetry beyond per-attempt `usage` / `timing` records.
 - The inference subgraph's dynamic machinery: `claim_node` and multi-worker claims, parallel branches, per-node `SKIP` / `FORCE` / `INVALIDATE`, `request_graph_stop`, `resume_llm_graph`, `invalidate_downstream_nodes`, the per-node artifact tree and `calculate_consensus` — deferred to the MVP gate and tagged `# TODO: [MVP]` in `LLM-10`…`LLM-14`.
+
+## 12. Second pass — the streaming seam (`LLM-02`, `LLM-06`, `LLM-10`, `LLM-12`)
+
+Reopened 2026-10-03, after the probes under `scripts/tmpref/` were run against live models. The
+probes are scratch and not part of the deliverable; what they proved is that reading an answer as it
+is written is a property of the *call*, not an eighth primitive and not a second transport — the
+shape :class:`~docflow.llm.primitives.ProviderCall` already carried, and which nothing above the seam
+could reach.
+
+**What was wrong.** `ProviderCall.stream` and `ProviderCall.observer` were added to the seam, and
+`process_llm_request`, `process_llm_node` and `execute_llm_graph` built their calls without them.
+A caller that reached `docflow.llm.primitives` directly could watch a reasoning model think; a
+caller that went through the processor — which is every caller the architecture allows — could not.
+
+**Scope of the pass.** No task ID is added and no task is re-scoped: this is a pass over four rows
+that already exist.
+
+| Row | What the pass changed |
+|---|---|
+| `LLM-02` | `stream` is a *control option*: it is read out of `options` into the call, is stripped from the decoding options handed to the provider, and is **absent from `request_key`** — a streamed answer is the same answer, so a node answered over a stream stays reusable by the next run. `DeltaObserver` becomes a real alias rather than a forward reference, so a signature that names it is resolvable outside the seam |
+| `LLM-06` | `process_llm_request(request, *, observer=None)` hands the observer to the call it plans |
+| `LLM-10` | `process_llm_node(node_config, state, *, observer=None)`, the same way |
+| `LLM-12` | `execute_llm_graph(request, *, observer=None)` passes it to every node that runs; a `REUSED` node reaches no provider and so watches nothing |
+
+**The bench.** The lab bench is `SCR-05` / `SCR-15` in
+[`wbs-scripts.md`](wbs-scripts.md), not here, and its rows are amended there. It was rebuilt in the
+same pass, because a seam only a scratch probe can reach is not a seam the project has: the three
+modules (`scripts/tools/_llm.py`, `llm.py`, `batch_llm.py`) were deleted and written again, so the
+layer owns the flags, the `@FILE` extras, the stream switch and the naming of the two step artifacts
+a `call` publishes, while the call, the answer and the wire shape stay the library's. `--name` pins
+the step's stem, and the two artifacts are `<stem>.json` (the answer alone — the object a later step
+reads back through `--extra KEY=@FILE`) and `<stem>_full.json` (the whole run), both published
+through the library's atomic writer.
+
+**Evidence.** `pytest` 807 passed · `ruff check .` clean · `ruff format --check .` clean ·
+`pylint src tests` 10.00/10 with the one pre-existing `docflow/pdf/entrypoints.py` `R0912`.
+Three invariants were mutation-falsified (mutate → observe red → restore → observe green): the
+stream switch is absent from `request_key`; the observer is fed on both the single-call and the
+chain path, and a reused node is not; `--name` decides the published stem.
+
+**Not claimed.** The bench's `call` publishes no answer file when the answer never parsed — the
+library keeps an answer's text only once it has parsed, so the typed `INVALID_JSON` failure is what
+`<stem>_full.json` holds. Keeping the unparsed text is a change to `LLM-07`'s attempt record and is
+deliberately not made here.

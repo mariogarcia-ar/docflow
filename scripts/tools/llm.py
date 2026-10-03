@@ -7,9 +7,11 @@ code — lives in :mod:`scripts.tools._cli`, and the eight methods themselves li
 that are about an input.
 
 ``--provider`` and ``--model`` are required on every inference subcommand: a default model is
-exactly the silent stand-in this project forbids. The ``fake`` subcommand installs the committed
-scripted provider at the provider seam and then demonstrates the chain and its resume path twice —
-with no model reached and no token spent.
+exactly the silent stand-in this project forbids. ``--stream`` reads the answer as it is written,
+echoing a reasoning model's trace and its answer to stderr while stdout stays the payload; the body
+the run records is the one a waiting call would have received. The ``fake`` subcommand installs the
+committed scripted provider at the provider seam and then demonstrates the chain and its resume
+path twice — with no model reached and no token spent.
 """
 
 from __future__ import annotations

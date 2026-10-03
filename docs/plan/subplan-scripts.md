@@ -236,6 +236,17 @@ schemas) and the resolved value is printed; the library itself has **no** defaul
 `metadata["assets_dir"]` and this tool does not invent one for the library, it states the
 bench's own root.
 
+`--stream` is a *control option* on every inference subcommand, the batch tool included: it joins
+`options`, the processor reads it into the call, and the deltas are echoed to stderr under a
+`[thinking]` / `[content]` header while stdout stays the payload. The body the run records is the
+one a waiting call would have received, so the switch stays out of `request_key`. `call` also files
+the two step artifacts — `<stem>.json`, the answer alone, and `<stem>_full.json`, the whole run —
+named after the schema's last path component or `--name`, and published through the library's
+atomic writer.
+
+*(The streaming switch and the two step artifacts were added in the second pass of 2026-10-03:
+`docs/plan/issues/wbs-procesador-llm-call.md` §12.)*
+
 **`workflow.py`** — reaches the four processors only through their public contracts:
 
 | Subcommand | Calls | Notes |

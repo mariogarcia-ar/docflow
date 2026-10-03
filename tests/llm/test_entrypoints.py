@@ -27,6 +27,8 @@ from docflow.llm.entrypoints import (
 )
 from docflow.llm.primitives import (
     INFERENCE_CHAIN,
+    STREAM_OPTION,
+    StreamDelta,
     default_inference_graph,
 )
 from docflow.states import StageState
@@ -194,6 +196,59 @@ def test_the_same_logical_request_keys_the_same_across_two_runs(
     assert first_attempt.attempt_id == second_attempt.attempt_id
     assert first.run_id != second.run_id
     assert first.metadata["prompt_tokens"] == second.metadata["prompt_tokens"]
+
+
+def test_a_streamed_call_is_the_same_logical_request_as_a_waiting_one(
+    tmp_path: Path,
+) -> None:
+    """Invariant: reading an answer as it is written does not change the request it answers.
+
+    *Mutation that breaks it:* stop dropping ``stream`` in
+    :func:`docflow.llm.primitives.normalize_llm_options` — let it hash with the rest of the
+    options — and the two runs below, which differ only in whether they stream, disagree on
+    ``request_key``. A streamed answer is the same answer, so a node one run streamed has to stay
+    reusable by the next; the observer also has to be fed, and the deltas it is fed have to be the
+    answer the call returned.
+    """
+    seen: list[StreamDelta] = []
+
+    def observe(delta: StreamDelta) -> None:
+        seen.append(delta)
+
+    waiting = process_llm_request(build_input(output_dir=tmp_path / "a"))
+    streamed = process_llm_request(
+        build_input(
+            output_dir=tmp_path / "b", options={STREAM_OPTION: True, "temperature": 0.0}
+        ),
+        observer=observe,
+    )
+
+    assert seen
+    assert "".join(delta.text for delta in seen) == streamed.raw_response
+    assert streamed.attempts[0].request_key == waiting.attempts[0].request_key
+    assert streamed.metadata["request_key"] == waiting.metadata["request_key"]
+    assert streamed.raw_response == waiting.raw_response
+    assert streamed.parsed_response == waiting.parsed_response
+
+
+def test_the_stream_switch_is_not_handed_to_the_provider_as_a_decoding_option(
+    provider: Callable[..., FakeProvider], tmp_path: Path
+) -> None:
+    """``stream`` selects how the answer is read; the transport states the wire field itself."""
+    fake = provider()
+
+    process_llm_request(
+        build_input(
+            output_dir=tmp_path, options={STREAM_OPTION: True, "temperature": 0.0}
+        ),
+        observer=lambda delta: None,
+    )
+
+    call = fake.calls[0]
+    assert call.stream is True
+    assert call.observer is not None
+    assert "stream" not in call.options
+    assert call.options["temperature"] == 0.0
 
 
 def test_a_retryable_invalid_answer_is_retried_and_the_prior_attempt_is_kept(
@@ -461,6 +516,39 @@ def test_a_resumed_chain_reuses_every_valid_node_and_calls_the_provider_for_none
         node_result.status == StageState.SUCCESS
         for node_result in second.node_results.values()
     )
+
+
+def test_every_node_that_reaches_the_provider_is_observed_and_a_reused_one_is_not(
+    provider: Callable[..., FakeProvider], tmp_path: Path
+) -> None:
+    """An observer follows the chain, and stops at the nodes a resume reused.
+
+    *Mutation that breaks it:* drop ``observer=observer`` on the way from
+    :func:`execute_llm_graph` through :func:`_resolve_node` into :func:`process_llm_node` — the
+    chain runs, the provider answers, and ``first_seen`` is empty. The second half is the other
+    side of the same rule: a ``REUSED`` node reaches no provider, so nothing arrives to watch.
+    """
+    output = tmp_path / "run_001"
+    first_seen: list[StreamDelta] = []
+    first_fake = provider()
+    first = process_llm_request(
+        build_graph_input(output, options={STREAM_OPTION: True, "temperature": 0.0}),
+        observer=first_seen.append,
+    )
+
+    resumed_seen: list[StreamDelta] = []
+    resumed = provider()
+    second = process_llm_request(
+        build_graph_input(output, options={STREAM_OPTION: True, "temperature": 0.0}),
+        observer=resumed_seen.append,
+    )
+
+    assert first.status == StageState.SUCCESS
+    assert len(first_seen) == len(first_fake.calls) > 0
+    assert second.metadata["node_actions"] == dict.fromkeys(INFERENCE_CHAIN, "REUSE")
+    assert resumed.calls == []
+    assert not resumed_seen
+    assert second.raw_response == first.raw_response
 
 
 def test_a_chain_interrupted_by_a_failed_node_resumes_without_repeating_the_valid_ones(

@@ -291,6 +291,17 @@ against that step's rules rather than against what looks plausible. `--run-id` i
 pinned — it is what makes `resume` a resume rather than a fresh call, and it is required by `fake`,
 whose whole point is showing a graph and its resume under one identity.
 
+**`--stream`** reads an answer as it is written instead of waiting for the whole of it: a reasoning
+review takes minutes, and this is what shows whether it is thinking or stuck. The model's trace and
+its answer go to stderr under a `[thinking]` / `[content]` header, so stdout — and the files — stay
+the finished answer.
+
+**`--name`** (on `call`) is the base name of the two step artifacts a `call` files: `<name>.json` is
+the answer alone — the object a later step reads back through `--extra KEY=@FILE` — and
+`<name>_full.json` is the whole run. Without `--name` the step is keyed by the schema's last path
+component, so `--name review` is how two steps that share a schema name (`extraction/invoice` and
+`review/invoice`) stop overwriting each other.
+
 **Or state them once in `.env`.** `<repo root>/.env` — `cp .env.example .env` — supplies
 `DOCFLOW_ASSETS_DIR`, the endpoint, the credential, the timeout and the decoding options, so
 `--option num_ctx=16384 --option timeout=600` stops being retyped on every command. A real
@@ -346,6 +357,20 @@ python scripts/tools/llm.py --run-id demo --out var/demo \
 ```
 
 `node`, `status`, `models` and `tokens` publish nothing.
+
+`call` on a real model, watched as it answers — the deltas on stderr, stdout and the two files
+unchanged:
+
+```bash
+python scripts/tools/llm.py call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+    --provider ollama --model deepseek-r1:8b --task review --template review/invoice \
+    --schema review/invoice --stream --name review \
+    --extra proposal=@var/run/reading/invoice.json \
+    --option temperature=0.6 --option num_ctx=16384 --timeout 300
+```
+
+That writes `review.json` (the answer alone) and `review_full.json` (the run) beside the run's own
+`state.json` and `final_result.json`, whatever the schema was called.
 
 ### A folder
 

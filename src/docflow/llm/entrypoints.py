@@ -17,6 +17,13 @@ Three shapes of one workflow:
 * :func:`execute_llm_graph` — the fixed linear chain, node by node, reusing what a previous run
   already paid for and consolidating the nodes into one result.
 
+**Streaming.** Reading an answer as it is written is a property of the *call*, not a fourth entry
+point: ``request.options["stream"]`` asks for it and the ``observer`` argument watches it arrive.
+The three shapes above each take an observer and hand it to every provider call they make, and the
+body they return is the body a waiting caller receives — an observer changes when an answer is
+available, never what it is. That is why the switch is a control option and why it is not in the
+request key: a node answered over a stream is a node a later run still reuses.
+
 Nothing here decides anything documental: which document to process, whether OCR runs, which
 source wins and whether the LLM stage runs at all belong to the orchestrator, and this processor
 reaches no other processor to ask.
@@ -59,6 +66,8 @@ from docflow.llm.contracts import (
 )
 from docflow.llm.primitives import (
     API_KEY_OPTION,
+    STREAM_OPTION,
+    DeltaObserver,
     ModelQuery,
     ProviderCall,
     build_inference_plan,
@@ -77,6 +86,7 @@ PROCESSOR_VERSION: Final[str] = "0.0.0"
 CONTROL_OPTIONS: Final[frozenset[str]] = frozenset(
     {
         API_KEY_OPTION,
+        STREAM_OPTION,
         "base_url",
         "timeout",
         "max_attempts",
@@ -132,12 +142,20 @@ def _provider_options(request: LLMInput) -> dict[str, Any]:
     }
 
 
-def _plan_call(request: LLMInput, node_id: str | None) -> PlannedCall:
+def _plan_call(
+    request: LLMInput, node_id: str | None, *, observer: DeltaObserver | None = None
+) -> PlannedCall:
     """Render, measure and key one inference, without reaching a provider.
+
+    The stream switch is read out of the request's options here rather than travelling beside
+    them, so one statement decides both the call's transport and its :class:`ProviderCall`. The
+    observer is not part of the request, and cannot be: it is a callback, and the request is data
+    that is hashed. It changes when a streaming answer arrives, never what it is.
 
     Args:
         request: The request to plan.
         node_id: The node it belongs to, or ``None``.
+        observer: Called once per delta while the call arrives, when the request asks to stream.
 
     Returns:
         The plan.
@@ -188,6 +206,8 @@ def _plan_call(request: LLMInput, node_id: str | None) -> PlannedCall:
             options=_provider_options(request),
             schema=schema,
             timeout=primitives.request_timeout(request.options),
+            stream=bool(request.options.get(STREAM_OPTION, False)),
+            observer=observer,
         ),
         schema=schema,
         attempt_limit=primitives.max_attempts(request.options),
@@ -469,13 +489,18 @@ def _publish_result(output_dir: Path | None, result: LLMResult) -> LLMError | No
     return None
 
 
-def process_llm_request(request: LLMInput) -> LLMResult:
+def process_llm_request(
+    request: LLMInput, *, observer: DeltaObserver | None = None
+) -> LLMResult:
     """Execute one LLM/VLM inference, or the inference chain when the request declares one.
 
     Args:
         request: The inference to perform, its provider and model, its template and the schema the
             response is validated against. A request carrying a ``graph`` descriptor runs the fixed
-            linear chain instead of one call.
+            linear chain instead of one call. ``options["stream"]`` asks to read every answer as it
+            is written.
+        observer: Called once per delta while a streaming answer arrives, or ``None`` to stream
+            unwatched. Ignored by a request that does not state ``options["stream"]``.
 
     Returns:
         The result, carrying every attempt made, the validation outcome and the token accounting.
@@ -484,17 +509,19 @@ def process_llm_request(request: LLMInput) -> LLMResult:
         and is never raised across the contract.
     """
     if request.graph is not None:
-        return execute_llm_graph(request)
-    return _single_call(request)
+        return execute_llm_graph(request, observer=observer)
+    return _single_call(request, observer=observer)
 
 
-def _single_call(request: LLMInput) -> LLMResult:
+def _single_call(
+    request: LLMInput, *, observer: DeltaObserver | None = None
+) -> LLMResult:
     """Execute one inference, with retries, and persist its result when asked to."""
     started = perf_counter()
     run_id = primitives.pinned_run_id(request) or _mint_run_id()
     output_dir = primitives.output_dir_for(request)
     try:
-        planned = _plan_call(request, None)
+        planned = _plan_call(request, None, observer=observer)
     except primitives.LLMPrimitiveError as failure:
         return _failed_result(
             request, run_id, failure.error, elapsed=perf_counter() - started
@@ -589,6 +616,8 @@ def _node_request(node_config: dict[str, Any], state: LLMGraphState) -> LLMInput
 def process_llm_node(
     node_config: dict[str, Any],
     state: LLMGraphState,
+    *,
+    observer: DeltaObserver | None = None,
 ) -> LLMNodeResult:
     """Execute one node of the inference graph and record it into the chain state.
 
@@ -601,6 +630,7 @@ def process_llm_node(
             ``depends_on`` — and the graph's own ``request``.
         state: The graph state to read the node's dependencies from and record the node's outcome
             into.
+        observer: Called once per delta while a streaming answer arrives, or ``None``.
 
     Returns:
         The node result. Its ``request_key`` is the one the call recorded; a node that failed
@@ -613,11 +643,11 @@ def process_llm_node(
     state.node_states[node_id] = StageState.RUNNING
     state.current_nodes = [node_id]
     try:
-        planned = _plan_call(request, node_id)
+        planned = _plan_call(request, node_id, observer=observer)
     except primitives.LLMPrimitiveError as failure:
         state.current_nodes = []
         return _record_node(state, node_id, "", failure.error)
-    result = _single_call(request)
+    result = _single_call(request, observer=observer)
     state.current_nodes = []
     if result.status == StageState.FAILED:
         return _record_node(
@@ -719,7 +749,9 @@ def _comparisons_for(plan: Any, state: LLMGraphState) -> dict[str, Any]:
     return comparisons
 
 
-def execute_llm_graph(request: LLMInput) -> LLMResult:
+def execute_llm_graph(
+    request: LLMInput, *, observer: DeltaObserver | None = None
+) -> LLMResult:
     """Run the request's inference chain, reusing the nodes it may and consolidating the rest.
 
     The chain runs in the order the descriptor declares, which is the order that satisfies every
@@ -732,6 +764,8 @@ def execute_llm_graph(request: LLMInput) -> LLMResult:
     Args:
         request: The request, carrying the graph descriptor in ``graph`` and the run's namespace in
             ``metadata["output_dir"]``.
+        observer: Called once per delta while a streaming answer arrives, or ``None``. It is handed
+            to every node that runs; a reused node reaches no provider and therefore writes nothing.
 
     Returns:
         The consolidated result: one node result per node that ran or was reused, the run's
@@ -758,7 +792,7 @@ def execute_llm_graph(request: LLMInput) -> LLMResult:
             "schema": node.schema,
             "request": request,
         }
-        action, node_result = _resolve_node(node_config, state)
+        action, node_result = _resolve_node(node_config, state, observer=observer)
         node_actions[node.node_id] = action
         if node_result.status == StageState.FAILED:
             break
@@ -815,13 +849,17 @@ def _resumed_state(output_dir: Path | None, run_id: str, plan: Any) -> LLMGraphS
 
 
 def _resolve_node(
-    node_config: dict[str, Any], state: LLMGraphState
+    node_config: dict[str, Any],
+    state: LLMGraphState,
+    *,
+    observer: DeltaObserver | None = None,
 ) -> tuple[str, LLMNodeResult]:
     """Return ``(action, node_result)`` for one node: reuse it, or execute it.
 
     Args:
         node_config: The node's definition and the graph's request.
         state: The chain state.
+        observer: Called once per delta while a streaming answer arrives, or ``None``.
 
     Returns:
         ``("REUSE", result)`` when a valid result under the same key already exists, and
@@ -829,17 +867,19 @@ def _resolve_node(
     """
     node_id = str(node_config["node_id"])
     try:
-        planned = _plan_call(_node_request(node_config, state), node_id)
+        planned = _plan_call(
+            _node_request(node_config, state), node_id, observer=observer
+        )
     except primitives.LLMPrimitiveError:
         # The node cannot even be planned, so there is no key to look a reuse up under; executing
         # it is what turns that into a typed FAILED node result.
-        return "EXECUTE", process_llm_node(node_config, state)
+        return "EXECUTE", process_llm_node(node_config, state, observer=observer)
 
     reusable = primitives.find_reusable_node_result(state, node_id, planned.request_key)
     if reusable is not None:
         state.node_states[node_id] = StageState.REUSED
         return "REUSE", reusable
-    return "EXECUTE", process_llm_node(node_config, state)
+    return "EXECUTE", process_llm_node(node_config, state, observer=observer)
 
 
 def _consolidate(

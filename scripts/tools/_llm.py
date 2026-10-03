@@ -1,4 +1,4 @@
-"""The LLM bench's shared command layer (``SCR-15``).
+"""The LLM bench's shared command layer (``SCR-15``), reshaped after ``scripts/tmpref``.
 
 ``llm.py`` runs one input and ``batch_llm.py`` runs a folder tree: two callers of the same methods.
 This module holds them, so neither tool owns a second copy of a payload, a flag or a request — the
@@ -9,6 +9,21 @@ It is **not** a tool: it has no ``main``, it prints nothing, and it is never inv
 method does the work and returns the payload; the caller decides whether that becomes stdout
 (:mod:`_cli`'s printers) or a file beside the artifacts. The processor's typed failures are raised,
 never caught here — a tool prints them and exits ``1``.
+
+**What this layer owns, and what it does not.** The call is the library's: the request is a
+:class:`~docflow.llm.LLMInput`, the inference is :func:`docflow.llm.process_llm_request`, and the
+answer is read out of the result's own ``parsed_response``. What is left here is the CLI's surface
+— the flags, the ``@FILE`` extras, the stream switch, and the naming and filing of the two files a
+``call`` publishes. Nothing here speaks HTTP, and nothing here re-decides a wire shape the seam
+already fixed.
+
+**Streaming.** ``--stream`` is the seam's own switch rather than a second way to reach a provider.
+The flag joins the request's ``options``; the processor reads that option into
+:attr:`~docflow.llm.primitives.ProviderCall.stream` and hands the call the observer below, so a
+reasoning model's trace and its answer are echoed to stderr under a ``[thinking]`` / ``[content]``
+header while stdout stays the payload. The body the run records is the body a waiting call would
+have received — the two files are the same either way — which is why the switch is a control
+option and not part of the request key.
 
 It carries the lab-bench exception of ``subplan-scripts.md`` §3.2 for its own processor: it may
 drive ``docflow.llm.primitives``.
@@ -21,8 +36,11 @@ the silent stand-in this project forbids, and the refusal is a post-parse check
 from __future__ import annotations
 
 import argparse
+import json
 import os
-from collections.abc import Callable, Sequence
+import sys
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Final
@@ -30,9 +48,9 @@ from typing import Any, Final
 import _cli
 
 from docflow import llm as llm_processor
-from docflow.llm import LLMGraphState, LLMInput, primitives
+from docflow.llm import LLMGraphState, LLMInput, LLMResult, primitives
 from docflow.llm.contracts import Usage
-from docflow.llm.primitives import persistence
+from docflow.llm.primitives import StreamDelta, persistence
 from docflow.states import StageState
 from tests.fakes.engines.fake_provider import FakeProvider
 
@@ -56,6 +74,10 @@ SUFFIXES: Final[tuple[str, ...]] = (".txt", ".md")
 #: The asset root the template and schema identifiers resolve against by default. The library has no
 #: default for ``metadata["assets_dir"]``; the bench states this one and prints the resolved value.
 DEFAULT_ASSETS_DIR: Final[Path] = _cli.FIXTURES_ROOT / "llm"
+
+#: The suffixes a step name may carry into ``--name`` and must not keep: the two artifacts append
+#: their own, so ``--name reading.json`` and ``--name reading`` have to mean the same step.
+NAME_SUFFIXES: Final[tuple[str, ...]] = (".json", ".txt")
 
 #: The ``.env`` names the bench honors, each mapped to the option it sets. Only settings that are
 #: **optional** on the command line are here: ``--provider`` and ``--model`` stay required flags, so
@@ -104,6 +126,66 @@ Payload = dict[str, Any]
 Command = Callable[[argparse.Namespace, argparse.ArgumentParser, Path, Path], Payload]
 
 
+class _Echo:
+    """Echo a streaming answer to stderr, under a header per channel.
+
+    A reasoning model writes on two channels — its trace and its answer — and the header is what
+    tells them apart on a terminal that receives them interleaved. Nothing is written until a
+    channel's first delta arrives, so a call that streams nothing echoes nothing.
+    """
+
+    def __init__(self) -> None:
+        """Start an echo that has shown no channel yet."""
+        self._shown: set[str] = set()
+
+    def __call__(self, delta: StreamDelta) -> None:
+        """Write one delta, opening its channel's header the first time it speaks."""
+        if delta.channel not in self._shown:
+            self._shown.add(delta.channel)
+            print(f"\n[{delta.channel}] ", end="", file=sys.stderr, flush=True)
+        print(delta.text, end="", file=sys.stderr, flush=True)
+
+    def close(self) -> None:
+        """End the line the last delta left open, when any delta was written."""
+        if self._shown:
+            print(file=sys.stderr)
+
+
+@contextmanager
+def _watched(args: argparse.Namespace) -> Iterator[_Echo | None]:
+    """Watch a streaming answer arrive while the block reaches a provider.
+
+    The observer is built here and closed here, so a call that raises — an interrupt, a typed
+    failure from the seam — still ends the line it left open.
+
+    Args:
+        args: The parsed flags, carrying the stream switch.
+
+    Yields:
+        The observer to hand to the call, or ``None`` when ``--stream`` was not stated.
+    """
+    echo = _Echo() if args.stream else None
+    try:
+        yield echo
+    finally:
+        if echo is not None:
+            echo.close()
+
+
+def _send(request: LLMInput, args: argparse.Namespace) -> LLMResult:
+    """Send one request through the processor, echoing the answer while it arrives.
+
+    Args:
+        request: The inference to perform.
+        args: The parsed flags, carrying the stream switch.
+
+    Returns:
+        The processor's result: the answer, its validation outcome, and the run's accounting.
+    """
+    with _watched(args) as observer:
+        return llm_processor.process_llm_request(request, observer=observer)
+
+
 def _add_decode_options(subparser: argparse.ArgumentParser) -> None:
     """Add the flags that describe the provider call itself.
 
@@ -137,6 +219,15 @@ def _add_inference_arguments(subparser: argparse.ArgumentParser) -> None:
         help=(
             "A value for the template's <extra:KEY> placeholder; may be repeated. "
             "KEY=@FILE reads the value from a file."
+        ),
+    )
+    subparser.add_argument(
+        "--stream",
+        action="store_true",
+        help=(
+            "Read the answer as it is written: the model's thinking and its answer are echoed "
+            "to stderr, so the terminal shows what it is doing while stdout stays the payload. "
+            "The recorded body is the one a waiting call would have received."
         ),
     )
     _add_decode_options(subparser)
@@ -174,8 +265,22 @@ def build_subcommands(
         parser = _cli.add_subcommand(
             subparsers, name, help_text, input_argument=input_argument
         )
+        # The stream switch is defaulted on every command, not only where it is registered: the
+        # layer reads one attribute whatever the command was, and a question that reaches no
+        # provider simply never streams.
+        parser.set_defaults(stream=False)
         if name in ("call", "graph", "resume", "fake"):
             _add_inference_arguments(parser)
+            if name == "call":
+                parser.add_argument(
+                    "--name",
+                    help=(
+                        "The base name of the two step artifacts this call publishes, without a "
+                        "suffix (default: the schema's last path component, or the template's "
+                        "when no schema is stated). Name it when two steps would otherwise share "
+                        "one stem."
+                    ),
+                )
         elif name == "node":
             _add_inference_arguments(parser)
             parser.add_argument("--node", default="node", help="Node identifier.")
@@ -257,7 +362,8 @@ def _options(
     A flag wins over the file, because the two statements are not the same size: ``--option
     timeout=60`` is about *this* run and the file is about the bench, and the narrower one has to
     win or an override would need an edit. ``--context-window`` keeps its own flag rather than
-    joining the table: it is a processor control, not a passthrough.
+    joining the table: it is a processor control, not a passthrough. ``--stream`` joins the options
+    the same way, and the processor reads it out of them — one statement, one place.
 
     Returns:
         The options, ready for the request.
@@ -266,6 +372,8 @@ def _options(
     options.update(_cli.option_values(args.option, parser, flag="--option"))
     if args.context_window is not None:
         options["context_window"] = int(args.context_window)
+    if args.stream:
+        options[primitives.STREAM_OPTION] = True
     return options
 
 
@@ -436,29 +544,44 @@ def install_fake() -> FakeProvider:
 def _artifact_stem(args: argparse.Namespace) -> str | None:
     """Return the name a call's two step artifacts are keyed by.
 
-    The identifier is the schema's last path component — ``extraction/invoice_detection`` becomes
-    ``invoice_detection`` — so the files say which step produced them. A call that states no schema
-    falls back to its template; one that states neither publishes no step artifact.
+    ``--name`` states it, which is how a step keeps the file it reads back distinct from the file
+    it writes when two steps share a schema name — the extraction and its review both end in
+    ``invoice``. With no ``--name`` the identifier is the schema's last path component, so the
+    files say which step produced them; a call that states no schema falls back to its template,
+    and one that states neither publishes no step artifact.
 
     Args:
-        args: The parsed flags, carrying ``--schema`` and ``--template``.
+        args: The parsed flags, carrying ``--name``, ``--schema`` and ``--template``.
 
     Returns:
-        The stem, or ``None`` when the call stated no asset identifier.
+        The stem, or ``None`` when the call stated neither a name nor an asset identifier.
     """
+    stated = getattr(args, "name", None)
+    if stated:
+        return str(stated).removesuffix(NAME_SUFFIXES[0]).removesuffix(NAME_SUFFIXES[1])
     identifier = getattr(args, "schema", None) or getattr(args, "template", None)
     return None if not identifier else Path(str(identifier)).name
 
 
-def _publish_step_artifacts(root: Path, stem: str | None, result: Any) -> None:
-    """File a call's result and its raw response under names the step owns.
+def _publish_step_artifacts(root: Path, stem: str | None, result: LLMResult) -> None:
+    """File a call's answer and the run that produced it, under names the step owns.
 
     The library names its two artifacts after the run directory alone, so two ``call``s over one
     input — the detection gate and the base reading — land on the same ``final_result.json`` and
-    the second overwrites the first. These two files carry the step's identifier instead:
-    ``<stem>_results.json`` is the run's result, exactly the payload ``final_result.json`` holds,
-    and ``<stem>.json`` is the model's raw response, verbatim. A call that produced no raw response
-    writes no second file rather than an empty one.
+    the second overwrites the first. These two carry the step's identifier instead:
+
+    * ``<stem>.json`` is the **answer alone** — the object a later step reads back through
+      ``--extra KEY=@<stem>.json``. It is the parsed answer, not the provider's envelope: one fence
+      around a JSON answer is unwrapped by the library before it is kept. A call that produced no
+      answer — every attempt failed before one could be parsed — writes no answer file rather than
+      an empty one, and the typed failure is what ``<stem>_full.json`` holds instead.
+    * ``<stem>_full.json`` is the **whole run**: the payload ``final_result.json`` holds, with the
+      attempts, the usage and the timings a run is judged by.
+
+    Both are published with the library's atomic writer — a ``.tmp`` sibling, then a rename — so a
+    reader never sees half an answer. A file the writer refuses is raised as the library's typed
+    ``INTERNAL_ERROR`` and never swallowed here: a run does not claim success whose record is
+    missing from disk.
 
     Only ``call`` publishes these: ``graph``, ``resume`` and ``fake`` run the built-in chain, whose
     descriptor ignores ``--schema``/``--template``, so a step name would be a claim about assets the
@@ -467,18 +590,35 @@ def _publish_step_artifacts(root: Path, stem: str | None, result: Any) -> None:
     Args:
         root: The run's output directory.
         stem: The identifier the step is keyed by, or ``None`` when it stated none.
-        result: The inference result whose payload and raw response are written.
+        result: The inference result whose answer and record are written.
     """
     if stem is None:
         return
-    _cli.write_payload(
-        root / f"{stem}_results.json", persistence.result_to_payload(result)
+    if result.raw_response is not None:
+        _publish_answer(root, stem, result.parsed_response)
+    primitives.write_json_atomic(
+        root / f"{stem}_full.json", persistence.result_to_payload(result)
     )
-    if result.raw_response is None:
+
+
+def _publish_answer(root: Path, stem: str, answer: Any) -> None:
+    """Publish one answer alone, as the object a later step reads back.
+
+    The library hands back the answer already parsed, so this writes it rather than re-reading the
+    model's text. A mapping goes through the deterministic JSON writer; a bare JSON value has no
+    keys to sort and is written as canonical text.
+
+    Args:
+        root: The run's output directory.
+        stem: The step's identifier, without a suffix.
+        answer: The parsed answer.
+    """
+    if isinstance(answer, dict):
+        primitives.write_json_atomic(root / f"{stem}.json", answer)
         return
-    raw = root / f"{stem}.json"
-    raw.parent.mkdir(parents=True, exist_ok=True)
-    raw.write_text(result.raw_response, encoding="utf-8")
+    primitives.write_text_atomic(
+        root / f"{stem}.json", json.dumps(answer, ensure_ascii=False, indent=2) + "\n"
+    )
 
 
 def _call(
@@ -489,7 +629,7 @@ def _call(
 ) -> Payload:
     """Run one inference, filing its two step-named artifacts beside the run's own."""
     request = _request(args, parser, input_path, root)
-    result = llm_processor.process_llm_request(request)
+    result = _send(request, args)
     _publish_step_artifacts(root, _artifact_stem(args), result)
     return _result_payload(result)
 
@@ -504,7 +644,7 @@ def _graph(
     request = _request(
         args, parser, input_path, root, graph=primitives.default_inference_graph()
     )
-    return _result_payload(llm_processor.process_llm_request(request))
+    return _result_payload(_send(request, args))
 
 
 def _resume(
@@ -518,7 +658,7 @@ def _resume(
     request = _request(
         args, parser, input_path, root, graph=primitives.default_inference_graph()
     )
-    return _result_payload(llm_processor.process_llm_request(request))
+    return _result_payload(_send(request, args))
 
 
 def _node(
@@ -535,17 +675,19 @@ def _node(
     del root
     request = _request(args, parser, input_path, None)
     _, run_id = _cli.identity_for(args, Path(parser.prog).stem, input_path)
-    node_result = llm_processor.process_llm_node(
-        {
-            "node_id": str(args.node),
-            "depends_on": [],
-            "task": str(args.task),
-            "template": str(args.template),
-            "schema": args.schema,
-            "request": request,
-        },
-        _fresh_state(run_id),
-    )
+    with _watched(args) as observer:
+        node_result = llm_processor.process_llm_node(
+            {
+                "node_id": str(args.node),
+                "depends_on": [],
+                "task": str(args.task),
+                "template": str(args.template),
+                "schema": args.schema,
+                "request": request,
+            },
+            _fresh_state(run_id),
+            observer=observer,
+        )
     return {
         "node_id": node_result.node_id,
         "status": str(node_result.status),
@@ -632,15 +774,17 @@ def _fake(
     """
     _cli.required(args, parser, "run_id", "--run-id")
     install_fake()
-    first = llm_processor.process_llm_request(
+    first = _send(
         _request(
             args, parser, input_path, root, graph=primitives.default_inference_graph()
-        )
+        ),
+        args,
     )
-    second = llm_processor.process_llm_request(
+    second = _send(
         _request(
             args, parser, input_path, root, graph=primitives.default_inference_graph()
-        )
+        ),
+        args,
     )
     state = primitives.load_graph_state(root)
     return {

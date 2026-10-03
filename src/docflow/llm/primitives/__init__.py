@@ -87,6 +87,7 @@ from docflow.llm.primitives.composition import (
     INFERENCE_CHAIN,
     OUTPUT_DIR_KEY,
     RUN_ID_KEY,
+    STREAM_OPTION,
     assets_dir_for,
     attempt_validation_record,
     attempt_validation_state,
@@ -192,11 +193,26 @@ _OLLAMA_REQUEST_FIELDS: Final[tuple[str, ...]] = ("think", "keep_alive")
 CONTENT_CHANNEL: Final[str] = "content"
 THINKING_CHANNEL: Final[str] = "thinking"
 
+
+@dataclass(frozen=True)
+class StreamDelta:
+    """One piece of an answer, read as it was written.
+
+    Attributes:
+        channel: :data:`CONTENT_CHANNEL` for the answer, :data:`THINKING_CHANNEL` for a reasoning
+            model's trace.
+        text: The piece itself, exactly as the provider wrote it.
+    """
+
+    channel: str
+    text: str
+
+
 #: What a caller gives a streaming call to watch it: called once per delta, in arrival order,
 #: while the answer is written. An observer is never required — a streaming call without one is
 #: still read as it arrives — and it never replaces the answer: the body the primitive returns
 #: is the whole one, exactly as a waiting call would have received it.
-DeltaObserver = Callable[["StreamDelta"], None]
+DeltaObserver = Callable[[StreamDelta], None]
 
 #: A provider's own reader: given the lines of a streaming answer and the observer to feed,
 #: return the body the same call would have returned without streaming.
@@ -246,6 +262,7 @@ __all__ = [
     "PROVIDER_KINDS",
     "RETRYABLE_KINDS",
     "RUN_ID_KEY",
+    "STREAM_OPTION",
     "THINKING_CHANNEL",
     "DeltaObserver",
     "LLMPrimitiveError",
@@ -311,20 +328,6 @@ __all__ = [
     "write_json_atomic",
     "write_text_atomic",
 ]
-
-
-@dataclass(frozen=True)
-class StreamDelta:
-    """One piece of an answer, read as it was written.
-
-    Attributes:
-        channel: :data:`CONTENT_CHANNEL` for the answer, :data:`THINKING_CHANNEL` for a reasoning
-            model's trace.
-        text: The piece itself, exactly as the provider wrote it.
-    """
-
-    channel: str
-    text: str
 
 
 @dataclass(frozen=True)
