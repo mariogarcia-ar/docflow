@@ -70,7 +70,7 @@ names its output, so the next one reads the answer back through ``@var/tmp/<name
 Watching that same review happen, which a saved file cannot show:
 
     python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b --name review --stream \
-        --template $R/template/review/invoice.md --doc $DOC \
+        --template $R/template/review/invoice_reason.md --doc $DOC \
         --schema $R/schema/review/invoice.schema.json \
         --extra proposal=@var/tmp/reading.json \
         --extra contract=@$R/schema/extraction/invoice.schema.json
