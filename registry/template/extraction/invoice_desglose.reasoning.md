@@ -56,6 +56,8 @@ AMBIGUOUS CASES AND TIE-BREAKERS
 - The bottom-line total is neither the IVA amount nor the net amount.
 - The "0" values of a Factura C come from the emitter's condition, not from a printed zero; the
   condition note is what makes them readable.
+- A zero is a zero however it is written: "0,00" and "0" are the same answer, and a zero the page
+  prints is not a different answer from the zero a criterion states for a tax it does not show.
 - Amounts are returned as printed, decimal separator included: "12.345,60" is not 12345.60.
 
 UNCERTAINTY

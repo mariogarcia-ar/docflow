@@ -79,7 +79,12 @@ print is answered "0", and a Factura C — an emitter under Monotributo or exemp
 every amount tax "0" and repeats the total in subtotal: that "0" is the correct value where
 the document does not discriminate, and it is not a "disagree".
 
-8. `analisis_condicion_iva` is an open working note — what the emitter's condition legend
+8. A zero is a zero, however it is written. "0", "0,00" and "0.00" are the same value and the same
+answer: where the criterion answers a zero and the proposal states a zero, the verdict is "agree".
+A zero is never a "disagree", and one zero spelling is never corrected into another — a zero is the
+one value for which rule 7's printed form is not checked.
+
+9. `analisis_condicion_iva` is an open working note — what the emitter's condition legend
 declares and whether the document discriminates IVA — and is never adjudicated: its verdict
 is "ignored", never "agree", "disagree" or "uncertain". Do not judge its content against the
 criteria, do not analyze it, and set its suggested_value to null.

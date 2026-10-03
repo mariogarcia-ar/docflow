@@ -54,6 +54,10 @@ RULES
 
 3. Do not infer a tax that is not printed: answer "0".
 
+4. A zero is a zero however it is written: "0,00" and "0" are the same answer. That is the one
+   exception to rule 1 — the spelling of a zero is a rendering, so a zero the page prints and a
+   zero answered for a tax it does not show are not different answers.
+
 <document>
 <doc>
 </document>

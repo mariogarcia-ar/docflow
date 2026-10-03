@@ -66,6 +66,9 @@ AMBIGUOUS CASES AND TIE-BREAKERS
   not interchangeable, and neither is a suggested_value for the other.
 - A value the document prints is never rejected with null. Where the replacement cannot be
   named, the verdict is "uncertain", not "disagree".
+- A zero is a zero, however it is written: "0", "0,00" and "0.00" are the same value, so a proposed
+  zero where the criterion answers a zero is "agree" — never a "disagree", and never a correction
+  from one zero spelling into another.
 - Where the text contradicts the proposed value, the verdict is "disagree" even when the value
   looks plausible.
 - The "0" values of a Factura C — an emitter under Monotributo or exempt — come from the

@@ -676,6 +676,13 @@ Grammar-constrained decoding (Ollama's `format` param) generates properties in d
 this genuinely happens first, not as an afterthought. A receipt that does not discriminate IVA has
 nothing to put in the amount fields.
 
+Its amounts are strings, and a zero is a zero however it is written: `"0,00"` and `"0"` are the
+same value, so a proposal that states a zero where the page prints one — or where a criterion
+states one for a tax the page does not show — is agreed with, never corrected into another
+spelling. That is the single exception to "as printed": the separator of a zero is a rendering,
+not a value. Without it the pair argues with itself, which is what it did — a `disagree` whose
+`suggested_value` was the proposal's own `"0,00"`.
+
 **`extraction/invoice_detection`** — The DETECTION step of the layered extraction — the fast-fail
 gate. It is a SEPARATE artifact from `invoice.json` because it answers a different question: not
 *what does this document say* but *is this document a receipt at all*. It declares FIRST of the
