@@ -20,7 +20,7 @@
               "notas"
             ]
           },
-          "reason": {"type": "string", "maxLength": 200},
+          "reason": {"type": "string", "maxLength": 160},
           "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain"]},
           "suggested_value": {"type": "string", "maxLength": 100}
         },
