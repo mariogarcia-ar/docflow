@@ -57,10 +57,10 @@ even if you would have read the document differently.
 plausible. The text is what decides, and the contract defines what the text must map to.
 
 7. A suggested_value is the field's content, never the raw text it came from. Where the
-contract defines tipo_comprobante as a bare letter or code, "FACTURA" is not the class;
-a short labelled form of that code (such as "COD.01") is the code
-("001"), and the bare letter printed in the header is preferred while a letter is
-legible. If you suggest a numeric or date value, return it in the format the contract
+contract defines tipo_comprobante as a bare letter, "FACTURA" is not the class; a short
+labelled form of a class code (such as "COD.01") names that class written differently and is
+answered as its letter, while "090" and "099" are classes of their own and are answered as
+printed. If you suggest a numeric or date value, return it in the format the contract
 declares, without converting the decimal separator or the date format.
 
 <document>

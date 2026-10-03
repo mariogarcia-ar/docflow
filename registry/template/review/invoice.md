@@ -68,11 +68,12 @@ verdict is "agree". The verdict is about the value, not about how the other mode
 plausible.
 
 7. suggested_value is the field's content, never the raw text it came from. For
-`tipo_comprobante` the class is printed as the bare letter in the header ("FACTURA" is not
-the class) or as a code ("001", "006", "011") — including a short labelled form of the code,
-such as "COD.01" or "COD 01", which stands for "001". Whenever a letter 'A', 'B' or 'C' is
-legible in the header, that letter is the correct value and a proposed letter is "agree" —
-even when a code is printed elsewhere; do not swap the letter for the code. For numeric or
+`tipo_comprobante` the class is the bare letter printed in the header ("FACTURA" is not the
+class); a short labelled form of a class code, such as "COD.01" or "COD 01", names that class
+written differently and its suggested_value is the letter ("COD.01" -> "A"). The codes "090"
+and "099" are classes of their own and are answered as printed. Whenever a letter 'A', 'B' or
+'C' is legible in the header, that letter is the correct value and a proposed letter is
+"agree", even when a code is printed elsewhere. For numeric or
 date values, use the format the contract declares, without converting the decimal separator
 or the date format.
 

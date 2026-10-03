@@ -25,20 +25,21 @@ Column headers the OCR pasted into the running text (e.g.
 RULES BY FIELD
 
 tipo_comprobante — the receipt class printed in the header.
-  - It is printed as the bare letter "A", "B" or "C", or as its AFIP three-digit code
-    ("001" Factura A, "006" Factura B, "011" Factura C). A short labelled form of that code,
-    with any separator and an optional leading zero ("COD.01", "COD 01", "COD01", "COD.1"),
-    IS the code: answer it in three-digit form ("01" -> "001", "06" -> "006",
-    "11" -> "011").
+  - It is the bare letter "A", "B" or "C". A short labelled form of a class code, with any
+    separator and an optional leading zero ("COD.01", "COD 01", "COD01", "COD.1"), is that
+    class written differently, and it is answered as its letter ("COD.01" -> "A",
+    "COD.06" -> "B", "COD.11" -> "C").
+  - "090" and "099" are classes of their own: the receipts that do not comply with RG 1415
+    print those two codes. Answer them as printed.
   - The letter and the word "FACTURA" are separate blocks on the page, so a bare "A", "B" or
     "C" may sit alone on its line or share the line with "FACTURA", to its left or to its
     right. Wherever it sits in the header, a legible letter is the class: no line is skipped
     for carrying anything else beside it.
-  - Whenever a letter is legible, that letter is the answer, even if a code is printed
-    elsewhere. Answer a code only when no letter is legible.
-  - NOT the class: the point-of-sale number ("Punto de Venta"); "090" and "099", receipts
-    that do not comply with RG 1415; a date, a CUIT, an amount or an item code.
-  - null when neither a letter nor a code of that table is legible.
+  - Whenever a letter is legible, that letter is the answer, even if one of those codes is
+    printed elsewhere.
+  - NOT the class: the point-of-sale number ("Punto de Venta"); a date, a CUIT, an amount or
+    an item code.
+  - null when neither a letter nor one of those two codes is legible.
 
 razon_social_emisor — the emitter's name as printed in the header block, without its label
   (neither "Razon Social:" nor "Cliente:"). Never the recipient's name. Correct a letter O

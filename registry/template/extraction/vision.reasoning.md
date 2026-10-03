@@ -21,9 +21,12 @@ next field ends where the printed evidence ends.
 CRITERIA BY FIELD
 
 tipo_comprobante
-  The class printed in the header, as the bare letter "A", "B" or "C" or as the three-digit code
-  "001", "006" or "011". "090" and "099" are receipts that do not comply with RG 1415, not a class.
-  Where neither a letter nor a code is legible, the field is null.
+  The class printed in the header, as the bare letter "A", "B" or "C". A short labelled form of
+  a class code, with any separator and an optional leading zero ("COD.01", "COD 01", "COD01",
+  "COD.1"), names that class written differently and is answered as its letter. The codes "090"
+  and "099" are classes of their own, printed by receipts that do not comply with RG 1415, and
+  they are answered as printed. Where neither a letter nor one of those two codes is legible,
+  the field is null.
 
 razon_social_emisor
   The emitter's name as printed in the header block, without its label. The recipient is a

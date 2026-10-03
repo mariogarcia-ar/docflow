@@ -3,7 +3,7 @@
   "properties": {
     "tipo_comprobante": {
       "type": ["string", "null"],
-      "enum": ["A", "B", "C", "001", "006", "011", null]
+      "enum": ["A", "B", "C", "090", "099", null]
     },
     "razon_social_emisor": {"type": ["string", "null"]},
     "cuit_emisor": {"type": ["string", "null"]},

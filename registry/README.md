@@ -125,6 +125,15 @@ value lists the `null` itself (`tipo_comprobante`, `categoria_gasto`,
 union and the model emits a real `null`. `validate_schema` enforces a union `type` like any
 other, so the nullable declaration is a rule the answer is checked against, not an annotation.
 
+### `tipo_comprobante` is a five-value alphabet
+
+The class field admits the three printed letters — `"A"`, `"B"`, `"C"` — and the two codes that
+are classes in their own right, `"090"` and `"099"`, printed by receipts that do not comply with
+RG 1415. The AFIP three-digit codes for the three classes are **not** separate values: `"001"`,
+`"006"` and `"011"` are those same classes written differently, so a labelled form such as
+`"COD.01"` is answered as the letter it names (`"A"`). There is no preference to weigh between
+the two spellings — the value is the letter either way.
+
 | | instruct prompt | reasoning prompt |
 |---|---|---|
 | Instructions | operational — what to do | criteria — what makes an answer right |

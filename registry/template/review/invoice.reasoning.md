@@ -40,9 +40,10 @@ moneda
   "USD" when the document says "USD" or "U$S"; "ARS" otherwise.
 
 tipo_comprobante
-  The class is the bare letter printed in the header ("FACTURA" is not the class) or a code
-  ("001", "006", "011"), including a short labelled form of the code such as "COD.01" or
-  "COD 01", which stands for "001". A letter 'A', 'B' or 'C' legible in the header is the
+  The class is the bare letter printed in the header ("FACTURA" is not the class). A short
+  labelled form of a class code, such as "COD.01" or "COD 01", names that class written
+  differently and is answered as its letter. The codes "090" and "099" are classes of their
+  own and are answered as printed. A letter 'A', 'B' or 'C' legible in the header is the
   correct value, even when a code is printed elsewhere.
 
 notas

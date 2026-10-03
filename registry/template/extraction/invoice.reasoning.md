@@ -27,21 +27,19 @@ Column headers the OCR pasted into the running text (e.g.
 CRITERIA BY FIELD
 
 tipo_comprobante
-  The class is the mark under which the receipt is issued. It is printed either as the bare
-  letter "A", "B" or "C" or as its AFIP three-digit code ("001" Factura A, "006" Factura B,
-  "011" Factura C). A short labelled form of that code, with any separator and an optional
-  leading zero ("COD.01", "COD 01", "COD01", "COD.1"), is the same code written differently
-  and is answered in three-digit form ("01" -> "001", "06" -> "006", "11" -> "011").
-  The letter and the code name the same class, so when both are legible the letter is the
-  answer: it is what the page prints, and the code is that class encoded. A code is the
-  answer only when no letter can be read.
+  The class is the mark under which the receipt is issued. It is the bare letter "A", "B" or
+  "C", and nothing else names those three classes: a short labelled form of a class code, with
+  any separator and an optional leading zero ("COD.01", "COD 01", "COD01", "COD.1"), is that
+  class written differently, and it is answered as its letter ("COD.01" -> "A",
+  "COD.06" -> "B", "COD.11" -> "C").
+  Two codes are classes of their own: "090" and "099" are printed by receipts that do not
+  comply with RG 1415, and they are answered as printed.
   The letter and the word "FACTURA" are separate blocks on the page, so a bare letter may sit
   alone on its line or share the line with "FACTURA", to its left or to its right; where it
   sits in the header is not evidence about the class.
-  The point-of-sale number ("Punto de Venta") sits beside the class and is not it. "090" and
-  "099" are receipts that do not comply with RG 1415, not a class. A date, a CUIT, an amount
-  and an item code are other numbers carrying other meanings.
-  null when neither a letter nor a code of that table is legible.
+  The point-of-sale number ("Punto de Venta") sits beside the class and is not it. A date, a
+  CUIT, an amount and an item code are other numbers carrying other meanings.
+  null when neither a letter nor one of those two codes is legible.
 
 razon_social_emisor
   The name of the business that issues the receipt, taken from the emitter block and stripped
