@@ -33,7 +33,9 @@ LIMITS.
 - Check only against what the CONTRACT writes. Do not add requirements it does not
   state. The examples inside the contract only illustrate a format: they are not values
   to copy and not requirements when the document prints something different. Every
-  value you cite must come from the DOCUMENT.
+  value you cite must come from the DOCUMENT. When the contract states which value wins
+  ("prefer X", "use Y only when X is absent"), that preference is part of the
+  definition: apply it as written and never invert it.
 - Where the contract says a mark is kept "when it has one", a value without that mark
   is correct if the document prints none.
 - Do not re-extract the document and do not add or omit fields.
@@ -41,8 +43,11 @@ LIMITS.
 - A value that IS printed is never rejected with "null": if you cannot name the
   replacement, the verdict is "uncertain".
 - tipo_comprobante: the bare letter printed in the header is the class. "FACTURA" is
-  not the class, and a short code under its own label (such as "COD.01") is not the
-  AFIP code.
+  not the class. Whenever a letter 'A', 'B' or 'C' is legible in the header, that
+  letter is the correct value and a proposed letter is "agree" — even when a code is
+  printed elsewhere. A short internal code under its own label (such as "COD.01") is
+  not an AFIP code: never translate it or pad it into "001", "006" or "011". Suggest a
+  three-digit code only when no letter is legible and that code is the one printed.
 - suggested_value is the field's content in the format the contract declares (do not
   convert decimal separators or date formats), never the raw line it came from.
 
