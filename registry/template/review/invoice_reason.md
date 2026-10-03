@@ -48,6 +48,8 @@ LIMITS.
   printed elsewhere. A short internal code under its own label (such as "COD.01") is
   not an AFIP code: never translate it or pad it into "001", "006" or "011". Suggest a
   three-digit code only when no letter is legible and that code is the one printed.
+- notas is an open field: do not analyze it. Do not judge its content against the
+  contract and never return "disagree" for it; report "agree" and move on.
 - suggested_value is the field's content in the format the contract declares (do not
   convert decimal separators or date formats), never the raw line it came from.
 

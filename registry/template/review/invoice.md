@@ -78,3 +78,6 @@ code: never translate it or pad it into "001", "006" or "011". Suggest a three-d
 code only when no letter is legible and that code is the one printed. For numeric or
 date values, use the format the contract declares, without converting the decimal
 separator or the date format.
+
+8. `notas` is an open field: do not analyze it. Do not judge its content against the
+contract and never return "disagree" for it; report "agree" and move on.
