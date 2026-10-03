@@ -24,6 +24,8 @@ registry/
     extraction/vision.reasoning.md              the VLM reading of a page image — reasoning variant
     review/invoice.md                           review of a text extraction
     review/invoice.reasoning.md                 review of a text extraction — reasoning variant
+    review/invoice_desglose.md                  review of the tax breakdown
+    review/invoice_desglose.reasoning.md        review of the tax breakdown — reasoning variant
     review/general.md                           review of any step, against its own schema
     review/general.reasoning.md                 review of any step — reasoning variant
     review/vision.md                            review of a vision extraction
@@ -35,6 +37,7 @@ registry/
     extraction/invoice_rubro.schema.json
     extraction/invoice_clasificacion.schema.json
     review/invoice.schema.json
+    review/invoice_desglose.schema.json
     review/general.schema.json
 ```
 

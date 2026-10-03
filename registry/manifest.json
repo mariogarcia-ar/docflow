@@ -25,6 +25,14 @@
       "format": "text"
     },
     {
+      "key": "template/review/invoice_desglose.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_desglose.reasoning.md",
+      "format": "text"
+    },
+    {
       "key": "template/review/general.md",
       "format": "text"
     },
@@ -79,6 +87,11 @@
     },
     {
       "key": "schema/review/invoice.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/review/invoice_desglose.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },

@@ -92,6 +92,25 @@ the way the library sends it, and ``--timeout`` states the wait the lab tool sta
         --option think=false --option temperature=0.2 --option min_p=0.05 \
         --option num_ctx=16384 --timeout 600
 
+The breakdown of step 3 is reviewed the same way, against its own step schema, and both
+review models run it:
+
+    python scripts/tmp/ollama_md_prompt.py --model deepseek-r1:8b --name review-desglose \
+        --template $R/template/review/invoice_desglose.reasoning.md --doc $DOC \
+        --schema $R/schema/review/invoice_desglose.schema.json \
+        --extra proposal=@var/tmp/desglose.json \
+        --extra contract=@$R/schema/extraction/invoice_desglose.schema.json \
+        --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
+        --option num_ctx=16384 --option num_predict=4096 --timeout 300
+
+    python scripts/tmp/ollama_md_prompt.py --model qwen3.5:9b --name review-desglose-qwen \
+        --template $R/template/review/invoice_desglose.md --doc $DOC \
+        --schema $R/schema/review/invoice_desglose.schema.json \
+        --extra proposal=@var/tmp/desglose.json \
+        --extra contract=@$R/schema/extraction/invoice_desglose.schema.json \
+        --option think=false --option temperature=0.2 --option min_p=0.05 \
+        --option num_ctx=16384 --timeout 600
+
 The transport is its sibling :mod:`_ollama`, so a probe runs from this folder.
 
 ``--model`` is required: a default model is the silent stand-in this project forbids.
