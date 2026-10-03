@@ -14,6 +14,7 @@ provider.
 from __future__ import annotations
 
 import base64
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,14 +22,17 @@ from typing import Any
 import pytest
 
 from docflow.llm.primitives import (
+    CONTENT_CHANNEL,
     OLLAMA_BASE_URL,
     OPENAI_COMPATIBLE_BASE_URL,
     PRIMITIVE_NAMES,
+    THINKING_CHANNEL,
     LLMPrimitiveError,
     ModelQuery,
     OllamaProvider,
     OpenAICompatibleProvider,
     ProviderCall,
+    StreamDelta,
     check_model_available,
     generate_multimodal,
     generate_structured,
@@ -404,3 +408,107 @@ def test_the_two_transports_expose_the_same_surface() -> None:
 
     assert surfaces[0] == set(PRIMITIVE_NAMES)
     assert surfaces[1] == set(PRIMITIVE_NAMES)
+
+
+def test_a_streaming_ollama_call_reassembles_the_deltas_it_was_read_from(http) -> None:
+    """A streamed answer is the body a waiting call returns, read one delta at a time."""
+    client = http(
+        lines=[
+            json.dumps({"message": {"content": '{"a":'}, "model": "test-model"}),
+            "",
+            json.dumps({"message": {"thinking": "weighing it"}, "model": "test-model"}),
+            json.dumps({"message": {"content": " 1}"}, "model": "test-model"}),
+            json.dumps(
+                {
+                    "message": {"content": ""},
+                    "model": "test-model",
+                    "done": True,
+                    "done_reason": "stop",
+                    "eval_count": 7,
+                }
+            ),
+        ]
+    )
+    seen: list[StreamDelta] = []
+
+    body = generate_text(call(stream=True, observer=seen.append))
+
+    sent = client.requests[0]
+    assert sent["method"] == "POST"
+    assert sent["url"] == f"{OLLAMA_BASE_URL}/api/chat"
+    assert sent["json"]["stream"] is True
+    assert body["message"]["content"] == '{"a": 1}'
+    assert body["message"]["thinking"] == "weighing it"
+    assert (body["done"], body["done_reason"], body["eval_count"]) == (True, "stop", 7)
+    assert seen == [
+        StreamDelta(channel=CONTENT_CHANNEL, text='{"a":'),
+        StreamDelta(channel=THINKING_CHANNEL, text="weighing it"),
+        StreamDelta(channel=CONTENT_CHANNEL, text=" 1}"),
+    ]
+
+
+def test_a_streaming_call_without_an_observer_is_still_read_as_it_arrives(http) -> None:
+    """Watching is optional; reading as it arrives is what the call asked for."""
+    http(lines=[json.dumps({"message": {"content": "ok"}, "model": "test-model"})])
+
+    body = generate_text(call(stream=True))
+
+    assert body["message"]["content"] == "ok"
+
+
+def test_a_streaming_openai_call_reassembles_its_events_into_a_message(http) -> None:
+    """The other dialect streams events; the body it is turned into is the waiting one."""
+    client = http(
+        lines=[
+            ": keep-alive",
+            "",
+            'data: {"model": "test-model", "choices": [{"delta": {"content": "{\\"a\\":"}}]}',
+            'data: {"model": "test-model", "choices": '
+            '[{"delta": {"reasoning_content": "why"}}]}',
+            'data: {"model": "test-model", "choices": '
+            '[{"delta": {"content": " 1}"}, "finish_reason": "stop"}]}',
+            'data: {"model": "test-model", "choices": [], '
+            '"usage": {"prompt_tokens": 3, "completion_tokens": 5}}',
+            "data: [DONE]",
+        ]
+    )
+    seen: list[StreamDelta] = []
+
+    body = generate_text(
+        call(provider="openai_compatible", stream=True, observer=seen.append)
+    )
+
+    sent = client.requests[0]
+    assert sent["url"] == f"{OPENAI_COMPATIBLE_BASE_URL}/chat/completions"
+    assert sent["json"]["stream"] is True
+    choice = body["choices"][0]
+    assert choice["message"]["content"] == '{"a": 1}'
+    assert choice["message"]["reasoning_content"] == "why"
+    assert choice["finish_reason"] == "stop"
+    assert body["usage"] == {"prompt_tokens": 3, "completion_tokens": 5}
+    assert translate_provider_response("openai_compatible", body).text == '{"a": 1}'
+    assert [delta.channel for delta in seen] == [
+        CONTENT_CHANNEL,
+        THINKING_CHANNEL,
+        CONTENT_CHANNEL,
+    ]
+
+
+def test_a_streaming_chunk_that_is_not_json_is_an_invalid_response(http) -> None:
+    """A chunk this module cannot read is an answer it cannot assemble."""
+    http(lines=["not json at all"])
+
+    with pytest.raises(LLMPrimitiveError) as raised:
+        generate_text(call(stream=True))
+
+    assert raised.value.error.type == "INVALID_RESPONSE"
+
+
+def test_a_streaming_error_status_is_typed_like_a_waiting_one(http) -> None:
+    """The mapping is written once, so a refusal is the same typed failure either way."""
+    http(status=404, body='{"error": "no such model"}')
+
+    with pytest.raises(LLMPrimitiveError) as raised:
+        generate_text(call(stream=True))
+
+    assert raised.value.error.type == "MODEL_UNAVAILABLE"

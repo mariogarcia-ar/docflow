@@ -31,7 +31,7 @@ import json
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from docflow.llm.primitives import typed_failure
+from docflow.llm.primitives import CONTENT_CHANNEL, StreamDelta, typed_failure
 
 #: The version the double reports for the model. Deliberately synthetic: a test asserting a real
 #: one would be asserting what the provider says, not what our seam does.
@@ -152,6 +152,7 @@ class FakeProvider:
         self.calls.append(call)
         if self.raises is not None:
             raise self.raises
+        body: Mapping[str, Any] | None = None
         if self.answers:
             scripted = self.answers.pop(0)
             if isinstance(scripted, Exception):
@@ -159,10 +160,34 @@ class FakeProvider:
             if callable(scripted):
                 scripted = scripted(call)
             if isinstance(scripted, Mapping):
-                return dict(scripted)
-            if isinstance(scripted, str):
-                return self.body_for(call, scripted)
-        return self.body_for(call, DEFAULT_CONTENT)
+                body = dict(scripted)
+            elif isinstance(scripted, str):
+                body = self.body_for(call, scripted)
+        if body is None:
+            body = self.body_for(call, DEFAULT_CONTENT)
+        self._observe(call, body)
+        return body
+
+    def _observe(self, call: Any, body: Mapping[str, Any]) -> None:
+        """Show a streaming call its answer, the way a transport feeding deltas would.
+
+        The double sends the whole answer as one delta rather than inventing a chunking no
+        provider promised: what it has to model is that an observer is fed while the call is
+        read and that the body it returns is the whole answer either way.
+
+        Args:
+            call: The call the provider was asked for.
+            body: The body that is about to be returned.
+        """
+        if not getattr(call, "stream", False) or call.observer is None:
+            return
+        if "message" in body:
+            message = body.get("message") or {}
+        else:
+            message = ((body.get("choices") or [{}])[0].get("message")) or {}
+        content = message.get("content")
+        if isinstance(content, str) and content:
+            call.observer(StreamDelta(channel=CONTENT_CHANNEL, text=content))
 
     def body_for(self, call: Any, content: str) -> dict[str, Any]:
         """Return ``content`` in the response shape of the provider ``call`` names.

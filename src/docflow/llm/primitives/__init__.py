@@ -29,6 +29,14 @@ Primitive                       Reaches
 ``get_model_info``              ``POST /api/show`` (Ollama) · ``GET /models/{id}``
 =============================== ==========================================================
 
+**Streaming.** Reading an answer as it is written is a property of the *call*, not an eighth
+primitive: :attr:`~docflow.llm.primitives.ProviderCall.stream` asks to be read as it is written
+and :attr:`~docflow.llm.primitives.ProviderCall.observer` watches it arrive. The generators
+return exactly what they return today — the provider's whole body, reassembled from the deltas
+— so a streaming caller and a waiting one receive the same body and the surface stays the seven
+names above. An OpenAI-compatible stream states no usage unless the endpoint chooses to send it,
+and a figure no endpoint stated is reported as ``None``, never as a zero.
+
 **Lazy import.** ``httpx`` is resolved inside the call that needs it, never at module import
 time, so ``import docflow.llm.primitives`` succeeds on a machine with no HTTP client — the
 guarantee ``tests/test_skeleton.py`` measures. An absent client is a typed ``PROVIDER_ERROR``.
@@ -52,16 +60,17 @@ Two rules hold for everything here: an unnamed provider is refused rather than g
 ``api_key`` is sent but never recorded — it is dropped from the normalized options before a
 request key or an artifact is written.
 
-# TODO: [MVP] streaming, provider-native schema dialects, prompt caching and per-provider
-# concurrency limits. # TODO: [RELEASE] GPU-competition and queue policy.
+# TODO: [MVP] provider-native schema dialects, prompt caching and per-provider concurrency
+# limits. # TODO: [RELEASE] GPU-competition and queue policy.
 """
 
 from __future__ import annotations
 
 import base64
 import importlib
+import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Protocol
@@ -176,6 +185,36 @@ NUM_CTX = re.compile(r"num_ctx\s+(\d+)")
 #: decoding parameter and stays inside ``options``.
 _OLLAMA_REQUEST_FIELDS: Final[tuple[str, ...]] = ("think", "keep_alive")
 
+#: The two channels a streamed answer arrives on: the answer itself, and the trace a reasoning
+#: model writes before it. ``content`` is Ollama's own field name for the first; the second is
+#: read from ``message.thinking`` on Ollama and ``delta.reasoning_content`` on the
+#: OpenAI-compatible dialect, which are the two spellings the models behind each one use.
+CONTENT_CHANNEL: Final[str] = "content"
+THINKING_CHANNEL: Final[str] = "thinking"
+
+#: What a caller gives a streaming call to watch it: called once per delta, in arrival order,
+#: while the answer is written. An observer is never required — a streaming call without one is
+#: still read as it arrives — and it never replaces the answer: the body the primitive returns
+#: is the whole one, exactly as a waiting call would have received it.
+DeltaObserver = Callable[["StreamDelta"], None]
+
+#: A provider's own reader: given the lines of a streaming answer and the observer to feed,
+#: return the body the same call would have returned without streaming.
+_StreamConsumer = Callable[[Iterable[str], "DeltaObserver | None"], dict[str, Any]]
+
+#: Where each dialect spells a streamed delta's text, by channel. Ollama names the two fields
+#: after the channels themselves; the OpenAI-compatible dialect calls a reasoning trace
+#: ``reasoning_content``, which is the spelling DeepSeek and vLLM use.
+_OLLAMA_DELTA_FIELDS: Final[tuple[tuple[str, str], ...]] = (
+    (CONTENT_CHANNEL, CONTENT_CHANNEL),
+    (THINKING_CHANNEL, THINKING_CHANNEL),
+)
+
+_OPENAI_DELTA_FIELDS: Final[tuple[tuple[str, str], ...]] = (
+    (CONTENT_CHANNEL, "content"),
+    (THINKING_CHANNEL, "reasoning_content"),
+)
+
 #: What a provider must mention in a 400/413 body for it to be a context overflow rather than a
 #: malformed request. The wording differs per provider, so the check is on the idea, not a line.
 _CONTEXT_HINTS: Final[tuple[str, ...]] = (
@@ -194,6 +233,7 @@ __all__ = [
     "API_KEY_OPTION",
     "ASSETS_DIR_KEY",
     "CHAIN_DEPENDENCIES",
+    "CONTENT_CHANNEL",
     "DEFAULT_MAX_ATTEMPTS",
     "DEFAULT_TIMEOUT_SECONDS",
     "GENERATORS",
@@ -206,12 +246,15 @@ __all__ = [
     "PROVIDER_KINDS",
     "RETRYABLE_KINDS",
     "RUN_ID_KEY",
+    "THINKING_CHANNEL",
+    "DeltaObserver",
     "LLMPrimitiveError",
     "ModelQuery",
     "OllamaProvider",
     "OpenAICompatibleProvider",
     "ProviderCall",
     "ProviderResponse",
+    "StreamDelta",
     "assets_dir_for",
     "attempt_validation_record",
     "attempt_validation_state",
@@ -271,6 +314,20 @@ __all__ = [
 
 
 @dataclass(frozen=True)
+class StreamDelta:
+    """One piece of an answer, read as it was written.
+
+    Attributes:
+        channel: :data:`CONTENT_CHANNEL` for the answer, :data:`THINKING_CHANNEL` for a reasoning
+            model's trace.
+        text: The piece itself, exactly as the provider wrote it.
+    """
+
+    channel: str
+    text: str
+
+
+@dataclass(frozen=True)
 class ProviderCall:
     """One inference, described in provider-neutral terms.
 
@@ -288,6 +345,11 @@ class ProviderCall:
         options: Decoding options passed through to the provider.
         schema: The response schema, when the call is structured.
         timeout: Per-call timeout, in seconds.
+        stream: Whether to read the answer as it is written rather than wait for the whole of
+            it. The body the generator returns is the same either way; only when it is available
+            changes.
+        observer: Called once per delta while a streaming call arrives, or ``None`` to stream
+            unwatched. Ignored by a call that does not stream.
     """
 
     provider: str
@@ -299,6 +361,8 @@ class ProviderCall:
     options: dict[str, Any]
     schema: dict[str, Any] | None
     timeout: float
+    stream: bool = False
+    observer: DeltaObserver | None = None
 
 
 @dataclass(frozen=True)
@@ -461,31 +525,26 @@ def _parsed_body(response: Any, subject: ProviderCall | ModelQuery) -> dict[str,
     return body
 
 
-def _send(
-    http_method: Any, url: str, subject: ProviderCall | ModelQuery, **kwargs: Any
-) -> Any:
-    """Send one HTTP request, typing every way it can fail.
+def _guarded(subject: ProviderCall | ModelQuery, request: Callable[[Any], Any]) -> Any:
+    """Run one HTTP request, typing every way it can fail.
+
+    The client library is handed to ``request`` rather than imported here twice, so the import
+    stays at call time and the mapping below is written once for both of the ways this module
+    sends — a request read whole and one read as it arrives.
 
     Args:
-        http_method: The bound ``httpx`` verb to call.
-        url: The endpoint.
         subject: The call or query being sent, read for its provider, model and timeout.
-        kwargs: The request's own keyword arguments.
+        request: Given the client library, performs the request and returns its result.
 
     Returns:
-        The response, once it is not an error status.
+        Whatever ``request`` returned.
 
     Raises:
         LLMPrimitiveError: With the kind the engine-signal table fixes.
     """
     http = _http()
     try:
-        response = http_method(
-            url,
-            timeout=subject.timeout,
-            headers=_headers(subject.api_key),
-            **kwargs,
-        )
+        return request(http)
     except http.TimeoutException as exc:
         raise typed_failure(
             "TIMEOUT",
@@ -506,27 +565,166 @@ def _send(
                 "error": str(exc),
             },
         ) from exc
-    if response.status_code >= 400:
-        raise _status_failure(
-            subject.provider, subject.model, response.status_code, response.text
+
+
+def _send(
+    method: str, url: str, subject: ProviderCall | ModelQuery, **kwargs: Any
+) -> Any:
+    """Send one HTTP request and return its response, once it is not an error status.
+
+    Args:
+        method: The verb to send, ``"post"`` or ``"get"``.
+        url: The endpoint.
+        subject: The call or query being sent, read for its provider, model and timeout.
+        kwargs: The request's own keyword arguments.
+
+    Returns:
+        The response.
+
+    Raises:
+        LLMPrimitiveError: With the kind the engine-signal table fixes.
+    """
+
+    def request(http: Any) -> Any:
+        response = getattr(http, method)(
+            url,
+            timeout=subject.timeout,
+            headers=_headers(subject.api_key),
+            **kwargs,
         )
-    return response
+        if response.status_code >= 400:
+            raise _status_failure(
+                subject.provider, subject.model, response.status_code, response.text
+            )
+        return response
+
+    return _guarded(subject, request)
 
 
 def _post_json(
     url: str, body: Mapping[str, Any], subject: ProviderCall | ModelQuery
 ) -> dict[str, Any]:
     """POST ``body`` as JSON and return the parsed response body."""
-    http = _http()
-    response = _send(http.post, url, subject, json=dict(body))
+    response = _send("post", url, subject, json=dict(body))
     return _parsed_body(response, subject)
+
+
+def _stream_json(
+    url: str, body: Mapping[str, Any], subject: ProviderCall, consume: _StreamConsumer
+) -> dict[str, Any]:
+    """POST ``body`` as JSON, read the answer as it is written, and return its whole body.
+
+    The lines the provider sends are the transport's business, so each provider reads its own
+    through ``consume``; what is shared is the request, the error mapping and the promise that
+    the caller gets the body a waiting call would have received.
+
+    Args:
+        url: The endpoint.
+        body: The request body, with its provider's streaming switch already set.
+        subject: The streaming call, read for its endpoint, timeout and observer.
+        consume: The provider's reader for its own streaming lines.
+
+    Returns:
+        The reassembled body.
+
+    Raises:
+        LLMPrimitiveError: With the kind the engine-signal table fixes, and with
+            ``INVALID_RESPONSE`` when a chunk is not a JSON object.
+    """
+
+    def request(http: Any) -> dict[str, Any]:
+        with http.stream(
+            "POST",
+            url,
+            timeout=subject.timeout,
+            headers=_headers(subject.api_key),
+            json=dict(body),
+        ) as response:
+            if response.status_code >= 400:
+                response.read()
+                raise _status_failure(
+                    subject.provider, subject.model, response.status_code, response.text
+                )
+            return consume(response.iter_lines(), subject.observer)
+
+    return _guarded(subject, request)
+
+
+def _json_object(line: str) -> dict[str, Any]:
+    """Return one streaming line's parsed object.
+
+    Args:
+        line: One line of a streaming answer.
+
+    Returns:
+        The parsed object.
+
+    Raises:
+        LLMPrimitiveError: With ``INVALID_RESPONSE`` when the line is not a JSON object — a
+            chunk this module cannot read is an answer it cannot assemble, and inventing an
+            empty one would report a truncated answer as a whole one.
+    """
+    try:
+        chunk = json.loads(line)
+    except ValueError as exc:
+        raise typed_failure(
+            "INVALID_RESPONSE",
+            "a streaming chunk is not JSON",
+            metadata={"chunk": line[:200]},
+        ) from exc
+    if not isinstance(chunk, dict):
+        raise typed_failure(
+            "INVALID_RESPONSE",
+            "a streaming chunk is not a JSON object",
+            metadata={"chunk": line[:200]},
+        )
+    return chunk
+
+
+def _sse_payload(line: str) -> dict[str, Any] | None:
+    """Return one server-sent event's object, or ``None`` when the line carries none.
+
+    Args:
+        line: One line of an OpenAI-compatible stream.
+
+    Returns:
+        The event's parsed object, or ``None`` for a blank line, a comment, or the closing
+        ``data: [DONE]`` marker — none of which carries any of the answer.
+    """
+    text = line.strip()
+    if not text or text.startswith(":"):
+        return None
+    if text.startswith("data:"):
+        text = text[len("data:") :].strip()
+    if not text or text == "[DONE]":
+        return None
+    return _json_object(text)
 
 
 def _get_json(url: str, subject: ModelQuery) -> dict[str, Any]:
     """GET ``url`` and return the parsed response body."""
-    http = _http()
-    response = _send(http.get, url, subject)
+    response = _send("get", url, subject)
     return _parsed_body(response, subject)
+
+
+def _collect(
+    piece: Any, channel: str, sink: list[str], observer: DeltaObserver | None
+) -> None:
+    """Append one streamed piece to its channel and show it to the observer.
+
+    A piece the provider did not send is not a piece: an absent field leaves the channel alone
+    rather than contributing an empty string to it.
+
+    Args:
+        piece: What the provider sent for this channel, if anything.
+        channel: The channel the piece belongs to.
+        sink: The pieces read so far for this channel.
+        observer: Called with the piece, or ``None`` to read unwatched.
+    """
+    if isinstance(piece, str) and piece:
+        sink.append(piece)
+        if observer is not None:
+            observer(StreamDelta(channel=channel, text=piece))
 
 
 def _image_parts(paths: Sequence[str]) -> list[tuple[str, str]]:
@@ -652,7 +850,7 @@ class OllamaProvider(_HttpProvider):
         body: dict[str, Any] = {
             "model": call.model,
             "messages": [message],
-            "stream": False,
+            "stream": call.stream,
         }
         options = dict(call.options)
         for name in _OLLAMA_REQUEST_FIELDS:
@@ -661,7 +859,46 @@ class OllamaProvider(_HttpProvider):
         body["options"] = options
         if call.schema is not None:
             body["format"] = dict(call.schema)
-        return _post_json(f"{self._base_url(call)}/api/chat", body, call)
+        url = f"{self._base_url(call)}/api/chat"
+        if call.stream:
+            return _stream_json(url, body, call, self._consume_stream)
+        return _post_json(url, body, call)
+
+    def _consume_stream(
+        self, lines: Iterable[str], observer: DeltaObserver | None
+    ) -> dict[str, Any]:
+        """Read Ollama's chunks into the body a waiting call would have received.
+
+        Ollama sends one JSON object per line and repeats nothing: the deltas carry the answer
+        in ``message.content`` and a reasoning model's trace in ``message.thinking``, and the
+        last object carries the counters. The message is rebuilt from the deltas and the last
+        object is the body, exactly as a non-streaming call returns it.
+
+        Args:
+            lines: The provider's streaming lines.
+            observer: Called once per delta, or ``None`` to read unwatched.
+
+        Returns:
+            The reassembled body.
+
+        Raises:
+            LLMPrimitiveError: With ``INVALID_RESPONSE`` when a line is not a JSON object.
+        """
+        sinks: dict[str, list[str]] = {CONTENT_CHANNEL: [], THINKING_CHANNEL: []}
+        closing: dict[str, Any] = {}
+        for line in lines:
+            if not line.strip():
+                continue
+            closing = _json_object(line)
+            message = closing.get("message") or {}
+            for channel, field in _OLLAMA_DELTA_FIELDS:
+                _collect(message.get(field), channel, sinks[channel], observer)
+        message = dict(closing.get("message") or {})
+        message[CONTENT_CHANNEL] = "".join(sinks[CONTENT_CHANNEL])
+        if sinks[THINKING_CHANNEL]:
+            message[THINKING_CHANNEL] = "".join(sinks[THINKING_CHANNEL])
+        closing["message"] = message
+        return closing
 
     def list_models(self, query: ModelQuery) -> list[str]:
         """Return the tags the daemon serves."""
@@ -731,7 +968,7 @@ class OpenAICompatibleProvider(_HttpProvider):
         body: dict[str, Any] = {
             "model": call.model,
             "messages": [{"role": "user", "content": content}],
-            "stream": False,
+            "stream": call.stream,
             **call.options,
         }
         if call.schema is not None:
@@ -743,7 +980,63 @@ class OpenAICompatibleProvider(_HttpProvider):
                     "schema": dict(call.schema),
                 },
             }
-        return _post_json(f"{self._base_url(call)}/chat/completions", body, call)
+        url = f"{self._base_url(call)}/chat/completions"
+        if call.stream:
+            return _stream_json(url, body, call, self._consume_stream)
+        return _post_json(url, body, call)
+
+    def _consume_stream(
+        self, lines: Iterable[str], observer: DeltaObserver | None
+    ) -> dict[str, Any]:
+        """Read an OpenAI-compatible event stream into the body a waiting call would have got.
+
+        The dialect sends server-sent events: each carries a ``choices[0].delta`` piece of the
+        answer, and the last one that stops generation carries the reason. The body is rebuilt
+        in the shape a non-streaming call returns — one ``choices[0].message`` — so that nothing
+        downstream can tell the two apart. Usage is reported only when the endpoint chose to
+        send it, and an endpoint that sent none leaves it absent rather than zero.
+
+        Args:
+            lines: The provider's streaming lines.
+            observer: Called once per delta, or ``None`` to read unwatched.
+
+        Returns:
+            The reassembled body.
+
+        Raises:
+            LLMPrimitiveError: With ``INVALID_RESPONSE`` when an event is not a JSON object.
+        """
+        sinks: dict[str, list[str]] = {CONTENT_CHANNEL: [], THINKING_CHANNEL: []}
+        model: str | None = None
+        finish_reason: Any = None
+        usage: dict[str, Any] = {}
+        for line in lines:
+            payload = _sse_payload(line)
+            if payload is None:
+                continue
+            if payload.get("model"):
+                model = str(payload["model"])
+            if isinstance(payload.get("usage"), Mapping):
+                usage = dict(payload["usage"])
+            choice = (payload.get("choices") or [{}])[0]
+            if choice.get("finish_reason") is not None:
+                finish_reason = choice["finish_reason"]
+            delta = choice.get("delta") or {}
+            for channel, field in _OPENAI_DELTA_FIELDS:
+                _collect(delta.get(field), channel, sinks[channel], observer)
+        message: dict[str, Any] = {
+            "role": "assistant",
+            "content": "".join(sinks[CONTENT_CHANNEL]),
+        }
+        if sinks[THINKING_CHANNEL]:
+            message["reasoning_content"] = "".join(sinks[THINKING_CHANNEL])
+        body: dict[str, Any] = {
+            "model": model,
+            "choices": [{"message": message, "finish_reason": finish_reason}],
+        }
+        if usage:
+            body["usage"] = usage
+        return body
 
     def list_models(self, query: ModelQuery) -> list[str]:
         """Return the ids the endpoint serves."""

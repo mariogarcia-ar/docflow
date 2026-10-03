@@ -11,9 +11,14 @@ rendering is :func:`docflow.llm.primitives.composition.process_template`, the ca
 :func:`docflow.llm.primitives.generate_structured` (or ``generate_text``), the answer is read back
 through :func:`docflow.llm.primitives.translate_provider_response`, and the two files are written
 with the library's atomic publication. What is left here is the CLI's own surface — the flags, the
-``@FILE`` extras and the naming of the outputs. One consequence is worth stating: the seam does
-not stream, so there is no ``--stream`` here, and no ``--system`` either — the template *is* the
+``@FILE`` extras and the naming of the outputs. There is no ``--system``: the template *is* the
 instruction, which is why the seam builds exactly one user message.
+
+``--stream`` is the seam's own switch rather than a second way to reach a provider: the call
+carries ``stream=True`` and an observer, so a reasoning model's trace and its answer are echoed to
+stderr under a ``[thinking]`` / ``[content]`` header while stdout stays the finished answer. The
+body is reassembled from the deltas, so the two files below hold exactly what a waiting call would
+have produced.
 
 Every answer is saved twice in ``var/tmp/``, and the answer itself still goes to stdout, so a pipe
 keeps working. ``--print-prompt`` renders without sending and saves nothing.
@@ -77,6 +82,16 @@ names its output, so the next one reads the answer back through ``@var/tmp/<name
         --extra contract=@$R/schema/extraction/invoice.schema.json \
         --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
         --option num_ctx=16384 --option num_predict=4096 --timeout 300
+
+Watching that same review happen, which a saved file cannot show — the deltas go to stderr while
+stdout and the two files stay the finished answer:
+
+    python scripts/tmpref/md_prompt.py --provider ollama --model deepseek-r1:8b --stream \
+        --name review \
+        --template $R/template/review/invoice.reasoning.md --doc $DOC \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading.json \
+        --extra contract=@$R/schema/extraction/invoice.schema.json
 
 Step 6's review again, on T3, with the thinking channel braked: ``--option think=false`` reaches
 the top of the request, the way the library sends it, and ``--timeout`` states the wait.

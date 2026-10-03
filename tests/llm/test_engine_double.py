@@ -11,16 +11,19 @@ of this processor imports a client library.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import tests.llm
 from docflow.llm.primitives import (
+    CONTENT_CHANNEL,
     PRIMITIVE_NAMES,
     LLMPrimitiveError,
     ModelQuery,
     ProviderCall,
+    StreamDelta,
     typed_failure,
 )
 from tests.fakes.engines.fake_provider import (
@@ -181,3 +184,15 @@ def test_no_test_of_this_processor_imports_a_client_library() -> None:
                 offenders.append(f"{module.name}:{line} imports {name}")
 
     assert not offenders, f"a test imports a client library: {offenders}"
+
+
+def test_the_double_feeds_a_streaming_calls_observer_and_still_answers_whole() -> None:
+    """A call that streams is watched as it is read, and the body it returns is the whole one."""
+    seen: list[StreamDelta] = []
+
+    body = FakeProvider().generate_text(
+        replace(call(), stream=True, observer=seen.append)
+    )
+
+    assert seen == [StreamDelta(channel=CONTENT_CHANNEL, text=DEFAULT_CONTENT)]
+    assert body["message"]["content"] == DEFAULT_CONTENT

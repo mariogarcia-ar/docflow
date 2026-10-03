@@ -12,9 +12,9 @@ through :func:`~docflow.llm.primitives.translate_provider_response`. The wire sh
 top-level request fields and the answer's translation are therefore the library's decisions, not
 this folder's.
 
-No streaming here, on purpose: the seam sends ``"stream": false`` and no primitive does otherwise,
-so a probe that wants to watch the model work has to reach the daemon itself — which is exactly
-the direct call this folder replaced.
+``--stream`` is the seam's own switch, not a second transport: the call carries
+``stream=True`` and an observer, so the answer is read as it is written and the body the probe
+saves is still the one a waiting call would have received.
 
 This module is imported by its siblings, so a probe runs from this folder — that keeps
 ``scripts/tmpref`` on ``sys.path``.
@@ -38,7 +38,7 @@ if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from docflow.llm import primitives  # noqa: E402  (the bootstrap above must run first)
-from docflow.llm.primitives import ProviderResponse  # noqa: E402
+from docflow.llm.primitives import ProviderResponse, StreamDelta  # noqa: E402
 
 
 def parse_option(raw: str) -> tuple[str, Any]:
@@ -100,6 +100,40 @@ def add_request_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--raw", action="store_true", help="print the whole response body"
     )
+    parser.add_argument(
+        "--stream",
+        dest="stream",
+        action="store_true",
+        help="read the answer as it is written: the model's thinking and its answer are echoed "
+        "to stderr, so the terminal shows what it is doing while stdout stays the finished "
+        "answer. The body is the same either way, so the two files a run writes are unchanged",
+    )
+    parser.set_defaults(stream=False)
+
+
+class _Echo:
+    """Echo a streaming answer to stderr, under a header per channel.
+
+    A reasoning model writes on two channels — its trace and its answer — and the header is what
+    tells them apart on a terminal that receives them interleaved. Nothing is written until a
+    channel's first delta arrives, so a call that streams nothing echoes nothing.
+    """
+
+    def __init__(self) -> None:
+        """Start an echo that has shown no channel yet."""
+        self._shown: set[str] = set()
+
+    def __call__(self, delta: StreamDelta) -> None:
+        """Write one delta, opening its channel's header the first time it speaks."""
+        if delta.channel not in self._shown:
+            self._shown.add(delta.channel)
+            print(f"\n[{delta.channel}] ", end="", file=sys.stderr, flush=True)
+        print(delta.text, end="", file=sys.stderr, flush=True)
+
+    def close(self) -> None:
+        """End the line the last delta left open, when any delta was written."""
+        if self._shown:
+            print(file=sys.stderr)
 
 
 def _options(args: argparse.Namespace) -> dict[str, Any]:
@@ -147,6 +181,7 @@ def call(
     # OpenAI-compatible transport spreads the options into the body, and a key must never be part
     # of the request it authorizes.
     api_key = options.pop(primitives.API_KEY_OPTION, None)
+    echo = _Echo() if args.stream else None
     request = primitives.ProviderCall(
         provider=provider,
         base_url=None if args.base_url is None else str(args.base_url),
@@ -157,12 +192,19 @@ def call(
         options=options,
         schema=schema,
         timeout=primitives.request_timeout(options),
+        stream=bool(args.stream),
+        observer=echo,
     )
     generator = getattr(
         primitives,
         primitives.resolve_generator(structured=schema is not None, multimodal=False),
     )
-    return primitives.translate_provider_response(provider, generator(request))
+    try:
+        body = generator(request)
+    finally:
+        if echo is not None:
+            echo.close()
+    return primitives.translate_provider_response(provider, body)
 
 
 def print_answer(response: ProviderResponse, *, raw: bool) -> None:
