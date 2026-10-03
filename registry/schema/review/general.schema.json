@@ -7,7 +7,7 @@
         "type": "object",
         "properties": {
           "field": {"type": "string"},
-          "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain"]},
+          "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain", "ignored"]},
           "reason": {"type": "string"},
           "suggested_value": {"type": "string"}
         },

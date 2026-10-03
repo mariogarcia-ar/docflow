@@ -16,7 +16,7 @@ Output key:
 
 Each field_verdicts object:
   field             the key's name, the same as in the proposed extraction
-  verdict           "agree" | "disagree" | "uncertain"
+  verdict           "agree" | "disagree" | "uncertain" | "ignored"
   reason            one short line: what in the text or the contract supports the
                     verdict
   suggested_value   the correct value when verdict is "disagree", otherwise "null"
@@ -37,7 +37,8 @@ none.
 verdict "disagree": the proposed value violates the text or the contract, AND you can
 name from the document the value that should stand in its place. verdict "uncertain":
 the text does not settle it, or you cannot name the correct value — then there is no
-suggested_value.
+suggested_value. verdict "ignored": the field is an open field the review does not
+adjudicate; its suggested_value is "null".
 
 4. A "disagree" must carry the correction, not an escape. The suggested_value is the
 value the document shows, in the field's declared format, that satisfies the contract,

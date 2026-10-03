@@ -21,7 +21,7 @@
             ]
           },
           "reason": {"type": "string", "maxLength": 160},
-          "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain"]},
+          "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain", "ignored"]},
           "suggested_value": {"type": "string", "maxLength": 100}
         },
         "required": ["field", "reason", "verdict", "suggested_value"],

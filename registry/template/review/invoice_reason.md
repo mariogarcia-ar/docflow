@@ -26,6 +26,8 @@ one answer two closed questions, then stop and move to the next field:
   the value that should stand instead    -> verdict "disagree" + that value
   anything else, or still unclear after
   one reading                            -> verdict "uncertain"
+  a field the LIMITS mark as open
+  (notas)                                -> verdict "ignored", no answer to Q1 or Q2
 
 LIMITS.
 - One reading per field, at most 3 short sentences of reasoning. Once a field is
@@ -48,8 +50,9 @@ LIMITS.
   printed elsewhere. A short internal code under its own label (such as "COD.01") is
   not an AFIP code: never translate it or pad it into "001", "006" or "011". Suggest a
   three-digit code only when no letter is legible and that code is the one printed.
-- notas is an open field: do not analyze it. Do not judge its content against the
-  contract and never return "disagree" for it; report "agree" and move on.
+- notas is an open field and is never adjudicated: its verdict is "ignored", never
+  "agree", "disagree" or "uncertain". Do not judge its content against the contract and
+  set its suggested_value to "null".
 - suggested_value is the field's content in the format the contract declares (do not
   convert decimal separators or date formats), never the raw line it came from.
 
@@ -57,5 +60,5 @@ OUTPUT. A single JSON object, nothing outside it, with the key "field_verdicts":
 object per field, same names and same order as the proposed extraction. Each object:
   field            the field's name
   reason           max 20 words: what in the DOCUMENT or the CONTRACT supports the verdict
-  verdict          "agree" | "disagree" | "uncertain"
+  verdict          "agree" | "disagree" | "uncertain" | "ignored"
   suggested_value  the correct value if verdict is "disagree"; otherwise the string "null"

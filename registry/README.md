@@ -605,7 +605,9 @@ returns on an 8B model. It still comes first so the model confirms which field i
 decides null vs. a printed number.
 
 **`review/invoice`** — The shape a review verdict must have. A field_verdict's enum is
-agree | disagree | uncertain; a disagree carries a suggested_value. A `disagree` carries a real
+agree | disagree | uncertain | ignored; a disagree carries a suggested_value. `ignored` marks an
+open field the review does not adjudicate (`notas`) and carries the sentinel `"null"`. A `disagree`
+carries a real
 correction — the value the document shows, in the field's contract format — and a `suggested_value`
 of `"null"` is for a field that is genuinely not printed: rejecting a printed value without naming
 what should stand in its place is `uncertain`, not `disagree`, which is why the template forbids it.

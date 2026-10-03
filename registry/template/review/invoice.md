@@ -32,7 +32,7 @@ added and none omitted. Each object has:
   field             the key's name, as in the proposed extraction
   reason            one short line (max 20 words): what in the text or the contract
                     supports the verdict
-  verdict           "agree" | "disagree" | "uncertain"
+  verdict           "agree" | "disagree" | "uncertain" | "ignored"
   suggested_value   the correct value when verdict is "disagree"; otherwise the string
                     "null"
 
@@ -55,6 +55,8 @@ it, and never add a preference the contract does not state.
 document, the value that should stand in its place.
 "uncertain": the text or the contract does not settle it, or you cannot name the
 correct value; suggested_value is then "null".
+"ignored": the field is an open field this review does not adjudicate; it applies to
+`notas` only, and its suggested_value is "null".
 
 4. A "disagree" must carry the correction. suggested_value is the value the document
 shows, in the field's declared format, that satisfies the contract and differs from
@@ -79,5 +81,6 @@ code only when no letter is legible and that code is the one printed. For numeri
 date values, use the format the contract declares, without converting the decimal
 separator or the date format.
 
-8. `notas` is an open field: do not analyze it. Do not judge its content against the
-contract and never return "disagree" for it; report "agree" and move on.
+8. `notas` is an open field and is never adjudicated: its verdict is "ignored", never
+"agree", "disagree" or "uncertain". Do not judge its content against the contract, do
+not analyze it, and set its suggested_value to "null".

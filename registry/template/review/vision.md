@@ -10,7 +10,7 @@ Output key:
 
 Each field_verdicts object:
   field             the key's name, the same as in the proposed extraction
-  verdict           "agree" | "disagree" | "uncertain"
+  verdict           "agree" | "disagree" | "uncertain" | "ignored"
   suggested_value   the correct value when verdict is "disagree", otherwise "null"
 
 Rules, apply in this order:
@@ -21,7 +21,8 @@ the whole document, do not add new fields.
 2. verdict "agree": the proposed value matches what the image shows. verdict
 "disagree": the proposed value is wrong; suggested_value is required and
 different from the proposed value. verdict "uncertain": it cannot be determined
-from the available image; no suggested_value.
+from the available image; no suggested_value. verdict "ignored": the field is an
+open field the review does not adjudicate; no suggested_value.
 
 3. If the image contradicts the proposed value, it is "disagree" even if the value
 looks plausible. The image is what decides, not plausibility.
