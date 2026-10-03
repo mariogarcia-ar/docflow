@@ -1,3 +1,23 @@
+# selection
+
+| Grupo | Modelos tuyos | Qué los define |
+|---|---|---|
+| **Instruct** | `gemma3:4b/12b`, `granite4:3b`, `granite4.2:8b`, `qwen2.5:7b-instruct`, `llama3.2:3b`, `qwen2.5vl:3b/7b` | Responden directo, siguen la instrucción tal cual. |
+| **Reasoning** | `deepseek-r1:8b` | Generan un bloque de pensamiento antes de la respuesta final. |
+
+La diferencia es de **comportamiento**, no de calidad ni de tamaño. Un instruct no es "peor": es más rápido y más predecible para extracción. Un reasoning solo se justifica cuando hay ambigüedad real que resolver.
+
+## Casos que conviene aclarar
+
+- **`qwen3.5:9b` es híbrido.** Puede correr en ambos modos según `think`. Con `think: false` usá el prompt instruct. Con `think: true` usá el prompt reasoning. Elegí el prompt según cómo lo llamás, no según el nombre del modelo.
+- **`deepseek-ocr:3b` y `granite3.2-vision:2b` no encajan en ninguno** para esta tarea. El primero es de OCR (extrae texto, no sigue instrucciones de validación) y el segundo es de visión y muy chico.
+- **Los modelos de visión** (`qwen2.5vl`) son instruct con imagen. Usan el prompt instruct, cambiando `<documento>` por la imagen.
+
+## Cómo decidir ante un modelo nuevo
+
+Mirá la salida con `think: true`: si Ollama devuelve contenido en `message.thinking`, es reasoning o híbrido. Si el modelo no tiene esa capacidad (la ficha en `ollama show` no lista `thinking`), es instruct.
+
+
 # Recomendaciones mínimas para schemas y user prompts  
 ## Ollama + Small Language Models (SLM)
 
