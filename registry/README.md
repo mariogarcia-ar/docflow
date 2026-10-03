@@ -12,14 +12,22 @@ registry/
     extraction/invoice.md                       the base reading
     extraction/invoice.reasoning.md             the base reading — reasoning variant
     extraction/invoice_deteccion.md             the fast-fail gate
+    extraction/invoice_deteccion.reasoning.md   the fast-fail gate — reasoning variant
     extraction/invoice_desglose.md              the tax breakdown
+    extraction/invoice_desglose.reasoning.md    the tax breakdown — reasoning variant
     extraction/invoice_rubro.md                 the line-of-business fields
+    extraction/invoice_rubro.reasoning.md       the line-of-business fields — reasoning variant
     extraction/invoice_clasificacion.md         the classification judgement
+    extraction/invoice_clasificacion.reasoning.md
+                                                the classification judgement — reasoning variant
     extraction/vision.md                        the VLM reading of a page image
+    extraction/vision.reasoning.md              the VLM reading of a page image — reasoning variant
     review/invoice.md                           review of a text extraction
     review/invoice.reasoning.md                 review of a text extraction — reasoning variant
     review/general.md                           review of any step, against its own schema
+    review/general.reasoning.md                 review of any step — reasoning variant
     review/vision.md                            review of a vision extraction
+    review/vision.reasoning.md                  review of a vision extraction — reasoning variant
   schema/                                    response schemas  (see `--schema`)
     extraction/invoice.schema.json
     extraction/invoice_detection.schema.json
@@ -72,14 +80,19 @@ document is substituted (no literal `{…}` survives into the prompt).
 | Step | `--template` | `--schema` | Role — model |
 |---|---|---|---|
 | Base reading | `extraction/invoice` | `extraction/invoice` | T1 extract — `gemma3:12b` |
-| Base reading — reasoning | `extraction/invoice.reasoning` | `extraction/invoice` | T1 extract — a reasoning model, `think:true` |
 | Detection (gate) | `extraction/invoice_deteccion` | `extraction/invoice_detection` | T1 extract — `gemma3:12b` |
 | Tax breakdown | `extraction/invoice_desglose` | `extraction/invoice_desglose` | T1 extract — `gemma3:12b` |
 | Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` | T1 extract — `gemma3:12b` |
 | Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` | T1 extract — `gemma3:12b` |
 | Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `deepseek-r1:8b`, T3 review — `qwen3.5:9b`, plus `--extra contract=<step schema>` |
-| Review — reasoning | `review/invoice.reasoning` | `review/invoice` | T2/T3 review — a reasoning model, `think:true`, plus `--extra contract=<step schema>` |
 | Vision | `extraction/vision`, `review/vision` | none — see the limits below | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
+
+Every step above ships **two** prompts: the identifier in the table (the instruct one) and the same
+identifier with a `.reasoning` suffix — `extraction/invoice_deteccion` →
+`extraction/invoice_deteccion.reasoning`. Both drive the same schema, and the schema is the one the
+table names; the vision pair ships no schema at all, and its two prompts state the answer's shape.
+Only the prompt changes between the pair: the instruct one states the rules, the reasoning one
+states the criteria, and the second is meant for a model with `think:true`.
 
 Note the spelling: the **detection** template is `deteccion` (Spanish) while its schema is
 `detection` (English). That is the one pair where the two identifiers do not match, and it is easy
@@ -87,13 +100,23 @@ to get wrong — a mismatched pair is a `DEPENDENCY_ERROR`, not a silent fallbac
 
 ### Instruct and reasoning: one schema, two prompts
 
-Every step that reads or judges text exists twice — an instruct prompt and a reasoning prompt — and
-both drive the **same** schema: the schema fixes the shape of the answer, the prompt fixes how the
-model is asked to reach it. They are separate files on purpose: flipping `think` over one prompt is
-not the same thing as asking the question the other architecture answers. The reasoning variant of a
-pair is the same identifier with a `.reasoning` suffix — `extraction/invoice` →
+Every step that reads or judges text exists twice — an instruct prompt and a reasoning prompt —
+and both drive the **same** schema: the schema fixes the shape of the answer, the prompt fixes how
+the model is asked to reach it. They are separate files on purpose: flipping `think` over one
+prompt is not the same thing as asking the question the other architecture answers. The reasoning
+variant of a pair is the same identifier with a `.reasoning` suffix — `extraction/invoice` →
 `extraction/invoice.reasoning`, `review/invoice` → `review/invoice.reasoning` — and the two share
 the schema.
+
+### The absent value is the real `null`
+
+Every asset answers the absent case with the JSON `null`, never the string `"null"`: the prompts
+say `null`, a schema declares the field `["string","null"]`, and an enum that admits an absent
+value lists the `null` itself (`tipo_comprobante`, `categoria_gasto`,
+`condicion_impositiva_dominante`). Type-array nullability was verified against Ollama 0.31.1
+(`gemma3:4b`, `qwen3.5:9b`) with `format` set to these schemas: the GBNF compiler accepts the
+union and the model emits a real `null`. `validate_schema` enforces a union `type` like any
+other, so the nullable declaration is a rule the answer is checked against, not an annotation.
 
 | | instruct prompt | reasoning prompt |
 |---|---|---|
@@ -668,13 +691,7 @@ the caller-facing metadata
 Both `reason` and `suggested_value` are `required`, so the model always fills them. `reason` is a
 plain string — it is the support for a verdict, and there is always one. `suggested_value` is
 nullable (`["string","null"]`): the correcting value on a `disagree`, and the real JSON `null`
-otherwise. That is the pipeline's convention for 'no value' — never the string `"null"` — and the
-same declaration carries into `extraction/invoice`, where every field that may be absent is
-`["string","null"]` and `tipo_comprobante`'s enum lists the `null` itself. Type-array nullability
-was re-verified against Ollama 0.31.1 (`gemma3:4b`, `qwen3.5:9b`) with `format` set to these
-schemas: the GBNF compiler accepts the union and the model emits a real `null`, so the absent value
-the prompts ask for is the one the grammar produces. `validate_schema` enforces a union `type` like
-any other, so a nullable declaration is a rule the answer is checked against, not an annotation.
+otherwise.
 
 ## Manifest
 

@@ -13,6 +13,10 @@
       "format": "text"
     },
     {
+      "key": "template/extraction/vision.reasoning.md",
+      "format": "text"
+    },
+    {
       "key": "template/review/invoice.md",
       "format": "text"
     },
@@ -25,7 +29,15 @@
       "format": "text"
     },
     {
+      "key": "template/review/general.reasoning.md",
+      "format": "text"
+    },
+    {
       "key": "template/review/vision.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/vision.reasoning.md",
       "format": "text"
     },
     {
@@ -33,7 +45,15 @@
       "format": "text"
     },
     {
+      "key": "template/extraction/invoice_deteccion.reasoning.md",
+      "format": "text"
+    },
+    {
       "key": "template/extraction/invoice_desglose.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_desglose.reasoning.md",
       "format": "text"
     },
     {
@@ -41,7 +61,15 @@
       "format": "text"
     },
     {
+      "key": "template/extraction/invoice_rubro.reasoning.md",
+      "format": "text"
+    },
+    {
       "key": "template/extraction/invoice_clasificacion.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_clasificacion.reasoning.md",
       "format": "text"
     },
     {

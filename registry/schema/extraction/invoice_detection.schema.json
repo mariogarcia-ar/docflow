@@ -1,19 +1,12 @@
 {
   "type": "object",
   "properties": {
-    "indicios_detectados": {
-      "type": "string",
-      "description": "one terse line: which receipt-like markers you found (date, amount, items, emitter, CUIT, words like 'factura'/'ticket'/'comprobante') or which are missing. Not a verdict yet, just the evidence"
-    },
+    "indicios_detectados": {"type": "string"},
     "comprobante_valido": {
       "type": "string",
-      "enum": ["true", "false"],
-      "description": "'true' when the text is a receipt, 'false' when it is not. A damaged or partly illegible receipt is still 'true': reading quality is the base step's question, not this one's"
+      "enum": ["true", "false"]
     },
-    "motivo_rechazo": {
-      "type": "string",
-      "description": "a short phrase naming why the document was refused, only when `comprobante_valido` is 'false'; otherwise 'null'"
-    }
+    "motivo_rechazo": {"type": ["string", "null"]}
   },
   "required": [
     "indicios_detectados",

@@ -9,7 +9,7 @@
           "field": {"type": "string"},
           "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain", "ignored"]},
           "reason": {"type": "string"},
-          "suggested_value": {"type": "string"}
+          "suggested_value": {"type": ["string", "null"]}
         },
         "required": ["field", "verdict", "reason", "suggested_value"],
         "additionalProperties": false

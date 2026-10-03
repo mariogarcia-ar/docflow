@@ -1,54 +1,26 @@
 {
   "type": "object",
   "properties": {
-    "analisis_condicion_iva": {
-      "type": "string",
-      "description": "terse note: what IVA condition legend the emitter declares (if any), and whether the document discriminates IVA at all (does it show a rate + amount, or just a bottom-line total?). This decides the Factura C branch below: when the emitter is Monotributo or Exento, iva and the other taxes are '0' and subtotal is the total"
-    },
-    "subtotal": {
-      "type": "string",
-      "description": "net amount, or the total if not discriminated"
-    },
-    "iva": {
-      "type": "string",
-      "description": "the IVA amount in pesos, never the rate: a receipt showing 'IVA 21%: 2.100,00' has iva '2.100,00', and 21 goes in alicuotas_detectadas. '0' when the document does not discriminate IVA"
-    },
-    "impuestos_internos": {
-      "type": "string",
-      "description": "printed amount, or \"0\""
-    },
-    "percepcion_iibb": {
-      "type": "string",
-      "description": "printed amount, or \"0\""
-    },
-    "otros_impuestos": {
-      "type": "string",
-      "description": "printed amount, or \"0\""
-    },
-    "monto_no_gravado": {
-      "type": "string",
-      "description": "printed amount, or \"0\". Not the same as 'exento': a non-taxed amount is outside the IVA base, an exempt one is inside it and taxed at 0%"
-    },
-    "importe_total_facturado": {
-      "type": "string",
-      "description": "total as printed, with no adjustments"
-    },
+    "analisis_condicion_iva": {"type": "string"},
+    "subtotal": {"type": "string"},
+    "iva": {"type": "string"},
+    "impuestos_internos": {"type": "string"},
+    "percepcion_iibb": {"type": "string"},
+    "otros_impuestos": {"type": "string"},
+    "monto_no_gravado": {"type": "string"},
+    "importe_total_facturado": {"type": "string"},
     "condicion_impositiva_dominante": {
-      "type": "string",
+      "type": ["string", "null"],
       "enum": [
         "Responsable Inscripto",
         "Monotributo",
         "Exento",
         "No Categorizado",
         "Consumidor Final",
-        "null"
-      ],
-      "description": "the emitter's IVA condition, or 'null' when it is not declared. Same conclusion as analisis_condicion_iva above, in the fixed legend form"
+        null
+      ]
     },
-    "alicuotas_detectadas": {
-      "type": "string",
-      "description": "the printed IVA rates, with the AFIP codes: 0, 2_5, 5, 10_5, 21, 27, separated by '|'. The rates, never the amounts"
-    }
+    "alicuotas_detectadas": {"type": "string"}
   },
   "required": [
     "analisis_condicion_iva",

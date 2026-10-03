@@ -1,18 +1,9 @@
 {
   "type": "object",
   "properties": {
-    "analisis_rubro_aplica": {
-      "type": "string",
-      "description": "one short line: which of the two fields is in scope for this document's line of business, and whether that specific datum appears printed anywhere in the text"
-    },
-    "cantidad_comensales_personas": {
-      "type": "string",
-      "description": "the number of diners, only when the line of business is Restaurante; otherwise 'null'. Exactly as printed, without the unit; 'null' when it is not printed — never deduced from the number of items"
-    },
-    "cantidad_litros": {
-      "type": "string",
-      "description": "the litres, only when the line of business is Combustible; otherwise 'null'. Exactly as printed, without the unit; 'null' when it is not printed — never deduced from the amount divided by the price"
-    }
+    "analisis_rubro_aplica": {"type": "string"},
+    "cantidad_comensales_personas": {"type": ["string", "null"]},
+    "cantidad_litros": {"type": ["string", "null"]}
   },
   "required": [
     "analisis_rubro_aplica",
