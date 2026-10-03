@@ -46,7 +46,9 @@ only if it satisfies its field's definition in the contract: its type, its enum,
 everything its description says the field must or must not be. Judge only against what
 the contract states; do not invent a requirement it does not state. Where the contract
 keeps a mark "when it has one", a value without it is correct when the document prints
-none.
+none. When the contract states which value wins ("prefer X", "use Y only when X is
+absent"), that preference is part of the definition: apply it as written, never invert
+it, and never add a preference the contract does not state.
 
 3. "agree": the value matches the text and satisfies the contract.
 "disagree": the value violates the text or the contract AND you can name, from the
@@ -67,9 +69,12 @@ reached it.
 6. If the text contradicts the proposed value, it is "disagree" even if the value looks
 plausible.
 
-7. suggested_value is the field's content, never the raw text it came from. Where the
-contract defines tipo_comprobante as a bare letter or code, "FACTURA" is not the class,
-and an internal code printed under its own label (such as "COD.01") is not the AFIP
-code: the bare letter printed in the header is. For numeric or date values, use the
-format the contract declares, without converting the decimal separator or the date
-format.
+7. suggested_value is the field's content, never the raw text it came from. For
+`tipo_comprobante` the class is the bare letter printed in the header: "FACTURA" is not
+the class. Whenever a letter 'A', 'B' or 'C' is legible in the header, that letter is
+the correct value and a proposed letter is "agree" — even when a code is printed
+elsewhere. A short internal code under its own label (such as "COD.01") is not an AFIP
+code: never translate it or pad it into "001", "006" or "011". Suggest a three-digit
+code only when no letter is legible and that code is the one printed. For numeric or
+date values, use the format the contract declares, without converting the decimal
+separator or the date format.
