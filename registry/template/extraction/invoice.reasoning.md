@@ -35,8 +35,9 @@ tipo_comprobante
   The letter and the code name the same class, so when both are legible the letter is the
   answer: it is what the page prints, and the code is that class encoded. A code is the
   answer only when no letter can be read.
-  The letter usually sits alone on its line, far from the word "FACTURA", because the two are
-  separate blocks on the page; distance from "FACTURA" is not evidence against the class.
+  The letter and the word "FACTURA" are separate blocks on the page, so a bare letter may sit
+  alone on its line or share the line with "FACTURA", to its left or to its right; where it
+  sits in the header is not evidence about the class.
   The point-of-sale number ("Punto de Venta") sits beside the class and is not it. "090" and
   "099" are receipts that do not comply with RG 1415, not a class. A date, a CUIT, an amount
   and an item code are other numbers carrying other meanings.

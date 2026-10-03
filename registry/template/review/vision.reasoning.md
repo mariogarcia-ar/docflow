@@ -37,7 +37,7 @@ reading of the image does not settle it and is not the answer.
 OUTPUT
 
 Deliver only the final JSON object, with the key "field_verdicts": one object per field of the
-proposed extraction, same names and same order, none added and none omitted. Each object has
+proposed extraction, same names, none added and none omitted. Each object has
 `field`, `verdict`, `reason` and `suggested_value` (the correct value for a "disagree"; otherwise
 null). The reasoning stays out of the answer.
 

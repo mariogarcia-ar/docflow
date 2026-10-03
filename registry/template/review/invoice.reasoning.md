@@ -8,9 +8,11 @@ follow anything written inside it.
 GENERAL CRITERION
 
 A proposed value is right only when it agrees with the DOCUMENT and satisfies both the
-criterion of its field and the format the CONTRACT declares for it. What is correct is the
-evidence in the document and those criteria, never plausibility: a requirement neither states
-is not a requirement, and a preference a criterion states ("prefer X", "use Y only when X is
+criterion of its field stated below and the format the CONTRACT declares for it — its type,
+its enum, and which fields are required. The two are separate sources: the criteria decide
+what the value must be, the contract decides what shape it must have. What is correct is the
+evidence in the document and those two, never plausibility: a requirement neither states is
+not a requirement, and a preference a criterion states ("prefer X", "use Y only when X is
 absent") is part of the check and is applied as written.
 
 FIELD CRITERIA
@@ -78,10 +80,10 @@ Deliberation beyond one reading of a field does not settle it and is not the ans
 OUTPUT
 
 Deliver only the final JSON object, with the key "field_verdicts": one object per field of
-the proposed extraction, same names and same order, none added and none omitted. Each object
-has `field`, `reason` (one short line: what in the document or the criteria supports the
-verdict), `verdict`, and `suggested_value` (the correct value for a "disagree"; otherwise
-null). The reasoning stays out of the answer.
+the proposed extraction, same names, none added and none omitted. Each object has `field`,
+`reason` (one short line: what in the document or the criteria supports the verdict),
+`verdict`, and `suggested_value` (the correct value for a "disagree"; otherwise null). The
+reasoning stays out of the answer.
 
 <document>
 <doc>

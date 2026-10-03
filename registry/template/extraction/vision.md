@@ -28,11 +28,12 @@ Rules, apply in this order:
    field. Do not complete missing digits.
    Example: "C.U.I.T. Nro.: 99-9 Ing, Brutas: 201641" -> "99-9".
 
-2. Extract tipo_comprobante as a bare code or letter, nothing more. A lone letter
-   ("A", "B", "C") if that is how it appears. A three-digit code ("001", "006",
-   "011") if that is how it appears. Codes 090 and 099 are not a letter or an
-   A/B/C class, they are not a ticket or a boarding pass. If there is no legible
-   letter or code: null.
+2. Extract tipo_comprobante as a bare code or letter, nothing more. A letter ("A",
+   "B", "C") legible in the header is the class wherever it sits — alone on a line or
+   beside the word "FACTURA" — and it wins over a code printed elsewhere. Only when no
+   letter is legible does a three-digit code ("001", "006", "011") answer the field.
+   Codes 090 and 099 are not a letter or an A/B/C class, they are not a ticket or a
+   boarding pass. If there is no legible letter or code: null.
 
 3. Extract moneda "USD" only if the image shows "USD" or "U$S". Without that
    indication: "ARS".

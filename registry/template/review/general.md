@@ -29,11 +29,10 @@ VERDICT RULES
 1. Review only the fields that are in the proposed extraction. Do not re-extract
 the whole document, do not add new fields.
 
-2. The CONTRACT decides what is correct, not plausibility. What it declares is the
-field's type, its enum, and which fields are required — nothing else is a
-requirement. Judge only against what the contract states; do not invent a requirement
-it does not state: where the contract keeps a mark "when it has one", a value without
-it is correct when the document prints none.
+2. The CONTRACT declares the format, not the meaning: the field's type, its enum, and which
+fields are required. That declared format is what decides whether a value is admissible — not
+plausibility — and nothing it does not declare is a requirement. Where the contract keeps a
+mark "when it has one", a value without it is correct when the document prints none.
 
 3. verdict "agree": the proposed value matches the text and satisfies the contract.
 verdict "disagree": the proposed value violates the text or the contract, AND you can

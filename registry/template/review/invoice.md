@@ -40,11 +40,12 @@ VERDICT RULES (apply in this order)
 1. Review only the fields in the proposed extraction. Do not re-extract the document and do
 not add fields.
 
-2. What is correct is the criterion of the field and the format the CONTRACT declares for it
-(its type and its enum), never plausibility. Judge only against the criteria and what the
-contract declares; do not invent a requirement they do not state. When a criterion states
-which value wins ("prefer X", "use Y only when X is absent"), that preference is part of the
-check: apply it as written, never invert it, and never add a preference it does not state.
+2. Two sources decide, and they are separate. The criteria below state what a value must be;
+the CONTRACT declares the format it must satisfy — its type, its enum, and which fields are
+required. Never plausibility. Judge only against those two; do not invent a requirement
+neither states. When a criterion states which value wins ("prefer X", "use Y only when X is
+absent"), that preference is part of the check: apply it as written, never invert it, and
+never add a preference it does not state.
 
 3. "agree": the value matches the text and satisfies the criterion and the contract.
 "disagree": the value violates the text, the criterion or the contract AND you can name, from
@@ -82,8 +83,8 @@ analyze it, and set its suggested_value to null.
 OUTPUT
 
 A single JSON object with the key "field_verdicts" and no text or markdown outside it. One
-object per field of the proposed extraction, same names and same order, none added and none
-omitted. Each object has:
+object per field of the proposed extraction, same names, none added and none omitted. Each
+object has:
   field             the key's name, as in the proposed extraction
   reason            one short line (max 20 words): what in the text or the criteria supports
                     the verdict

@@ -30,10 +30,10 @@ tipo_comprobante — the receipt class printed in the header.
     with any separator and an optional leading zero ("COD.01", "COD 01", "COD01", "COD.1"),
     IS the code: answer it in three-digit form ("01" -> "001", "06" -> "006",
     "11" -> "011").
-  - The letter usually sits alone on its line, far to the right of the word "FACTURA",
-    because the two are separate blocks on the page. Do not require the mark to be adjacent
-    to "FACTURA", and do not skip a line whose only content is "A" — that line is where the
-    class is.
+  - The letter and the word "FACTURA" are separate blocks on the page, so a bare "A", "B" or
+    "C" may sit alone on its line or share the line with "FACTURA", to its left or to its
+    right. Wherever it sits in the header, a legible letter is the class: no line is skipped
+    for carrying anything else beside it.
   - Whenever a letter is legible, that letter is the answer, even if a code is printed
     elsewhere. Answer a code only when no letter is legible.
   - NOT the class: the point-of-sale number ("Punto de Venta"); "090" and "099", receipts
