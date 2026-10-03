@@ -10,12 +10,14 @@ registry/
   manifest.json                              the inventory of what lives here
   template/                                  prompt templates  (see `--template`)
     extraction/invoice.md                       the base reading
+    extraction/invoice_reason.md                the base reading — reasoning variant
     extraction/invoice_deteccion.md             the fast-fail gate
     extraction/invoice_desglose.md              the tax breakdown
     extraction/invoice_rubro.md                 the line-of-business fields
     extraction/invoice_clasificacion.md         the classification judgement
     extraction/vision.md                        the VLM reading of a page image
     review/invoice.md                           review of a text extraction
+    review/invoice_reason.md                    review of a text extraction — reasoning variant
     review/general.md                           review of any step, against its own schema
     review/vision.md                            review of a vision extraction
   schema/                                    response schemas  (see `--schema`)
@@ -52,8 +54,10 @@ same mapping `<extra>` renders whole, addressed one key at a time. The key must 
 `proposal`, because a review prompt with an empty proposal block asks a different question. The
 review template also carries `<extra:contract>`, and it is the reviewed step's own **schema**
 (`--extra contract=@registry/schema/extraction/invoice.schema.json`): the reviewer judges each
-proposed value against the same contract the extractor was given, so its verdicts and its
-`suggested_value`s obey the extraction rules instead of second-guessing them from plausibility.
+proposed value against the same format the extractor's answer had to satisfy, so its verdicts and
+its `suggested_value`s obey that format instead of second-guessing it from plausibility. The
+schema is the format — fields, types, enums, `required`, `additionalProperties` — and the rules
+that decide each value are stated in the prompts, never in the schema's descriptions.
 
 A template that asks for a placeholder the request cannot fill is a `DEPENDENCY_ERROR`, never an
 empty substitution: a prompt that reads as if the document were empty is a different question.
@@ -68,16 +72,49 @@ document is substituted (no literal `{…}` survives into the prompt).
 | Step | `--template` | `--schema` | Role — model |
 |---|---|---|---|
 | Base reading | `extraction/invoice` | `extraction/invoice` | T1 extract — `gemma3:12b` |
+| Base reading — reasoning | `extraction/invoice_reason` | `extraction/invoice` | T1 extract — a reasoning model, `think:true` |
 | Detection (gate) | `extraction/invoice_deteccion` | `extraction/invoice_detection` | T1 extract — `gemma3:12b` |
 | Tax breakdown | `extraction/invoice_desglose` | `extraction/invoice_desglose` | T1 extract — `gemma3:12b` |
 | Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` | T1 extract — `gemma3:12b` |
 | Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` | T1 extract — `gemma3:12b` |
 | Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `deepseek-r1:8b`, T3 review — `qwen3.5:9b`, plus `--extra contract=<step schema>` |
+| Review — reasoning | `review/invoice_reason` | `review/invoice` | T2/T3 review — a reasoning model, `think:true`, plus `--extra contract=<step schema>` |
 | Vision | `extraction/vision`, `review/vision` | none — see the limits below | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
 
 Note the spelling: the **detection** template is `deteccion` (Spanish) while its schema is
 `detection` (English). That is the one pair where the two identifiers do not match, and it is easy
 to get wrong — a mismatched pair is a `DEPENDENCY_ERROR`, not a silent fallback.
+
+### Instruct and reasoning: one schema, two prompts
+
+Every step that reads or judges text exists twice — an instruct prompt and a reasoning prompt — and
+both drive the **same** schema: the schema fixes the shape of the answer, the prompt fixes how the
+model is asked to reach it. They are separate files on purpose: flipping `think` over one prompt is
+not the same thing as asking the question the other architecture answers.
+
+| | instruct prompt | reasoning prompt |
+|---|---|---|
+| Instructions | operational — what to do | criteria — what makes an answer right |
+| Ambiguity | resolved by a stated rule | resolved by naming the evidence |
+| `think` | `false` | `true` |
+| `temperature` | `0` | `0.5–0.7`, per model |
+| `num_ctx` | the minimum that holds prompt + document + answer (≈4096 to start) | larger, because the reasoning shares the window (8192+) |
+| Latency | low | higher |
+
+Use the instruct prompt when the location of a field is known, the rules are clear, and the run
+should be fast and deterministic; use the reasoning prompt when several candidates must be
+distinguished, blocks related, or contradictory information weighed. Both extraction variants pass
+`--schema extraction/invoice`, and both review variants pass `--schema review/invoice` — the
+schema is shared, only the framing of the question changes.
+
+`think: true` together with `format: schema` is not guaranteed by the model or by the Ollama
+version: it is verified per template. The expected shape is the reasoning in `message.thinking` and
+the final JSON, alone, in `message.content`; the schema constrains that final answer only, and both
+reasoning prompts ask for exactly that.
+
+Both prompts of a pair are versioned and evaluated independently, against the same labelled
+dataset: per-field accuracy, correct `null`, false positives, invented values, invalid JSON and
+latency — never a handful of manual examples.
 
 ## How to use them, step by step
 
@@ -127,10 +164,11 @@ python scripts/tools/llm.py --assets-dir $REG call $DOC \
 # 5 — the review: a second model audits step 1's reading — <extra:proposal>, judged against
 #     <extra:contract>. KEY=@FILE reads the value from a file, which is how step 1's answer gets
 #     here: it was written verbatim as invoice.json (the `<stem>.json` the bench readme describes)
-#     under the `--out` step 1 was given. The contract is step 1's schema, and it is what the
-#     reviewer compares each proposed value against; without it the reviewer re-reads the raw text
-#     with no rules, and its suggested_value can break the extraction contract — it once proposed
-#     the word "FACTURA" where rule 2 requires the bare letter "A". A template that asks for either
+#     under the `--out` step 1 was given. The contract is step 1's schema — the format each
+#     proposed value must have — and the reviewer's own criteria say what each value must be.
+#     Without it the reviewer loses even that shape, and its suggested_value can break the
+#     extraction format — a run once proposed the word "FACTURA" where rule 7 requires the bare
+#     letter "A". A template that asks for either
 #     placeholder and does not receive it stops at load with a DEPENDENCY_ERROR naming the key.
 #     A reasoning reviewer loops instead of answering unless its thinking is switched off: with
 #     `think` left unset, deepseek-r1:8b put all 2,000 tokens of a bounded run into the reasoning
@@ -192,7 +230,8 @@ from pathlib import Path
 from docflow.llm import LLMInput, process_llm_request
 
 ASSETS = Path("registry")
-# The reviewed step's schema is the contract the reviewer judges the proposal against.
+# The reviewed step's schema is the format the reviewer checks the proposal against; the rules
+# that decide each value live in the review template, never in the schema.
 CONTRACT = json.loads((ASSETS / "schema/extraction/invoice.schema.json").read_text())
 DOC = Path(
     "tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt"
@@ -362,9 +401,11 @@ section, and the section name is what pairs an input with a placeholder:
 `extra={"proposal": reading.parsed_response}`, and `<extra:contract>` by the reviewed step's own
 schema; `extraction/invoice_rubro` is the same shape with `<extra:rubro>`. The contract is what
 makes the reviewer the extractor's judge rather than a second opinion: it names each field and
-states what that field must and must not be, so a proposed value is "disagree" when it breaks the
-rule, not when it merely looks unlikely — and a `suggested_value` is only valid when it satisfies
-the same contract. **Every text template opens with the document and states its instructions after
+declares the format its value must have — the schema is the shape of the answer, and the rules
+that decide a value live in the prompts, never in the schema's descriptions. The reviewer's own
+criteria (one block per field, mirroring the extractor's rules) then say what each value must be,
+so a proposed value is "disagree" when it breaks a criterion or the declared format, not when it
+merely looks unlikely — and a `suggested_value` is only valid when it satisfies both. **Every text template opens with the document and states its instructions after
 it**, never the reverse: the five T1 steps then share a byte-identical prefix — the same block plus
 the same OCR text — and Ollama reuses the KV it cached for that prefix, so the document is tokenized
 once per run instead of once per step. The instructions, which differ from step to step, sit after
@@ -550,6 +591,13 @@ python scripts/tools/llm.py --assets-dir registry node <file.txt> \
 ## Schema design notes
 
 These were the `$comment` fields of each schema, moved here when the schemas became loader assets.
+
+**The schema is the format, not the rules.** Every schema here declares structure only — `type`,
+`enum`, `required`, `additionalProperties` — and no `description` states how a value is found or
+chosen. The rules live in the templates: the extraction prompts hold what each field must be, and
+`review/invoice` restates them as the reviewer's own criteria. A rule written into a schema
+description would be a second source of truth drifting from the first, and the decoder's grammar
+does not read descriptions anyway.
 
 **`extraction/invoice`** — The BASE READING step of the layered extraction: the seven printed
 fields, and ONLY those. This schema was trimmed to the answer itself, so the four `analisis_*`

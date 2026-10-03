@@ -5,11 +5,19 @@
       "format": "text"
     },
     {
+      "key": "template/extraction/invoice_reason.md",
+      "format": "text"
+    },
+    {
       "key": "template/extraction/vision.md",
       "format": "text"
     },
     {
       "key": "template/review/invoice.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_reason.md",
       "format": "text"
     },
     {

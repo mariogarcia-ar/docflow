@@ -3,34 +3,17 @@
   "properties": {
     "tipo_comprobante": {
       "type": "string",
-      "enum": ["A", "B", "C", "090", "099", "null"],
-      "description": "the receipt class printed in the header: the bare letter 'A', 'B' or 'C', or its AFIP three-digit code ('001' Factura A, '006' Factura B, '011' Factura C). The code may also be printed as a short labelled form of the same number ('COD.01', 'COD 01', 'COD01', 'COD.1') and that label IS the code: give it in its three-digit AFIP form ('01' -> '001', '06' -> '006', '11' -> '011'). Prefer the letter whenever a letter is legible, even when a code is printed elsewhere; answer the code only when no letter is legible. '090' and '099' are comprobantes that do not comply with RG 1415 and are never the correct answer. Not the point of sale ('Punto de Venta'); not a date, a CUIT, an amount or an item code. 'null' when neither a letter nor a code of that table is legible"
+      "enum": ["A", "B", "C", "090", "099", "null"]
     },
-    "razon_social_emisor": {
-      "type": "string",
-      "description": "the EMITTER's name as printed in the header block (above 'Cliente:'), without labels like 'Razon Social:' or 'Cliente:'. Never the recipient's name. Correct a letter O misread for the digit 0 inside words (e.g. 'ROSARI0' -> 'ROSARIO'). 'null' when it is not printed"
-    },
-    "cuit_emisor": {
-      "type": "string",
-      "description": "the EMITTER's CUIT, digits and its own hyphens only, format XX-XXXXXXXX-X. Taken only from the emitter block, never from the recipient's CUIT. Correct a letter O misread for the digit 0. Cut the value at the first character that is not a digit or a hyphen, even if it is left incomplete — do not complete missing digits. 'null' when it is not printed"
-    },
-    "fecha_emision": {
-      "type": "string",
-      "description": "the issue date as printed, DD/MM/YYYY. The issue date, not the due date and not the billing period; do not convert it to another format. 'null' when it is not printed"
-    },
-    "nro_comprobante": {
-      "type": "string",
-      "description": "the receipt number printed beside a label such as 'Comp.Nro.', 'Nro.', 'Número' or 'Comprobante Nro.', complete, with the hyphen when it has one (e.g. '0104-12231729'). Not the point of sale ('Punto de Venta'), not the CAE ('CAE N°'), not an item code, not the tipo_comprobante code nor its short labelled form (such as 'COD.01'). 'null' when it is not printed"
-    },
+    "razon_social_emisor": {"type": "string"},
+    "cuit_emisor": {"type": "string"},
+    "fecha_emision": {"type": "string"},
+    "nro_comprobante": {"type": "string"},
     "moneda": {
       "type": "string",
-      "enum": ["ARS", "USD"],
-      "description": "'USD' only when the document says 'USD' or 'U$S'; otherwise 'ARS'"
+      "enum": ["ARS", "USD"]
     },
-    "notas": {
-      "type": "string",
-      "description": "real observations printed on the receipt, or 'null'. Not a column header pasted into the running text, not a running-account 'Saldo Cta Cte' balance, not a summary of what you did, and not text in another language"
-    }
+    "notas": {"type": "string"}
   },
   "required": [
     "tipo_comprobante",

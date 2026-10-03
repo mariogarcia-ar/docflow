@@ -3,8 +3,6 @@
   "properties": {
     "field_verdicts": {
       "type": "array",
-      "minItems": 7,
-      "maxItems": 7,
       "items": {
         "type": "object",
         "properties": {
@@ -20,9 +18,12 @@
               "notas"
             ]
           },
-          "reason": {"type": "string", "maxLength": 160},
-          "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain", "ignored"]},
-          "suggested_value": {"type": "string", "maxLength": 100}
+          "reason": {"type": "string"},
+          "verdict": {
+            "type": "string",
+            "enum": ["agree", "disagree", "uncertain", "ignored"]
+          },
+          "suggested_value": {"type": "string"}
         },
         "required": ["field", "reason", "verdict", "suggested_value"],
         "additionalProperties": false
