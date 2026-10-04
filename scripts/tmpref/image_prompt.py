@@ -45,34 +45,150 @@ schema (or the template when no schema is stated) and the input — the first im
 text's appended when ``--doc`` states one — so a page read with and without its text does not
 overwrite itself.
 
-A receipt read straight from its image, on a model that can see, and then reviewed against the same
-image — the flow of the bench's examples with the text replaced by the pixels:
+The invoice flow, one command per step, mirroring the lab bench's assets and options — each step
+names its output, so the next one reads the answer back through ``@var/tmp/<name>.json``:
 
     IMG=tests/fixtures/expected-extraction/dbc07b17-2538-4611-9e51-7e161aaf7ba5.jpg
+    DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
     R=registry
 
     # what the flow asks, without sending anything: the rendered prompt
     python scripts/tmpref/image_prompt.py --print-prompt \
         --template $R/template/extraction/vision.md --image $IMG
 
-    # 1. the base reading, straight from the image
+    # 1. the base reading, straight from the image. The image is the document, so the template
+    #    carries no <doc> and none is stated. The registry ships no vision schema either — the
+    #    template states the answer's shape — and the step's own schema is passed when the decoder
+    #    should be constrained to it: the seven fields it declares are the ones asked for.
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name reading \
         --template $R/template/extraction/vision.md --image $IMG \
         --schema $R/schema/extraction/invoice.schema.json
 
-    # 2. the review of step 1's answer, judged against the same image
+    # 2. the review of step 1's answer, judged against the same image. review/vision names the
+    #    proposal alone, so the schema it is given is what says which fields are judged: the
+    #    reviewed step's.
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name review \
         --template $R/template/review/vision.md --image $IMG \
         --schema $R/schema/review/invoice.schema.json \
         --extra proposal=@var/tmp/reading.json \
         --option temperature=0.2 --timeout 300
 
-A call that carries the page text beside the image, the way ``TEXT_PLUS_VLM`` does, states both:
+The rest of the flow reads text, and the registry ships no vision template for it: the asset table
+in ``registry/README.md`` names the vision pair alone — one step that reads pixels, one that judges
+a proposal against them. Such a step still carries the page, because the strategy the library calls
+``TEXT_PLUS_VLM`` (``docflow/workflow/llm_input.py``) sends the document's text *and* the image in
+one request, and ``--doc`` is how this probe states that half. The step's template reads its own
+``<doc>``, the step's schema constrains the answer to its fields, and the image rides beside the
+text as the pixel half of the evidence:
 
+    # 3. the detection gate, with the page beside its text
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name detection \
+        --template $R/template/extraction/invoice_deteccion.md --image $IMG --doc $DOC \
+        --schema $R/schema/extraction/invoice_detection.schema.json
+
+    # 4. the base reading of the page as text, the one the review below judges
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name reading \
-        --template $R/template/extraction/vision.md --image $IMG \
-        --doc tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+        --template $R/template/extraction/invoice.md --image $IMG --doc $DOC \
         --schema $R/schema/extraction/invoice.schema.json
+
+    # 5. the breakdown of items and amounts
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name desglose \
+        --template $R/template/extraction/invoice_desglose.md --image $IMG --doc $DOC \
+        --schema $R/schema/extraction/invoice_desglose.schema.json
+
+    # 6. the receipt class, and 7. the line of business the caller states
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b \
+        --name clasificacion \
+        --template $R/template/extraction/invoice_clasificacion.md --image $IMG --doc $DOC \
+        --schema $R/schema/extraction/invoice_clasificacion.schema.json
+
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name rubro \
+        --template $R/template/extraction/invoice_rubro.md --image $IMG --doc $DOC \
+        --schema $R/schema/extraction/invoice_rubro.schema.json --extra rubro=Restaurante
+
+    # 8. step 4's reading is reviewed with the page: review/invoice names <doc>, <extra:proposal>
+    #    and <extra:contract>, so the review carries the same three inputs the text flow gives it
+    #    and the image joins them. T2 is a reasoning model, so it is asked the reasoning variant of
+    #    the pair (registry/README.md, "Instruct and reasoning: one schema, two prompts").
+    python scripts/tmpref/image_prompt.py --provider ollama --model deepseek-r1:8b --name review \
+        --template $R/template/review/invoice.reasoning.md --image $IMG --doc $DOC \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading.json \
+        --extra contract=@$R/schema/extraction/invoice.schema.json \
+        --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
+        --option num_ctx=16384 --option num_predict=4096 --timeout 300
+
+Watching that review happen, which a saved file cannot show — the deltas go to stderr while stdout
+and the two files stay the finished answer:
+
+    python scripts/tmpref/image_prompt.py --provider ollama --model deepseek-r1:8b --stream \
+        --name review \
+        --template $R/template/review/invoice.reasoning.md --image $IMG --doc $DOC \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading.json \
+        --extra contract=@$R/schema/extraction/invoice.schema.json
+
+Step 8's review again, on T3, with the thinking channel braked: ``--option think=false`` reaches the
+top of the request, the way the library sends it, and ``--timeout`` states the wait.
+
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen3.5:9b --name review-qwen \
+        --template $R/template/review/invoice.md --image $IMG --doc $DOC \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading.json \
+        --extra contract=@$R/schema/extraction/invoice.schema.json \
+        --option think=false --option temperature=0.2 --option min_p=0.05 \
+        --option num_ctx=16384 --timeout 600
+
+The breakdown of step 5 is reviewed the same way, against its own step schema, and both review
+models run it:
+
+    # 9. T2 reads the breakdown, with the page
+    python scripts/tmpref/image_prompt.py --provider ollama --model deepseek-r1:8b \
+        --name review-desglose \
+        --template $R/template/review/invoice_desglose.reasoning.md --image $IMG --doc $DOC \
+        --schema $R/schema/review/invoice_desglose.schema.json \
+        --extra proposal=@var/tmp/desglose.json \
+        --extra contract=@$R/schema/extraction/invoice_desglose.schema.json \
+        --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
+        --option num_ctx=16384 --option num_predict=4096 --timeout 300
+
+    # 10. and T3, braked, on the instruct template — the same schema, the same three inputs
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen3.5:9b \
+        --name review-desglose-qwen \
+        --template $R/template/review/invoice_desglose.md --image $IMG --doc $DOC \
+        --schema $R/schema/review/invoice_desglose.schema.json \
+        --extra proposal=@var/tmp/desglose.json \
+        --extra contract=@$R/schema/extraction/invoice_desglose.schema.json \
+        --option think=false --option temperature=0.2 --option min_p=0.05 \
+        --option num_ctx=16384 --timeout 600
+
+The review template names no field of its own, so it judges whatever proposal it is handed: the
+breakdown is reviewed from the pixels alone — no text at all — by stating the step's own schema:
+
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b \
+        --name review-desglose-pixels \
+        --template $R/template/review/vision.md --image $IMG \
+        --schema $R/schema/review/invoice_desglose.schema.json \
+        --extra proposal=@var/tmp/desglose.json \
+        --option temperature=0.2 --timeout 300
+
+The vision pair exists twice as well, and the two halves are asked the way the text pair is: the
+reasoning template for a model whose trace is left to itself, the instruct one for a model whose
+thinking channel is braked — ``--option think=false`` reaches the top of the request, the way the
+library sends it. A model that both sees and reasons (``qwen3.5:9b``) runs both:
+
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen3.5:9b \
+        --name reading-reasoning \
+        --template $R/template/extraction/vision.reasoning.md --image $IMG \
+        --schema $R/schema/extraction/invoice.schema.json \
+        --option temperature=0.6 --option num_ctx=16384 --option num_predict=4096 --timeout 600
+
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen3.5:9b \
+        --name reading-braked \
+        --template $R/template/extraction/vision.md --image $IMG \
+        --schema $R/schema/extraction/invoice.schema.json \
+        --option think=false --option temperature=0.2 --option min_p=0.05 \
+        --option num_ctx=16384 --timeout 600
 
 The seam is its sibling :mod:`_seam` and the surface this probe shares with :mod:`md_prompt` is
 :mod:`_probe`, so a probe runs from this folder.
