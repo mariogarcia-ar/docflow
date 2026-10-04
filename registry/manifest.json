@@ -9,11 +9,11 @@
       "format": "text"
     },
     {
-      "key": "template/extraction/vision.md",
+      "key": "template/extraction/invoice_vision.md",
       "format": "text"
     },
     {
-      "key": "template/extraction/vision.reasoning.md",
+      "key": "template/extraction/invoice_vision.reasoning.md",
       "format": "text"
     },
     {
@@ -117,6 +117,16 @@
     },
     {
       "key": "schema/extraction/invoice_clasificacion.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/review/vision.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     }

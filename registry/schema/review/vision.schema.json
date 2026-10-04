@@ -1,0 +1,35 @@
+{
+  "type": "object",
+  "properties": {
+    "field_verdicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "tipo_comprobante",
+              "razon_social_emisor",
+              "cuit_emisor",
+              "fecha_emision",
+              "nro_comprobante",
+              "moneda",
+              "notas"
+            ]
+          },
+          "reason": {"type": "string"},
+          "verdict": {
+            "type": "string",
+            "enum": ["agree", "disagree", "uncertain", "ignored"]
+          },
+          "suggested_value": {"type": ["string", "null"]}
+        },
+        "required": ["field", "reason", "verdict", "suggested_value"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["field_verdicts"],
+  "additionalProperties": false
+}

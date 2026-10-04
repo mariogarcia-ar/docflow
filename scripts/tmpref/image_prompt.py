@@ -6,9 +6,10 @@ composition seam defines: ``<doc>``, ``<extra>``, ``<extra:key>`` and ``<schema>
 is printed and saved the same way. What differs is the input: instead of the document's text, the
 call carries the image (or images) ``--image`` names.
 
-The image *is* the document here. ``registry/template/extraction/vision.md`` reads the seven fields
-of an Argentine receipt straight from the pixels, and ``registry/template/review/vision.md`` judges
-a proposal against that same image; neither carries a ``<doc>``, because there is no text to give.
+The image *is* the document here. ``registry/template/extraction/invoice_vision.md`` reads the seven
+fields of an Argentine receipt straight from the pixels, and ``registry/template/review/vision.md``
+judges a proposal against that same image; neither carries a ``<doc>``, because there is no text to
+give.
 A template that *does* carry one still resolves it: the strategy the library calls
 ``TEXT_PLUS_VLM`` (``docflow/workflow/llm_input.py``) sends the page text *and* the image in one
 call, and ``--doc`` is how this probe states that half.
@@ -54,22 +55,21 @@ names its output, so the next one reads the answer back through ``@var/tmp/<name
 
     # what the flow asks, without sending anything: the rendered prompt
     python scripts/tmpref/image_prompt.py --print-prompt \
-        --template $R/template/extraction/vision.md --image $IMG
+        --template $R/template/extraction/invoice_vision.md --image $IMG
 
     # 1. the base reading, straight from the image. The image is the document, so the template
-    #    carries no <doc> and none is stated. The registry ships no vision schema either — the
-    #    template states the answer's shape — and the step's own schema is passed when the decoder
-    #    should be constrained to it: the seven fields it declares are the ones asked for.
+    #    carries no <doc> and none is stated. The step ships its own schema — the seven fields the
+    #    template asks for — and passing it compiles that shape into the decoder's grammar.
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name reading \
-        --template $R/template/extraction/vision.md --image $IMG \
-        --schema $R/schema/extraction/invoice.schema.json
+        --template $R/template/extraction/invoice_vision.md --image $IMG \
+        --schema $R/schema/extraction/invoice_vision.schema.json
 
     # 2. the review of step 1's answer, judged against the same image. review/vision names the
     #    proposal alone, so the schema it is given is what says which fields are judged: the
     #    reviewed step's.
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name review \
         --template $R/template/review/vision.md --image $IMG \
-        --schema $R/schema/review/invoice.schema.json \
+        --schema $R/schema/review/vision.schema.json \
         --extra proposal=@var/tmp/reading.json \
         --option temperature=0.2 --timeout 300
 
@@ -179,14 +179,14 @@ library sends it. A model that both sees and reasons (``qwen3.5:9b``) runs both:
 
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen3.5:9b \
         --name reading-reasoning \
-        --template $R/template/extraction/vision.reasoning.md --image $IMG \
-        --schema $R/schema/extraction/invoice.schema.json \
+        --template $R/template/extraction/invoice_vision.reasoning.md --image $IMG \
+        --schema $R/schema/extraction/invoice_vision.schema.json \
         --option temperature=0.6 --option num_ctx=16384 --option num_predict=4096 --timeout 600
 
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen3.5:9b \
         --name reading-braked \
-        --template $R/template/extraction/vision.md --image $IMG \
-        --schema $R/schema/extraction/invoice.schema.json \
+        --template $R/template/extraction/invoice_vision.md --image $IMG \
+        --schema $R/schema/extraction/invoice_vision.schema.json \
         --option think=false --option temperature=0.2 --option min_p=0.05 \
         --option num_ctx=16384 --timeout 600
 

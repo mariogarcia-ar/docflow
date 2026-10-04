@@ -20,8 +20,8 @@ registry/
     extraction/invoice_clasificacion.md         the classification judgement
     extraction/invoice_clasificacion.reasoning.md
                                                 the classification judgement — reasoning variant
-    extraction/vision.md                        the VLM reading of a page image
-    extraction/vision.reasoning.md              the VLM reading of a page image — reasoning variant
+    extraction/invoice_vision.md                the VLM reading of a page image
+    extraction/invoice_vision.reasoning.md      the VLM reading of a page image — reasoning variant
     review/invoice.md                           review of a text extraction
     review/invoice.reasoning.md                 review of a text extraction — reasoning variant
     review/invoice_desglose.md                  review of the tax breakdown
@@ -36,9 +36,11 @@ registry/
     extraction/invoice_desglose.schema.json
     extraction/invoice_rubro.schema.json
     extraction/invoice_clasificacion.schema.json
+    extraction/invoice_vision.schema.json
     review/invoice.schema.json
     review/invoice_desglose.schema.json
     review/general.schema.json
+    review/vision.schema.json
 ```
 
 ## How an identifier resolves
@@ -95,12 +97,13 @@ document is substituted (no literal `{…}` survives into the prompt).
 | Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` | T1 extract — `gemma3:12b` |
 | Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` | T1 extract — `gemma3:12b` |
 | Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `deepseek-r1:8b`, T3 review — `qwen3.5:9b`, plus `--extra contract=<step schema>` |
-| Vision | `extraction/vision`, `review/vision` | none — see the limits below | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
+| Vision | `extraction/invoice_vision`, `review/vision` | `extraction/invoice_vision`, `review/vision` | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
 
 Every step above ships **two** prompts: the identifier in the table (the instruct one) and the same
 identifier with a `.reasoning` suffix — `extraction/invoice_deteccion` →
 `extraction/invoice_deteccion.reasoning`. Both drive the same schema, and the schema is the one the
-table names; the vision pair ships no schema at all, and its two prompts state the answer's shape.
+table names; the vision pair ships one schema per step — `extraction/invoice_vision` for the
+reading, `review/vision` for the judgement — and its two prompts state the answer's shape as well.
 Only the prompt changes between the pair: the instruct one states the rules, the reasoning one
 states the criteria, and the second is meant for a model with `think:true`.
 
@@ -402,12 +405,11 @@ review_qwen = step(
 )
 
 # The vision path runs when the text path fails the checks, not instead of it. V1 reads the page
-# image: no document, and no schema ships for vision here, so the template states the answer's
-# shape in prose and nothing compiles it into a grammar.
+# image: no document, and its own schema compiles the answer's shape into a grammar.
 vision = step(
     "vision_extract",
-    "extraction/vision",
-    None,
+    "extraction/invoice_vision",
+    "extraction/invoice_vision",
     model=V1,
     document=None,
     images=[PAGE],
@@ -417,7 +419,7 @@ vision = step(
 vision_review = step(
     "vision_review",
     "review/vision",
-    None,
+    "review/vision",
     model=V2,
     document=None,
     images=[PAGE],
@@ -472,8 +474,8 @@ Five things that are not decoration:
 - **`options` is where the provider controls live** (`base_url`, `api_key`, `timeout`,
   `max_attempts`, `context_window`) — those are consumed by the processor. Every other key in it is
   copied into the provider's request body as a decoding parameter.
-- **The vision steps are the same contract minus two fields.** They carry the page in `images`,
-  leave `document` at `None` rather than an empty string, and pass no `schema` — a step reads pixels
+- **The vision steps carry the page instead of the document.** They carry it in `images`, leave
+  `document` at `None` rather than an empty string, and pass their own `schema` — a step reads pixels
   or it reads text, and a request that pretends to do both is not the step it says it is.
 - **Failures come back inside the result**, typed, in `status` and `errors`; nothing is raised
   across the contract. So a caller checks `result.schema_valid` before reading a field — which is
@@ -622,13 +624,10 @@ python scripts/tools/llm.py --assets-dir registry node <file.txt> \
   CLI only when each named key is stated; a key the caller leaves out stops the run at load time
   with a `DEPENDENCY_ERROR` naming it, rather than rendering a proposal block that reads as empty.
   `workflow.py` still fills none of them, and its chain does not read this registry.
-- **`llm.py` cannot send images.** It hardcodes `images=[]`, so `extraction/vision` and
+- **`llm.py` cannot send images.** It hardcodes `images=[]`, so `extraction/invoice_vision` and
   `review/vision` are not reachable from the CLI: drive them from the library, as in *Chaining the
   steps* above. `workflow.py`'s `--allow-vlm` / `--image-prepare-for-vlm` enable its own chain,
   and that chain does not read this registry.
-- **No vision schema ships here.** `schema/` holds the six text artifacts only, so `--schema` is
-  omitted on the two vision steps and nothing constrains their decoder — the templates state the
-  answer's shape in prose.
 - **`$comment` is not allowed in a schema.** The validator enforces a closed keyword set and sends
   the schema to the provider verbatim, where OpenAI's `strict: true` rejects unknown keywords; so
   the design notes that used to live in `$comment` are kept below instead.
@@ -718,6 +717,18 @@ Both `reason` and `suggested_value` are `required`, so the model always fills th
 plain string — it is the support for a verdict, and there is always one. `suggested_value` is
 nullable (`["string","null"]`): the correcting value on a `disagree`, and the real JSON `null`
 otherwise.
+
+**`extraction/invoice_vision`** — The VLM reading of a page image: the same seven printed fields as
+`extraction/invoice`, and a byte-for-byte copy of it. The two templates ask for the same fields, so
+the copy exists to give the step its own artifact — a registry asset is named after the step that
+reads it, the way `extraction/invoice_desglose` is — and to constrain the reading's decoder with a
+grammar instead of leaving the answer's shape to prose.
+
+**`review/vision`** — The verdict vector over the vision reading: `field_verdicts` over the same
+seven fields, and a copy of `review/invoice` for the same reason. It carries the weight on this
+side, because `review/vision` names no field of its own — it judges whatever proposal it is handed —
+so this file is the one that says which fields a vision review answers. A vision review of another
+step's proposal states that step's own review schema instead.
 
 ## Manifest
 
