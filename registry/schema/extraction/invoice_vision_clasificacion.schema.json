@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "analisis_evidencia_rubro": {"type": "string"},
+    "categoria_gasto": {
+      "type": ["string", "null"],
+      "enum": [
+        "Restaurante",
+        "Supermercado",
+        "Hospedaje",
+        "Combustible",
+        "Movilidad/Pasajes",
+        "Peajes",
+        "Herramientas",
+        "Otros",
+        null
+      ]
+    },
+    "descripcion": {"type": "string"},
+    "centro_de_costo": {"type": ["string", "null"]}
+  },
+  "required": [
+    "analisis_evidencia_rubro",
+    "categoria_gasto",
+    "descripcion",
+    "centro_de_costo"
+  ],
+  "additionalProperties": false
+}

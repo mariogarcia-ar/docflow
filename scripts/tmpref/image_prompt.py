@@ -6,10 +6,12 @@ composition seam defines: ``<doc>``, ``<extra>``, ``<extra:key>`` and ``<schema>
 is printed and saved the same way. What differs is the input: instead of the document's text, the
 call carries the image (or images) ``--image`` names.
 
-The image *is* the document here. ``registry/template/extraction/invoice_vision.md`` reads the seven
-fields of an Argentine receipt straight from the pixels, and ``registry/template/review/vision.md``
-judges a proposal against that same image; neither carries a ``<doc>``, because there is no text to
-give.
+The image *is* the document here. Every step of the layered extraction ships a template that reads
+the page: ``registry/template/extraction/invoice_vision.md`` reads the seven fields of an Argentine
+receipt straight from the pixels and its siblings — ``…_deteccion``, ``…_desglose``,
+``…_clasificacion``, ``…_rubro`` — ask the other steps of that same page, while
+``registry/template/review/vision.md`` and ``registry/template/review/invoice_vision_desglose.md``
+judge a proposal against it. None carries a ``<doc>``, because there is no text to give.
 A template that *does* carry one still resolves it: the strategy the library calls
 ``TEXT_PLUS_VLM`` (``docflow/workflow/llm_input.py``) sends the page text *and* the image in one
 call, and ``--doc`` is how this probe states that half.
@@ -47,9 +49,12 @@ text's appended when ``--doc`` states one — so a page read with and without it
 overwrite itself.
 
 The invoice flow, one command per step, mirroring the lab bench's assets and options — each step
-names its output, so the next one reads the answer back through ``@var/tmp/<name>.json``:
+names its output, so the next one reads the answer back through ``@var/tmp/<name>.json``. Every step
+ships a template that reads the page, so the whole flow runs from the image alone, and the receipt is
+the one the text flow reads as ``fixtures-txt/casos/<same id>.txt``: the two paths answer about the
+same paper.
 
-    IMG=tests/fixtures/expected-extraction/dbc07b17-2538-4611-9e51-7e161aaf7ba5.jpg
+    IMG=tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg
     DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
     R=registry
 
@@ -64,39 +69,68 @@ names its output, so the next one reads the answer back through ``@var/tmp/<name
         --template $R/template/extraction/invoice_vision.md --image $IMG \
         --schema $R/schema/extraction/invoice_vision.schema.json
 
-    # 2. the review of step 1's answer, judged against the same image. review/vision names the
+    # 2. the detection gate: is this a receipt at all?
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name detection \
+        --template $R/template/extraction/invoice_vision_deteccion.md --image $IMG \
+        --schema $R/schema/extraction/invoice_vision_detection.schema.json
+
+    # 3. the tax breakdown, read from the page: the IVA mechanics and the amounts
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name desglose \
+        --template $R/template/extraction/invoice_vision_desglose.md --image $IMG \
+        --schema $R/schema/extraction/invoice_vision_desglose.schema.json
+
+    # 4. the classification judgement, and 5. the line-of-business fields the caller states
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b \
+        --name clasificacion \
+        --template $R/template/extraction/invoice_vision_clasificacion.md --image $IMG \
+        --schema $R/schema/extraction/invoice_vision_clasificacion.schema.json
+
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name rubro \
+        --template $R/template/extraction/invoice_vision_rubro.md --image $IMG \
+        --schema $R/schema/extraction/invoice_vision_rubro.schema.json --extra rubro=Restaurante
+
+    # 6. the review of step 1's answer, judged against the same image. review/vision names the
     #    proposal alone, so the schema it is given is what says which fields are judged: the
-    #    reviewed step's.
+    #    reviewed step's. A review carries the page as well as the proposal, so the window is
+    #    stated — the image is context, and Ollama's default is smaller than the request.
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name review \
         --template $R/template/review/vision.md --image $IMG \
         --schema $R/schema/review/vision.schema.json \
         --extra proposal=@var/tmp/reading.json \
-        --option temperature=0.2 --timeout 300
+        --option num_ctx=16384 --option temperature=0.2 --timeout 300
 
-The rest of the flow reads text, and the registry ships no vision template for it: the asset table
-in ``registry/README.md`` names the vision pair alone — one step that reads pixels, one that judges
-a proposal against them. Such a step still carries the page, because the strategy the library calls
-``TEXT_PLUS_VLM`` (``docflow/workflow/llm_input.py``) sends the document's text *and* the image in
-one request, and ``--doc`` is how this probe states that half. The step's template reads its own
-``<doc>``, the step's schema constrains the answer to its fields, and the image rides beside the
-text as the pixel half of the evidence:
+    # 7. the review of step 3's breakdown against the same image — the criteria-bearing reviewer,
+    #    which names <contract> and <proposal> the way the text flow's review does
+    python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b \
+        --name review-desglose \
+        --template $R/template/review/invoice_vision_desglose.md --image $IMG \
+        --schema $R/schema/review/invoice_vision_desglose.schema.json \
+        --extra proposal=@var/tmp/desglose.json \
+        --extra contract=@$R/schema/extraction/invoice_vision_desglose.schema.json \
+        --option num_ctx=16384 --option temperature=0.2 --timeout 300
 
-    # 3. the detection gate, with the page beside its text
+A step can also carry the page *beside* its text: the strategy the library calls ``TEXT_PLUS_VLM``
+(``docflow/workflow/llm_input.py``) sends the document's text *and* the image in one request, and
+``--doc`` is how this probe states that half. The step's template reads its own ``<doc>``, the step's
+schema constrains the answer to its fields, and the image rides beside the text as the pixel half of
+the evidence:
+
+    # 8. the detection gate, with the page beside its text
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name detection \
         --template $R/template/extraction/invoice_deteccion.md --image $IMG --doc $DOC \
         --schema $R/schema/extraction/invoice_detection.schema.json
 
-    # 4. the base reading of the page as text, the one the review below judges
+    # 9. the base reading of the page as text, the one the review below judges
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name reading \
         --template $R/template/extraction/invoice.md --image $IMG --doc $DOC \
         --schema $R/schema/extraction/invoice.schema.json
 
-    # 5. the breakdown of items and amounts
+    # 10. the breakdown of items and amounts
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name desglose \
         --template $R/template/extraction/invoice_desglose.md --image $IMG --doc $DOC \
         --schema $R/schema/extraction/invoice_desglose.schema.json
 
-    # 6. the receipt class, and 7. the line of business the caller states
+    # 11. the receipt class, and 12. the line of business the caller states
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b \
         --name clasificacion \
         --template $R/template/extraction/invoice_clasificacion.md --image $IMG --doc $DOC \
@@ -106,7 +140,7 @@ text as the pixel half of the evidence:
         --template $R/template/extraction/invoice_rubro.md --image $IMG --doc $DOC \
         --schema $R/schema/extraction/invoice_rubro.schema.json --extra rubro=Restaurante
 
-    # 8. step 4's reading is reviewed with the page: review/invoice names <doc>, <extra:proposal>
+    # 13. step 9's reading is reviewed with the page: review/invoice names <doc>, <extra:proposal>
     #    and <extra:contract>, so the review carries the same three inputs the text flow gives it
     #    and the image joins them. T2 is a reasoning model, so it is asked the reasoning variant of
     #    the pair (registry/README.md, "Instruct and reasoning: one schema, two prompts").
@@ -128,7 +162,7 @@ and the two files stay the finished answer:
         --extra proposal=@var/tmp/reading.json \
         --extra contract=@$R/schema/extraction/invoice.schema.json
 
-Step 8's review again, on T3, with the thinking channel braked: ``--option think=false`` reaches the
+Step 13's review again, on T3, with the thinking channel braked: ``--option think=false`` reaches the
 top of the request, the way the library sends it, and ``--timeout`` states the wait.
 
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen3.5:9b --name review-qwen \
@@ -139,10 +173,10 @@ top of the request, the way the library sends it, and ``--timeout`` states the w
         --option think=false --option temperature=0.2 --option min_p=0.05 \
         --option num_ctx=16384 --timeout 600
 
-The breakdown of step 5 is reviewed the same way, against its own step schema, and both review
+The breakdown of step 10 is reviewed the same way, against its own step schema, and both review
 models run it:
 
-    # 9. T2 reads the breakdown, with the page
+    # 14. T2 reads the breakdown, with the page
     python scripts/tmpref/image_prompt.py --provider ollama --model deepseek-r1:8b \
         --name review-desglose \
         --template $R/template/review/invoice_desglose.reasoning.md --image $IMG --doc $DOC \
@@ -152,7 +186,7 @@ models run it:
         --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
         --option num_ctx=16384 --option num_predict=4096 --timeout 300
 
-    # 10. and T3, braked, on the instruct template — the same schema, the same three inputs
+    # 15. and T3, braked, on the instruct template — the same schema, the same three inputs
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen3.5:9b \
         --name review-desglose-qwen \
         --template $R/template/review/invoice_desglose.md --image $IMG --doc $DOC \
@@ -162,8 +196,10 @@ models run it:
         --option think=false --option temperature=0.2 --option min_p=0.05 \
         --option num_ctx=16384 --timeout 600
 
-The review template names no field of its own, so it judges whatever proposal it is handed: the
-breakdown is reviewed from the pixels alone — no text at all — by stating the step's own schema:
+The review template names no field of its own, so it judges whatever proposal it is handed — the
+shape the contract declares, with no criteria of its own, which is what `review/general` does on the
+text path. The breakdown is reviewed that way, from the pixels alone, by stating the step's own
+schema:
 
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b \
         --name review-desglose-pixels \
@@ -172,7 +208,7 @@ breakdown is reviewed from the pixels alone — no text at all — by stating th
         --extra proposal=@var/tmp/desglose.json \
         --option temperature=0.2 --timeout 300
 
-The vision pair exists twice as well, and the two halves are asked the way the text pair is: the
+The reading's pair exists twice as well, and the two halves are asked the way the text pairs are: the
 reasoning template for a model whose trace is left to itself, the instruct one for a model whose
 thinking channel is braked — ``--option think=false`` reaches the top of the request, the way the
 library sends it. A model that both sees and reasons (``qwen3.5:9b``) runs both:

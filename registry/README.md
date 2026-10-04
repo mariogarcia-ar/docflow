@@ -22,10 +22,26 @@ registry/
                                                 the classification judgement — reasoning variant
     extraction/invoice_vision.md                the VLM reading of a page image
     extraction/invoice_vision.reasoning.md      the VLM reading of a page image — reasoning variant
+    extraction/invoice_vision_deteccion.md      the fast-fail gate, read from the page image
+    extraction/invoice_vision_deteccion.reasoning.md
+                                                the fast-fail gate, read from the page image — reasoning variant
+    extraction/invoice_vision_desglose.md       the tax breakdown, read from the page image
+    extraction/invoice_vision_desglose.reasoning.md
+                                                the tax breakdown, read from the page image — reasoning variant
+    extraction/invoice_vision_clasificacion.md
+                                                the classification judgement, read from the page image
+    extraction/invoice_vision_clasificacion.reasoning.md
+                                                the classification judgement, read from the page image — reasoning variant
+    extraction/invoice_vision_rubro.md          the line-of-business fields, read from the page image
+    extraction/invoice_vision_rubro.reasoning.md
+                                                the line-of-business fields, read from the page image — reasoning variant
     review/invoice.md                           review of a text extraction
     review/invoice.reasoning.md                 review of a text extraction — reasoning variant
     review/invoice_desglose.md                  review of the tax breakdown
     review/invoice_desglose.reasoning.md        review of the tax breakdown — reasoning variant
+    review/invoice_vision_desglose.md           review of a vision tax breakdown
+    review/invoice_vision_desglose.reasoning.md
+                                                review of a vision tax breakdown — reasoning variant
     review/general.md                           review of any step, against its own schema
     review/general.reasoning.md                 review of any step — reasoning variant
     review/vision.md                            review of a vision extraction
@@ -37,10 +53,15 @@ registry/
     extraction/invoice_rubro.schema.json
     extraction/invoice_clasificacion.schema.json
     extraction/invoice_vision.schema.json
+    extraction/invoice_vision_detection.schema.json
+    extraction/invoice_vision_desglose.schema.json
+    extraction/invoice_vision_clasificacion.schema.json
+    extraction/invoice_vision_rubro.schema.json
     review/invoice.schema.json
     review/invoice_desglose.schema.json
     review/general.schema.json
     review/vision.schema.json
+    review/invoice_vision_desglose.schema.json
 ```
 
 ## How an identifier resolves
@@ -97,13 +118,19 @@ document is substituted (no literal `{…}` survives into the prompt).
 | Classification | `extraction/invoice_clasificacion` | `extraction/invoice_clasificacion` | T1 extract — `gemma3:12b` |
 | Line of business | `extraction/invoice_rubro` | `extraction/invoice_rubro` | T1 extract — `gemma3:12b` |
 | Review | `review/invoice`, `review/general` | `review/invoice` | T2 review — `deepseek-r1:8b`, T3 review — `qwen3.5:9b`, plus `--extra contract=<step schema>` |
-| Vision | `extraction/invoice_vision`, `review/vision` | `extraction/invoice_vision`, `review/vision` | V1 extract — `qwen3-vl:8b`, V2 review — `ministral-3:8b` |
+| Vision — base reading | `extraction/invoice_vision` | `extraction/invoice_vision` | V1 extract — `qwen3-vl:8b` |
+| Vision — detection (gate) | `extraction/invoice_vision_deteccion` | `extraction/invoice_vision_detection` | V1 extract — `qwen3-vl:8b` |
+| Vision — tax breakdown | `extraction/invoice_vision_desglose` | `extraction/invoice_vision_desglose` | V1 extract — `qwen3-vl:8b` |
+| Vision — classification | `extraction/invoice_vision_clasificacion` | `extraction/invoice_vision_clasificacion` | V1 extract — `qwen3-vl:8b` |
+| Vision — line of business | `extraction/invoice_vision_rubro` | `extraction/invoice_vision_rubro` | V1 extract — `qwen3-vl:8b`, plus `--extra rubro=<line>` |
+| Vision — reviews | `review/vision`, `review/invoice_vision_desglose` | `review/vision`, `review/invoice_vision_desglose` | V2 review — `ministral-3:8b`, plus `--extra proposal=<step answer>` |
 
 Every step above ships **two** prompts: the identifier in the table (the instruct one) and the same
 identifier with a `.reasoning` suffix — `extraction/invoice_deteccion` →
 `extraction/invoice_deteccion.reasoning`. Both drive the same schema, and the schema is the one the
-table names; the vision pair ships one schema per step — `extraction/invoice_vision` for the
-reading, `review/vision` for the judgement — and its two prompts state the answer's shape as well.
+table names; every vision step ships its schema under its own name —
+`extraction/invoice_vision_desglose` for the breakdown read from the page,
+`review/invoice_vision_desglose` for its review — and its prompts state the answer's shape as well.
 Only the prompt changes between the pair: the instruct one states the rules, the reasoning one
 states the criteria, and the second is meant for a model with `think:true`.
 
@@ -427,6 +454,13 @@ vision_review = step(
 )
 ```
 
+The other four steps exist on the vision path with the same shape, and are not spelled out above:
+`extraction/invoice_vision_deteccion`, `…_desglose`, `…_clasificacion` and `…_rubro` each take
+`model=V1`, `document=None`, `images=[PAGE]` and their own schema, exactly as `vision` does —
+`…_rubro` also takes `extra={"rubro": …}` from the caller. The breakdown is judged by
+`review/invoice_vision_desglose`, the criteria-bearing reviewer that is the vision counterpart of
+`review/invoice_desglose`, with `extra={"proposal": …}` and `extra={"contract": …}`.
+
 The other half of every `extra={…}` is the template. `review/invoice` names each input in its own
 section, and the section name is what pairs an input with a placeholder:
 
@@ -624,8 +658,9 @@ python scripts/tools/llm.py --assets-dir registry node <file.txt> \
   CLI only when each named key is stated; a key the caller leaves out stops the run at load time
   with a `DEPENDENCY_ERROR` naming it, rather than rendering a proposal block that reads as empty.
   `workflow.py` still fills none of them, and its chain does not read this registry.
-- **`llm.py` cannot send images.** It hardcodes `images=[]`, so `extraction/invoice_vision` and
-  `review/vision` are not reachable from the CLI: drive them from the library, as in *Chaining the
+- **`llm.py` cannot send images.** It hardcodes `images=[]`, so the vision steps — every
+  `extraction/invoice_vision*`, plus `review/vision` and `review/invoice_vision_desglose` — are not
+  reachable from the CLI: drive them from the library, as in *Chaining the
   steps* above. `workflow.py`'s `--allow-vlm` / `--image-prepare-for-vlm` enable its own chain,
   and that chain does not read this registry.
 - **`$comment` is not allowed in a schema.** The validator enforces a closed keyword set and sends
@@ -729,6 +764,12 @@ seven fields, and a copy of `review/invoice` for the same reason. It carries the
 side, because `review/vision` names no field of its own — it judges whatever proposal it is handed —
 so this file is the one that says which fields a vision review answers. A vision review of another
 step's proposal states that step's own review schema instead.
+
+**The five vision schema copies** — `extraction/invoice_vision_detection`, `…_desglose`,
+`…_clasificacion`, `…_rubro` and `review/invoice_vision_desglose` — repeat the same rule: each is a
+byte-for-byte copy of the schema of the step it reads, because a vision template asks for the same
+fields as its text twin. One shape, two names: the name says which step and which path, and a change
+to a step's fields is a change to both of its schemas.
 
 ## Manifest
 

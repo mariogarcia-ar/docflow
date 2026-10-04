@@ -81,6 +81,46 @@
       "format": "text"
     },
     {
+      "key": "template/extraction/invoice_vision_deteccion.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_deteccion.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_desglose.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_desglose.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_clasificacion.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_clasificacion.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_rubro.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_rubro.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_vision_desglose.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_vision_desglose.reasoning.md",
+      "format": "text"
+    },
+    {
       "key": "schema/extraction/invoice.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
@@ -127,6 +167,31 @@
     },
     {
       "key": "schema/review/vision.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision_detection.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision_desglose.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision_clasificacion.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision_rubro.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/review/invoice_vision_desglose.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     }
