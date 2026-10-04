@@ -11,7 +11,7 @@ finished library by hand against the committed fixtures under `tests/fixtures/` 
 | `scripts/tools/pdf.py` | `SCR-02` | `inspect`, `split`, `render`, `text`, `blocks`, `images`, `classify`, `run` |
 | `scripts/tools/image.py` | `SCR-03` | `info`, `metrics`, `normalize`, `ocr-ready`, `vlm-ready`, `classify`, `run` |
 | `scripts/tools/ocr.py` | `SCR-04` | `run`, `text`, `mixed`, `md`, `json`, `tables`, `blocks`, `metrics` |
-| `scripts/tools/llm.py` | `SCR-05` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
+| `scripts/tools/llm.py` | `SCR-05` | `call`, `prompt`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `scripts/tools/workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 
 The deliverable is a **caller**, not a component: each tool parses arguments, builds a real
@@ -223,6 +223,7 @@ default model is the silent stand-in this project forbids:
 | Subcommand | Calls | Notes |
 |---|---|---|
 | `call` | `llm.process_llm_request` | one inference |
+| `prompt` | `llm.primitives.load_template` / `load_schema` / `process_prompt` | the prompt a `call` would send, rendered: no provider is reached and nothing is published, and the window it is measured against is the one `--context-window` states |
 | `node` | `llm.process_llm_node` | one node of the graph |
 | `graph` | `llm.process_llm_request` with `graph` set, or `execute_llm_graph` | the linear chain |
 | `resume` | `llm.process_llm_request` again, same `--run-id` and `--out` | the processor reuses a node whose `request_key` matches; re-invocation **is** the resume — there is no `resume_llm_graph` symbol to call |

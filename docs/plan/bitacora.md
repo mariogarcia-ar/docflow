@@ -2720,3 +2720,78 @@ silent stand-in this project forbids. The probes could save the text because the
 named in §12 of the reopened WBS rather than made silently. The pre-existing `ruff format` and
 `pylint` rows are untouched, and the two scratch folders (`scripts/tmp/`, `scripts/tmpref/`) are
 left where they are: they are the evidence for this pass and removing them is the plan owner's call.
+
+## 2026-10-03 — Phase 5 · the LLM bench renders the ask (`prompt`), and the probe's recipe becomes a bench command
+
+**Delivered.** The `scripts/tmpref/` probes carried a `--print-prompt` switch whose whole point was
+to render the ask and spend nothing — and the bench had no answer to it, so the probe's own
+step-by-step recipe could not be expressed with `llm.py` at all. It can now, as a ninth command.
+
+| File | Change |
+|---|---|
+| `scripts/tools/_llm.py` | `prompt`: the request rendered through `primitives.process_prompt`, no provider reached and nothing published. `_add_request_arguments` extracted so `prompt` and `call` state the *same* request; `--stream` and `--name` stay the call's own |
+| `scripts/tools/llm.py` | `prompt` declared report-only, so the header says the run publishes nothing |
+| `scripts/tools/batch_llm.py` | `prompt` registered — five of the nine, and the only one that reaches no provider |
+| `scripts/tools/quickstart.md` | the command, and **the layered flow as `llm.py` commands**: the probe recipe's replacement, one command per step |
+| `scripts/tools/readme.md` | the `prompt` row, its paragraph, and the batch bullets |
+| `docs/plan/README.md`, `subplan-scripts.md`, `issues/wbs-scripts.md`, `issues/wbs-procesador-llm-call.md` | the command lists and the reopen's record |
+| `tests/test_lab_tools.py` | two glue tests and the two guard maps |
+
+**Why a command and not `--print-prompt` on `call`.** What a run publishes is a property of the
+*command* in this bench — `REPORT_ONLY`, which the header reads — and a switch that changed it would
+make the header's own statement false, or force the frame to grow a flag-aware notion of
+"publishes". A command that sends nothing and writes nothing is already a shape the bench has
+(`status`, `models`, `tokens`), so the render is one more of those rather than an exception to the
+frame.
+
+**The render is not a second renderer.** It resolves the template, the schema and the extras the same
+way `call` does and stops at `process_prompt`, which is why the token count it reports is the number
+the call would have been planned against. The window it weighs that against is the one the caller
+*states*: `tokens` reads an unstated window from the provider, and a render may not, because a probe
+is exactly the reach a render exists to avoid.
+
+**Hand run** (live Ollama, `.env` bypassed so the commands below are self-contained):
+
+```
+prompt  step 1's ask        1,057 tokens · truncated: False · window 16,384 · overflows: False
+        no provider call, no file, header: "output: (none — this subcommand publishes no file)"
+```
+
+The whole recipe was then run as the quickstart prints it — gemma3:12b for the four extraction steps,
+deepseek-r1:8b and qwen3.5:9b for the reviews — and two of the recipes the probe's block carried did
+**not** survive the move:
+
+1. **`think=false` is not a house style, and it can empty an answer instead of tightening one.**
+   `deepseek-r1:8b` answered the *invoice* review with the brake on (2,174 in / 1,188 out) and
+   returned nothing at all for the *breakdown* review with the same brake — twice, `INVALID_JSON`,
+   `"response": ""` — then answered the breakdown once its thinking was left free with room
+   (`num_predict=8192`, `timeout=900`). The quickstart states both and says which pair each applies
+   to; `registry/README.md`'s "a reasoning reviewer loops unless its thinking is switched off" is the
+   other half of the same observation, not a contradiction of it.
+2. **A review is not reviewed by the same recipe as its extraction.** The five extraction steps ran
+   as written; the review steps needed their own option sets, which is what the block's comments were
+   already saying.
+
+**Gate evidence.**
+
+```
+pytest                     809 passed
+ruff check .               All checks passed!
+ruff format --check .      1 file would be reformatted — the pre-existing registry/README.md
+                           block, present at HEAD and unrelated to this pass
+pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
+```
+
+**Mutation evidence** (three rows, each applied and restored by the inverse edit).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `_prompt`: answer the document instead of the render (`prompt.text` → `request.document`) | 1 red — `test_llm_prompt_renders_what_a_call_would_send_and_reaches_no_provider`: the payload stops equalling the message the call carried | green |
+| `COMMANDS["prompt"]` → `_call` | 2 red — the render's "no provider reached" assertion and the window test's absent key | green |
+| `llm.py` `REPORT_ONLY` without `prompt` | 1 red — `test_every_tool_declares_the_subcommands_that_publish_nothing` | green |
+
+**Not done, and deliberately.** `registry/README.md`'s flow section is left as it stands. It already
+carries this recipe — which is why the bench's copy is the command sequence and the pointer, not a
+second telling of the roles and the criteria — and its step 5 states `think=false` for a reasoning
+reviewer, which the observation above qualifies rather than contradicts: the brake is what empties
+the *breakdown* review, not the model's thinking as such.

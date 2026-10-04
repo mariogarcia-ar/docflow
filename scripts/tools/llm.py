@@ -2,16 +2,18 @@
 
 A thin caller: its parser, its flags and one handler per subcommand are all it owns. The frame
 around them — where a run writes, how the input resolves, the header, the printers and the exit
-code — lives in :mod:`scripts.tools._cli`, and the eight methods themselves live in
-:mod:`scripts.tools._llm`, which ``batch_llm.py`` drives over a folder tree with the four of them
+code — lives in :mod:`scripts.tools._cli`, and the nine methods themselves live in
+:mod:`scripts.tools._llm`, which ``batch_llm.py`` drives over a folder tree with the five of them
 that are about an input.
 
 ``--provider`` and ``--model`` are required on every inference subcommand: a default model is
 exactly the silent stand-in this project forbids. ``--stream`` reads the answer as it is written,
 echoing a reasoning model's trace and its answer to stderr while stdout stays the payload; the body
-the run records is the one a waiting call would have received. The ``fake`` subcommand installs the
-committed scripted provider at the provider seam and then demonstrates the chain and its resume
-path twice — with no model reached and no token spent.
+the run records is the one a waiting call would have received. ``prompt`` states the same request
+and stops before the provider, so the rendered ask can be read — and its token count weighed
+against a stated window — without paying for a call. The ``fake`` subcommand installs the committed
+scripted provider at the provider seam and then demonstrates the chain and its resume path twice —
+with no model reached and no token spent.
 """
 
 from __future__ import annotations
@@ -28,9 +30,10 @@ from docflow.llm.primitives.errors import LLMPrimitiveError
 
 #: Subcommands that publish no file: their report is the stdout summary, so the run header
 #: says so instead of naming an output root no run creates. ``node`` builds its request with
-#: no output directory on purpose, so it publishes nothing even when it succeeds. Verified by
+#: no output directory on purpose, so it publishes nothing even when it succeeds; ``prompt``
+#: renders and stops, and its request carries no output directory either. Verified by
 #: the hand run in ``docs/plan/bitacora.md`` (2026-09-27).
-REPORT_ONLY: Final[tuple[str, ...]] = ("node", "status", "models", "tokens")
+REPORT_ONLY: Final[tuple[str, ...]] = ("prompt", "node", "status", "models", "tokens")
 
 
 def build_parser() -> argparse.ArgumentParser:

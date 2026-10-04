@@ -271,7 +271,8 @@ substituted stand-in.
 
 | Subcommand | Needs | What it gives you |
 |---|---|---|
-| `call` | `--provider` `--model` `--task` `--template` | one inference |
+| `call` | `--provider` `--model` `--task` `--template` | one inference, and the two step artifacts below |
+| `prompt` | the same | the prompt a `call` would send, rendered — nothing is sent, nothing is written |
 | `node` | the same | one node, against a fresh chain state |
 | `graph` | the same | the fixed linear chain |
 | `resume` | the same, plus the same `--run-id` and `--out` | re-invocation *is* the resume |
@@ -290,6 +291,22 @@ reviewed step's own schema as `contract`
 against that step's rules rather than against what looks plausible. `--run-id` is how a run is
 pinned — it is what makes `resume` a resume rather than a fresh call, and it is required by `fake`,
 whose whole point is showing a graph and its resume under one identity.
+
+**`prompt` is the ask, not the answer.** It states the same request `call` does — the same template,
+schema, extras and asset root — and stops before the provider, printing the prompt a `call` would
+have sent, its token count, and whether it fits the window `--context-window` states. Nothing is
+sent and nothing is written, so `--provider` and `--model` are stated only because every inference
+command states them; the window is what a render reads them for. It is the cheap check before a
+reasoning review: that prompt is minutes of a 12B model, and a window too small for it comes back as
+an empty answer rather than as an error. `--json` with `jq -r .prompt` gives the bare text:
+
+```bash
+python scripts/tools/llm.py --json --assets-dir registry \
+    prompt tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+    --provider ollama --model gemma3:12b --task detection \
+    --template extraction/invoice_deteccion --schema extraction/invoice_detection \
+    --context-window 16384 | jq -r .prompt
+```
 
 **`--stream`** reads an answer as it is written instead of waiting for the whole of it: a reasoning
 review takes minutes, and this is what shows whether it is thinking or stuck. The model's trace and
@@ -372,6 +389,116 @@ python scripts/tools/llm.py call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f
 That writes `review.json` (the answer alone) and `review_full.json` (the run) beside the run's own
 `state.json` and `final_result.json`, whatever the schema was called.
 
+### The layered extraction, one command per step
+
+The registry's templates are a flow, not a prompt: five extraction calls and the reviews that audit
+them, each step its own artifact and its own schema. [`registry/README.md`](../../registry/README.md)
+states the roles and the criteria — why the reviewer is handed the reviewed step's schema as a
+`contract`, why two models review, what the reasoning variant of a template pair is for. What follows
+is the same flow as commands.
+
+`--task` is a label: it is recorded in the run and never reaches the model. `--template` and
+`--schema` are what select the step, and both are identifiers under `--assets-dir` — the bench
+resolves `extraction/invoice` itself, so the `.md` and `.schema.json` suffixes are never typed.
+
+```bash
+REG=registry
+DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
+T1=gemma3:12b       # extracts
+T2=deepseek-r1:8b   # reviews
+T3=qwen3.5:9b       # reviews again, so the two verdicts can be compared
+
+# what the gate asks, without sending anything: the rendered prompt, its size, and whether it
+# fits the window stated. No provider is reached.
+python scripts/tools/llm.py --assets-dir $REG prompt $DOC \
+    --provider ollama --model $T1 --task detection \
+    --template extraction/invoice_deteccion --schema extraction/invoice_detection \
+    --context-window 16384
+
+# 0 — the gate: a receipt, or something else? Run it first and refuse cheaply.
+python scripts/tools/llm.py --assets-dir $REG --out var/run/detection call $DOC \
+    --provider ollama --model $T1 --task detection \
+    --template extraction/invoice_deteccion --schema extraction/invoice_detection
+
+# 1 — the base reading the rest of the flow refines, and the one the review judges. It takes its
+#     own `--out`, because the review below files under the same schema stem and would otherwise
+#     overwrite the very answer it audits.
+python scripts/tools/llm.py --assets-dir $REG --out var/run/reading call $DOC \
+    --provider ollama --model $T1 --task extract \
+    --template extraction/invoice --schema extraction/invoice
+
+# 2 — the breakdown of items and amounts
+python scripts/tools/llm.py --assets-dir $REG --out var/run/desglose call $DOC \
+    --provider ollama --model $T1 --task desglose \
+    --template extraction/invoice_desglose --schema extraction/invoice_desglose
+
+# 3 — the receipt class, and 4 — the line of business the caller states
+python scripts/tools/llm.py --assets-dir $REG --out var/run/clasificacion call $DOC \
+    --provider ollama --model $T1 --task clasificacion \
+    --template extraction/invoice_clasificacion --schema extraction/invoice_clasificacion
+
+python scripts/tools/llm.py --assets-dir $REG --out var/run/rubro call $DOC \
+    --provider ollama --model $T1 --task rubro \
+    --template extraction/invoice_rubro --schema extraction/invoice_rubro \
+    --extra rubro=Restaurante
+
+# 5 — the review reads step 1's answer: the answer alone, never the run's envelope. T2 is a
+#     reasoning model, so it is asked the reasoning variant of the pair — the same schema, the
+#     criteria instead of the rules — and its thinking is braked here. The brake is the model's,
+#     not the house's: see the breakdown review below, where the same brake on the same model
+#     empties the answer instead of shortening it.
+python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
+    --provider ollama --model $T2 --task review \
+    --template review/invoice.reasoning --schema review/invoice \
+    --extra proposal=@var/run/reading/invoice.json \
+    --extra contract=@registry/schema/extraction/invoice.schema.json \
+    --option think=false --option temperature=0.6 --option top_p=0.95 \
+    --option repeat_penalty=1.0 --option num_ctx=16384 --option num_predict=4096 \
+    --option timeout=600
+
+# 6 — step 5 again on T3, with the thinking braked the way that model's card wants
+python scripts/tools/llm.py --assets-dir $REG --out var/run/review-qwen call $DOC \
+    --provider ollama --model $T3 --task review \
+    --template review/invoice --schema review/invoice \
+    --extra proposal=@var/run/reading/invoice.json \
+    --extra contract=@registry/schema/extraction/invoice.schema.json \
+    --option think=false --option temperature=0.2 --option min_p=0.05 \
+    --option num_ctx=16384 --option timeout=600
+
+# The breakdown of step 2 is reviewed the same way, against its own step schema. This is the one
+# prompt where the brake above does the opposite of its job: T2 with `think=false` returned no
+# content at all here — twice, an empty answer the processor types as INVALID_JSON and retries —
+# and answered once its thinking was left free and given room. So this pair runs unbraked, and T3
+# carries the braked variant. Which side of a pair needs the brake is a thing a run tells you.
+python scripts/tools/llm.py --assets-dir $REG --out var/run/review-desglose call $DOC \
+    --provider ollama --model $T2 --task review \
+    --template review/invoice_desglose.reasoning --schema review/invoice_desglose \
+    --extra proposal=@var/run/desglose/invoice_desglose.json \
+    --extra contract=@registry/schema/extraction/invoice_desglose.schema.json \
+    --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
+    --option num_ctx=16384 --option num_predict=8192 --option timeout=900
+
+python scripts/tools/llm.py --assets-dir $REG --out var/run/review-desglose-qwen call $DOC \
+    --provider ollama --model $T3 --task review \
+    --template review/invoice_desglose --schema review/invoice_desglose \
+    --extra proposal=@var/run/desglose/invoice_desglose.json \
+    --extra contract=@registry/schema/extraction/invoice_desglose.schema.json \
+    --option think=false --option temperature=0.2 --option min_p=0.05 \
+    --option num_ctx=16384 --option timeout=600
+```
+
+Those nine commands, run against a daemon serving those three tags, all came back `SUCCESS` with
+`schema_valid: true` — five extraction steps and four reviews. A review that returns *nothing* is
+not a refusal: it is a typed `INVALID_JSON` over an empty answer, and the remedy is an option, not a
+retry.
+
+Every line above is the same `call`: what differs is the template, the schema and the extras. Each
+step writes two files beside the run's own — `<step>.json`, the answer alone, and `<step>_full.json`,
+the whole run — under the `--out` that step was given, named after `--name` or after the schema's
+last component. Watching a review happen instead of reading what it left is one more flag: add
+`--stream` to any of them and its thinking and its answer arrive on stderr while stdout and the two
+files stay the finished answer.
+
 ### A folder
 
 ```bash
@@ -383,13 +510,18 @@ python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos node \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
 python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos tokens \
     --provider ollama --model llama3.1 --context-window 4096
+python scripts/tools/batch_llm.py tests/fixtures-txt/casos prompt \
+    --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
 ```
 
-Those are all four commands this tool offers.
+Those are all five commands this tool offers.
 
 This is the one batch tool with **no default command** — a command is required (`2` without one) —
-and it offers only `call`, `graph`, `node` and `tokens`. `status`, `models`, `fake` and `resume`
-are per-file concerns; on `batch_llm.py` the scripted provider is the global `--fake` flag.
+and it offers only `call`, `graph`, `node`, `tokens` and `prompt`. `status`, `models`, `fake` and
+`resume` are per-file concerns; on `batch_llm.py` the scripted provider is the global `--fake` flag.
+`prompt` is the one of the five that reaches no provider and writes nothing but its record: a corpus
+of rendered prompts, one per input, is a reading of the corpus rather than a run over it — and the
+record the frame files for an input is where that input's prompt lands.
 
 ---
 

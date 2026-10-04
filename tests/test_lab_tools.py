@@ -117,8 +117,18 @@ DOCUMENTED_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
     ),
     "ocr": ("run", "text", "mixed", "md", "json", "tables", "blocks", "metrics"),
     "batch_ocr": ("run", "text", "mixed", "md", "json", "tables", "blocks", "metrics"),
-    "llm": ("call", "node", "graph", "resume", "status", "models", "tokens", "fake"),
-    "batch_llm": ("call", "graph", "node", "tokens"),
+    "llm": (
+        "call",
+        "prompt",
+        "node",
+        "graph",
+        "resume",
+        "status",
+        "models",
+        "tokens",
+        "fake",
+    ),
+    "batch_llm": ("call", "graph", "node", "tokens", "prompt"),
     "workflow": (
         "run",
         "plan",
@@ -327,7 +337,7 @@ REPORT_ONLY: dict[str, tuple[str, ...]] = {
     "image": ("info", "metrics", "classify"),
     "ocr": ("md", "json", "tables", "blocks", "metrics"),
     "batch_ocr": (),
-    "llm": ("node", "status", "models", "tokens"),
+    "llm": ("prompt", "node", "status", "models", "tokens"),
     "batch_llm": (),
     "workflow": ("plan", "status", "context"),
 }
@@ -1272,6 +1282,93 @@ def test_llm_call_streams_the_answer_to_stderr_and_files_the_same_run(
             "parsed_response"
         ]
     )
+
+
+def test_llm_prompt_renders_what_a_call_would_send_and_reaches_no_provider(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``prompt`` is the ask, not the answer: what it prints is the message a call carries.
+
+    The comparison is not against a second copy of the template — the test renders, then *calls*
+    with the scripted provider, and weighs the two against each other. A render that drifted from
+    the call (a placeholder resolved differently, an extra dropped, the schema rendered or not)
+    would agree with a copy and disagree with the call, which is the drift worth catching.
+    """
+    fake = providers()
+    out = tmp_path / "run"
+    tool_flags = ["--fixture", f"casos/{CASE_TEXT.name}", "--out", str(out)]
+    command_flags = [
+        "--provider",
+        "ollama",
+        "--model",
+        "example-model",
+        "--task",
+        "extract",
+        "--template",
+        "simple_extract",
+        "--schema",
+        "simple",
+        "--extra",
+        "source=native_text",
+    ]
+
+    code = tool_module("llm").main(["--json", *tool_flags, "prompt", *command_flags])
+
+    rendered = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert fake.calls == []
+    assert not out.exists()
+
+    code = tool_module("llm").main([*tool_flags, "call", *command_flags])
+
+    capsys.readouterr()
+    assert code == 0
+    assert len(fake.calls) == 1
+    assert fake.calls[0].messages == [{"role": "user", "content": rendered["prompt"]}]
+    assert rendered["prompt_tokens"] > 0
+
+
+def test_llm_prompt_weighs_the_ask_against_a_stated_window_and_probes_none(
+    providers: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The window a render measures against is the one stated — an unstated one is not evidence.
+
+    ``tokens`` reads the window from the provider when the caller states none; a render may not,
+    because a probe is exactly the reach a render is meant not to make. So ``context_window`` is
+    ``None`` and no overflow is claimed, and a stated window is honoured instead.
+    """
+    fake = providers(context_window=4096)
+    tool_flags = ["--fixture", f"casos/{CASE_TEXT.name}"]
+    command_flags = [
+        "--provider",
+        "ollama",
+        "--model",
+        "example-model",
+        "--task",
+        "extract",
+        "--template",
+        "simple_extract",
+        "--schema",
+        "simple",
+    ]
+
+    code = tool_module("llm").main(["--json", *tool_flags, "prompt", *command_flags])
+
+    unstated = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert unstated["context_window"] is None
+    assert unstated["overflows"] is False
+    assert fake.model_calls == []
+
+    code = tool_module("llm").main(
+        ["--json", *tool_flags, "prompt", *command_flags, "--context-window", "10"]
+    )
+
+    stated = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert stated["context_window"] == 10
+    assert stated["overflows"] is True
+    assert fake.model_calls == []
 
 
 def test_llm_call_fills_named_extra_placeholders_from_a_flag_and_a_file(

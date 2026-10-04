@@ -25,7 +25,7 @@ recorded as a gate.
 | `_pdf.py` | the PDF bench's **command layer**: the eight methods, their payloads and their flags. Not a tool — `pdf.py` and `batch_pdf.py` both call it |
 | `_image.py` | the image bench's **command layer**: the seven methods. Not a tool — `image.py` and `batch_image.py` both call it |
 | `_ocr.py` | the OCR bench's **command layer**: the eight methods. Not a tool — `ocr.py` and `batch_ocr.py` both call it |
-| `_llm.py` | the LLM bench's **command layer**: the eight methods. Not a tool — `llm.py` and `batch_llm.py` both call it |
+| `_llm.py` | the LLM bench's **command layer**: the nine methods. Not a tool — `llm.py` and `batch_llm.py` both call it |
 | `pdf.py` | `SCR-02` — the PDF processor's primitives and its contract, one file per run |
 | `batch_pdf.py` | `SCR-12` — the same eight methods over every PDF below a folder, one record per input |
 | `image.py` | `SCR-03` — the image processor's pipelines and its contract, one file per run |
@@ -33,7 +33,7 @@ recorded as a gate.
 | `ocr.py` | `SCR-04` — the OCR processor's representations and its contract |
 | `batch_ocr.py` | `SCR-14` — the same eight methods over every image below a folder |
 | `llm.py` | `SCR-05` — one inference, the chain, the inventory and the scripted provider |
-| `batch_llm.py` | `SCR-15` — four of the same eight commands over every text below a folder |
+| `batch_llm.py` | `SCR-15` — five of the same nine commands over every text below a folder |
 | `workflow.py` | `SCR-06` — the orchestrator: plan, run, resume, force, skip, stop |
 
 A tool owns its subcommands, its flags and one handler per subcommand. Everything else — where a
@@ -282,7 +282,7 @@ block and a line like any other instead of a line nobody mentions.
 
 ### `llm.py` — `SCR-05`
 
-`--provider` and `--model` are **required on every inference subcommand** (`call`, `node`,
+`--provider` and `--model` are **required on every inference subcommand** (`call`, `prompt`, `node`,
 `graph`, `resume`, `fake`; `models` and `tokens` need them too). A default model is exactly the
 silent stand-in this project forbids — the check is a post-parse refusal, which is what makes the
 "no default model" guard falsifiable.
@@ -290,6 +290,7 @@ silent stand-in this project forbids — the check is a post-parse refusal, whic
 | Subcommand | Calls | Notes |
 |---|---|---|
 | `call` | `process_llm_request` | one inference; also files the two step artifacts below |
+| `prompt` | `primitives.load_template` / `load_schema` / `process_prompt` | the prompt a `call` would send, rendered: nothing is sent, nothing is written, and the window it is measured against is the one `--context-window` states — never a probe |
 | `node` | `process_llm_node` | one node, against a fresh chain state |
 | `graph` | `process_llm_request` with `default_inference_graph()` | the linear chain |
 | `resume` | the same call again, with the same `--run-id` and `--out` | re-invocation **is** the resume; there is no `resume_llm_graph` symbol |
@@ -332,6 +333,13 @@ through `--extra`, which is the defect the layered extraction hit. A directory p
 is one remedy and the bench's own flag; `--name review` is the smaller one — the two files are
 `review.json` and `review_full.json` however the schema is named, and a `--name` carrying a
 suffix states the same step (`review.json` and `review` are one name).
+
+**`prompt` renders and stops.** It states the same request `call` does — the same asset root,
+template, schema and extras — and answers with the prompt a call would have sent, its token count
+and whether it fits the window the caller stated. No provider is reached and no file is written, so
+the tool declares it report-only and the run header says so. That is why it is a command rather than
+a `--print-prompt` switch on `call`: what a run writes is a property of the command, not of a flag,
+and a switch that changed it would make the header's own statement false.
 
 **The bench reads `.env` for its optional settings.** `<repo root>/.env`, or the file
 `$DOCFLOW_ENV_FILE` names, supplies `DOCFLOW_ASSETS_DIR` and the `DOCFLOW_LLM_*` transport, window,
@@ -596,11 +604,11 @@ python scripts/tools/batch_llm.py tests/fixtures-txt/casos call \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
 ```
 
-- **Four of the eight commands**, and precisely the four whose answer is a property of the input:
-  `call`, `graph`, `node`, `tokens`. `status` asks about a *run directory*, `models` asks about a
-  *model* and never reads the input, `fake` is a single-input demonstration, and `resume` pins one
-  run identity — which a corpus can only give one input by giving it to all of them. Naming any of
-  the four here is a usage error, not a silent no-op.
+- **Five of the nine commands**, and precisely the five whose answer is a property of the input:
+  `call`, `graph`, `node`, `tokens`, `prompt`. `status` asks about a *run directory*, `models` asks
+  about a *model* and never reads the input, `fake` is a single-input demonstration, and `resume`
+  pins one run identity — which a corpus can only give one input by giving it to all of them. Naming
+  any of the four left out is a usage error, not a silent no-op.
 - **No default command.** The other batch tools make a flag-free method when the caller states
   none; this one has none to make, because `--provider` and `--model` are required on every command
   here as on `llm.py`. A bare run is refused, exit `2`.
@@ -612,6 +620,9 @@ python scripts/tools/batch_llm.py tests/fixtures-txt/casos call \
 - **`--stream`** is the same switch as `llm.py`'s, on the same three inference commands. The walk is
   sequential, so an input's deltas arrive under that input's own header and never run into the next
   one's; the record filed for each input is the one a waiting call would have produced.
+- **`prompt` is one of the five**, and the only one that reaches no provider and writes nothing but
+  its record: a corpus of rendered prompts — one record per input, holding that input's prompt — is
+  a reading of the corpus rather than a run over it.
 - The third command is the honest failure the bench exists for: nothing is served on this machine,
   so **every** input returns a typed `MODEL_UNAVAILABLE` — each printed as `name: FAILED` with its
   own record, `files: 3 · succeeded: 0 · failed: 3`, exit `1`. The second, with `--fake`, is the

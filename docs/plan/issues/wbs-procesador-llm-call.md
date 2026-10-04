@@ -422,6 +422,13 @@ the step's stem, and the two artifacts are `<stem>.json` (the answer alone — t
 reads back through `--extra KEY=@FILE`) and `<stem>_full.json` (the whole run), both published
 through the library's atomic writer.
 
+The bench also gained a ninth command, `prompt`, which is where the probes' `--print-prompt` landed:
+it states the same request `call` does and stops before the provider, answering with the rendered
+prompt, its token count and whether it fits the window the caller *stated* — never a probe. It is a
+command rather than a switch on `call` because what a run publishes is a property of the command in
+this bench (`REPORT_ONLY`), and a flag that changed it would make the run header's own statement
+false.
+
 **Evidence.** `pytest` 807 passed · `ruff check .` clean · `ruff format --check .` clean ·
 `pylint src tests` 10.00/10 with the one pre-existing `docflow/pdf/entrypoints.py` `R0912`.
 Three invariants were mutation-falsified (mutate → observe red → restore → observe green): the

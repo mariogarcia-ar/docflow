@@ -222,7 +222,7 @@ scripts/tools/
 ├── pdf.py          pdf      → inspect, split, render, text, blocks, images, classify, run
 ├── image.py        image    → info, metrics, normalize, ocr-ready, vlm-ready, classify, run
 ├── ocr.py          ocr      → run, text, mixed, md, json, tables, blocks, metrics
-├── llm.py          llm      → call, node, graph, resume, status, models, tokens, fake
+├── llm.py          llm      → call, prompt, node, graph, resume, status, models, tokens, fake
 └── workflow.py     workflow → run, plan, status, resume, force, skip, stop, context
 ```
 

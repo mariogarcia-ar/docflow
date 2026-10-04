@@ -3,14 +3,15 @@
 ``llm.py`` runs one input; this runs the same methods over every text file under a folder. What it
 shares with the other batch tools — the walk, the mirror, the per-input record, the summary and the
 exit code — is :mod:`_batch`; what is its own is the suffix set it takes, the layer its methods come
-from (:mod:`_llm`) and the four commands it offers.
+from (:mod:`_llm`) and the five commands it offers.
 
-**Four of the eight, on purpose.** ``status`` asks about a *run directory*, not about an input;
+**Five of the nine, on purpose.** ``status`` asks about a *run directory*, not about an input;
 ``models`` asks about a *model* and never reads the input at all; ``fake`` is a demonstration of the
 provider seam, and a demonstration is a single-input thing. None of the three is a question a corpus
 run answers per file, so none of them is registered — naming one is a usage error, not a silent
 no-op. ``resume`` is left out for a related reason: it *pins* one run identity, and a corpus run
-shares one identity across many inputs.
+shares one identity across many inputs. ``prompt`` is offered: it reaches no provider and its answer
+is a property of the input, so a corpus of rendered prompts is one the walk can make.
 
 **No default command.** Unlike the other batch tools, a bare run here refuses: ``--provider`` and
 ``--model`` are required on every command, so there is no flag-free method to make. Stating the
@@ -38,7 +39,7 @@ from docflow.llm.primitives.errors import LLMPrimitiveError
 
 #: The commands a corpus run may make: the ones whose answer is a property of the input. The other
 #: four are the tool's own — see the module docstring.
-SUBCOMMANDS: Final[tuple[str, ...]] = ("call", "graph", "node", "tokens")
+SUBCOMMANDS: Final[tuple[str, ...]] = ("call", "graph", "node", "tokens", "prompt")
 
 #: The inputs this tool takes: the LLM layer's own set — the extracted text a task is performed
 #: over, ``.txt`` and the engine's Markdown.

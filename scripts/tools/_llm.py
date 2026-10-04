@@ -25,6 +25,12 @@ header while stdout stays the payload. The body the run records is the body a wa
 have received — the two files are the same either way — which is why the switch is a control
 option and not part of the request key.
 
+**Rendering without sending.** ``prompt`` states the same request ``call`` does and stops before the
+provider: the render is the library's own :func:`~docflow.llm.primitives.process_prompt`, over the
+same asset root, extras and schema, so what it prints is what a call would have sent. It reports the
+prompt's token count and measures it against the window the caller *stated* — never a probe — and it
+writes nothing, which is why the tool declares it report-only rather than a call with a switch on it.
+
 It carries the lab-bench exception of ``subplan-scripts.md`` §3.2 for its own processor: it may
 drive ``docflow.llm.primitives``.
 
@@ -58,6 +64,7 @@ from tests.fakes.engines.fake_provider import FakeProvider
 #: them a corpus run may make; this is the full set the layer knows how to build.
 SUBCOMMANDS: tuple[tuple[str, str], ...] = (
     ("call", "One inference."),
+    ("prompt", "The prompt a call would send; nothing is sent."),
     ("graph", "The linear inference chain."),
     ("node", "One node of the inference graph."),
     ("resume", "Re-run the chain under a pinned id."),
@@ -205,8 +212,12 @@ def _add_decode_options(subparser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_inference_arguments(subparser: argparse.ArgumentParser) -> None:
-    """Add the required provider, model, task and template flags to a subcommand."""
+def _add_request_arguments(subparser: argparse.ArgumentParser) -> None:
+    """Add the flags that state the request the layer builds.
+
+    They are the flags of the *request*, not of a transport: a command that renders and stops
+    states the same ones a command that sends does, which is what makes the render trustworthy.
+    """
     subparser.add_argument("--provider", help="Provider name; required.")
     subparser.add_argument("--model", help="Model name; required.")
     subparser.add_argument("--task", help="The task to perform; required.")
@@ -221,6 +232,12 @@ def _add_inference_arguments(subparser: argparse.ArgumentParser) -> None:
             "KEY=@FILE reads the value from a file."
         ),
     )
+    _add_decode_options(subparser)
+
+
+def _add_inference_arguments(subparser: argparse.ArgumentParser) -> None:
+    """Add the request flags and the stream switch a command that reaches a provider states."""
+    _add_request_arguments(subparser)
     subparser.add_argument(
         "--stream",
         action="store_true",
@@ -230,7 +247,6 @@ def _add_inference_arguments(subparser: argparse.ArgumentParser) -> None:
             "The recorded body is the one a waiting call would have received."
         ),
     )
-    _add_decode_options(subparser)
 
 
 def _add_model_arguments(subparser: argparse.ArgumentParser) -> None:
@@ -281,6 +297,8 @@ def build_subcommands(
                         "one stem."
                     ),
                 )
+        elif name == "prompt":
+            _add_request_arguments(parser)
         elif name == "node":
             _add_inference_arguments(parser)
             parser.add_argument("--node", default="node", help="Node identifier.")
@@ -621,6 +639,41 @@ def _publish_answer(root: Path, stem: str, answer: Any) -> None:
     )
 
 
+def _prompt(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+    input_path: Path,
+    root: Path,
+) -> Payload:
+    """Render the prompt a call would send: nothing is sent and nothing is published.
+
+    The flags are the ones :func:`_call` takes, and they are resolved the same way — the same
+    asset root, the same ``<extra:KEY>`` values, the same schema — so what is printed is what
+    would have been sent. That is the whole point of the answer's being a *rendered prompt*: it
+    is evidence about the call, taken without paying for one.
+
+    The request carries no output directory — there is no run to name one for — and it never reaches
+    the processor: no provider is reached and nothing is published. The window it measures against is
+    the one ``--context-window`` states, never a probe. The provider and the model are stated because
+    every inference command states them; what a render reads them for is exactly that window.
+    """
+    del root
+    request = _request(args, parser, input_path, None)
+    assets = primitives.assets_dir_for(request)
+    template = primitives.load_template(request.template, assets)
+    schema = primitives.load_schema(request.schema, assets)
+    prompt = primitives.process_prompt(request, template, schema)
+    window = primitives.stated_context_window(request)
+    return {
+        "input": str(input_path),
+        "prompt": prompt.text,
+        "prompt_tokens": prompt.tokens,
+        "truncated": prompt.truncated,
+        "context_window": window,
+        "overflows": primitives.is_context_limit_exceeded(prompt.tokens, window),
+    }
+
+
 def _call(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
@@ -801,6 +854,7 @@ def _fake(
 #: lives in exactly one place.
 COMMANDS: dict[str, Command] = {
     "call": _call,
+    "prompt": _prompt,
     "graph": _graph,
     "node": _node,
     "resume": _resume,
