@@ -7,10 +7,11 @@ folder exists to replace.
 
 It maps the probe's flags onto the seam's own records: ``--option`` and ``--timeout`` become a
 :class:`~docflow.llm.primitives.ProviderCall`'s options, the rendered prompt becomes the messages
-:func:`~docflow.llm.primitives.build_messages` builds, and the provider's answer is read back
-through :func:`~docflow.llm.primitives.translate_provider_response`. The wire shape, the
-top-level request fields and the answer's translation are therefore the library's decisions, not
-this folder's.
+:func:`~docflow.llm.primitives.build_messages` builds, the images a probe attaches travel in the
+same record, and the provider's answer is read back through
+:func:`~docflow.llm.primitives.translate_provider_response`. The wire shape, the top-level request
+fields and the answer's translation are therefore the library's decisions, not this folder's —
+including what an image becomes on the wire, which is why nothing here encodes one.
 
 ``--stream`` is the seam's own switch, not a second transport: the call carries
 ``stream=True`` and an observer, so the answer is read as it is written and the body the probe
@@ -25,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -159,6 +161,7 @@ def call(
     args: argparse.Namespace,
     prompt: str,
     schema: dict[str, Any] | None,
+    images: Sequence[str] = (),
 ) -> ProviderResponse:
     """Send one prompt through the provider seam and return the answer in our terms.
 
@@ -167,6 +170,9 @@ def call(
         prompt: The rendered prompt, sent with the messages the seam builds.
         schema: The schema the answer must satisfy, or ``None`` for a plain text call. It selects
             the generator and, at the same time, constrains the provider's response format.
+        images: The images to attach, in order, or nothing for a call that carries none. The
+            generator is resolved from the schema and the images together: a structured call that
+            carries images is still the structured one, and its transport attaches them.
 
     Returns:
         The provider's answer, read in the processor's own terms.
@@ -188,7 +194,7 @@ def call(
         api_key=None if api_key is None else str(api_key),
         model=str(args.model),
         messages=primitives.build_messages(prompt),
-        images=[],
+        images=list(images),
         options=options,
         schema=schema,
         timeout=primitives.request_timeout(options),
@@ -197,7 +203,9 @@ def call(
     )
     generator = getattr(
         primitives,
-        primitives.resolve_generator(structured=schema is not None, multimodal=False),
+        primitives.resolve_generator(
+            structured=schema is not None, multimodal=bool(images)
+        ),
     )
     try:
         body = generator(request)

@@ -10,9 +10,11 @@ Unlike its predecessor under ``scripts/tmp``, this probe holds no transport of i
 rendering is :func:`docflow.llm.primitives.composition.process_template`, the call is
 :func:`docflow.llm.primitives.generate_structured` (or ``generate_text``), the answer is read back
 through :func:`docflow.llm.primitives.translate_provider_response`, and the two files are written
-with the library's atomic publication. What is left here is the CLI's own surface — the flags, the
-``@FILE`` extras and the naming of the outputs. There is no ``--system``: the template *is* the
-instruction, which is why the seam builds exactly one user message.
+with the library's atomic publication. What is left here is this probe's own surface — the flags
+that state its input, and the rendering it asks for. The half it shares with its vision sibling
+:mod:`image_prompt` — the rest of the flags, the ``@FILE`` extras, the naming of the outputs and
+the exit codes — is :mod:`_probe`. There is no ``--system``: the template *is* the instruction,
+which is why the seam builds exactly one user message.
 
 ``--stream`` is the seam's own switch rather than a second way to reach a provider: the call
 carries ``stream=True`` and an observer, so a reasoning model's trace and its answer are echoed to
@@ -125,7 +127,8 @@ models run it:
         --option think=false --option temperature=0.2 --option min_p=0.05 \
         --option num_ctx=16384 --timeout 600
 
-The seam is its sibling :mod:`_seam`, so a probe runs from this folder.
+The seam is its sibling :mod:`_seam` and the surface this probe shares with :mod:`image_prompt` is
+:mod:`_probe`, so a probe runs from this folder.
 
 A typed failure the library raised — a provider that is not there, a model it does not offer, a
 request it refuses — is printed as ``KIND: message`` on stderr and exits ``1``.
@@ -134,84 +137,12 @@ request it refuses — is printed as ``KIND: message`` on stderr and exits ``1``
 from __future__ import annotations
 
 import argparse
-import json
-import sys
 from collections.abc import Sequence
-from pathlib import Path
-from typing import Any, Final
 
+import _probe
 import _seam
 
-from docflow.llm import primitives
-from docflow.llm.primitives import ProviderResponse, composition
-from docflow.llm.primitives.errors import LLMPrimitiveError
-
-#: Where a response lands unless ``--out`` says otherwise. Ignored by git like the rest of ``var/``.
-DEFAULT_OUT: Final[Path] = Path("var/tmp")
-
-
-def _read_text(path: str, *, what: str) -> str:
-    """Return a file's text, reported as a usage failure instead of a traceback.
-
-    Args:
-        path: The file to read.
-        what: The flag the path came from, for the failure message.
-
-    Returns:
-        The file's text, as UTF-8.
-
-    Raises:
-        SystemExit: When the file cannot be read.
-    """
-    try:
-        return Path(path).expanduser().read_text(encoding="utf-8")
-    except OSError as unreadable:
-        raise SystemExit(f"{what} {path}: {unreadable}") from unreadable
-
-
-def _read_schema(path: str) -> dict[str, Any]:
-    """Return a schema file's parsed object.
-
-    Args:
-        path: The JSON file that renders ``<schema>`` and constrains the answer.
-
-    Returns:
-        The decoded schema.
-
-    Raises:
-        SystemExit: When the file cannot be read or does not hold a JSON object.
-    """
-    try:
-        schema = json.loads(_read_text(path, what="--schema"))
-    except json.JSONDecodeError as malformed:
-        raise SystemExit(f"--schema {path}: {malformed}") from malformed
-    if not isinstance(schema, dict):
-        raise SystemExit(f"--schema {path}: expected a JSON object")
-    return schema
-
-
-def _extra_context(raw: Sequence[tuple[str, Any]]) -> dict[str, Any]:
-    """Build the values ``<extra>`` and ``<extra:key>`` resolve against.
-
-    ``--extra KEY=VALUE`` states one inline and ``--extra KEY=@FILE`` reads it from a file, which
-    is how one step's answer reaches the next over the shell. A file value is inserted as the text
-    it is, so a saved answer needs no re-encoding.
-
-    Args:
-        raw: The parsed ``key=value`` pairs, in the order they were written.
-
-    Returns:
-        The values, by key.
-    """
-    extra: dict[str, Any] = {}
-    for key, value in raw:
-        text = str(value)
-        extra[key] = (
-            _read_text(text[1:], what=f"--extra {key}=@")
-            if text.startswith("@")
-            else text
-        )
-    return extra
+from docflow.llm.primitives import composition
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -221,99 +152,11 @@ def build_parser() -> argparse.ArgumentParser:
         The parser, with the template and the flags it documents.
     """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--template", required=True, help="the Markdown template to render"
-    )
-    parser.add_argument(
-        "--model", help="the model tag to reach (required unless --print-prompt)"
-    )
+    _probe.add_prompt_arguments(parser)
     parser.add_argument("--doc", help="the file whose text renders <doc>")
-    parser.add_argument(
-        "--extra",
-        action="append",
-        default=[],
-        type=_seam.parse_option,
-        metavar="KEY=VALUE",
-        help="a value for <extra> or <extra:key>, repeatable; @FILE reads it from a file",
-    )
-    parser.add_argument(
-        "--schema",
-        help="the JSON file that constrains the answer's format and renders <schema>",
-    )
-    parser.add_argument(
-        "--out",
-        default=str(DEFAULT_OUT),
-        help="the directory the response is saved in (default: var/tmp)",
-    )
-    parser.add_argument(
-        "--name",
-        help="the base name of the two output files, without a suffix (default: "
-        "<schema-or-template>[.<document>]); name it to hand the file to a later step",
-    )
+    _probe.add_output_arguments(parser)
     _seam.add_request_arguments(parser)
-    parser.add_argument(
-        "--print-prompt",
-        action="store_true",
-        help="print the rendered prompt and send nothing",
-    )
     return parser
-
-
-def _default_name(asset: str, doc: str | None) -> str:
-    """Return the base name outputs land under when ``--name`` states none.
-
-    The asset names the step the same way the lab bench does — the schema's name when one is
-    stated, the template's otherwise — and the document's own name qualifies it, so two documents
-    read through one template do not overwrite each other's answer in the shared default folder.
-
-    Args:
-        asset: The schema or template the call was made with.
-        doc: The document the answer is about, or ``None`` when the call carried none.
-
-    Returns:
-        The base name, without a suffix.
-    """
-    stem = Path(asset).stem.removesuffix(".schema")
-    return stem if doc is None else f"{stem}.{Path(doc).stem}"
-
-
-def _save(out: str, name: str, response: ProviderResponse) -> list[Path]:
-    """Save the answer alone and the full response, and return both paths.
-
-    ``<name>.json`` is the answer only — the file a later step reads through
-    ``@var/tmp/<name>.json`` — and an answer that is not JSON is saved as ``<name>.txt`` rather
-    than called a ``.json`` it is not. ``<name>_full.json`` is the provider's whole response, with
-    the timings and token counts a run is judged by; the library's publication sorts its keys, so
-    the full file is the body verbatim apart from key order.
-
-    Args:
-        out: The directory the files are saved in.
-        name: The base name, without a suffix.
-        response: The answer, in the processor's own terms.
-
-    Returns:
-        The files that were written, the answer first.
-
-    Raises:
-        LLMPrimitiveError: With ``INTERNAL_ERROR`` when a file cannot be published.
-    """
-    directory = Path(out).expanduser()
-    try:
-        parsed = primitives.parse_json_response(response.text)
-    except LLMPrimitiveError:
-        answer_path = directory / f"{name}.txt"
-        primitives.write_text_atomic(answer_path, response.text + "\n")
-    else:
-        answer_path = directory / f"{name}.json"
-        if isinstance(parsed, dict):
-            primitives.write_json_atomic(answer_path, parsed)
-        else:
-            primitives.write_text_atomic(
-                answer_path, json.dumps(parsed, ensure_ascii=False, indent=2) + "\n"
-            )
-    full_path = directory / f"{name}_full.json"
-    primitives.write_json_atomic(full_path, response.body)
-    return [answer_path, full_path]
 
 
 def _run(args: argparse.Namespace) -> int:
@@ -325,11 +168,11 @@ def _run(args: argparse.Namespace) -> int:
     Returns:
         ``0`` when the prompt was rendered, and when the provider answered.
     """
-    schema = _read_schema(args.schema) if args.schema is not None else None
+    schema = _probe.read_schema(args.schema) if args.schema is not None else None
     prompt = composition.process_template(
-        _read_text(args.template, what="--template"),
-        document=None if args.doc is None else _read_text(args.doc, what="--doc"),
-        extra_context=_extra_context(args.extra),
+        _probe.read_text(args.template, what="--template"),
+        document=None if args.doc is None else _probe.read_text(args.doc, what="--doc"),
+        extra_context=_probe.extra_context(args.extra),
         schema=schema,
     )
     if args.print_prompt:
@@ -337,14 +180,12 @@ def _run(args: argparse.Namespace) -> int:
         return 0
 
     response = _seam.call(args, prompt, schema)
-    _seam.print_answer(response, raw=args.raw)
-    if not args.raw:
-        _seam.print_stats(response)
-    asset = args.schema if args.schema is not None else args.template
-    name = args.name if args.name is not None else _default_name(asset, args.doc)
-    name = name.removesuffix(".json")
-    for path in _save(args.out, name, response):
-        print(f"saved {path}", file=sys.stderr)
+    _probe.publish(
+        args,
+        response,
+        asset=args.schema if args.schema is not None else args.template,
+        inputs=() if args.doc is None else (args.doc,),
+    )
     return 0
 
 
@@ -358,19 +199,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ``0`` when the prompt was rendered, and when the provider answered; ``1`` when the
         library returned a typed failure; ``2`` when the arguments do not state a call.
     """
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    if not args.print_prompt and not args.provider:
-        parser.error("--provider is required unless --print-prompt")
-    if not args.print_prompt and not args.model:
-        parser.error("--model is required unless --print-prompt")
-    if args.name is not None and not args.name.strip():
-        parser.error("--name states no name")
-    try:
-        return _run(args)
-    except LLMPrimitiveError as failure:
-        print(f"{failure.error.type}: {failure.error.message}", file=sys.stderr)
-        return 1
+    return _probe.dispatch(build_parser(), argv, _run)
 
 
 if __name__ == "__main__":
