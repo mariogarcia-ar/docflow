@@ -9,6 +9,7 @@ makes it the base directory; every example below states it.
 registry/
   manifest.json                              the inventory of what lives here
   template/                                  prompt templates  (see `--template`)
+    README.md                                   which fields each prompt extracts, and from which medium
     extraction/invoice.md                       the base reading
     extraction/invoice.reasoning.md             the base reading — reasoning variant
     extraction/invoice_deteccion.md             the fast-fail gate
@@ -47,6 +48,7 @@ registry/
     review/general.md                           review of any step, against its own schema
     review/general.reasoning.md                 review of any step — reasoning variant
   schema/                                    response schemas  (see `--schema`)
+    README.md                                   the shape of every answer
     extraction/invoice.schema.json
     extraction/invoice_detection.schema.json
     extraction/invoice_desglose.schema.json
