@@ -1,12 +1,12 @@
 # Registry — prompts and schemas
 
-The asset root the LLM processor resolves its identifiers against. `--assets-dir registry` is what
+The asset root the LLM processor resolves its identifiers against. `--assets-dir registry/llm-local` is what
 makes it the base directory; every example below states it.
 
 ## Layout
 
 ```
-registry/
+registry/llm-local/
   manifest.json                              the inventory of what lives here
   template/                                  prompt templates  (see `--template`)
     README.md                                   which fields each prompt extracts, and from which medium
@@ -96,7 +96,7 @@ same mapping `<extra>` renders whole, addressed one key at a time. The key must 
 `extra_context` — `review/invoice` carrying `<extra:proposal>` refuses a request that carries no
 `proposal`, because a review prompt with an empty proposal block asks a different question. The
 review template also carries `<extra:contract>`, and it is the reviewed step's own **schema**
-(`--extra contract=@registry/schema/extraction/invoice.schema.json`): the reviewer judges each
+(`--extra contract=@registry/llm-local/schema/extraction/invoice.schema.json`): the reviewer judges each
 proposed value against the same format the extractor's answer had to satisfy, so its verdicts and
 its `suggested_value`s obey that format instead of second-guessing it from plausibility. The
 schema is the format — fields, types, enums, `required`, `additionalProperties` — and the rules
@@ -203,7 +203,7 @@ Ollama, and every one of them works the same against vLLM or a hosted API by swa
 / `--model` / `--option` (see *Local* and *Remote* below).
 
 ```bash
-REG=registry
+REG=registry/llm-local
 DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
 T1=gemma3:12b     # the extractor: steps 0 to 4
 T2=deepseek-r1:8b # the reviewer: step 5
@@ -257,7 +257,7 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
     --provider ollama --model $T2 --task review \
     --template review/invoice --schema review/invoice \
     --extra proposal=@var/run/reading/invoice.json \
-    --extra contract=@registry/schema/extraction/invoice.schema.json \
+    --extra contract=@registry/llm-local/schema/extraction/invoice.schema.json \
     --option think=false \
     --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
     --option presence_penalty=0.0 --option num_ctx=16384 --option timeout=600
@@ -271,7 +271,7 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review-qwen call $DO
     --provider ollama --model $T3 --task review \
     --template review/invoice --schema review/invoice \
     --extra proposal=@var/run/reading/invoice.json \
-    --extra contract=@registry/schema/extraction/invoice.schema.json \
+    --extra contract=@registry/llm-local/schema/extraction/invoice.schema.json \
     --option think=false --option temperature=0.2 --option min_p=0.05 \
     --option num_ctx=16384 --option timeout=600
 ```
@@ -552,7 +552,7 @@ carried step 1's answer into step 5's prompt intact, and the reviewer contradict
 **Ollama** — native transport (`/api/chat`), no key, default endpoint `http://localhost:11434`:
 
 ```bash
-python scripts/tools/llm.py --assets-dir registry \
+python scripts/tools/llm.py --assets-dir registry/llm-local \
     call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     --provider ollama --model gemma3:12b --task extract \
     --template extraction/invoice --schema extraction/invoice
@@ -563,7 +563,7 @@ tag has to match exactly (`gemma3:12b` is a different string from `gemma3`, whic
 another size):
 
 ```bash
-python scripts/tools/llm.py --assets-dir registry \
+python scripts/tools/llm.py --assets-dir registry/llm-local \
     models tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     --provider ollama --model gemma3:12b
 ```
@@ -577,7 +577,7 @@ not serve yet before citing them.
 ```bash
 vllm serve Qwen/Qwen2.5-7B-Instruct --max-model-len 8192   # in another shell
 
-python scripts/tools/llm.py --assets-dir registry \
+python scripts/tools/llm.py --assets-dir registry/llm-local \
     call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     --provider vllm --model Qwen/Qwen2.5-7B-Instruct --task extract \
     --template extraction/invoice --schema extraction/invoice \
@@ -593,7 +593,7 @@ reads as *cannot tell* rather than as *fits*.
 **OpenAI** — `openai` and `openai_compatible` are the same transport; the endpoint is what differs:
 
 ```bash
-python scripts/tools/llm.py --assets-dir registry \
+python scripts/tools/llm.py --assets-dir registry/llm-local \
     call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     --provider openai --model gpt-4o-mini --task extract \
     --template extraction/invoice --schema extraction/invoice \
@@ -604,7 +604,7 @@ python scripts/tools/llm.py --assets-dir registry \
 **DeepSeek** — OpenAI-compatible wire format:
 
 ```bash
-python scripts/tools/llm.py --assets-dir registry \
+python scripts/tools/llm.py --assets-dir registry/llm-local \
     call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     --provider openai_compatible --model deepseek-chat --task extract \
     --template extraction/invoice --schema extraction/invoice \
@@ -617,7 +617,7 @@ an exact-string membership test, so a near-miss id fails there rather than in yo
 call:
 
 ```bash
-python scripts/tools/llm.py --assets-dir registry \
+python scripts/tools/llm.py --assets-dir registry/llm-local \
     models tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     --provider openai_compatible --model deepseek-chat \
     --option base_url=https://api.deepseek.com/v1 --option api_key="$DEEPSEEK_API_KEY"
@@ -641,7 +641,7 @@ the provider, not at the asset — and a `request_key` still comes back, which o
 prompt was built:
 
 ```bash
-python scripts/tools/llm.py --assets-dir registry node <file.txt> \
+python scripts/tools/llm.py --assets-dir registry/llm-local node <file.txt> \
     --provider ollama --model gemma3:12b --task extract \
     --template extraction/invoice --schema extraction/invoice
 # errors: PROVIDER_ERROR "ollama could not be reached"        ← assets were fine
@@ -649,7 +649,7 @@ python scripts/tools/llm.py --assets-dir registry node <file.txt> \
 
 # …and with an identifier that does not exist:
 # errors: DEPENDENCY_ERROR "the template 'x' does not resolve to a readable asset"
-#         metadata.path: …/registry/template/x.md
+#         metadata.path: …/registry/llm-local/template/x.md
 ```
 
 ## Limits worth knowing
@@ -657,7 +657,7 @@ python scripts/tools/llm.py --assets-dir registry node <file.txt> \
 - **`graph`, `fake` and `resume` cannot use this registry.** They run the built-in chain, whose
   descriptor hardcodes `template: "simple_extract"` and `schema: "simple"` per node, and its node
   ids are `classify` / `extract_a` / `extract_b` / `compare` / `validate` / `consolidate`. Against
-  `--assets-dir registry` those two identifiers do not exist, so the run stops with a
+  `--assets-dir registry/llm-local` those two identifiers do not exist, so the run stops with a
   `DEPENDENCY_ERROR`. Use `call` and `node` with this registry; the five-step layered extraction is
   not expressible as the PoC's fixed chain today.
 - **`--template` / `--schema` / `--task` are ignored on `graph` and `resume`** for the same

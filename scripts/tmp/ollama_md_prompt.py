@@ -1,6 +1,6 @@
 """Scratch probe: render a Markdown template and send it to Ollama as one prompt.
 
-Reads a template from ``registry/template/`` (or any ``.md``), resolves the placeholders the
+Reads a template from ``registry/llm-local/template/`` (or any ``.md``), resolves the placeholders the
 library's composition seam defines — ``<doc>``, ``<extra>``, ``<extra:key>``, ``<schema>`` — and
 posts the result as the single user message of a ``POST /api/chat``. ``--schema`` does both
 things the seam does with a schema: it renders ``<schema>`` and it constrains the answer, which
@@ -28,7 +28,7 @@ The invoice flow, one command per step, mirroring the lab bench's assets and opt
 names its output, so the next one reads the answer back through ``@var/tmp/<name>.json``:
 
     DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
-    R=registry
+    R=registry/llm-local
 
     # what the flow asks, without sending anything: the rendered prompt
     python scripts/tmp/ollama_md_prompt.py --print-prompt \

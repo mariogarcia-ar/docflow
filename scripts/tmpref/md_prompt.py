@@ -1,6 +1,6 @@
 """Scratch probe: render a Markdown template and send it to a provider as one prompt.
 
-Reads a template from ``registry/template/`` (or any ``.md``), resolves the placeholders the
+Reads a template from ``registry/llm-local/template/`` (or any ``.md``), resolves the placeholders the
 library's composition seam defines — ``<doc>``, ``<extra>``, ``<extra:key>``, ``<schema>`` — and
 posts the result, through :mod:`docflow.llm.primitives`, as the single user message of one
 inference. ``--schema`` does both things the seam does with a schema: it renders ``<schema>`` and
@@ -44,7 +44,7 @@ The invoice flow, one command per step, mirroring the lab bench's assets and opt
 names its output, so the next one reads the answer back through ``@var/tmp/<name>.json``:
 
     DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
-    R=registry
+    R=registry/llm-local
 
     # what the flow asks, without sending anything: the rendered prompt
     python scripts/tmpref/md_prompt.py --print-prompt \
@@ -76,7 +76,7 @@ names its output, so the next one reads the answer back through ``@var/tmp/<name
 
     # 6. the review reads step 2's answer — the bare object, not the daemon's envelope. T2 is a
     #    reasoning model, so it is asked the reasoning variant of the pair: same schema, criteria
-    #    instead of rules (registry/README.md, "Instruct and reasoning: one schema, two prompts").
+    #    instead of rules (registry/llm-local/README.md, "Instruct and reasoning: one schema, two prompts").
     python scripts/tmpref/md_prompt.py --provider ollama --model deepseek-r1:8b --name review \
         --template $R/template/review/invoice.reasoning.md --doc $DOC \
         --schema $R/schema/review/invoice.schema.json \

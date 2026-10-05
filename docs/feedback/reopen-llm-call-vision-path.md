@@ -53,7 +53,7 @@
 | E5 | **"The window" has two spellings and only one of them takes effect.** `context_window` is a control option: it is read by the pre-flight and *never sent to the provider*. `num_ctx` is a decoding option: it is sent, and it is what actually resizes the window | `stated_context_window`, `entrypoints.CONTROL_OPTIONS`, and the live overflow below |
 
 **The live failure behind E5.** The breakdown review — image + proposal + contract — overflowed
-until `num_ctx=16384` was stated (`registry/README.md` carries the recipe). With `context_window`
+until `num_ctx=16384` was stated (`registry/llm-local/README.md` carries the recipe). With `context_window`
 absent, `is_context_limit_exceeded(tokens, None)` returns `False` by design ("an unmeasured ceiling
 is not evidence of an overflow"), so the pre-flight blessed a call whose real cost it had never
 measured. Both halves of that sentence are deliberate; together they are a silent stand-in.
@@ -328,7 +328,7 @@ the second run agreeing with the first about what one page image costs.
 | 1 — the code the rows carry | `LLM-15`: `context_verdict(prompt_tokens, window, *, image_count, image_tokens)` returns `fits` / `exceeds` / `unmeasured`, `image_tokens_for(request)` reads `metadata["image_tokens"]`, and `_plan_call` refuses on `exceeds` with the numbers it used. `LLM-06`: `ProviderCall.context_window` states the window the call asks for. `LLM-09`: the Ollama transport translates that statement into `num_ctx`, outranking a decoding option of the same name; the OpenAI-compatible transport ignores it. `LLM-04`: a second committed template fixture with no `<doc>` (`tests/fixtures/llm/template/simple_read_pixels.md`) |
 | 2 — the plan text | the subplan's §3 (the meaning of `document`/`images`, the three metadata keys, the option-class table, the generator-resolution rule), §4 (six rows re-scoped, never renumbered), §5 (two scenarios), §6 (invariants 4 and 5, a second fixture), §9 (decisions 7, 8, 9 and the open decision 10), and the second-pass pointer; the WBS's header, its six index rows and a new §13 |
 | 3 — the registry row | `minItems` on `review/invoice`, `review/invoice_vision`, `review/invoice_desglose` and `review/invoice_vision_desglose`, plus the `LLM-07` keyword that enforces it, plus the README's prose |
-| 4 — the bench's and the registry's documentation | `scripts/tools/quickstart.md` (the vision subsection with the probe's pixel flow, the `prompt` field's meaning, the one-spelling window paragraph, the gate recipe's comment, and a known limitation), `scripts/tools/readme.md`, the `num_ctx` comment in `scripts/tools/_llm.py`, and `registry/README.md`'s *Chaining the steps* snippet, which now states the two keys a vision caller carries (`context_window`, `image_tokens`) — all of them stated the old two-name split, and the bench's *code* is untouched |
+| 4 — the bench's and the registry's documentation | `scripts/tools/quickstart.md` (the vision subsection with the probe's pixel flow, the `prompt` field's meaning, the one-spelling window paragraph, the gate recipe's comment, and a known limitation), `scripts/tools/readme.md`, the `num_ctx` comment in `scripts/tools/_llm.py`, and `registry/llm-local/README.md`'s *Chaining the steps* snippet, which now states the two keys a vision caller carries (`context_window`, `image_tokens`) — all of them stated the old two-name split, and the bench's *code* is untouched |
 
 **Two corrections the implementation forced.**
 
@@ -353,7 +353,7 @@ Code state at the end of the pass, all of it run rather than asserted:
 ```bash
 pytest                                   # 818 passed (809 before; the pass adds 9)
 ruff check .                             # clean
-ruff format --check .                    # clean except the pre-existing registry/README.md block
+ruff format --check .                    # clean except the pre-existing registry/llm-local/README.md block
 pylint src tests                         # 10.00/10, one pre-existing R0912 in docflow/pdf/entrypoints.py
 ```
 

@@ -28,7 +28,7 @@ Every other step reads text, and cannot run from pixels at all:
 
 Three consequences, all of them measured rather than assumed:
 
-1. **The fallback answers one question.** `registry/README.md` says the vision path runs when the
+1. **The fallback answers one question.** `registry/llm-local/README.md` says the vision path runs when the
    text path fails the checks, not instead of it — and a page the text path could not read is
    therefore *read* and not gated, not broken down, not classified, and given no line of business.
    Four of the five answers the text path gives are missing on the path that exists for the case
@@ -51,13 +51,13 @@ Three consequences, all of them measured rather than assumed:
 
 | # | Decision | Where it lands |
 |---|---|---|
-| D-1 | The family is `invoice_vision_<step>`, and it keeps the `.reasoning` twin every step's pair has: the identifier in the table plus `.reasoning` | `registry/template/extraction/` |
+| D-1 | The family is `invoice_vision_<step>`, and it keeps the `.reasoning` twin every step's pair has: the identifier in the table plus `.reasoning` | `registry/llm-local/template/extraction/` |
 | D-2 | Four steps gain both halves — `invoice_vision_deteccion`, `invoice_vision_desglose`, `invoice_vision_clasificacion`, `invoice_vision_rubro` | 8 new templates |
-| D-3 | Each new template gets a schema named after it, a copy of its step's — the rule `extraction/invoice_vision` already follows | 4 new `registry/schema/extraction/*.schema.json` |
+| D-3 | Each new template gets a schema named after it, a copy of its step's — the rule `extraction/invoice_vision` already follows | 4 new `registry/llm-local/schema/extraction/*.schema.json` |
 | D-4 | The breakdown gains a criteria-bearing reviewer for the vision path, `review/invoice_vision_desglose` (+ `.reasoning`) and its schema copy, mirroring `review/invoice_desglose`. The other three steps are judged by the field-agnostic `review/invoice_vision`, paired with the shape that names the judged fields — the step's own review schema where it has one, `review/general` (unconstrained `field`) where it does not | 2 new templates, 1 new schema |
 | D-5 | The vision reviewer is named after the step whose schema it ships with, as every review asset is named after the step it judges: `review/vision` → `review/invoice_vision`, and its schema with it. Its rules stay field-agnostic — the template names no field of its own — and its listing line still reads as the review of a vision extraction *against its own schema*, not the reading's criteria-loaded twin | 3 renamed files, plus the references in the manifest, the README and the probe |
 | D-6 | The agreement check runs on the pair the tree already carries — `tests/fixtures/casos/66cd35e9-….jpg` against `tests/fixtures-txt/casos/66cd35e9-….txt` — not on new captures; the unpaired `expected-extraction/` images are left as they are | `tests/fixtures/casos/`, `tests/fixtures-txt/casos/` |
-| D-7 | The surface follows the assets: one recipe per new step in `scripts/tmpref/image_prompt.py`, and the registry's table gains the four rows. The bench CLI is not touched — it cannot send images | `registry/README.md`, the probe's examples |
+| D-7 | The surface follows the assets: one recipe per new step in `scripts/tmpref/image_prompt.py`, and the registry's table gains the four rows. The bench CLI is not touched — it cannot send images | `registry/llm-local/README.md`, the probe's examples |
 
 ## 3. What each new template carries
 
@@ -65,7 +65,7 @@ The work is mechanical, and the rule is one sentence: **the step's criteria, the
 source.** Concretely, per file:
 
 1. **No `<doc>`, and no new placeholder.** A template that reads pixels carries no document block —
-   the rule `registry/README.md` states as "a step reads pixels or it reads text". The placeholder
+   the rule `registry/llm-local/README.md` states as "a step reads pixels or it reads text". The placeholder
    set of a vision template is its text twin's minus `<doc>`/`<document>`, and a step that already
    names an input in `extra` keeps it: `<extra:rubro>` for the line of business,
    `<extra:proposal>` and `<extra:contract>` for a review.
@@ -78,7 +78,7 @@ source.** Concretely, per file:
    step's schema — and its copy under D-3 — applies unchanged. This is what makes the two paths
    comparable at all.
 4. **The pair keeps its two halves.** The instruct template states the rules, the `.reasoning` twin
-   states the criteria and is meant for a model with `think:true` (`registry/README.md`, "Instruct
+   states the criteria and is meant for a model with `think:true` (`registry/llm-local/README.md`, "Instruct
    and reasoning: one schema, two prompts"). One content change per file, applied twice.
 
 Per step, the one thing that is genuinely new work rather than translation:
@@ -152,7 +152,7 @@ table rows, and the probe's recipes.
 | 1 | `template/extraction/invoice_vision_deteccion.md` (+ `.reasoning.md`), `schema/extraction/invoice_vision_detection.schema.json` |
 | 2 | `template/extraction/invoice_vision_desglose.md` (+ `.reasoning.md`), `schema/extraction/invoice_vision_desglose.schema.json`, `template/review/invoice_vision_desglose.md` (+ `.reasoning.md`), `schema/review/invoice_vision_desglose.schema.json` |
 | 3 | `template/extraction/invoice_vision_clasificacion.md` and `…_rubro.md` (+ their `.reasoning.md`), and the two schema copies |
-| 4 | `registry/manifest.json` (fifteen keys), `registry/README.md` (the listing, the vision rows of the asset table, the pair rule, the chaining note, one paragraph on the five copies), `scripts/tmpref/image_prompt.py` (the pixel path: seven recipes, and the examples now read the paired receipt), and the D-5 rename — `template/review/vision.md` (+ `.reasoning.md`) and `schema/review/vision.schema.json` become `review/invoice_vision*` |
+| 4 | `registry/llm-local/manifest.json` (fifteen keys), `registry/llm-local/README.md` (the listing, the vision rows of the asset table, the pair rule, the chaining note, one paragraph on the five copies), `scripts/tmpref/image_prompt.py` (the pixel path: seven recipes, and the examples now read the paired receipt), and the D-5 rename — `template/review/vision.md` (+ `.reasoning.md`) and `schema/review/vision.schema.json` become `review/invoice_vision*` |
 
 The translation rule held with one deliberate exception per file: the source framing and the
 document block, nothing else. Where a criterion spoke of "the text", it speaks of "the image"; where

@@ -2508,8 +2508,8 @@ cause — three of the four in code, not in wording.
 | `scripts/tools/_llm.py` | `--extra KEY=VALUE`, repeatable, `KEY=@FILE` reads a file — the CLI's only route onto `extra_context`; `_request` no longer hardcodes `{}` |
 | `scripts/tools/_cli.py` | `option_values`: a decoding option value is read as JSON, so `temperature=0` reaches the provider as the number `0` |
 | `scripts/tools/workflow.py` | `--llm-option` uses the same parser — it carried the same defect under a different name |
-| `registry/template/{review/invoice,review/vision,extraction/invoice_rubro}.md` | the three consuming steps name their input: `<extra:proposal>`, `<extra:proposal>`, `<extra:rubro>` |
-| `registry/README.md`, `scripts/tools/readme.md`, `scripts/tools/quickstart.md` | the flag, the placeholder pairing, the stem collision, and what the live run needs |
+| `registry/llm-local/template/{review/invoice,review/vision,extraction/invoice_rubro}.md` | the three consuming steps name their input: `<extra:proposal>`, `<extra:proposal>`, `<extra:rubro>` |
+| `registry/llm-local/README.md`, `scripts/tools/readme.md`, `scripts/tools/quickstart.md` | the flag, the placeholder pairing, the stem collision, and what the live run needs |
 | `docs/plan/issues/wbs-procesador-llm-call.md`, `wbs-scripts.md`, `subplan-procesador-llm-call.md` | the placeholder set and the SCR-05 flag surface |
 | `tests/test_lab_tools.py`, `tests/llm/primitives/test_composition.py` | six tests, each proven by mutation |
 
@@ -2560,7 +2560,7 @@ Both directories keep their own `invoice.json`, which is the `--out` split doing
 pytest                     785 passed
 ruff check .               All checks passed!
 ruff format --check .      1 file would be reformatted — the pre-existing
-                           registry/README.md OPTIONS block, present at HEAD
+                           registry/llm-local/README.md OPTIONS block, present at HEAD
 pylint src tests           10.00/10 — one message, the pre-existing
                            src/docflow/pdf/entrypoints.py:475 R0912 (15/12)
 ```
@@ -2575,7 +2575,7 @@ pylint src tests           10.00/10 — one message, the pre-existing
 
 **Not fixed, and deliberately.** The two gate rows above are pre-existing and unrelated: the
 `ruff format` complaint is a comment-alignment diff inside a fenced Python block in
-`registry/README.md`, and the `pylint` message is in the PDF processor, untouched by this pass. The
+`registry/llm-local/README.md`, and the `pylint` message is in the PDF processor, untouched by this pass. The
 fixture template `tests/fixtures/llm/template/simple_extract.md` keeps its bare `<extra>` on purpose:
 it is a valid form, and several tests render it with `extra_context={}`.
 
@@ -2618,7 +2618,7 @@ stated twice on purpose — and the review step runs with nothing but its identi
 ```
 DOCFLOW_LLM_TEMPERATURE=0        DOCFLOW_LLM_TIMEOUT=600
 DOCFLOW_LLM_NUM_CTX=16384        DOCFLOW_LLM_CONTEXT_WINDOW=16384
-DOCFLOW_ASSETS_DIR=registry
+DOCFLOW_ASSETS_DIR=registry/llm-local
 ```
 
 ```
@@ -2639,7 +2639,7 @@ gets refused for a limit it does not have.
 ```
 pytest                     791 passed
 ruff check .               All checks passed!
-ruff format --check .      1 file would be reformatted — the pre-existing registry/README.md block
+ruff format --check .      1 file would be reformatted — the pre-existing registry/llm-local/README.md block
 pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
 ```
 
@@ -2677,7 +2677,7 @@ both through the library's atomic writer. That replaces `<stem>.json` (the raw r
 `<stem>_results.json` (the run payload). `--name` pins the stem, which is the smaller remedy for the
 two-steps-one-name collision the layered extraction hit in the 2026-10-01 entry.
 
-**Hand run** (live Ollama, `gemma3:4b`, `--assets-dir registry`, `--stream --name detection`, on
+**Hand run** (live Ollama, `gemma3:4b`, `--assets-dir registry/llm-local`, `--stream --name detection`, on
 `casos/66cd35e9-….txt`):
 
 ```
@@ -2693,13 +2693,13 @@ no *.tmp left behind
 ```
 pytest                     807 passed
 ruff check .               All checks passed!
-ruff format --check .      1 file would be reformatted — the pre-existing registry/README.md
+ruff format --check .      1 file would be reformatted — the pre-existing registry/llm-local/README.md
                            block, present at HEAD and unrelated to this pass
 pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
 ```
 
 `ruff format .` was run on the changed files only, and the one pre-existing block it would have
-rewritten (`registry/README.md`, a comment-alignment diff inside a fenced Python example) was
+rewritten (`registry/llm-local/README.md`, a comment-alignment diff inside a fenced Python example) was
 reverted rather than carried along: a frozen artifact is not this pass's to reformat.
 
 **Mutation evidence** (five rows, each applied and restored by the inverse edit).
@@ -2766,7 +2766,7 @@ deepseek-r1:8b and qwen3.5:9b for the reviews — and two of the recipes the pro
    returned nothing at all for the *breakdown* review with the same brake — twice, `INVALID_JSON`,
    `"response": ""` — then answered the breakdown once its thinking was left free with room
    (`num_predict=8192`, `timeout=900`). The quickstart states both and says which pair each applies
-   to; `registry/README.md`'s "a reasoning reviewer loops unless its thinking is switched off" is the
+   to; `registry/llm-local/README.md`'s "a reasoning reviewer loops unless its thinking is switched off" is the
    other half of the same observation, not a contradiction of it.
 2. **A review is not reviewed by the same recipe as its extraction.** The five extraction steps ran
    as written; the review steps needed their own option sets, which is what the block's comments were
@@ -2777,7 +2777,7 @@ deepseek-r1:8b and qwen3.5:9b for the reviews — and two of the recipes the pro
 ```
 pytest                     809 passed
 ruff check .               All checks passed!
-ruff format --check .      1 file would be reformatted — the pre-existing registry/README.md
+ruff format --check .      1 file would be reformatted — the pre-existing registry/llm-local/README.md
                            block, present at HEAD and unrelated to this pass
 pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
 ```
@@ -2790,7 +2790,7 @@ pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
 | `COMMANDS["prompt"]` → `_call` | 2 red — the render's "no provider reached" assertion and the window test's absent key | green |
 | `llm.py` `REPORT_ONLY` without `prompt` | 1 red — `test_every_tool_declares_the_subcommands_that_publish_nothing` | green |
 
-**Not done, and deliberately.** `registry/README.md`'s flow section is left as it stands. It already
+**Not done, and deliberately.** `registry/llm-local/README.md`'s flow section is left as it stands. It already
 carries this recipe — which is why the bench's copy is the command sequence and the pointer, not a
 second telling of the roles and the criteria — and its step 5 states `think=false` for a reasoning
 reviewer, which the observation above qualifies rather than contradicts: the brake is what empties
@@ -2839,7 +2839,7 @@ batch_llm.py --fake --assets-dir tests/fixtures/llm tests/fixtures/image call \
     --provider ollama --model qwen3-vl:8b --task read --template simple_read_pixels --schema simple
           files: 4 · succeeded: 4 · failed: 0 — four pages, each its own input's document
 
-llm.py --assets-dir registry --json prompt casos/66cd35e9-….jpg … --template extraction/invoice_vision \
+llm.py --assets-dir registry/llm-local --json prompt casos/66cd35e9-….jpg … --template extraction/invoice_vision \
     --schema extraction/invoice_vision --context-window 16384 --image-tokens 2800
           images: [that page] · prompt_tokens: 615 · context_verdict: fits
           (without --image-tokens: unmeasured — and 615 alone would have read as "fits")
@@ -2848,7 +2848,7 @@ llm.py --assets-dir tests/fixtures/llm prompt <the same page> … --template sim
           ERROR DEPENDENCY_ERROR: the template asks for a document and the request carries none
 ```
 
-The 615-token reading is the number `registry/README.md` records for the same page, and 615 + 2,800
+The 615-token reading is the number `registry/llm-local/README.md` records for the same page, and 615 + 2,800
 is what the registry's own `image_tokens` states — the bench and the library now agree about the same
 page without sharing a measurement.
 
@@ -2857,7 +2857,7 @@ page without sharing a measurement.
 ```
 pytest                     825 passed
 ruff check .               All checks passed!
-ruff format --check .      1 file would be reformatted — the pre-existing registry/README.md
+ruff format --check .      1 file would be reformatted — the pre-existing registry/llm-local/README.md
                            block, present at HEAD and unrelated to this pass
 pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
 ```

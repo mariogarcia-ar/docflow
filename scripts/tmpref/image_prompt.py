@@ -1,17 +1,17 @@
 """Scratch probe: send a page image, with a rendered template, as one prompt.
 
 The vision sibling of :mod:`md_prompt`. The template is rendered exactly as it is there — a
-template from ``registry/template/`` (or any ``.md``), with the placeholders the library's
+template from ``registry/llm-local/template/`` (or any ``.md``), with the placeholders the library's
 composition seam defines: ``<doc>``, ``<extra>``, ``<extra:key>`` and ``<schema>`` — and the answer
 is printed and saved the same way. What differs is the input: instead of the document's text, the
 call carries the image (or images) ``--image`` names.
 
 The image *is* the document here. Every step of the layered extraction ships a template that reads
-the page: ``registry/template/extraction/invoice_vision.md`` reads the seven fields of an Argentine
+the page: ``registry/llm-local/template/extraction/invoice_vision.md`` reads the seven fields of an Argentine
 receipt straight from the pixels and its siblings — ``…_deteccion``, ``…_desglose``,
 ``…_clasificacion``, ``…_rubro`` — ask the other steps of that same page, while
-``registry/template/review/invoice_vision.md`` and
-``registry/template/review/invoice_vision_desglose.md`` judge a proposal against it. None carries a
+``registry/llm-local/template/review/invoice_vision.md`` and
+``registry/llm-local/template/review/invoice_vision_desglose.md`` judge a proposal against it. None carries a
 ``<doc>``, because there is no text to give.
 A template that *does* carry one still resolves it: the strategy the library calls
 ``TEXT_PLUS_VLM`` (``docflow/workflow/llm_input.py``) sends the page text *and* the image in one
@@ -57,7 +57,7 @@ same paper.
 
     IMG=tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg
     DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
-    R=registry
+    R=registry/llm-local
 
     # what the flow asks, without sending anything: the rendered prompt
     python scripts/tmpref/image_prompt.py --print-prompt \
@@ -144,7 +144,7 @@ the evidence:
     # 13. step 9's reading is reviewed with the page: review/invoice names <doc>, <extra:proposal>
     #    and <extra:contract>, so the review carries the same three inputs the text flow gives it
     #    and the image joins them. T2 is a reasoning model, so it is asked the reasoning variant of
-    #    the pair (registry/README.md, "Instruct and reasoning: one schema, two prompts").
+    #    the pair (registry/llm-local/README.md, "Instruct and reasoning: one schema, two prompts").
     python scripts/tmpref/image_prompt.py --provider ollama --model deepseek-r1:8b --name review \
         --template $R/template/review/invoice.reasoning.md --image $IMG --doc $DOC \
         --schema $R/schema/review/invoice.schema.json \

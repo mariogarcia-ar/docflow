@@ -297,7 +297,7 @@ has no offline count, so it is refused (`2`) rather than counted as something it
 template's `<extra:KEY>` placeholder, and `KEY=@FILE` reads the value from a file — how one step's
 saved answer reaches the next. A **review** fills two of them: the proposal it audits and the
 reviewed step's own schema as `contract`
-(`--extra contract=@registry/schema/extraction/invoice.schema.json`), so each verdict is measured
+(`--extra contract=@registry/llm-local/schema/extraction/invoice.schema.json`), so each verdict is measured
 against that step's rules rather than against what looks plausible. `--run-id` is how a run is
 pinned — it is what makes `resume` a resume rather than a fresh call, and it is required by `fake`,
 whose whole point is showing a graph and its resume under one identity. `--image` and
@@ -315,7 +315,7 @@ before a reasoning review: that prompt is minutes of a 12B model, and a window t
 back as an empty answer rather than as an error. `--json` with `jq -r .prompt` gives the bare text:
 
 ```bash
-python scripts/tools/llm.py --json --assets-dir registry \
+python scripts/tools/llm.py --json --assets-dir registry/llm-local \
     prompt tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     --provider ollama --model gemma3:12b --task detection \
     --template extraction/invoice_deteccion --schema extraction/invoice_detection \
@@ -412,7 +412,7 @@ That writes `review.json` (the answer alone) and `review_full.json` (the run) be
 ### The layered extraction, one command per step
 
 The registry's templates are a flow, not a prompt: five extraction calls and the reviews that audit
-them, each step its own artifact and its own schema. [`registry/README.md`](../../registry/README.md)
+them, each step its own artifact and its own schema. [`registry/llm-local/README.md`](../../registry/llm-local/README.md)
 states the roles and the criteria — why the reviewer is handed the reviewed step's schema as a
 `contract`, why two models review, what the reasoning variant of a template pair is for. What follows
 is the same flow as commands.
@@ -422,7 +422,7 @@ is the same flow as commands.
 resolves `extraction/invoice` itself, so the `.md` and `.schema.json` suffixes are never typed.
 
 ```bash
-REG=registry
+REG=registry/llm-local
 DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
 T1=gemma3:12b       # extracts
 T2=deepseek-r1:8b   # reviews
@@ -471,7 +471,7 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review call $DOC \
     --provider ollama --model $T2 --task review \
     --template review/invoice.reasoning --schema review/invoice \
     --extra proposal=@var/run/reading/invoice.json \
-    --extra contract=@registry/schema/extraction/invoice.schema.json \
+    --extra contract=@registry/llm-local/schema/extraction/invoice.schema.json \
     --option think=false --option temperature=0.6 --option top_p=0.95 \
     --option repeat_penalty=1.0 --option num_ctx=16384 --option num_predict=4096 \
     --option timeout=600
@@ -481,7 +481,7 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review-qwen call $DO
     --provider ollama --model $T3 --task review \
     --template review/invoice --schema review/invoice \
     --extra proposal=@var/run/reading/invoice.json \
-    --extra contract=@registry/schema/extraction/invoice.schema.json \
+    --extra contract=@registry/llm-local/schema/extraction/invoice.schema.json \
     --option think=false --option temperature=0.2 --option min_p=0.05 \
     --option num_ctx=16384 --option timeout=600
 
@@ -494,7 +494,7 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review-desglose call
     --provider ollama --model $T2 --task review \
     --template review/invoice_desglose.reasoning --schema review/invoice_desglose \
     --extra proposal=@var/run/desglose/invoice_desglose.json \
-    --extra contract=@registry/schema/extraction/invoice_desglose.schema.json \
+    --extra contract=@registry/llm-local/schema/extraction/invoice_desglose.schema.json \
     --option temperature=0.6 --option top_p=0.95 --option repeat_penalty=1.0 \
     --option num_ctx=16384 --option num_predict=8192 --option timeout=900
 
@@ -502,7 +502,7 @@ python scripts/tools/llm.py --assets-dir $REG --out var/run/review-desglose-qwen
     --provider ollama --model $T3 --task review \
     --template review/invoice_desglose --schema review/invoice_desglose \
     --extra proposal=@var/run/desglose/invoice_desglose.json \
-    --extra contract=@registry/schema/extraction/invoice_desglose.schema.json \
+    --extra contract=@registry/llm-local/schema/extraction/invoice_desglose.schema.json \
     --option think=false --option temperature=0.2 --option min_p=0.05 \
     --option num_ctx=16384 --option timeout=600
 ```
@@ -537,7 +537,7 @@ the call asks the provider for. The receipt is the one the text flow reads as
 
 ```bash
 IMG=tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg
-R=registry
+R=registry/llm-local
 V1=qwen3-vl:8b      # reads the page image
 V2=ministral-3:8b   # reviews the vision reading
 
@@ -585,7 +585,7 @@ python scripts/tools/llm.py --assets-dir $R --out var/run/review-vision call $IM
     --provider ollama --model $V2 --task review --name review \
     --template review/invoice_vision --schema review/invoice_vision \
     --extra proposal=@var/run/reading-vision/reading.json \
-    --extra contract=@registry/schema/extraction/invoice_vision.schema.json \
+    --extra contract=@registry/llm-local/schema/extraction/invoice_vision.schema.json \
     --context-window 16384 --image-tokens 2800 \
     --option temperature=0.2 --option min_p=0.05
 
@@ -594,7 +594,7 @@ python scripts/tools/llm.py --assets-dir $R --out var/run/review-desglose-vision
     --provider ollama --model $V2 --task review --name review-desglose \
     --template review/invoice_vision_desglose --schema review/invoice_vision_desglose \
     --extra proposal=@var/run/desglose-vision/invoice_vision_desglose.json \
-    --extra contract=@registry/schema/extraction/invoice_vision_desglose.schema.json \
+    --extra contract=@registry/llm-local/schema/extraction/invoice_vision_desglose.schema.json \
     --context-window 16384 --image-tokens 2800 \
     --option temperature=0.2 --option min_p=0.05
 ```
@@ -608,7 +608,7 @@ the library calls `TEXT_PLUS_VLM` — is a text input with `--image` added; a do
 is one `--image` per page, in reading order, and `--image-tokens` then states what one page costs
 rather than what the set does. `batch_llm.py` walks `.txt`, `.md` **and** the image suffixes, so a
 folder of pages is one command over a corpus exactly as a folder of texts is. The library form —
-`LLMInput` with its `images` and the two `metadata` keys — is `registry/README.md` → *Chaining the
+`LLMInput` with its `images` and the two `metadata` keys — is `registry/llm-local/README.md` → *Chaining the
 steps*.
 
 ### A folder

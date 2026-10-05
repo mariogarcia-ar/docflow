@@ -414,7 +414,7 @@ leaves out stops the run at load with a `DEPENDENCY_ERROR` naming it, never as a
 **A reviewer fills two keys, and one of them is the contract.** `review/invoice` — and
 `review/general`, the same reviewer under a step-neutral name, which reviews any step — names
 `<extra:proposal>`, the answer under audit, and `<extra:contract>`, the reviewed step's own schema
-(`--extra contract=@registry/schema/extraction/invoice.schema.json`). The contract is what the
+(`--extra contract=@registry/llm-local/schema/extraction/invoice.schema.json`). The contract is what the
 verdict is measured against: a proposed value is `disagree` when it breaks the field's definition,
 not when it merely looks unlikely, and the `suggested_value` obeys the same contract — the bare
 letter `A` where the field is defined as a letter or code, never the word `FACTURA`. A `disagree`

@@ -483,12 +483,12 @@ was built first, not what the row says today.
 bounded schema — verified live, and the same call returned a complete seven-verdict answer.
 
 **Evidence.** `pytest` 818 passed · `ruff check .` clean · `ruff format --check .` clean except the
-pre-existing `registry/README.md` code block · `pylint src tests` 10.00/10 with the one pre-existing
+pre-existing `registry/llm-local/README.md` code block · `pylint src tests` 10.00/10 with the one pre-existing
 `docflow/pdf/entrypoints.py` `R0912`. The bench's and the registry's own documentation moved with the
 library, because both stated the old split: `scripts/tools/quickstart.md` gained a vision subsection
 carrying the probe's eight pixel recipes, and the `prompt` paragraph, the window prose, the gate
 recipe's comment and a known limitation were corrected; `scripts/tools/readme.md` and the `num_ctx`
-comment in `scripts/tools/_llm.py` say the same thing now; and `registry/README.md`'s *Chaining the
+comment in `scripts/tools/_llm.py` say the same thing now; and `registry/llm-local/README.md`'s *Chaining the
 steps* snippet states the two keys a vision caller carries. Every command added to the quickstart was
 rendered before it was written down — eight of eight — and the snippet's documented shape was run
 live against a stand-in tag: `SUCCESS`, seven fields, `context_verdict: fits`. Four mutations were
