@@ -57,6 +57,38 @@ LLMInput
 └── metadata: dict[str, Any]
 ```
 
+`document` and `images` are a **resolved payload, not a choice**: the caller states which it sent,
+and the four shapes are text alone, pixels alone, both, and neither. The code answers each one
+honestly, and that is what this contract freezes: a template that carries `<doc>` with a request
+that carries no document fails with a typed `DEPENDENCY_ERROR` ("the template asks for a document
+and the request carries none"); an absent document is not an empty one (`document=""` renders the
+placeholder empty, `None` does not render it at all); and a template that reads pixels carries no
+`<doc>`, so it renders with no document because the placeholder is not there to fill. An image is a
+*path*, read once and base64-encoded at the seam, and its **bytes** — not its name — are what
+`input_hashes` hashes. Deciding the shape is `ORC-13`'s (`src/docflow/workflow/llm_input.py`, the
+`ExtractionStrategy` vocabulary); this processor never widens or narrows it.
+
+Three `metadata` keys are part of the request rather than correlation, and none of them has a
+default: `assets_dir` (the root `template` and `schema` resolve against — a template that silently
+resolved against a working directory would make one request mean two things), `output_dir` (`None`
+writes nothing) and `run_id` (pinned, or minted). `image_tokens` is a fourth, added by the second
+pass of 2026-10-04: the token cost of *one* image, as the caller measured it, used by the
+pre-flight below and never invented here.
+
+**The option classes.** `options` is not one kind of thing, and which kind a key belongs to decides
+whether it reaches the provider and whether it belongs to `request_key` (the canonical serialization
+in the formula below):
+
+| Class | Keys | Reaches the provider | In `request_key` |
+|---|---|---|---|
+| Transport | `api_key` | no | no — a credential |
+| | `timeout`, `max_attempts` | no | yes (open: §9 decision 10) |
+| Request-level | `think`, `keep_alive` | yes, lifted to the top of the Ollama body | yes — `think` changes the answer |
+| Decoding | everything else (`temperature`, `min_p`, `num_ctx`, …) | yes, inside the body's own options | yes |
+| Read here, also sent | `context_window` | yes, translated by the transport (§9 decision 7) | yes |
+| Read here, never sent | `max_prompt_tokens` | no | yes — it changes the prompt |
+| Read here, excluded | `stream` | yes, as the call's own field | no — a streamed answer is the same answer |
+
 ```text
 LLMResult
 ├── run_id: str
@@ -242,6 +274,13 @@ surface needed: `generate_text`, `generate_multimodal`, `generate_structured`,
 behind the `LLMInput → LLMResult` contract — a different provider changes only
 `llm/primitives/`, never the contract or the workflow.
 
+**Which of the three carries an image is resolved, not chosen.** A caller does not pick a
+generator: `resolve_generator(structured=…, multimodal=…)` states the rule, and a schema outranks
+images, so the registry's pixel path — every one of its vision steps declares a schema — runs on
+`generate_structured`, which attaches the images whenever the call carries any.
+`generate_multimodal` is therefore the text-free, schema-free generator, not "the vision one"; it
+exists because the surface would otherwise have a hole, not because a caller selects it.
+
 The provider SDK is imported **inside** the primitive that needs it, never at module import
 time: importing `docflow.llm.primitives` must succeed on a machine with no provider
 installed (`tests/test_skeleton.py` guards it). The scripted fake of `LLM-03` is injected at
@@ -268,24 +307,28 @@ graph; a retry always preserves prior attempts (`LLMAttempt` history). Documenta
 | LLM-01 | Contract dataclasses: `LLMInput`, `LLMResult`, `LLMNodeResult`, `LLMGraphState`, `LLMAttempt`, `ComparisonResult`, `Usage`, `Timing`, stage-state enums | S | — |
 | LLM-02 | Provider primitive interface + `LLMProvider` result/error types (in `llm/primitives/`) | S | LLM-01 |
 | LLM-03 | In-memory fake provider implementing the primitive interface + committed template/schema fixtures | S | LLM-02 |
-| LLM-04 | Template render & prompt build: variable injection, `<doc>`/`<extra>`/`<extra:key>`/`<schema>` resolution in a single pass, sanitize | M | LLM-01 |
+| LLM-04 | Template render & prompt build: variable injection, `<doc>`/`<extra>`/`<extra:key>`/`<schema>` resolution in a single pass, sanitize; the asset root and the two identifier→path rules (`template/<id>.md`, `schema/<id>.schema.json`); a template that asks for a document no request carries is a typed failure | M | LLM-01 |
 | LLM-05 | `calculate_request_key` + idempotency helpers (`find_reusable_node_result`, `is_node_reusable`, `validate_cached_result`) | M | LLM-01 |
-| LLM-06 | `process_llm_request` single-call happy path (template → prompt → key → payload → call → parse → validate) | M | LLM-03, LLM-04, LLM-05 |
-| LLM-07 | Parse + schema validation (`load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result`) | M | LLM-06 |
+| LLM-06 | `process_llm_request` single-call happy path (template → prompt → key → payload → call → parse → validate); the planned call carries the request's `document` and `images` | M | LLM-03, LLM-04, LLM-05 |
+| LLM-07 | Parse + schema validation (`load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result`); the enforced keyword subset is closed and includes `minItems`, which is where a review's completeness is enforced | M | LLM-06 |
 | LLM-08 | Retry + attempt history (`retry_llm_request`, `should_retry`, `increment_attempt`) | M | LLM-07 |
-| LLM-09 | Provider primitives: Ollama local + OpenAI-compatible (`# TODO: [MVP]` real transport) | L | LLM-02 |
+| LLM-09 | Provider primitives: Ollama local + OpenAI-compatible (`# TODO: [MVP]` real transport); `resolve_generator` decides which primitive carries an image, and the transport translates the stated window where it can | L | LLM-02 |
 | LLM-10 | Node execution: `process_llm_node` + node-state transitions, one node at a time (`claim_node` and multi-worker claims deferred, `# TODO: [MVP]`) | M | LLM-06 |
 | LLM-11 | Graph persistence in `llm/`: one `state.json` + `final_result.json`, atomic writes, load/save of `LLMGraphState` (per-node artifact tree deferred, `# TODO: [MVP]`) | L | LLM-01 |
 | LLM-12 | `execute_llm_graph` over the fixed linear chain: node order, node reuse, completion detection (routing, parallel branches, subgraph lifecycle deferred, `# TODO: [MVP]`) | L | LLM-10, LLM-11 |
 | LLM-13 | Node reuse on restart: a `SUCCESS` node with a matching `request_key` is reused and only the pending nodes run (`request_graph_stop`, `SKIP` / `FORCE` / `INVALIDATE`, `invalidate_downstream_nodes` deferred, `# TODO: [MVP]`) | L | LLM-12 |
-| LLM-14 | Per-field comparison and consolidation: `compare_outputs` (`calculate_consensus` deferred, `# TODO: [MVP]`) | M | LLM-12 |
-| LLM-15 | Usage, timing and context-window control (`count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded`) | M | LLM-06 |
+| LLM-14 | Per-field comparison and consolidation: `compare_outputs` (`calculate_consensus` deferred, `# TODO: [MVP]`); a per-field vector is compared field by field, never as one score | M | LLM-12 |
+| LLM-15 | Usage, timing and context-window control (`count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded`, `context_verdict`): the pre-flight counts a stated image cost, never reports a fit it cannot measure, and compares against the window the call asks for | M | LLM-06 |
 
 ### Waves
 
 - **Wave 1 (contracts & primitives):** LLM-01 → LLM-02 → LLM-03; LLM-04 and LLM-05 depend only on LLM-01 and run in parallel with the provider seam (LLM-02/LLM-03).
 - **Wave 2 (single call):** LLM-06 → LLM-07 → LLM-08; LLM-09 in parallel after LLM-02; LLM-15 also starts here (its only predecessor is LLM-06).
 - **Wave 3 (linear inference chain):** LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12. LLM-15 is completed in Wave 2 by its declared dependency. The chain is fixed and sequential; the dynamic machinery is deferred (§9.6).
+
+*(The pixel half — what `document`/`images` mean, the generator resolution, the option classes, the
+window the pre-flight checks, and a review's completeness — was reopened in the second pass of
+2026-10-04: `docs/plan/issues/wbs-procesador-llm-call.md` §13.)*
 
 Each wave ends with the four QA gates green and its happy-path/invariant tests passing.
 
@@ -310,6 +353,22 @@ Scenario: A retryable invalid response is retried and prior attempts are kept
   When process_llm_request is invoked
   Then the result is SUCCESS, the attempt history contains both attempts,
     and the attempt ids differ while the request_key stays identical
+
+Scenario: A vision call sends the image, and the answer is validated against the schema
+  Given an LLMInput with document=None, one image, a template that carries no <doc> and a schema
+  When process_llm_request is invoked against the fake provider
+  Then the call the fake receives carries that image,
+    the resolved generator is generate_structured,
+    the image's bytes are part of the request_key, and
+    the result is SUCCESS with schema_valid true
+
+Scenario: The pre-flight counts what it was told and claims no fit it cannot measure
+  Given an LLMInput carrying one image, a stated window and a stated per-image cost that
+    together exceed the window
+  When process_llm_request is invoked
+  Then it reports CONTEXT_OVERFLOW with the cost it used, and reaches no provider
+  And with the per-image cost unstated the same request reports context_verdict "unmeasured",
+    never "fits", and is not refused on a number nobody measured
 ```
 
 Node-level `FORCE` / `SKIP` / `STOP` and the downstream invalidation they imply are deferred
@@ -349,15 +408,36 @@ reports `status == "SUCCESS"`, `schema_valid == true`, non-empty `usage` and `ti
    Kept here, numbered, so the citations that already point at invariant 3 stay resolvable.
    The documental-level equivalent is live (`ORC-09`, `ORC-19` invariant 2).
 
+4. **The image a request names reaches the call.**
+   *Invariant:* every entry point that plans a call carries the request's `images` into the
+   `ProviderCall`, and the image's bytes — not its path — are part of the `request_key`.
+   *Mutation that breaks it:* plan the call with `images=[]` — the call is made, the provider
+   answers, and the page the request paid for never leaves the process. The second half fails
+   too, because a page re-exported under the same name would reuse the first page's answer.
+
+5. **The pre-flight counts what it was told, and never reports a fit it cannot measure.**
+   *Invariant:* a stated per-image cost is added to the text estimate before the comparison, and
+   a request carrying images whose cost nobody stated is reported as `unmeasured` rather than
+   `fits`.
+   *Mutation that breaks it:* compare the text estimate alone — the text fits the stated window
+   comfortably, so a call whose real cost is over budget is made, and an unpriced image reads as
+   a fit.
+
 ### Fixtures needed
 
 - A prompt template fixture (`fixtures/llm/template/simple_extract.md`) with `<doc>`,
   `<extra>` and `<schema>` placeholders, used verbatim by the happy-path and invariant tests.
+- A second template fixture (`fixtures/llm/template/simple_read_pixels.md`) that carries no
+  `<doc>`: the shape a vision step's request has, and the one that proves a template without a
+  document placeholder renders rather than failing.
 - A JSON schema fixture (`fixtures/llm/schema/simple.schema.json`) exercising required
   fields and types.
 - A fake provider (in-memory) that returns deterministic valid JSON and can be
   scripted to return invalid JSON / raise timeouts for retry tests, with a call counter to
-  prove reuse (invariant 1) and attempt tracking (invariant 2 / retry scenario).
+  prove reuse (invariant 1) and attempt tracking (invariant 2 / retry scenario). It also records
+  the `ProviderCall` it was handed, which is what invariant 4 reads.
+- No image fixture: a test writes the bytes it needs into `tmp_path`, so the file it hashes is the
+  file the call would read.
 
 ### Why this processor keeps a scripted fake — deliberately
 
@@ -452,3 +532,28 @@ pylint src tests
    tasks that carried it (`LLM-10`…`LLM-14`). The rows are re-scoped, never renumbered: no ID
    changes and every range citation stays valid. Effort is left as estimated; a re-estimation
    is a separate pass.
+7. **The context window — RESOLVED (second pass, 2026-10-04):** one spelling of it. The caller
+   states `options["context_window"]`, that statement is what the pre-flight compares against,
+   and the transport translates it into the provider's own field where the provider can honour
+   one (Ollama: `num_ctx`, inside the body's options, outranking a decoding option of the same
+   name). A transport that cannot resize its window per request ignores it rather than inventing
+   one. Two spellings — one that guards the call and one that takes effect — is how a live review
+   overflowed a window its own pre-flight had blessed.
+8. **A prompt's cost — RESOLVED (second pass, 2026-10-04):** the pre-flight compares a total it
+   can name: the text estimate a tokenizer-free approximation produces, plus a per-image cost the
+   caller states in `metadata["image_tokens"]`. With images present and no cost stated the verdict
+   is `unmeasured`, never `fits` — an image costs a model thousands of tokens no text measurement
+   sees (measured on a real receipt: 615 estimated against 3 420 counted for one page), and a
+   number invented here would be the default threshold the project forbids. Only `exceeds` stops a
+   call; `unmeasured` proceeds, and says so.
+9. **A review's completeness — RESOLVED (second pass, 2026-10-04):** enforced by the schema's own
+   bound, not by a check in the processor. A review enumerates the field names it adjudicates
+   *and* how many verdicts it owes; the registry states that count as `minItems` on the four
+   step-shaped review schemas, and `LLM-07` enforces `minItems` as part of its closed keyword
+   subset. A kernel check would have to name a field and a verdict, which the no-domain-noun rule
+   forbids; a review that dropped five of seven verdicts and validated clean is what this closes.
+10. **Whether a bound belongs to the request's identity — OPEN.** `timeout` and `max_attempts`
+    are the processor's own options and today enter `request_key`, so an answer earned under one
+    timeout is not reusable under another. They bound an attempt and cannot change an answer,
+    which argues they should not key it. Left open on purpose: changing it moves which requests
+    count as the same request, and that is a re-use decision rather than a validation one.

@@ -31,9 +31,11 @@ from docflow.llm.primitives.composition import (
     build_messages,
     calculate_request_key,
     compare_outputs,
+    context_verdict,
     count_tokens,
     default_inference_graph,
     find_reusable_node_result,
+    image_tokens_for,
     increment_attempt,
     input_hashes,
     is_context_limit_exceeded,
@@ -216,6 +218,37 @@ def test_an_unknown_window_is_not_an_overflow() -> None:
     assert is_context_limit_exceeded(10_000, None) is False
     assert is_context_limit_exceeded(10_001, 10_000) is True
     assert is_context_limit_exceeded(10_000, 10_000) is False
+
+
+def test_a_cost_nobody_measured_is_never_reported_as_fitting() -> None:
+    """``fits`` is claimed only when the total *and* the window are known.
+
+    An image costs a model thousands of prompt tokens no text measurement sees, so a request that
+    carries one whose cost the caller never stated is ``unmeasured`` against a stated window — and
+    still ``exceeds`` when the text alone is over, because that much is known.
+    """
+    assert context_verdict(615, 4096, image_count=1, image_tokens=None) == "unmeasured"
+    assert context_verdict(615, None, image_count=1, image_tokens=None) == "unmeasured"
+    assert context_verdict(10_000, 4096, image_count=1, image_tokens=None) == "exceeds"
+    assert context_verdict(615, 4096) == "fits"
+    assert context_verdict(615, None) == "unmeasured"
+
+
+def test_a_stated_image_cost_is_added_to_the_text_it_measures() -> None:
+    """The comparison uses every number anyone knows: text plus one cost per image."""
+    assert context_verdict(615, 4096, image_count=1, image_tokens=2800) == "fits"
+    assert context_verdict(615, 4096, image_count=2, image_tokens=2800) == "exceeds"
+    assert context_verdict(615, 4096, image_count=1, image_tokens=4000) == "exceeds"
+
+
+def test_only_a_positive_integer_prices_an_image() -> None:
+    """A cost nobody stated is not stated — and a malformed one is not a zero either."""
+    assert image_tokens_for(build_input(metadata={"image_tokens": 2800})) == 2800
+    assert image_tokens_for(build_input()) is None
+    for unstated in (None, 0, -1, True, "2800"):
+        assert (
+            image_tokens_for(build_input(metadata={"image_tokens": unstated})) is None
+        )
 
 
 def test_usage_adds_up_and_stays_unmeasured_when_nothing_was_measured() -> None:

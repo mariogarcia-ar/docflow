@@ -398,7 +398,100 @@ def test_an_unknown_window_is_not_an_overflow(
 
     assert result.status == StageState.SUCCESS
     assert result.metadata["context_window"] is None
+    assert result.metadata["context_verdict"] == "unmeasured"
     assert len(fake.calls) == 1
+
+
+def test_the_window_the_pre_flight_checks_is_the_window_the_call_asks_for(
+    provider: Callable[..., FakeProvider],
+) -> None:
+    """A statement that guards the call and a statement the provider gets are the same statement."""
+    fake = provider()
+
+    process_llm_request(build_input(options={"context_window": 4096}))
+
+    assert fake.calls[0].context_window == 4096
+    assert (
+        fake.calls[0].options.get("num_ctx") is None
+    )  # the transport's spelling, not this layer's
+
+
+def test_a_page_image_reaches_the_call_and_keys_the_request(
+    provider: Callable[..., FakeProvider], tmp_path: Path
+) -> None:
+    """Invariant 4: the image a request names is in the call the provider receives.
+
+    *Mutation that breaks it:* drop ``images=list(request.images)`` from the planned call — the
+    call is made, the double answers, and the page the request paid for never leaves the process.
+    It is the streaming seam's defect the other way round: a field the seam carries that nothing
+    above it fills in.
+
+    The second half is why the bytes are keyed and not the path: a page re-exported under the same
+    name is a different page, and an answer about the first is not an answer about the second.
+    """
+    page = tmp_path / "page.png"
+    page.write_bytes(b"\x89PNG\r\n\x1a\nfirst")
+    fake = provider()
+
+    result = process_llm_request(
+        build_input(document=None, images=[str(page)], template="simple_read_pixels")
+    )
+
+    assert result.status == StageState.SUCCESS
+    assert fake.calls[0].images == [str(page)]
+    assert result.metadata["images"] == 1
+    first_key = result.attempts[0].request_key
+
+    page.write_bytes(b"\x89PNG\r\n\x1a\nsecond")
+    second = process_llm_request(
+        build_input(document=None, images=[str(page)], template="simple_read_pixels")
+    )
+
+    assert second.attempts[0].request_key != first_key
+
+
+def test_a_priced_image_is_counted_before_the_call_and_an_unpriced_one_is_no_fit(
+    provider: Callable[..., FakeProvider], tmp_path: Path
+) -> None:
+    """Invariant 5: the pre-flight adds what the caller stated, and claims no fit it cannot measure.
+
+    *Mutation that breaks it:* compare ``prompt.tokens`` alone — the text fits the stated window
+    comfortably, so the call is made, the double answers, and nothing records that the window was
+    the smaller number. The second half fails under the same mutation, because an image nobody
+    priced would read as ``fits`` rather than ``unmeasured``.
+    """
+    page = tmp_path / "page.png"
+    page.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+    priced = provider()
+
+    result = process_llm_request(
+        build_input(
+            document=None,
+            images=[str(page)],
+            template="simple_read_pixels",
+            options={"context_window": 4096},
+            metadata={"image_tokens": 4000},
+        )
+    )
+
+    assert result.errors[0].type == "CONTEXT_OVERFLOW"
+    assert result.errors[0].metadata["image_tokens"] == 4000
+    assert result.errors[0].metadata["images"] == 1
+    assert priced.calls == []
+
+    unpriced = provider()
+    ran = process_llm_request(
+        build_input(
+            document=None,
+            images=[str(page)],
+            template="simple_read_pixels",
+            options={"context_window": 4096},
+        )
+    )
+
+    assert ran.status == StageState.SUCCESS
+    assert ran.metadata["context_verdict"] == "unmeasured"
+    assert len(unpriced.calls) == 1
 
 
 def test_a_schema_this_processor_cannot_enforce_is_refused(

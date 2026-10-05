@@ -84,6 +84,7 @@ from docflow.llm.primitives.composition import (
     CHAIN_DEPENDENCIES,
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_TIMEOUT_SECONDS,
+    IMAGE_TOKENS_KEY,
     INFERENCE_CHAIN,
     OUTPUT_DIR_KEY,
     RUN_ID_KEY,
@@ -96,9 +97,11 @@ from docflow.llm.primitives.composition import (
     calculate_request_key,
     canonical_json,
     compare_outputs,
+    context_verdict,
     count_tokens,
     default_inference_graph,
     find_reusable_node_result,
+    image_tokens_for,
     increment_attempt,
     input_hashes,
     is_context_limit_exceeded,
@@ -109,6 +112,7 @@ from docflow.llm.primitives.composition import (
     mint_attempt_id,
     normalize_llm_options,
     output_dir_for,
+    overflow_message,
     parse_json_response,
     pinned_run_id,
     process_prompt,
@@ -253,6 +257,7 @@ __all__ = [
     "DEFAULT_MAX_ATTEMPTS",
     "DEFAULT_TIMEOUT_SECONDS",
     "GENERATORS",
+    "IMAGE_TOKENS_KEY",
     "INFERENCE_CHAIN",
     "NON_RETRYABLE_KINDS",
     "OLLAMA_BASE_URL",
@@ -281,6 +286,7 @@ __all__ = [
     "canonical_json",
     "check_model_available",
     "compare_outputs",
+    "context_verdict",
     "count_tokens",
     "default_inference_graph",
     "ensure_directory",
@@ -290,6 +296,7 @@ __all__ = [
     "generate_text",
     "get_context_window",
     "get_model_info",
+    "image_tokens_for",
     "increment_attempt",
     "input_hashes",
     "is_context_limit_exceeded",
@@ -306,6 +313,7 @@ __all__ = [
     "mint_attempt_id",
     "normalize_llm_options",
     "output_dir_for",
+    "overflow_message",
     "parse_json_response",
     "pinned_run_id",
     "process_prompt",
@@ -353,6 +361,10 @@ class ProviderCall:
             changes.
         observer: Called once per delta while a streaming call arrives, or ``None`` to stream
             unwatched. Ignored by a call that does not stream.
+        context_window: The window the call asks the provider for, or ``None`` when the caller
+            states none. A statement, not a decoding preference: it is the same value the
+            pre-flight compares against, so the window that guards a call is the window the call
+            gets. A transport that can honour it does; one that cannot ignores it.
     """
 
     provider: str
@@ -366,6 +378,7 @@ class ProviderCall:
     timeout: float
     stream: bool = False
     observer: DeltaObserver | None = None
+    context_window: int | None = None
 
 
 @dataclass(frozen=True)
@@ -859,6 +872,11 @@ class OllamaProvider(_HttpProvider):
         for name in _OLLAMA_REQUEST_FIELDS:
             if name in options:
                 body[name] = options.pop(name)
+        if call.context_window is not None:
+            # ``num_ctx`` is Ollama's spelling of the window, and a statement the processor made
+            # outranks a decoding option the caller guessed: the value compared against the
+            # prompt is the value the provider is told, or the two would drift apart again.
+            options["num_ctx"] = call.context_window
         body["options"] = options
         if call.schema is not None:
             body["format"] = dict(call.schema)

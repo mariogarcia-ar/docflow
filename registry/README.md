@@ -664,7 +664,11 @@ python scripts/tools/llm.py --assets-dir registry node <file.txt> \
   `--image-prepare-for-vlm` enable its own chain, and that chain does not read this registry.
 - **`$comment` is not allowed in a schema.** The validator enforces a closed keyword set and sends
   the schema to the provider verbatim, where OpenAI's `strict: true` rejects unknown keywords; so
-  the design notes that used to live in `$comment` are kept below instead.
+  the design notes that used to live in `$comment` are kept below instead. The enforced set is
+  `type`, `required`, `properties`, `additionalProperties`, `items`, `enum` and `minItems`, plus the
+  annotations `title`, `description` and `default` — a schema that states anything else is refused
+  at load time with `SCHEMA_ERROR`, by name, rather than silently validated under a rule nobody
+  applied.
 
 ## Schema design notes
 
@@ -763,6 +767,14 @@ same seven fields, and a copy of `review/invoice` for the same reason. It carrie
 side, because the template names no field of its own — it judges whatever proposal it is handed —
 so this file is the one that says which fields a vision review answers. A vision review of another
 step's proposal states that step's own review schema instead.
+
+**The four review schemas that count their own verdicts** — `review/invoice`, `review/invoice_vision`,
+`review/invoice_desglose` and `review/invoice_vision_desglose` carry a `minItems` equal to the number
+of field names their `field` enum lists (7, 7, 10, 10). The enum closes the *vocabulary* of a review;
+`minItems` is what closes its *count*, and the difference was measured: asked the same breakdown
+review four times, `deepseek-r1:8b` twice answered 8 and 9 of the 10 verdicts and stopped — a
+schema-valid answer that had quietly left fields unadjudicated. `review/general.schema.json` states
+no count on purpose: its `field` is unconstrained, so it has none to state.
 
 **The five vision schema copies** — `extraction/invoice_vision_detection`, `…_desglose`,
 `…_clasificacion`, `…_rubro` and `review/invoice_vision_desglose` — repeat the same rule: each is a

@@ -7,16 +7,16 @@
 | Derived from | `docs/plan/subplan-procesador-llm-call.md` §4 (WBS table, waves) |
 | Source of truth | `docs/plan/subplan-procesador-llm-call.md` + `docs/plan/README.md`; task IDs and titles are preserved verbatim from the subplan table |
 | ID range | `LLM-01` … `LLM-15` |
-| Status | `LLM-01` … `LLM-15` **DONE** (delivered 2026-09-26); **reopened 2026-10-03** — the streaming seam, §12 |
+| Status | `LLM-01` … `LLM-15` **DONE** (delivered 2026-09-26); **reopened 2026-10-03** — the streaming seam, §12; **reopened 2026-10-04** — the pixel half, §13 |
 
 This document expands — never replaces — the subplan WBS. Every issue traces back to exactly one row of `subplan-procesador-llm-call.md` §4; no new scope is introduced here. `.github/copilot-instructions.md` governs code quality for every task.
 
-> **Reopened.** The header said `NOT_STARTED` for all fifteen tasks; that was the owed flip
+> **Reopened twice.** The header said `NOT_STARTED` for all fifteen tasks; that was the owed flip
 > `docs/plan/bitacora.md` (2026-09-26) records — the tasks were delivered, and a WBS is a frozen
-> artifact, so flipping one is a plan revision. This pass makes that revision **and** reopens the
-> document, because the seam those tasks froze was extended afterwards. §12 is the second pass; the
-> §2 index carries the corrected status per task. The ID range is unchanged: the second pass is a
-> pass over rows that already exist, not new scope.
+> artifact, so flipping one is a plan revision. The 2026-10-03 pass made that revision **and**
+> reopened the document, because the seam those tasks froze was extended afterwards (§12). The
+> 2026-10-04 pass reopens it again for the pixel half (§13): the same fifteen rows, re-scoped, none
+> renumbered. The §2 index carries the corrected deliverable per row.
 
 ## 1. Summary
 
@@ -38,18 +38,18 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | LLM-01 | Contract dataclasses | S | 1 — Contracts & primitives | — | `LLMInput`, `LLMResult`, `LLMNodeResult`, `LLMGraphState`, `LLMAttempt`, `ComparisonResult`, `Usage`, `Timing`, stage-state enums | this file §LLM-01 | DONE |
 | LLM-02 | Provider primitive interface + result/error types | S | 1 — Contracts & primitives | LLM-01 | `llm/primitives/`, `LLMProvider` types | this file §LLM-02 | DONE |
 | LLM-03 | In-memory fake provider + fixtures | S | 1 — Contracts & primitives | LLM-02 | `fixtures/llm/template/simple_extract.md`, `fixtures/llm/schema/simple.schema.json`, fake provider | this file §LLM-03 | DONE |
-| LLM-04 | Template render & prompt build | M | 1 — Contracts & primitives | LLM-01 | variable injection, `<doc>`/`<extra>`/`<extra:key>`/`<schema>` resolution in a single pass, sanitize | this file §LLM-04 | DONE |
+| LLM-04 | Template render & prompt build | M | 1 — Contracts & primitives | LLM-01 | variable injection, `<doc>`/`<extra>`/`<extra:key>`/`<schema>` resolution in a single pass, sanitize; the asset root and the two identifier→path rules; a template asking for a document no request carries is a typed failure | this file §LLM-04 | DONE |
 | LLM-05 | `calculate_request_key` + idempotency helpers | M | 1 — Contracts & primitives | LLM-01 | `calculate_request_key`, `find_reusable_node_result`, `is_node_reusable`, `validate_cached_result` | this file §LLM-05 | DONE |
-| LLM-06 | `process_llm_request` single-call happy path | M | 2 — Single call | LLM-03, LLM-04, LLM-05 | `process_llm_request` | this file §LLM-06 | DONE |
-| LLM-07 | Parse + schema validation | M | 2 — Single call | LLM-06 | `load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result` | this file §LLM-07 | DONE |
+| LLM-06 | `process_llm_request` single-call happy path | M | 2 — Single call | LLM-03, LLM-04, LLM-05 | `process_llm_request`; the planned call carries the request's `document` and `images` | this file §LLM-06 | DONE |
+| LLM-07 | Parse + schema validation | M | 2 — Single call | LLM-06 | `load_schema`, `validate_schema`, `parse_json_response`, `validate_llm_result`; the enforced keyword subset is closed and includes `minItems`, where a review's completeness is enforced | this file §LLM-07 | DONE |
 | LLM-08 | Retry + attempt history | M | 2 — Single call | LLM-07 | `retry_llm_request`, `should_retry`, `increment_attempt` | this file §LLM-08 | DONE |
-| LLM-09 | Provider primitives: Ollama + OpenAI-compatible | L | 2 — Single call | LLM-02 | `generate_text`, `generate_multimodal`, `generate_structured`, `list_models`, `check_model_available`, `get_context_window` | this file §LLM-09 | DONE |
+| LLM-09 | Provider primitives: Ollama + OpenAI-compatible | L | 2 — Single call | LLM-02 | `generate_text`, `generate_multimodal`, `generate_structured`, `list_models`, `check_model_available`, `get_context_window`; `resolve_generator` decides which one carries an image, and the transport translates the stated window where it can | this file §LLM-09 | DONE |
 | LLM-10 | Node execution | M | 3 — Linear chain | LLM-06 | `process_llm_node`, node-state transitions (`claim_node` deferred) | this file §LLM-10 | DONE |
 | LLM-11 | Graph persistence in `llm/` | L | 3 — Linear chain | LLM-01 | `llm/run_001/{state.json, final_result.json}`, atomic writes, load/save `LLMGraphState` | this file §LLM-11 | DONE |
 | LLM-12 | `execute_llm_graph` | L | 3 — Linear chain | LLM-10, LLM-11 | fixed chain order, node reuse, completion detection | this file §LLM-12 | DONE |
 | LLM-13 | Node reuse on restart | L | 3 — Linear chain | LLM-12 | resume over the saved chain state: `REUSED` nodes, pending nodes executed | this file §LLM-13 | DONE |
-| LLM-14 | Per-field comparison + consolidation | M | 3 — Linear chain | LLM-12 | `compare_outputs` (`calculate_consensus` deferred) | this file §LLM-14 | DONE |
-| LLM-15 | Usage, timing and context-window control | M | 2 — Single call | LLM-06 | `count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded` | this file §LLM-15 | DONE |
+| LLM-14 | Per-field comparison + consolidation | M | 3 — Linear chain | LLM-12 | `compare_outputs` (`calculate_consensus` deferred); a per-field vector is compared field by field, never as one score | this file §LLM-14 | DONE |
+| LLM-15 | Usage, timing and context-window control | M | 2 — Single call | LLM-06 | `count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded`, `context_verdict`; the pre-flight counts a stated image cost and never reports a fit it cannot measure | this file §LLM-15 | DONE |
 
 > The subplan records LLM-01, LLM-02 and LLM-03 as `S`; LLM-04 … LLM-08, LLM-10, LLM-14, LLM-15 as `M`; and LLM-09, LLM-11, LLM-12, LLM-13 as `L`.
 
@@ -439,3 +439,61 @@ chain path, and a reused node is not; `--name` decides the published stem.
 library keeps an answer's text only once it has parsed, so the typed `INVALID_JSON` failure is what
 `<stem>_full.json` holds. Keeping the unparsed text is a change to `LLM-07`'s attempt record and is
 deliberately not made here.
+
+## 13. Second pass — the pixel half (`LLM-04`, `LLM-06`, `LLM-07`, `LLM-09`, `LLM-14`, `LLM-15`)
+
+Reopened 2026-10-04, from the probe `scripts/tmpref/image_prompt.py` and the work order
+`docs/feedback/reopen-llm-call-vision-path.md`. The probe ran every vision step the registry ships
+against live models and then took the path it had not taken itself — one vision call through
+`process_llm_request`. It worked, and what it measured around that call is what this pass fixes and
+records.
+
+**What was wrong.** Three things the plan never stated, and one it stated in a way the code does not
+implement:
+
+| Finding | Measured |
+|---|---|
+| The pre-flight compared a number it knew was too small | one page image: **615** tokens estimated against **3 420** counted by the provider. `count_tokens` measures text, and nothing measured the image |
+| "The window" had two spellings, and only one took effect | `context_window` guarded the pre-flight and was never sent; `num_ctx` was sent and resized the window. A live review overflowed a window its own pre-flight had blessed |
+| The generator that carries images was not the one the plan named | `resolve_generator(structured=True, multimodal=True) == "generate_structured"`, and every registry vision step declares a schema, so `generate_multimodal` is unreachable from the registry |
+| A review that dropped fields validated clean | 2 of 7 verdicts and 7 of 7 both returned `[]` from `validate_schema`: the registry's review schemas closed the `field` vocabulary and stated no count |
+
+**Scope of the pass.** No task ID is added and no task is re-scoped away: this is a pass over six
+rows that already exist, and the §2 index carries the corrected deliverable for each. The detailed
+issues (§3, `LLM-04` … `LLM-15`) keep the text they were delivered with, as §12's pass left them —
+§13 is where the second pass over a row is recorded, so a reader of a detail section is reading what
+was built first, not what the row says today.
+
+| Row | What the pass changed |
+|---|---|
+| `LLM-04` | The asset root (`metadata["assets_dir"]`, no default) and the two identifier→path rules are frozen in the subplan §3; a template carrying `<doc>` with a request carrying no document is a typed `DEPENDENCY_ERROR`, and `document=""` is not `document=None`. A second committed template fixture with no `<doc>` (`tests/fixtures/llm/template/simple_read_pixels.md`) is the shape a vision request has |
+| `LLM-06` | The planned call carries `images=list(request.images)`; `ProviderCall.context_window` states the window the call asks for, so the value the pre-flight compares is the value the provider is given |
+| `LLM-07` | `minItems` joins the closed enforced-keyword subset, and `_violations` applies it: a list shorter than the schema's count is now named by path, `$.field_verdicts: expected at least 7 items, got 2`. A schema using a keyword outside the subset is still refused at load time by name |
+| `LLM-09` | The generator resolution is a stated rule (`resolve_generator`), not a menu the caller picks from; the Ollama transport translates the stated window into `num_ctx`, outranking a decoding option of the same name, and the OpenAI-compatible transport ignores it rather than inventing one |
+| `LLM-14` | The subplan row says what the code does: a per-field vector is compared field by field, never as one score |
+| `LLM-15` | `context_verdict(prompt_tokens, window, image_count=…, image_tokens=…)` returns `fits`, `exceeds` or `unmeasured`; a stated per-image cost (`metadata["image_tokens"]`) is added to the text estimate, and a request whose images nobody priced is never reported as fitting. Only `exceeds` stops the call |
+
+**The registry's half.** The four step-shaped review schemas (`review/invoice`,
+`review/invoice_vision`, `review/invoice_desglose`, `review/invoice_vision_desglose`) now state
+`minItems` equal to the number of names their `field` enum lists (7, 7, 10, 10);
+`review/general.schema.json` states none, because its `field` is unconstrained. Ollama accepts the
+bounded schema — verified live, and the same call returned a complete seven-verdict answer.
+
+**Evidence.** `pytest` 818 passed · `ruff check .` clean · `ruff format --check .` clean except the
+pre-existing `registry/README.md` code block · `pylint src tests` 10.00/10 with the one pre-existing
+`docflow/pdf/entrypoints.py` `R0912`. Four mutations were falsified (mutate → observe red → restore
+→ observe green): the planned call dropping `images`; the pre-flight ignoring a stated image cost;
+the transport not translating the stated window; `ProviderCall.context_window` left unset. Invariants
+4 and 5 are the two that were added, and each names its mutation in its docstring.
+
+**Live.** A vision call through `process_llm_request` on the paired receipt (`qwen2.5vl:7b`) and a
+review of its answer against the now-bounded `review/invoice_vision` schema: `SUCCESS`, seven
+verdicts, no violations, `context_verdict: fits` with a stated per-image cost of 2 800 against a
+window of 16 384 — while the same run's provider counted 3 316 prompt tokens against the library's
+527-token text estimate, which is the gap the per-image cost exists to close.
+
+**Not claimed.** The unparsed-answer gap §12 records is unchanged. Whether `timeout` and
+`max_attempts` belong to `request_key` is left open (subplan §9 decision 10): they bound an attempt
+rather than shape an answer, but changing it moves which requests count as the same one. And the
+bench still cannot send an image (`scripts/tools/_llm.py` states `images=[]`) — a `wbs-scripts.md`
+row, named here and not moved.

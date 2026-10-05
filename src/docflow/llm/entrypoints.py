@@ -171,12 +171,29 @@ def _plan_call(
     schema = primitives.load_schema(request.schema, assets_dir)
     prompt = primitives.process_prompt(request, template, schema)
     window = primitives.stated_context_window(request)
-    if primitives.is_context_limit_exceeded(prompt.tokens, window):
+    image_tokens = primitives.image_tokens_for(request)
+    verdict = primitives.context_verdict(
+        prompt.tokens,
+        window,
+        image_count=len(request.images),
+        image_tokens=image_tokens,
+    )
+    if verdict == "exceeds":
         raise primitives.typed_failure(
             "CONTEXT_OVERFLOW",
-            f"the prompt needs about {prompt.tokens} tokens and the stated window is {window}",
+            primitives.overflow_message(
+                prompt.tokens,
+                window,
+                image_count=len(request.images),
+                image_tokens=image_tokens,
+            ),
             recoverable=False,
-            metadata={"prompt_tokens": prompt.tokens, "context_window": window},
+            metadata={
+                "prompt_tokens": prompt.tokens,
+                "image_tokens": image_tokens,
+                "images": len(request.images),
+                "context_window": window,
+            },
         )
     hashes = primitives.input_hashes(
         request.document, [Path(image) for image in request.images]
@@ -208,6 +225,7 @@ def _plan_call(
             timeout=primitives.request_timeout(request.options),
             stream=bool(request.options.get(STREAM_OPTION, False)),
             observer=observer,
+            context_window=window,
         ),
         schema=schema,
         attempt_limit=primitives.max_attempts(request.options),
@@ -215,9 +233,12 @@ def _plan_call(
             "request_key": request_key,
             "model_version": model_version,
             "context_window": window,
+            "context_verdict": verdict,
             "prompt_tokens": prompt.tokens,
             "prompt_tokens_estimated": prompt.estimated,
             "prompt_truncated": prompt.truncated,
+            "image_tokens": image_tokens,
+            "images": len(request.images),
             "attempt_limit": primitives.max_attempts(request.options),
             "provider_timeout": primitives.request_timeout(request.options),
             "base_url": request.options.get("base_url"),

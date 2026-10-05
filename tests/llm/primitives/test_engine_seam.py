@@ -146,6 +146,31 @@ def test_an_ollama_call_that_states_no_option_sends_an_empty_map(http) -> None:
     assert "temperature" not in body and "top_p" not in body
 
 
+def test_the_window_a_call_asks_for_becomes_the_window_ollama_gets(http) -> None:
+    """The neutral statement is translated, and outranks a decoding option that guessed at it."""
+    client = http(body={"message": {"content": "{}"}})
+
+    generate_structured(
+        call(context_window=8192, options={"num_ctx": 2048, "temperature": 0.0})
+    )
+
+    sent = client.requests[0]["json"]
+    assert sent["options"]["num_ctx"] == 8192
+    assert sent["options"]["temperature"] == 0.0
+
+
+def test_a_transport_that_cannot_resize_its_window_does_not_invent_one(http) -> None:
+    """vLLM's window belongs to the server, not the request: nothing is sent to resize it."""
+    client = http(body={"choices": [{"message": {"content": "{}"}}]})
+
+    generate_text(
+        call(provider="vllm", base_url="http://gpu:8000/v1/", context_window=8192)
+    )
+
+    sent = client.requests[0]["json"]
+    assert "num_ctx" not in sent and "context_window" not in sent
+
+
 def test_an_openai_compatible_call_posts_a_constrained_response_format(http) -> None:
     """The two providers differ in their wire format; that difference is the transport's job."""
     client = http(body={"choices": [{"message": {"content": "{}"}}]})

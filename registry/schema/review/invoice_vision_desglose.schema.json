@@ -3,6 +3,7 @@
   "properties": {
     "field_verdicts": {
       "type": "array",
+      "minItems": 10,
       "items": {
         "type": "object",
         "properties": {

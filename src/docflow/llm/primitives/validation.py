@@ -52,9 +52,19 @@ TEMPLATE_SUFFIX: Final[str] = ".md"
 SCHEMA_SUFFIX: Final[str] = ".schema.json"
 
 #: The schema keywords this processor enforces. The first six carry a rule; the last three are
-#: annotations and cannot be violated.
+#: annotations and cannot be violated. ``minItems`` is here because a closed vocabulary is not a
+#: complete answer: a review enumerates the field names it adjudicates *and* how many verdicts it
+#: owes, and a schema that states only the first lets an answer that dropped fields read as valid.
 ENFORCED_KEYWORDS: Final[frozenset[str]] = frozenset(
-    {"type", "required", "properties", "additionalProperties", "items", "enum"}
+    {
+        "type",
+        "required",
+        "properties",
+        "additionalProperties",
+        "items",
+        "enum",
+        "minItems",
+    }
 )
 ANNOTATION_KEYWORDS: Final[frozenset[str]] = frozenset(
     {"title", "description", "default"}
@@ -224,6 +234,13 @@ def _violations(value: Any, schema: Mapping[str, Any], *, path: str) -> list[str
     if isinstance(value, Mapping):
         found.extend(_mapping_violations(value, schema, path=path))
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        minimum = schema.get("minItems")
+        if (
+            isinstance(minimum, int)
+            and not isinstance(minimum, bool)
+            and len(value) < minimum
+        ):
+            found.append(f"{path}: expected at least {minimum} items, got {len(value)}")
         items = schema.get("items")
         if isinstance(items, Mapping):
             for index, item in enumerate(value):

@@ -128,6 +128,12 @@ MAX_ATTEMPTS_OPTION: Final[str] = "max_attempts"
 CONTEXT_WINDOW_OPTION: Final[str] = "context_window"
 MAX_PROMPT_TOKENS_OPTION: Final[str] = "max_prompt_tokens"
 
+#: ``metadata`` key naming the token cost of *one* image, as the caller measured it. Stated by the
+#: caller rather than assumed by this module: a page image costs a model thousands of prompt
+#: tokens, the constant differs per model and per image size, and a number invented here would be
+#: the "default threshold used in place of a real answer" the project forbids.
+IMAGE_TOKENS_KEY: Final[str] = "image_tokens"
+
 #: One retry by default: the smallest policy that makes the retry path reachable at all. It is a
 #: policy, not an answer — it is recorded in ``normalized_options`` and therefore participates in
 #: the request key, and a caller that wants a different policy states it in ``options``.
@@ -263,6 +269,25 @@ def stated_model_version(request: LLMInput) -> str | None:
 def stated_context_window(request: LLMInput) -> int | None:
     """Return the model's context window when the caller states one, else ``None``."""
     stated = request.options.get(CONTEXT_WINDOW_OPTION)
+    if isinstance(stated, int) and not isinstance(stated, bool) and stated > 0:
+        return stated
+    return None
+
+
+def image_tokens_for(request: LLMInput) -> int | None:
+    """Return the token cost the caller states for *one* image, or ``None`` when it states none.
+
+    A value that is not a positive integer counts as not stated, the way a malformed window does:
+    this module has nothing to measure an image's cost with, and reporting a number nobody stated
+    would be worse than reporting that the cost is unmeasured.
+
+    Args:
+        request: The inference request.
+
+    Returns:
+        The stated per-image cost, or ``None``.
+    """
+    stated = request.metadata.get(IMAGE_TOKENS_KEY)
     if isinstance(stated, int) and not isinstance(stated, bool) and stated > 0:
         return stated
     return None
@@ -500,7 +525,9 @@ def count_tokens(text: str) -> int:
     """Estimate the number of tokens ``text`` costs.
 
     The estimate is a stated approximation, not a measurement: Phase 1 has no tokenizer, and a
-    fabricated exact count would be worse than an approximate one that is labelled as such.
+    fabricated exact count would be worse than an approximate one that is labelled as such. It is
+    also *text only*: an image's cost is measured by nobody here, and :func:`context_verdict` is
+    what keeps that from being mistaken for a fit.
 
     Args:
         text: The text to measure.
@@ -546,6 +573,63 @@ def is_context_limit_exceeded(prompt_tokens: int, context_window: int | None) ->
     if context_window is None:
         return False
     return prompt_tokens > context_window
+
+
+def context_verdict(
+    prompt_tokens: int,
+    context_window: int | None,
+    *,
+    image_count: int = 0,
+    image_tokens: int | None = None,
+) -> str:
+    """Return what is known about one planned prompt's fit: ``fits``, ``exceeds`` or ``unmeasured``.
+
+    ``count_tokens`` measures text, and an image costs the model thousands of prompt tokens that
+    no text measurement sees. So the verdict has three answers rather than two, and the third is
+    the point: a request whose images' cost nobody stated is never reported as fitting, because
+    the number the comparison would use is known to be smaller than the request.
+
+    Args:
+        prompt_tokens: The prompt text's estimated token count.
+        context_window: The window the call asks for, or ``None`` when the caller states none.
+        image_count: How many images the call carries.
+        image_tokens: The stated cost of one image, or ``None`` when the caller states none.
+
+    Returns:
+        ``"exceeds"`` when a measured total passes a stated window — the only verdict that stops a
+        call; ``"fits"`` only when both the total and the window are known; ``"unmeasured"``
+        otherwise, which includes the case of a known window against images no one priced.
+    """
+    if image_count and image_tokens is None:
+        if is_context_limit_exceeded(prompt_tokens, context_window):
+            return "exceeds"
+        return "unmeasured"
+    total = prompt_tokens + image_count * max(image_tokens or 0, 0)
+    if context_window is None:
+        return "unmeasured"
+    return "exceeds" if is_context_limit_exceeded(total, context_window) else "fits"
+
+
+def overflow_message(
+    prompt_tokens: int,
+    context_window: int | None,
+    *,
+    image_count: int = 0,
+    image_tokens: int | None = None,
+) -> str:
+    """Return the message one refused call carries, naming every number it compared.
+
+    A refusal a reader cannot check is not a verdict: the message states the text estimate, the
+    per-image cost when one was stated, and the window the call asked for.
+    """
+    priced = (
+        "unstated cost" if image_tokens is None else f"about {image_tokens} tokens each"
+    )
+    images = f" plus {image_count} image(s) at {priced}" if image_count else ""
+    return (
+        f"the prompt needs about {prompt_tokens} text tokens{images}, "
+        f"and the stated window is {context_window}"
+    )
 
 
 def process_prompt(

@@ -1,21 +1,22 @@
 # Plan — reopen `subplan-procesador-llm-call.md` for the pixel half
 
-> Status: **proposed.** A revision of a frozen artifact is the plan owner's to land, so this note
-> is a work order: it changes no plan text itself.
+> Status: **applied** (code + plan text + registry, 2026-10-04). The plan owner landed it as
+> written, with two corrections the implementation forced — §8 records both. §9 records what was
+> measured afterwards rather than before.
 >
-> What reopens it: the probe `scripts/tmpref/image_prompt.py` ran every vision step the registry
+> What reopened it: the probe `scripts/tmpref/image_prompt.py` ran every vision step the registry
 > ships against live models, and then took the path the probe itself never took — one vision call
 > through `process_llm_request`. §1 records what that measured: five facts the subplan's frozen text
 > does not state, and one reading it invites that the code does not take. §2 gives a verdict per
 > frozen statement, §3 the edit each verdict needs.
 >
-> **Documents only.** This plan changes plan text — `docs/plan/subplan-procesador-llm-call.md` and
-> `docs/plan/issues/wbs-procesador-llm-call.md`. The code the revision records becomes rows of the
-> WBS second pass (§4); nothing under `src/`, `tests/` or `scripts/` is edited here.
+> **Landing it edits frozen artifacts.** This plan changes plan text — `docs/plan/subplan-procesador-llm-call.md`
+> and `docs/plan/issues/wbs-procesador-llm-call.md` — which is the plan owner's call, not a code
+> task's. The code the revision records landed as rows of the WBS second pass (§4).
 >
 > Scope: subplan §3, §4, §5, §6, §7, §9, and its WBS §12 → a new §13. Out of scope: `registry/`
-> (its README owns the vision assets; §3.5 records the one row the registry owes), the bench
-> (`wbs-scripts.md`), `docs/plan/README.md` (no row of it moves), `docs/idea/` (read-only).
+> except for the one owed row (§3.5), the bench (`wbs-scripts.md`), `docs/plan/README.md` (no row of
+> it moves), `docs/idea/` (read-only).
 
 ## 0. Rules that constrain this revision
 
@@ -120,10 +121,12 @@ Freeze the enumeration (the formula's *shape* does not move — only which keys 
 
 | Class | Keys | Reaches the provider | Enters `request_key` |
 |---|---|---|---|
-| Transport | `api_key`, `timeout`, `max_attempts` | never | `api_key` no (credential); `timeout`, `max_attempts` — **recommended no**: they bound an attempt, they cannot change an answer, and an attempt that ends by timeout is a failure with no result to reuse (§7, O-2) |
+| Transport | `api_key` | never | no (credential) |
+| | `timeout`, `max_attempts` | never | yes — **left as it is**; whether a bound belongs to the request's identity is subplan §9 decision 10, deliberately still open |
 | Request-level | `think`, `keep_alive` | yes — lifted to the top of the Ollama body, not into `options` | **yes**: `think` changes what the model answers |
 | Decoding | everything else (`temperature`, `min_p`, `num_ctx`, …) | yes, inside `options` | yes |
-| Read by the processor, never sent | `context_window`, `max_prompt_tokens` | see §3.4 | `max_prompt_tokens` yes (it changes the prompt); `context_window` per §3.4 |
+| Read by the processor, also sent | `context_window` | yes, translated by the transport (§3.4) | yes |
+| Read by the processor, never sent | `max_prompt_tokens` | no | `max_prompt_tokens` yes (it changes the prompt) |
 
 `stream` keeps the standing §12 exception: read by the processor, absent from the key, because a
 streamed answer is the same answer.
@@ -148,17 +151,19 @@ Two sentences and one rule:
   exactly the "default model, engine or threshold used in place of a real answer" the project
   forbids.
 
-### 3.5 The registry's one owed row (not this subplan's edit)
+### 3.5 The registry's one owed row — and the library change it turned out to need
 
-The measured completeness failure (E3) is closed by *data*, not by code: every review schema
-enumerates `field` (`review/invoice.schema.json` 7 names, `review/invoice_desglose.schema.json` 10)
-and declares **no `minItems`**, so the vocabulary is closed while the count is open. A `minItems`
-equal to the step's own field count — data the schema already carries twice — makes `validate_schema`
-catch it, and the library change is nothing. `review/general.schema.json` is the exception: its
-`field` is unconstrained, so it can state no count. The row belongs to `registry/README.md`; the
-subplan's part is one sentence in §9 saying where a review's completeness is enforced. Note that no
-test in the suite reads `registry/`, so this row's only proof is a run: a real review answer that
-drops a field must stop validating once the bound is there.
+The measured completeness failure (E3) is closed by *data*: every review schema enumerates `field`
+(`review/invoice.schema.json` 7 names, `review/invoice_desglose.schema.json` 10) and declares **no
+`minItems`**, so the vocabulary is closed while the count is open. A `minItems` equal to the step's
+own field count — data the schema already carries twice — is what `validate_schema` needs to catch
+it. `review/general.schema.json` is the exception: its `field` is unconstrained, so it can state no
+count.
+
+**Corrected while landing it (see §8): the library change was not nothing.** `load_schema` refuses
+a schema that uses a keyword outside the enforced subset, by name and at load time — so a registry
+schema carrying `minItems` would fail *every* review with `SCHEMA_ERROR` until `LLM-07` enforced the
+keyword. The two land together: the subset gains `minItems` and gains the rule that applies it.
 
 ### 3.6 §4 WBS — the row scope
 
@@ -234,15 +239,15 @@ The header's own `Status` sentence is the one place the two passes meet, so it i
 |---|---|---|
 | 1 — the code the rows carry | `LLM-15` (the image's cost, one spelling of the window), `LLM-06`/`LLM-09` (the image in the planned call, asserted), `LLM-07` (the completeness sentence) | The four gates, invariants 4 and 5 mutation-falsified, and E1 re-run live as evidence — not as a test |
 | 2 — the plan text | §3.1–§3.9 in the subplan, §4's new §13 in the WBS, the §3.10 pointer | A grep sweep for the six row IDs and for `generate_multimodal` across `docs/plan/` |
-| 3 — the registry row | `minItems` on the step-shaped review schemas (§3.5) | A re-run of the probe's own check — one real review answer validated against each edited schema — because **no test in the suite reads `registry/`**: its schemas are data, and the only thing that has ever validated an answer against them is a run like the one §9 records |
+| 3 — the registry row | `minItems` on the four step-shaped review schemas, **plus** the `LLM-07` keyword that enforces it (§3.5) | A re-run of the probe's own check — one real review answer validated against each edited schema — because **no test in the suite reads `registry/`**: its schemas are data, and the only thing that has ever validated an answer against them is a run like the one §9 records |
 
 Wave 1 is the only wave that can fail on evidence; waves 2 and 3 are one-sitting edits whose risk
 is a half-updated citation.
 
 ## 6. Acceptance criteria for this revision
 
-- The subplan and the WBS both name the pixel half, and neither contradicts the other: the six row
-  scopes appear once in the subplan's table and once in §13, with the same wording.
+- The subplan and the WBS both name the pixel half, and neither contradicts the other: each of the
+  six rows states the same facts in the subplan's §4 table, in the WBS §2 index and in §13.
 - Invariants 4 and 5 exist, and each was proven to fail under its documented mutation before being
   restored green.
 - E1 reproduces: a vision call through `process_llm_request` returns `SUCCESS` with a valid answer,
@@ -257,7 +262,7 @@ is a half-updated citation.
 | # | Question | Recommendation |
 |---|---|---|
 | O-1 | One spelling of the window (the processor maps `context_window` onto the provider's field), or two, with the plan stating which wins? | One spelling, and the source is the window the call asks for — the provider's own `get_context_window()` as the fallback. Two spellings is how the live overflow happened |
-| O-2 | Do `timeout` and `max_attempts` belong to the request's identity? Today they enter `request_key`, so an answer earned under one timeout is not reusable under another | No. They bound an attempt, not the request; an attempt that ends by timeout carries no result to reuse |
+| O-2 | Do `timeout` and `max_attempts` belong to the request's identity? Today they enter `request_key`, so an answer earned under one timeout is not reusable under another | No. They bound an attempt, not the request; an attempt that ends by timeout carries no result to reuse. **Left open** (subplan §9 decision 10): it moves which requests count as the same one |
 | O-3 | Is a review's completeness the schema's business (`minItems`, no kernel change) or the processor's (a check that names `field_verdicts`, which the project's own rule forbids in a kernel API)? | The schema's. The measured failure is cardinality, and the count is data the schema already half-carries |
 | O-4 | Does the per-image cost live in `metadata` (the caller measures it) or in the provider primitive (the model's own `prompt_eval_count` after the fact)? | `metadata`, stated before the call: a cost discovered after the call cannot prevent the overflow it caused |
 
@@ -312,3 +317,67 @@ its own, only a caller.
 The two live numbers to compare against are the ones §1 records: **615 estimated against 3 420
 counted** for the reading, and **3 316 counted** for the review whose prompt was 2 108 characters —
 the second run agreeing with the first about what one page image costs.
+
+## 8. Applied
+
+| Wave | What landed |
+|---|---|
+| 1 — the code the rows carry | `LLM-15`: `context_verdict(prompt_tokens, window, *, image_count, image_tokens)` returns `fits` / `exceeds` / `unmeasured`, `image_tokens_for(request)` reads `metadata["image_tokens"]`, and `_plan_call` refuses on `exceeds` with the numbers it used. `LLM-06`: `ProviderCall.context_window` states the window the call asks for. `LLM-09`: the Ollama transport translates that statement into `num_ctx`, outranking a decoding option of the same name; the OpenAI-compatible transport ignores it. `LLM-04`: a second committed template fixture with no `<doc>` (`tests/fixtures/llm/template/simple_read_pixels.md`) |
+| 2 — the plan text | the subplan's §3 (the meaning of `document`/`images`, the three metadata keys, the option-class table, the generator-resolution rule), §4 (six rows re-scoped, never renumbered), §5 (two scenarios), §6 (invariants 4 and 5, a second fixture), §9 (decisions 7, 8, 9 and the open decision 10), and the second-pass pointer; the WBS's header, its six index rows and a new §13 |
+| 3 — the registry row | `minItems` on `review/invoice`, `review/invoice_vision`, `review/invoice_desglose` and `review/invoice_vision_desglose`, plus the `LLM-07` keyword that enforces it, plus the README's prose |
+
+**Two corrections the implementation forced.**
+
+1. **§3.5's "the library change is nothing" was wrong.** `load_schema` refuses a keyword outside the
+   enforced subset *at load time*, so a registry schema carrying `minItems` would have failed every
+   review with `SCHEMA_ERROR`. `ENFORCED_KEYWORDS` gained `minItems` and `_violations` gained the
+   rule; the registry row and the keyword land together, and the order is not optional.
+2. **§3.3 read as if `timeout` and `max_attempts` had been decided out of the key.** No wave covered
+   that, so they stay in it, and the subplan records the question as decision 10 — open. A frozen
+   table must not carry a "recommended" where a reader would take a "resolved".
+
+One thing the plan asserted and the implementation had to *check* rather than assume: whether a
+provider accepts the bounded schema on the wire. Ollama does — verified with a direct primitive call
+before the registry row was written, and again through `process_llm_request` afterwards. For the
+OpenAI-compatible dialect the standing caveat holds: the schema is sent verbatim, so a keyword an
+endpoint rejects arrives as a typed provider error rather than a silent one.
+
+## 9. Verified
+
+Code state at the end of the pass, all of it run rather than asserted:
+
+```bash
+pytest                                   # 818 passed (809 before; the pass adds 9)
+ruff check .                             # clean
+ruff format --check .                    # clean except the pre-existing registry/README.md block
+pylint src tests                         # 10.00/10, one pre-existing R0912 in docflow/pdf/entrypoints.py
+```
+
+**Mutations, each observed red and then restored green** (the §0 rule, and the reason invariant
+tests exist):
+
+| Mutation | Observed |
+|---|---|
+| the planned call plans `images=[]` | `test_a_page_image_reaches_the_call_and_keys_the_request` fails: `assert [] == ['/private/var/…/page.png']` |
+| the pre-flight calls `context_verdict(..., image_tokens=None)` | `test_a_priced_image_is_counted_before_the_call_and_an_unpriced_one_is_no_fit` fails: no `CONTEXT_OVERFLOW` is reported at all |
+| the Ollama transport stops translating the stated window | `test_the_window_a_call_asks_for_becomes_the_window_ollama_gets` fails: `assert 2048 == 8192` (the decoding option the caller guessed wins) |
+| the planned call omits `context_window=window` | `test_the_window_the_pre_flight_checks_is_the_window_the_call_asks_for` fails: `assert None == 4096` |
+
+**The measured failure, re-run against the schema as it now stands.** A two-verdict answer against
+`review/invoice`:
+
+```text
+before:  validate_schema(answer, schema) -> []
+after:   ['$.field_verdicts: expected at least 7 items, got 2']
+```
+
+**Live.** Two calls, both through the entry point rather than the probe's own seam:
+
+- the reading, `qwen2.5vl:7b`, on the paired receipt: `SUCCESS`, seven fields, and the numbers that
+  open this note — **615** estimated text tokens against **3 420** counted, the ~2 800-token gap a
+  page image costs;
+- the review of that answer against the now-bounded `review/invoice_vision` schema, with the
+  per-image cost stated: `SUCCESS`, seven verdicts, no violations, and `context_verdict` **`fits`**
+  for 527 text tokens plus 2 800 per image against a window of 16 384 — while the provider counted
+  3 316, which a stated 2 800 predicts to within 0.4 %. The estimate is still an approximation; what
+  changed is that it no longer pretends the image costs nothing.

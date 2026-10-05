@@ -106,7 +106,7 @@ def test_a_schema_that_is_not_json_is_reported(tmp_path: Path) -> None:
 
 
 def test_the_enforced_subset_is_the_one_the_module_documents() -> None:
-    """The annotations carry no rule; the six that do are the ones a violation can come from."""
+    """The annotations carry no rule; the seven that do are the ones a violation can come from."""
     assert "pattern" not in SUPPORTED_KEYWORDS
     assert {
         "type",
@@ -115,6 +115,7 @@ def test_the_enforced_subset_is_the_one_the_module_documents() -> None:
         "additionalProperties",
         "items",
         "enum",
+        "minItems",
         "title",
         "description",
         "default",
@@ -171,6 +172,27 @@ def test_an_enum_is_enforced_when_a_schema_states_one() -> None:
 
     assert not validate_schema("a", schema)
     assert validate_schema("c", schema) == ["$: 'c' is not one of ['a', 'b']"]
+
+
+def test_a_minimum_item_count_is_enforced_when_a_schema_states_one() -> None:
+    """A closed vocabulary is not a complete answer: the count is checked too.
+
+    A review enumerates the field names it adjudicates *and* how many verdicts it owes. With
+    ``minItems`` unenforced, an answer that dropped five of seven verdicts was valid against its
+    schema — measured on a real model, and the reason the keyword is in the enforced subset.
+    """
+    schema = {
+        "type": "object",
+        "properties": {
+            "verdicts": {"type": "array", "minItems": 3, "items": {"type": "string"}}
+        },
+        "required": ["verdicts"],
+    }
+
+    assert not validate_schema({"verdicts": ["a", "b", "c"]}, schema)
+    assert validate_schema({"verdicts": ["a", "b"]}, schema) == [
+        "$.verdicts: expected at least 3 items, got 2"
+    ]
 
 
 def finished_result(**overrides: Any) -> LLMResult:
