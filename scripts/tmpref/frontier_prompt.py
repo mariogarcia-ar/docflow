@@ -40,6 +40,15 @@ endpoint above is DeepSeek's, and its own model reads text only:
     R=registry/llm-frontier
     VLM=a-multimodal-frontier      # add --base-url <endpoint>/v1 when it is not the one above
 
+    # 0. hello world: is the key, the endpoint and the model reachable at all? The registry ships a
+    #    ping pair for exactly this question — one line in, that line echoed back out, one field in
+    #    the answer — so a connection failure shows up for a few hundred tokens instead of after a
+    #    4 000-token prompt. The template quotes a document, so it takes text, never a page.
+    printf 'hola mundo\n' > /tmp/ping.txt
+    python scripts/tmpref/frontier_prompt.py --name ping --doc /tmp/ping.txt --timeout 300 \
+        --template $R/template/ping.md --schema $R/schema/ping.schema.json
+    #     {"echo":"hola mundo"}, schema: conforms, exit 0
+
     # 1. what the call asks, without sending anything and without naming a key: the rendered prompt
     #    on stdout, the schema inlined into it, and the pages that would be attached echoed to
     #    stderr, where they cannot corrupt the prompt
@@ -126,9 +135,12 @@ wrong shape, so both are stated, or neither is and the registry's extraction hol
 whose API does accept ``json_schema`` is reached by the sibling probes, which hand the schema to
 the transport instead.
 
-**The key.** Paste it into ``API_KEY`` below to run locally, or leave that empty and export
-``DEEPSEEK_API_KEY``. A key pasted into a tracked file is a plain-text secret in the working tree:
-the file is committed, the key is not — so do not ``git add`` it once it holds a real one.
+**The key.** Three sources state it, in this order: ``API_KEY`` below, the process environment, and
+the repository's ``.env`` — the file git ignores on purpose, and the one a credential belongs in.
+The name is provider-scoped (``DEEPSEEK_API_KEY``) rather than the bench's own
+``DOCFLOW_LLM_API_KEY``, so one file may hold the credential of every frontier provider this probe
+is pointed at. ``API_KEY`` comes first, and is committed empty for that reason: a key pasted into a
+tracked file is a plain-text secret in the working tree, so do not ``git add`` it once it holds one.
 
 ``<name>.json`` and ``<name>_full.json`` land under ``--out`` exactly as the siblings' do (see
 :mod:`_probe`), and a typed failure is printed as ``KIND: message`` on stderr, exiting ``1``.
@@ -161,10 +173,12 @@ BASE_URL: Final[str] = "https://api.deepseek.com"
 #: sibling. Neither reads an image: for ``--image`` state a multimodal model instead.
 MODEL: Final[str] = "deepseek-flash"
 
-#: Paste the key here to run locally, or leave it empty and export :data:`API_KEY_ENV`.
+#: Paste the key here to run locally, or leave it empty and state :data:`API_KEY_ENV` — in the
+#: environment or in the repository's ``.env``, the file git ignores on purpose.
 API_KEY: Final[str] = ""
 
-#: The environment variable the key is read from when :data:`API_KEY` states none.
+#: The name the key is read under when :data:`API_KEY` states none: the process environment
+#: first, then ``.env``.
 API_KEY_ENV: Final[str] = "DEEPSEEK_API_KEY"
 
 #: What the endpoint is asked for: a JSON object. Not a schema dialect it may not speak — the
@@ -273,19 +287,25 @@ def _images(paths: Sequence[str]) -> list[str]:
 
 
 def _api_key() -> str:
-    """Return the credential: the one pasted above, or the environment's.
+    """Return the credential: the one pasted above, or the one a name states.
+
+    The name is read through the bench's own reader, so the process environment is consulted first
+    and the repository's ``.env`` second — the file that is git-ignored on purpose, and the one a
+    credential belongs in. A blank value states nothing in either, and a name stated nowhere is
+    refused rather than filled with a placeholder.
 
     Returns:
         The key, as text.
 
     Raises:
-        SystemExit: When neither states one. A call with no key, or with a guessed one, is the
+        SystemExit: When no source states one. A call with no key, or with a guessed one, is the
             silent stand-in this project refuses.
     """
-    key = API_KEY.strip() or os.environ.get(API_KEY_ENV, "").strip()
+    key = API_KEY.strip() or (_seam.env_value(API_KEY_ENV) or "")
     if not key:
         raise SystemExit(
-            f"no key: paste it into API_KEY at the top of this file, or export {API_KEY_ENV}"
+            f"no key: paste it into API_KEY at the top of this file, or state {API_KEY_ENV} "
+            f"in .env (or in the environment)"
         )
     return key
 

@@ -12,10 +12,12 @@ registry/llm-frontier/
   template/extraction/invoice_vision.md       the same, over a page with no OCR text
   template/review/invoice.md                  one pass over all 27 fields
   template/review/invoice_vision.md           the same, over a page with no OCR text
+  template/ping.md                            the connectivity check: one line in, that line out
   schema/extraction/invoice.schema.json       one object, 27 required fields
   schema/extraction/invoice_vision.schema.json  a copy of it — one shape for both media
   schema/review/invoice.schema.json           field_verdicts, minItems 27
   schema/review/invoice_vision.schema.json    a copy of it
+  schema/ping.schema.json                     the one field ping answers, "echo"
 ```
 
 The prompts are long on purpose: every rule the five steps stated is stated in the one prompt, so
@@ -108,6 +110,24 @@ python scripts/tools/llm.py --json --assets-dir registry/llm-frontier prompt $IM
 context it takes is `<extra:proposal>`. In the layered registry the proposal is audited against the
 schema it was extracted under; here the prompt states the rules itself, which is cheaper than
 handing the reviewer two documents that say the same thing.
+
+## Is the connection alive?
+
+`ping` is the smallest call this root can make: one line in, that line echoed back out, one field
+in the answer. It separates a connection failure from an analysis failure — a `PROVIDER_ERROR`, a
+`401`, or a model tag the endpoint does not know shows up here for a few hundred tokens instead of
+after a 4 000-token prompt. The template quotes a document, so it takes text, never a page:
+
+```bash
+printf 'hola mundo\n' > /tmp/ping.txt
+python scripts/tmpref/frontier_prompt.py --name ping --doc /tmp/ping.txt --timeout 300 \
+    --template registry/llm-frontier/template/ping.md \
+    --schema registry/llm-frontier/schema/ping.schema.json
+```
+
+A good run prints `{"echo":"hola mundo"}`, `schema: conforms`, and exits `0`, for a couple of
+hundred tokens. `deepseek-flash` reasons even on this, so state the longer `--timeout`. Through the
+library the same pair is `--assets-dir registry/llm-frontier --template ping --schema ping`.
 
 ## What differs from `llm-local` — read before mixing answers
 

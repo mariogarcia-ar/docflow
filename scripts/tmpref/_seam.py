@@ -39,8 +39,33 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT / "src") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "src"))
 
+# The bench's folder too, so a probe may read the repository's ``.env`` through the one parser
+# that already knows its format (``_cli.env_value``) instead of growing a second one.
+if str(REPO_ROOT / "scripts" / "tools") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "scripts" / "tools"))
+
 from docflow.llm import primitives  # noqa: E402  (the bootstrap above must run first)
 from docflow.llm.primitives import ProviderResponse, StreamDelta  # noqa: E402
+
+
+def env_value(name: str) -> str | None:
+    """Return one setting: the process environment first, the repository's ``.env`` second.
+
+    The parser for the file is the bench's own (``scripts/tools/_cli.py``), so a probe reads the
+    same settings the bench reads, with the same precedence and the same handling of quotes and
+    blank values — one ``.env`` for the whole repository, parsed once. It is imported inside this
+    function rather than at the top of the module on purpose: the path it lives on is put there by
+    the bootstrap above, and an import that ran before it would not resolve.
+
+    Args:
+        name: The setting's name.
+
+    Returns:
+        The value, or ``None`` when neither source states one.
+    """
+    import _cli  # the bootstrap above is what puts scripts/tools on the path
+
+    return _cli.env_value(name)
 
 
 def parse_option(raw: str) -> tuple[str, Any]:
