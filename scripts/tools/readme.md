@@ -336,7 +336,9 @@ suffix states the same step (`review.json` and `review` are one name).
 
 **`prompt` renders and stops.** It states the same request `call` does — the same asset root,
 template, schema and extras — and answers with the prompt a call would have sent, its token count
-and whether it fits the window the caller stated. No provider is reached and no file is written, so
+and whether that count is *known* to exceed the window the caller stated. Read `overflows` the way
+the processor reads it: `false` with no window stated means *unmeasured*, not *it fits*. No provider
+is reached and no file is written, so
 the tool declares it report-only and the run header says so. That is why it is a command rather than
 a `--print-prompt` switch on `call`: what a run writes is a property of the command, not of a flag,
 and a switch that changed it would make the header's own statement false.

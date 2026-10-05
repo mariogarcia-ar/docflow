@@ -90,10 +90,12 @@ NAME_SUFFIXES: Final[tuple[str, ...]] = (".json", ".txt")
 #: **optional** on the command line are here: ``--provider`` and ``--model`` stay required flags, so
 #: a configuration file can state an endpoint or a window but cannot quietly become a default model.
 #:
-#: ``num_ctx`` is Ollama's own key for the model's window, and it is the one that gives a reasoning
-#: reviewer room to finish. ``context_window`` does **not** do it — the processor consumes that one
-#: for its overflow check and never forwards it to the provider — so both names exist, and the file
-#: explains the difference at each.
+#: ``num_ctx`` is Ollama's own key for the model's window, and ``context_window`` is the bench's
+#: neutral name for the same statement. Since the second pass of 2026-10-04 the processor forwards
+#: ``context_window`` to the provider — the Ollama transport translates it into ``num_ctx`` — so
+#: either name resizes the window, and ``context_window`` is the one the overflow check also reads.
+#: Stating both differently is a mistake with no upside; ``--context-window`` is the spelling to
+#: prefer, and ``--option num_ctx=…`` remains the same thing one layer lower.
 #:
 #: ``think`` and ``min_p`` are the loop brakes for a reasoning reviewer: ``think=false`` stops the
 #: model thinking before it answers, and a small ``min_p`` trims the sampling tail it can wander

@@ -269,6 +269,12 @@ under `template/`, schemas under `schema/`); the resolved value is printed with 
 **no default provider and no default model** — omitting either is a usage error (`2`), never a
 substituted stand-in.
 
+**Known limitation.** The bench sends text, never pixels: the request it builds states `images=[]`,
+so the registry's vision steps (`extraction/invoice_vision*`, `review/invoice_vision*`) are not
+reachable from this CLI. The library carries them — `scripts/tmpref/image_prompt.py` drives them, and
+a caller reaching `docflow.llm` directly can too — and teaching this bench an `--image` flag is a
+`wbs-scripts.md` row rather than something to state here.
+
 | Subcommand | Needs | What it gives you |
 |---|---|---|
 | `call` | `--provider` `--model` `--task` `--template` | one inference, and the two step artifacts below |
@@ -294,11 +300,14 @@ whose whole point is showing a graph and its resume under one identity.
 
 **`prompt` is the ask, not the answer.** It states the same request `call` does — the same template,
 schema, extras and asset root — and stops before the provider, printing the prompt a `call` would
-have sent, its token count, and whether it fits the window `--context-window` states. Nothing is
-sent and nothing is written, so `--provider` and `--model` are stated only because every inference
-command states them; the window is what a render reads them for. It is the cheap check before a
-reasoning review: that prompt is minutes of a 12B model, and a window too small for it comes back as
-an empty answer rather than as an error. `--json` with `jq -r .prompt` gives the bare text:
+have sent, its token count, and whether that prompt is *known* to exceed the window
+`--context-window` states. Read `overflows` the way the processor reads it: `false` without a stated
+window means *unmeasured*, not *it fits* — a count with nothing to compare it against is not a fit,
+and a request carrying images whose cost the caller never stated is reported the same way rather than
+blessed. Nothing is sent and nothing is written, so `--provider` and `--model` are stated only because
+every inference command states them; the window is what a render reads them for. It is the cheap check
+before a reasoning review: that prompt is minutes of a 12B model, and a window too small for it comes
+back as an empty answer rather than as an error. `--json` with `jq -r .prompt` gives the bare text:
 
 ```bash
 python scripts/tools/llm.py --json --assets-dir registry \
@@ -324,6 +333,12 @@ component, so `--name review` is how two steps that share a schema name (`extrac
 `--option num_ctx=16384 --option timeout=600` stops being retyped on every command. A real
 environment variable beats the file and `--option` beats both; the run prints a `config:` line
 naming what it took. `--provider` and `--model` are not read from it — they stay required flags.
+
+**The window has one spelling that matters.** `--context-window` is it: the processor compares the
+prompt's cost against that number *and* asks the provider for it (the Ollama transport sends it as
+`num_ctx`). `--option num_ctx=…` still reaches the provider, because it is a decoding option it
+understands — but only `--context-window` is what the pre-flight and `prompt`'s `overflows` field
+measure against. State it once; `.env` is the place.
 
 ### One file
 
@@ -408,8 +423,8 @@ T1=gemma3:12b       # extracts
 T2=deepseek-r1:8b   # reviews
 T3=qwen3.5:9b       # reviews again, so the two verdicts can be compared
 
-# what the gate asks, without sending anything: the rendered prompt, its size, and whether it
-# fits the window stated. No provider is reached.
+# what the gate asks, without sending anything: the rendered prompt, its size, and whether that
+# size is known to exceed the window stated. No provider is reached.
 python scripts/tools/llm.py --assets-dir $REG prompt $DOC \
     --provider ollama --model $T1 --task detection \
     --template extraction/invoice_deteccion --schema extraction/invoice_detection \
@@ -498,6 +513,85 @@ the whole run — under the `--out` that step was given, named after `--name` or
 last component. Watching a review happen instead of reading what it left is one more flag: add
 `--stream` to any of them and its thinking and its answer arrive on stderr while stdout and the two
 files stay the finished answer.
+
+### The same flow from the pixels — a different tool
+
+The nine commands above read *text*. The registry ships a **vision twin of every step** — a template
+that reads the page instead of the document (`extraction/invoice_vision*`, `review/invoice_vision*`,
+five steps and their reviewers) — and **this bench cannot drive them**: its input is a `.txt` or
+`.md`, and the request it builds states `images=[]`. Two things can, and neither is `llm.py`:
+
+- **`scripts/tmpref/image_prompt.py`**, below. It is a scratch probe, not part of the bench — this
+  file describes what ships, and the probe is where a pipeline is *drawn* before it ships — but it
+  renders, calls and files an answer exactly as `llm.py` does, so its recipes read as the block above
+  does, with `--image` in place of the input file;
+- **the library**, whose `LLMInput` takes image *paths*. `registry/README.md` → *Chaining the steps*
+  is that form, and it states the two `metadata` keys a vision call can carry: `context_window` (the
+  window the pre-flight checks **and** asks the provider for) and `image_tokens` (what one image
+  costs, so the check compares a total rather than blessing a number it knows is too small).
+
+```bash
+IMG=tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg
+R=registry
+
+# what the flow asks, without sending anything: the rendered prompt. No image is encoded.
+python scripts/tmpref/image_prompt.py --print-prompt \
+    --template $R/template/extraction/invoice_vision.md --image $IMG
+
+# 1 — the base reading, straight from the pixels: no document is stated, because the image is the
+#     document and the template carries no <doc>. The step's own schema compiles the answer's shape
+#     into the decoder's grammar, exactly as the text path's does.
+python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name reading \
+    --template $R/template/extraction/invoice_vision.md --image $IMG \
+    --schema $R/schema/extraction/invoice_vision.schema.json
+
+# 0 — the gate, 2 — the breakdown, 3 — the class, 4 — the line of business: same shapes, one page
+python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name detection \
+    --template $R/template/extraction/invoice_vision_deteccion.md --image $IMG \
+    --schema $R/schema/extraction/invoice_vision_detection.schema.json
+
+python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name desglose \
+    --template $R/template/extraction/invoice_vision_desglose.md --image $IMG \
+    --schema $R/schema/extraction/invoice_vision_desglose.schema.json
+
+python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name clasificacion \
+    --template $R/template/extraction/invoice_vision_clasificacion.md --image $IMG \
+    --schema $R/schema/extraction/invoice_vision_clasificacion.schema.json
+
+python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name rubro \
+    --template $R/template/extraction/invoice_vision_rubro.md --image $IMG \
+    --schema $R/schema/extraction/invoice_vision_rubro.schema.json --extra rubro=Restaurante
+
+# 5 — the review of step 1's answer, against the same page. The template names the proposal alone,
+#     so the schema is what says which fields are judged. A review carries the page *and* the
+#     proposal and the contract, so the window is stated here: the image is context, and
+#     Ollama's own default is smaller than the request.
+python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name review \
+    --template $R/template/review/invoice_vision.md --image $IMG \
+    --schema $R/schema/review/invoice_vision.schema.json \
+    --extra proposal=@var/tmp/reading.json \
+    --option num_ctx=16384 --option temperature=0.2 --timeout 300
+
+# 6 — the breakdown of step 2, judged from the pixels by the criteria-bearing reviewer
+python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name review-desglose \
+    --template $R/template/review/invoice_vision_desglose.md --image $IMG \
+    --schema $R/schema/review/invoice_vision_desglose.schema.json \
+    --extra proposal=@var/tmp/desglose.json \
+    --extra contract=@$R/schema/extraction/invoice_vision_desglose.schema.json \
+    --option num_ctx=16384 --option temperature=0.2 --timeout 300
+```
+
+The receipt is the one the text flow reads as `fixtures-txt/casos/<same id>.txt`, so the two paths
+answer about the same paper; `--out` defaults to `var/tmp`, which is why the reviews read
+`@var/tmp/reading.json` where the block above read `@var/run/reading/invoice.json`. `--option
+num_ctx=…` is the probe's only spelling of the window: the probe builds the provider call itself and
+never reaches the processor's pre-flight, so `context_window` — the neutral key the library caller
+states — has no flag here.
+
+The probe's own docstring carries the rest of its surface, and it is where the other half lives: a
+page carried *beside* its text — the strategy the library calls `TEXT_PLUS_VLM`, stated here as
+`--doc` plus `--image` — is nine more recipes over the same steps, plus the streaming switch and the
+multi-image form.
 
 ### A folder
 

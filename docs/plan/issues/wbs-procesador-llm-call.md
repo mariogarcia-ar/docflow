@@ -440,6 +440,9 @@ library keeps an answer's text only once it has parsed, so the typed `INVALID_JS
 `<stem>_full.json` holds. Keeping the unparsed text is a change to `LLM-07`'s attempt record and is
 deliberately not made here.
 
+*(One field's meaning moved afterwards: §13 makes the fit verdict three-valued — `fits`, `exceeds`,
+`unmeasured` — and makes the stated window the one the call asks for.)*
+
 ## 13. Second pass — the pixel half (`LLM-04`, `LLM-06`, `LLM-07`, `LLM-09`, `LLM-14`, `LLM-15`)
 
 Reopened 2026-10-04, from the probe `scripts/tmpref/image_prompt.py` and the work order
@@ -481,10 +484,18 @@ bounded schema — verified live, and the same call returned a complete seven-ve
 
 **Evidence.** `pytest` 818 passed · `ruff check .` clean · `ruff format --check .` clean except the
 pre-existing `registry/README.md` code block · `pylint src tests` 10.00/10 with the one pre-existing
-`docflow/pdf/entrypoints.py` `R0912`. Four mutations were falsified (mutate → observe red → restore
-→ observe green): the planned call dropping `images`; the pre-flight ignoring a stated image cost;
-the transport not translating the stated window; `ProviderCall.context_window` left unset. Invariants
-4 and 5 are the two that were added, and each names its mutation in its docstring.
+`docflow/pdf/entrypoints.py` `R0912`. The bench's and the registry's own documentation moved with the
+library, because both stated the old split: `scripts/tools/quickstart.md` gained a vision subsection
+carrying the probe's eight pixel recipes, and the `prompt` paragraph, the window prose, the gate
+recipe's comment and a known limitation were corrected; `scripts/tools/readme.md` and the `num_ctx`
+comment in `scripts/tools/_llm.py` say the same thing now; and `registry/README.md`'s *Chaining the
+steps* snippet states the two keys a vision caller carries. Every command added to the quickstart was
+rendered before it was written down — eight of eight — and the snippet's documented shape was run
+live against a stand-in tag: `SUCCESS`, seven fields, `context_verdict: fits`. Four mutations were
+falsified (mutate → observe red → restore → observe green): the planned call dropping `images`; the
+pre-flight ignoring a stated image cost; the transport not translating the stated window;
+`ProviderCall.context_window` left unset. Invariants 4 and 5 are the two that were added, and each
+names its mutation in its docstring.
 
 **Live.** A vision call through `process_llm_request` on the paired receipt (`qwen2.5vl:7b`) and a
 review of its answer against the now-bounded `review/invoice_vision` schema: `SUCCESS`, seven

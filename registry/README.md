@@ -322,13 +322,22 @@ V1 = "qwen3-vl:8b"     # reads the page image
 V2 = "ministral-3:8b"  # reviews the vision reading
 # The provider controls every role shares: the local endpoint, the window, and a timeout well
 # above the 30 s default (a review carries the document, the proposal and the schema; a vision call
-# carries a whole page as image tokens). `temperature=0` keeps the extractor deterministic.
+# carries a whole page as image tokens). The window is stated with the processor's own key, which is
+# the one the pre-flight checks *and* the one the Ollama transport asks the daemon for; `temperature=0`
+# keeps the extractor deterministic.
 OPTIONS = {
     "base_url": "http://localhost:11434",
     "temperature": 0,
-    "num_ctx": 16384,
+    "context_window": 16384,
     "timeout": 300,
 }
+# What one page image costs, as this caller measured it: the pre-flight adds it to the text estimate,
+# and a request carrying images whose cost nobody stated comes back *unmeasured* rather than blessed.
+# It is ignored by a call that attaches no image, so one value serves both paths. The two fixture
+# pages measured 2 800 and 1 150 tokens against the same 615-token prompt; the larger one is stated,
+# because an over-estimate refuses a call that would have fit, and an under-estimate blesses one
+# that will not.
+IMAGE_TOKENS = 2800
 # The reviewers' decoding values are their model cards', not a house style. Each is layered over
 # the shared options for its own step. `think=False` is not a decoding value but the brake both
 # reviewers need: it is what keeps a reasoning reviewer from spending its whole window in the
@@ -371,7 +380,7 @@ def step(
             schema=schema,
             options=dict(OPTIONS if options is None else options),
             graph=None,
-            metadata={"assets_dir": str(ASSETS)},
+            metadata={"assets_dir": str(ASSETS), "image_tokens": IMAGE_TOKENS},
         )
     )
 
