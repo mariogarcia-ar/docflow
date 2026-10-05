@@ -39,13 +39,13 @@ registry/
     review/invoice.reasoning.md                 review of a text extraction — reasoning variant
     review/invoice_desglose.md                  review of the tax breakdown
     review/invoice_desglose.reasoning.md        review of the tax breakdown — reasoning variant
+    review/invoice_vision.md                    review of a vision extraction
+    review/invoice_vision.reasoning.md          review of a vision extraction — reasoning variant
     review/invoice_vision_desglose.md           review of a vision tax breakdown
     review/invoice_vision_desglose.reasoning.md
                                                 review of a vision tax breakdown — reasoning variant
     review/general.md                           review of any step, against its own schema
     review/general.reasoning.md                 review of any step — reasoning variant
-    review/vision.md                            review of a vision extraction
-    review/vision.reasoning.md                  review of a vision extraction — reasoning variant
   schema/                                    response schemas  (see `--schema`)
     extraction/invoice.schema.json
     extraction/invoice_detection.schema.json
@@ -60,7 +60,7 @@ registry/
     review/invoice.schema.json
     review/invoice_desglose.schema.json
     review/general.schema.json
-    review/vision.schema.json
+    review/invoice_vision.schema.json
     review/invoice_vision_desglose.schema.json
 ```
 
@@ -123,7 +123,7 @@ document is substituted (no literal `{…}` survives into the prompt).
 | Vision — tax breakdown | `extraction/invoice_vision_desglose` | `extraction/invoice_vision_desglose` | V1 extract — `qwen3-vl:8b` |
 | Vision — classification | `extraction/invoice_vision_clasificacion` | `extraction/invoice_vision_clasificacion` | V1 extract — `qwen3-vl:8b` |
 | Vision — line of business | `extraction/invoice_vision_rubro` | `extraction/invoice_vision_rubro` | V1 extract — `qwen3-vl:8b`, plus `--extra rubro=<line>` |
-| Vision — reviews | `review/vision`, `review/invoice_vision_desglose` | `review/vision`, `review/invoice_vision_desglose` | V2 review — `ministral-3:8b`, plus `--extra proposal=<step answer>` |
+| Vision — reviews | `review/invoice_vision`, `review/invoice_vision_desglose` | `review/invoice_vision`, `review/invoice_vision_desglose` | V2 review — `ministral-3:8b`, plus `--extra proposal=<step answer>` |
 
 Every step above ships **two** prompts: the identifier in the table (the instruct one) and the same
 identifier with a `.reasoning` suffix — `extraction/invoice_deteccion` →
@@ -445,8 +445,8 @@ vision = step(
 # V2 — the reviewer of that reading: the same page, plus the proposal it audits.
 vision_review = step(
     "vision_review",
-    "review/vision",
-    "review/vision",
+    "review/invoice_vision",
+    "review/invoice_vision",
     model=V2,
     document=None,
     images=[PAGE],
@@ -653,16 +653,15 @@ python scripts/tools/llm.py --assets-dir registry node <file.txt> \
   reason: the descriptor's values win.
 - **`llm.py` reaches `extra_context` only through `--extra`.** A value is text: inline, or the
   contents of the file `KEY=@FILE` names — nothing parses it, because `<extra:KEY>` renders a string
-  verbatim and a saved answer already is the JSON text. So `review/invoice`, `review/vision` and
-  `extraction/invoice_rubro` — the three steps that consume a previous step's output — run from the
-  CLI only when each named key is stated; a key the caller leaves out stops the run at load time
+  verbatim and a saved answer already is the JSON text. So `review/invoice`, `review/invoice_vision`
+  and `extraction/invoice_rubro` — the three steps that consume a previous step's output — run from
+  the CLI only when each named key is stated; a key the caller leaves out stops the run at load time
   with a `DEPENDENCY_ERROR` naming it, rather than rendering a proposal block that reads as empty.
   `workflow.py` still fills none of them, and its chain does not read this registry.
 - **`llm.py` cannot send images.** It hardcodes `images=[]`, so the vision steps — every
-  `extraction/invoice_vision*`, plus `review/vision` and `review/invoice_vision_desglose` — are not
-  reachable from the CLI: drive them from the library, as in *Chaining the
-  steps* above. `workflow.py`'s `--allow-vlm` / `--image-prepare-for-vlm` enable its own chain,
-  and that chain does not read this registry.
+  `extraction/invoice_vision*`, plus `review/invoice_vision*` — are not reachable from the CLI:
+  drive them from the library, as in *Chaining the steps* above. `workflow.py`'s `--allow-vlm` /
+  `--image-prepare-for-vlm` enable its own chain, and that chain does not read this registry.
 - **`$comment` is not allowed in a schema.** The validator enforces a closed keyword set and sends
   the schema to the provider verbatim, where OpenAI's `strict: true` rejects unknown keywords; so
   the design notes that used to live in `$comment` are kept below instead.
@@ -759,9 +758,9 @@ the copy exists to give the step its own artifact — a registry asset is named 
 reads it, the way `extraction/invoice_desglose` is — and to constrain the reading's decoder with a
 grammar instead of leaving the answer's shape to prose.
 
-**`review/vision`** — The verdict vector over the vision reading: `field_verdicts` over the same
-seven fields, and a copy of `review/invoice` for the same reason. It carries the weight on this
-side, because `review/vision` names no field of its own — it judges whatever proposal it is handed —
+**`review/invoice_vision`** — The verdict vector over the vision reading: `field_verdicts` over the
+same seven fields, and a copy of `review/invoice` for the same reason. It carries the weight on this
+side, because the template names no field of its own — it judges whatever proposal it is handed —
 so this file is the one that says which fields a vision review answers. A vision review of another
 step's proposal states that step's own review schema instead.
 

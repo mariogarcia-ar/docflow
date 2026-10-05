@@ -1,10 +1,11 @@
 # Decision — the vision path gains one prompt per step, and the fixtures gain a page pair
 
 > Status: **applied** (registry, 2026-10-04) — D-1…D-7 landed as §8 records: ten templates, five
-> schema copies, and the manifest, README and probe changes they need. It supersedes no earlier note;
-> it extends the pair `extraction/invoice_vision` + `review/vision` into a path that answers every
-> step the text path answers. Two open questions were executed on their recommendation (O-1: the
-> whole chain; O-2: the criteria-bearing reviewer, for the breakdown). Whether `docs/plan/`'s WBS
+> schema copies, and the manifest, README and probe changes they need, the D-5 rename included
+> (`review/vision` → `review/invoice_vision`). It supersedes no earlier note;
+> it extends the pair `extraction/invoice_vision` + `review/invoice_vision` into a path that answers
+> every step the text path answers. Two open questions were executed on their recommendation (O-1:
+> the whole chain; O-2: the criteria-bearing reviewer, for the breakdown). Whether `docs/plan/`'s WBS
 > rows move with it is the plan owner's, and §7 keeps what is still open.
 
 ## 1. What the registry showed
@@ -14,7 +15,7 @@ The vision path today answers one step of five:
 | Step | Template | Placeholders | Schema |
 |---|---|---|---|
 | V1 — the base reading | `extraction/invoice_vision` (+ `.reasoning`) | none | `extraction/invoice_vision` |
-| V2 — its review | `review/vision` (+ `.reasoning`) | `<extra:proposal>` | `review/vision` |
+| V2 — its review | `review/invoice_vision` (+ `.reasoning`) | `<extra:proposal>` | `review/invoice_vision` |
 
 Every other step reads text, and cannot run from pixels at all:
 
@@ -32,7 +33,7 @@ Three consequences, all of them measured rather than assumed:
    therefore *read* and not gated, not broken down, not classified, and given no line of business.
    Four of the five answers the text path gives are missing on the path that exists for the case
    where text is unavailable.
-2. **The judgement is weaker on the vision side, by construction.** `review/vision` names no field
+2. **The judgement is weaker on the vision side, by construction.** `review/invoice_vision` names no field
    of its own: it judges whatever proposal it is handed (its schema is what says which fields), and
    it carries no criteria block. Its text counterpart for the reading, `review/invoice`, carries one
    per field (107 lines against 47), and `review/invoice_desglose` carries one per field of the
@@ -53,8 +54,8 @@ Three consequences, all of them measured rather than assumed:
 | D-1 | The family is `invoice_vision_<step>`, and it keeps the `.reasoning` twin every step's pair has: the identifier in the table plus `.reasoning` | `registry/template/extraction/` |
 | D-2 | Four steps gain both halves — `invoice_vision_deteccion`, `invoice_vision_desglose`, `invoice_vision_clasificacion`, `invoice_vision_rubro` | 8 new templates |
 | D-3 | Each new template gets a schema named after it, a copy of its step's — the rule `extraction/invoice_vision` already follows | 4 new `registry/schema/extraction/*.schema.json` |
-| D-4 | The breakdown gains a criteria-bearing reviewer for the vision path, `review/invoice_vision_desglose` (+ `.reasoning`) and its schema copy, mirroring `review/invoice_desglose`. The other three steps are judged by the field-agnostic `review/vision`, paired with the shape that names the judged fields — the step's own review schema where it has one, `review/general` (unconstrained `field`) where it does not | 2 new templates, 1 new schema |
-| D-5 | `review/vision` keeps its name and its field-agnostic rules, and its listing line is reworded to what it is: the review of a vision extraction *against its own schema* — not the reading's criteria-loaded twin | `registry/README.md`, listing |
+| D-4 | The breakdown gains a criteria-bearing reviewer for the vision path, `review/invoice_vision_desglose` (+ `.reasoning`) and its schema copy, mirroring `review/invoice_desglose`. The other three steps are judged by the field-agnostic `review/invoice_vision`, paired with the shape that names the judged fields — the step's own review schema where it has one, `review/general` (unconstrained `field`) where it does not | 2 new templates, 1 new schema |
+| D-5 | The vision reviewer is named after the step whose schema it ships with, as every review asset is named after the step it judges: `review/vision` → `review/invoice_vision`, and its schema with it. Its rules stay field-agnostic — the template names no field of its own — and its listing line still reads as the review of a vision extraction *against its own schema*, not the reading's criteria-loaded twin | 3 renamed files, plus the references in the manifest, the README and the probe |
 | D-6 | The agreement check runs on the pair the tree already carries — `tests/fixtures/casos/66cd35e9-….jpg` against `tests/fixtures-txt/casos/66cd35e9-….txt` — not on new captures; the unpaired `expected-extraction/` images are left as they are | `tests/fixtures/casos/`, `tests/fixtures-txt/casos/` |
 | D-7 | The surface follows the assets: one recipe per new step in `scripts/tmpref/image_prompt.py`, and the registry's table gains the four rows. The bench CLI is not touched — it cannot send images | `registry/README.md`, the probe's examples |
 
@@ -114,7 +115,7 @@ A template is done when all of these hold, and each is checkable:
 | 1 | `invoice_vision_deteccion` + `.reasoning` + schema copy | The smallest template (41 lines) and the flow's first call: it proves the pattern end to end, cheaply |
 | 2 | `invoice_vision_desglose` + `.reasoning` + schema copy, and the reviewer `review/invoice_vision_desglose` + `.reasoning` + its schema copy | The step the fallback most needs: without it a page read from pixels has no breakdown, and the breakdown is the answer the review audits |
 | 3 | `invoice_vision_clasificacion`, `invoice_vision_rubro` (+ twins, schema copies) | The leaf steps; rubro is the only one that keeps an `extra` input |
-| 4 | `review/vision`'s listing wording (D-5), the registry's table rows, the probe's recipes | The surface, once the set is complete |
+| 4 | `review/invoice_vision`'s rename and listing wording (D-5), the registry's table rows, the probe's recipes | The surface, once the set is complete |
 
 Sizes: waves 1 and 3 are **S** each (a translation of an existing 41–45-line template plus two
 mechanical edits); wave 2 is **M** (65 lines of breakdown criteria, and a 115-line review to port);
@@ -140,7 +141,7 @@ table rows, and the probe's recipes.
 | # | Question | Recommendation |
 |---|---|---|
 | O-1 | Is the whole chain in scope, or only the steps the flow cannot do without? | The whole chain — a fallback that answers one of five questions is the gap this note exists to close — but sequenced, so wave 1 alone is useful |
-| O-2 | Does a review on the vision path need its own criteria block — D-4 for the breakdown, and the same question for the reading, where `review/invoice` carries criteria per field and `review/vision` carries none — or is the generic reviewer with the step's schema enough? | Add it for both: a review without criteria is a second opinion, and the text path already showed which one the audit needs |
+| O-2 | Does a review on the vision path need its own criteria block — D-4 for the breakdown, and the same question for the reading, where `review/invoice` carries criteria per field and `review/invoice_vision` carries none — or is the generic reviewer with the step's schema enough? | Add it for both: a review without criteria is a second opinion, and the text path already showed which one the audit needs |
 | O-3 | Which receipt does the agreement check run on, and against which text answer? | The paired case the tree already carries (`66cd35e9`), and its text answer must be produced in the pass: `var/tmp/reading.json` is a *vision* run over another image, not this receipt's text half |
 | O-4 | Does the probe gain one recipe per step, or a loop over the steps? | One recipe per step, matching how the text probe documents its flow — the probe is the manual, not the runner |
 
@@ -151,7 +152,7 @@ table rows, and the probe's recipes.
 | 1 | `template/extraction/invoice_vision_deteccion.md` (+ `.reasoning.md`), `schema/extraction/invoice_vision_detection.schema.json` |
 | 2 | `template/extraction/invoice_vision_desglose.md` (+ `.reasoning.md`), `schema/extraction/invoice_vision_desglose.schema.json`, `template/review/invoice_vision_desglose.md` (+ `.reasoning.md`), `schema/review/invoice_vision_desglose.schema.json` |
 | 3 | `template/extraction/invoice_vision_clasificacion.md` and `…_rubro.md` (+ their `.reasoning.md`), and the two schema copies |
-| 4 | `registry/manifest.json` (fifteen keys), `registry/README.md` (the listing, the vision rows of the asset table, the pair rule, the chaining note, one paragraph on the five copies), `scripts/tmpref/image_prompt.py` (the pixel path: seven recipes, and the examples now read the paired receipt) |
+| 4 | `registry/manifest.json` (fifteen keys), `registry/README.md` (the listing, the vision rows of the asset table, the pair rule, the chaining note, one paragraph on the five copies), `scripts/tmpref/image_prompt.py` (the pixel path: seven recipes, and the examples now read the paired receipt), and the D-5 rename — `template/review/vision.md` (+ `.reasoning.md`) and `schema/review/vision.schema.json` become `review/invoice_vision*` |
 
 The translation rule held with one deliberate exception per file: the source framing and the
 document block, nothing else. Where a criterion spoke of "the text", it speaks of "the image"; where
@@ -167,6 +168,8 @@ Verification, all of it run rather than asserted:
 - every manifest key resolves to a file, no file under `template/` or `schema/` is unlisted, and
   each schema entry's `required_keys` are present;
 - the five schema copies are byte-identical to the step schema they read;
+- the D-5 rename left nothing behind: no `review/vision` survives in `registry/`, `scripts/`, `src/`
+  or `tests/`, the three renamed manifest keys resolve, and the probe still renders all its recipes;
 - the whole pixel path ran live, on the receipt whose text half the bench has already answered, and
   each answer was validated with the library's own `validate_schema` (see §9);
 
@@ -186,7 +189,7 @@ for `qwen3-vl:8b`, one call per step. Every answer was validated with the librar
 | `extraction/invoice_vision_desglose` | the ten fields | valid |
 | `extraction/invoice_vision_clasificacion` | the four fields | valid |
 | `extraction/invoice_vision_rubro` (`--extra rubro=Restaurante`) | the three fields | valid |
-| `review/vision` over the reading | `field_verdicts` | valid |
+| `review/invoice_vision` over the reading | `field_verdicts` | valid |
 | `review/invoice_vision_desglose` over the breakdown | `field_verdicts` | valid |
 
 **Agreement, per field.** The reading taken from the image and the reading taken from the text — one

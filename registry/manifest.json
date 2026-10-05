@@ -41,11 +41,11 @@
       "format": "text"
     },
     {
-      "key": "template/review/vision.md",
+      "key": "template/review/invoice_vision.md",
       "format": "text"
     },
     {
-      "key": "template/review/vision.reasoning.md",
+      "key": "template/review/invoice_vision.reasoning.md",
       "format": "text"
     },
     {
@@ -166,7 +166,7 @@
       "required_keys": ["type", "properties", "required"]
     },
     {
-      "key": "schema/review/vision.schema.json",
+      "key": "schema/review/invoice_vision.schema.json",
       "format": "json",
       "required_keys": ["type", "properties", "required"]
     },

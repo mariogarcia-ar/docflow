@@ -10,8 +10,9 @@ The image *is* the document here. Every step of the layered extraction ships a t
 the page: ``registry/template/extraction/invoice_vision.md`` reads the seven fields of an Argentine
 receipt straight from the pixels and its siblings — ``…_deteccion``, ``…_desglose``,
 ``…_clasificacion``, ``…_rubro`` — ask the other steps of that same page, while
-``registry/template/review/vision.md`` and ``registry/template/review/invoice_vision_desglose.md``
-judge a proposal against it. None carries a ``<doc>``, because there is no text to give.
+``registry/template/review/invoice_vision.md`` and
+``registry/template/review/invoice_vision_desglose.md`` judge a proposal against it. None carries a
+``<doc>``, because there is no text to give.
 A template that *does* carry one still resolves it: the strategy the library calls
 ``TEXT_PLUS_VLM`` (``docflow/workflow/llm_input.py``) sends the page text *and* the image in one
 call, and ``--doc`` is how this probe states that half.
@@ -89,13 +90,13 @@ same paper.
         --template $R/template/extraction/invoice_vision_rubro.md --image $IMG \
         --schema $R/schema/extraction/invoice_vision_rubro.schema.json --extra rubro=Restaurante
 
-    # 6. the review of step 1's answer, judged against the same image. review/vision names the
+    # 6. the review of step 1's answer, judged against the same image. The template names the
     #    proposal alone, so the schema it is given is what says which fields are judged: the
     #    reviewed step's. A review carries the page as well as the proposal, so the window is
     #    stated — the image is context, and Ollama's default is smaller than the request.
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name review \
-        --template $R/template/review/vision.md --image $IMG \
-        --schema $R/schema/review/vision.schema.json \
+        --template $R/template/review/invoice_vision.md --image $IMG \
+        --schema $R/schema/review/invoice_vision.schema.json \
         --extra proposal=@var/tmp/reading.json \
         --option num_ctx=16384 --option temperature=0.2 --timeout 300
 
@@ -203,7 +204,7 @@ schema:
 
     python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b \
         --name review-desglose-pixels \
-        --template $R/template/review/vision.md --image $IMG \
+        --template $R/template/review/invoice_vision.md --image $IMG \
         --schema $R/schema/review/invoice_desglose.schema.json \
         --extra proposal=@var/tmp/desglose.json \
         --option temperature=0.2 --timeout 300
