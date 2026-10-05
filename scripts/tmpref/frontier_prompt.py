@@ -27,13 +27,93 @@ run states only its input:
 order written; at least one is required, because a call over neither has nothing to read. The
 registry's text templates take the page **beside** the text — the pixels decide where the OCR
 garbles — while the ``_vision`` pair takes the page **alone**, which is the no-OCR path those
-templates exist for:
+templates exist for.
 
-    # no OCR: the page is the document, and the vision templates carry no <doc>
-    python scripts/tmpref/frontier_prompt.py --name reading-pixels \
-        --image tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg \
-        --template registry/llm-frontier/template/extraction/invoice_vision.md \
-        --schema registry/llm-frontier/schema/extraction/invoice_vision.schema.json
+The one-call registry has one extraction and one review rather than one prompt per step, so the
+layered registry's step-and-review recipes collapse into the same four commands, each of them in
+both media. ``--provider``, ``--model`` and ``--base-url`` are the defaults stated at the top
+of this file, so a recipe over the page states the multimodal model it needs and nothing else — the
+endpoint above is DeepSeek's, and its own model reads text only:
+
+    IMG=tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg
+    DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
+    R=registry/llm-frontier
+    VLM=a-multimodal-frontier      # add --base-url <endpoint>/v1 when it is not the one above
+
+    # 1. what the call asks, without sending anything and without naming a key: the rendered prompt
+    #    on stdout, the schema inlined into it, and the pages that would be attached echoed to
+    #    stderr, where they cannot corrupt the prompt
+    python scripts/tmpref/frontier_prompt.py --print-prompt --image $IMG \
+        --template $R/template/extraction/invoice_vision.md \
+        --schema $R/schema/extraction/invoice_vision.schema.json
+
+    # 2. the extraction from the page alone — the no-OCR path. The vision template carries no
+    #    <doc>, so the pixels are the document, and the answer is checked against the schema here
+    #    rather than by the endpoint.
+    python scripts/tmpref/frontier_prompt.py --name reading-pixels --image $IMG \
+        --model $VLM --template $R/template/extraction/invoice_vision.md \
+        --schema $R/schema/extraction/invoice_vision.schema.json
+
+    # 3. the same extraction with the page *beside* its text — the strategy the library calls
+    #    TEXT_PLUS_VLM: the text template reads <doc>, the page rides beside it, and the pixels
+    #    decide where the OCR garbles. Every step the layered registry asked on its own — the gate,
+    #    the header, the breakdown, the line of business and its quantity — is asked in this call.
+    python scripts/tmpref/frontier_prompt.py --name reading-page --image $IMG --doc $DOC \
+        --model $VLM
+
+    # 4. the extraction over the text alone: the defaults are the text pair, so the document is the
+    #    whole command and the model is this file's
+    python scripts/tmpref/frontier_prompt.py --name reading --doc $DOC
+
+    # 5. the review of 2's answer, judged against the same page. Only the proposal travels in: the
+    #    criteria are written into the review prompt, so this review names no <contract>.
+    python scripts/tmpref/frontier_prompt.py --name review-pixels --image $IMG \
+        --model $VLM --template $R/template/review/invoice_vision.md \
+        --schema $R/schema/review/invoice_vision.schema.json \
+        --extra proposal=@var/tmp/reading-pixels.json
+
+    # 6. the review of 3's answer, with the two views the reader had: the reviewer must see at
+    #    least what the extractor saw, or a value read off the pixels is flagged as wrong by an
+    #    auditor that never saw them
+    python scripts/tmpref/frontier_prompt.py --name review-page --image $IMG --doc $DOC \
+        --model $VLM --template $R/template/review/invoice.md \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading-page.json
+
+    # 7. the same review, watched as it is written: the trace and the answer are echoed to stderr
+    #    under a header per channel, while stdout and the two files stay the finished answer
+    python scripts/tmpref/frontier_prompt.py --stream --name review-watched --doc $DOC \
+        --template $R/template/review/invoice.md \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading-page.json
+
+    # 8. the provider's body verbatim — timings, token counts and all — instead of the answer alone
+    python scripts/tmpref/frontier_prompt.py --raw --name reading-raw --doc $DOC
+
+    # 9. another endpoint and another model, stated per run: a self-hosted vLLM speaks the same
+    #    OpenAI dialect, so the three flags change and nothing else does
+    python scripts/tmpref/frontier_prompt.py --name reading-vllm --image $IMG \
+        --provider vllm --base-url http://gpu:8000/v1 --model Qwen/Qwen3-VL-8B \
+        --option temperature=0 --timeout 300 \
+        --template $R/template/extraction/invoice_vision.md \
+        --schema $R/schema/extraction/invoice_vision.schema.json
+
+    # 10. an extra stated inline, where the same extra read from a file is what one step's artifact
+    #     travels in as: @FILE is the form the recipes above use
+    python scripts/tmpref/frontier_prompt.py --name review-inline --doc $DOC \
+        --template $R/template/review/invoice.md \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra 'proposal={"comprobante_valido": "true", "moneda": "ARS"}'
+
+    # 11. where the artifacts land: --out and --name, and the two files a step reads back
+    python scripts/tmpref/frontier_prompt.py --name reading --out var/run/frontier --doc $DOC
+    #     var/run/frontier/reading.json        the answer alone — @var/run/frontier/reading.json
+    #     var/run/frontier/reading_full.json   the provider's body
+
+    # 12. a reasoning model instead of the chat one: the model tag is what selects it, and the
+    #     longer wait is stated because a thinking trace spends the answer's own budget
+    python scripts/tmpref/frontier_prompt.py --name reading-reasoning --doc $DOC \
+        --model a-reasoning-frontier --timeout 600
 
 **Why the schema travels in the prompt.** The library's OpenAI-compatible transport sends
 ``response_format: {"type": "json_schema", …}`` whenever a call carries a schema. DeepSeek's
