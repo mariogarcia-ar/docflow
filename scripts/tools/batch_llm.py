@@ -1,9 +1,10 @@
 """Lab tool for the LLM processor over a folder tree (``SCR-15``).
 
-``llm.py`` runs one input; this runs the same methods over every text file under a folder. What it
-shares with the other batch tools — the walk, the mirror, the per-input record, the summary and the
-exit code — is :mod:`_batch`; what is its own is the suffix set it takes, the layer its methods come
-from (:mod:`_llm`) and the five commands it offers.
+``llm.py`` runs one input; this runs the same methods over every input file under a folder — the
+extracted text, and the page images a vision call reads. What it shares with the other batch tools
+— the walk, the mirror, the per-input record, the summary and the exit code — is :mod:`_batch`;
+what is its own is the suffix set it takes, the layer its methods come from (:mod:`_llm`) and the
+five commands it offers.
 
 **Five of the nine, on purpose.** ``status`` asks about a *run directory*, not about an input;
 ``models`` asks about a *model* and never reads the input at all; ``fake`` is a demonstration of the
@@ -16,6 +17,12 @@ is a property of the input, so a corpus of rendered prompts is one the walk can 
 **No default command.** Unlike the other batch tools, a bare run here refuses: ``--provider`` and
 ``--model`` are required on every command, so there is no flag-free method to make. Stating the
 command is the caller's job, and the parser enforces it.
+
+**The input is the document, or the page.** An input that is text is read into ``document``; an
+input that is an image is attached as the page and no text is stated — so one walk drives the text
+flow and the registry's vision twin of it, and ``--image`` adds further pages beside each input.
+``tokens`` counts text only: a walk that holds an image refuses there as a usage error rather than
+inventing a count for a page.
 
 **``--stream`` reads each input's answer as it is written**, under that input's own header — the
 walk is sequential, so the deltas of one input never interleave with the next one's. The record
@@ -42,8 +49,8 @@ from docflow.llm.primitives.errors import LLMPrimitiveError
 SUBCOMMANDS: Final[tuple[str, ...]] = ("call", "graph", "node", "tokens", "prompt")
 
 #: The inputs this tool takes: the LLM layer's own set — the extracted text a task is performed
-#: over, ``.txt`` and the engine's Markdown.
-SUFFIXES: Final[tuple[str, ...]] = _llm.SUFFIXES
+#: over (``.txt`` and the engine's Markdown), and the page images a vision call reads.
+SUFFIXES: Final[tuple[str, ...]] = (*_llm.SUFFIXES, *_llm.IMAGE_SUFFIXES)
 
 #: No command of this tool is report-only: the frame files a record for every input that produced a
 #: payload, so the header may name the run root whatever the command was. Declared because the
@@ -60,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser, subparsers = _batch.build_parser(
         "batch_llm",
-        "Lab bench for the LLM processor over a folder: one command, every text below it.",
+        "Lab bench for the LLM processor over a folder: one command, every input below it.",
         subcommand_required=True,
     )
     parser.add_argument(

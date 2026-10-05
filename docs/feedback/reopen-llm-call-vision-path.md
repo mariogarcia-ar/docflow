@@ -270,7 +270,10 @@ is a half-updated citation.
 
 - **Any change to `registry/`'s assets or names.** The registry's README owns them; §3.5 records
   the one row it owes.
-- **The bench.** `scripts/tools/_llm.py` states `images=[]` (line 473), so the vision steps are
+- **The bench.** *Superseded 2026-10-05 by `subplan-scripts.md` §9, decision 22: `_llm.py` no longer
+  states `images=[]` — an image input is attached as the page, `--image` adds pages beside it, and
+  `--image-tokens` states what one costs. Recorded as it stood:* `scripts/tools/_llm.py` states
+  `images=[]` (line 473), so the vision steps are
   reachable from the library and not from the CLI. That is a `wbs-scripts.md` row, named here and
   not moved.
 - **What to attach.** `ORC-13`'s decision, cited and not absorbed.

@@ -17,6 +17,14 @@ answer is read out of the result's own ``parsed_response``. What is left here is
 ``call`` publishes. Nothing here speaks HTTP, and nothing here re-decides a wire shape the seam
 already fixed.
 
+**The input is the document, or the page.** An input that is text (``.txt``, ``.md``) is read into
+``document``; an input that is an image is attached as the page and no text is stated, so the same
+command drives the text flow and the registry's vision twin of it. ``--image`` attaches pages
+*beside* the input — repeatable, one image per page, in the order written — which is what a
+multi-page document and the library's ``TEXT_PLUS_VLM`` strategy need. A template that asks for a
+``<doc>`` the request does not carry is refused by the library rather than handed the image's
+bytes: an empty or garbled document is the silent stand-in the placeholder rule forbids.
+
 **Streaming.** ``--stream`` is the seam's own switch rather than a second way to reach a provider.
 The flag joins the request's ``options``; the processor reads that option into
 :attr:`~docflow.llm.primitives.ProviderCall.stream` and hands the call the observer below, so a
@@ -74,9 +82,21 @@ SUBCOMMANDS: tuple[tuple[str, str], ...] = (
     ("fake", "Demonstrate the chain with the scripted provider."),
 )
 
-#: The inputs the LLM processor takes: the extracted text a task is performed over. ``.md`` is the
-#: engine's Markdown, which is text too.
+#: The text inputs the LLM processor takes: the extracted document a task is performed over.
+#: ``.md`` is the engine's Markdown, which is text too.
 SUFFIXES: Final[tuple[str, ...]] = (".txt", ".md")
+
+#: The page images a vision call reads. An input carrying one of these suffixes **is** the
+#: document: the call attaches the pixels and states no text, which is how the registry's
+#: ``…_vision`` templates — the ones with no ``<doc>`` — are driven.
+IMAGE_SUFFIXES: Final[tuple[str, ...]] = (
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".tif",
+    ".tiff",
+    ".bmp",
+)
 
 #: The asset root the template and schema identifiers resolve against by default. The library has no
 #: default for ``metadata["assets_dir"]``; the bench states this one and prints the resolved value.
@@ -232,6 +252,24 @@ def _add_request_arguments(subparser: argparse.ArgumentParser) -> None:
         help=(
             "A value for the template's <extra:KEY> placeholder; may be repeated. "
             "KEY=@FILE reads the value from a file."
+        ),
+    )
+    subparser.add_argument(
+        "--image",
+        action="append",
+        metavar="FILE",
+        help=(
+            "An image to attach beside the input; may be repeated, in the order written. One "
+            "image per page, in reading order. An input that is itself an image needs no flag."
+        ),
+    )
+    subparser.add_argument(
+        "--image-tokens",
+        type=int,
+        help=(
+            "What one attached image costs in prompt tokens, when the caller has measured it. "
+            "The pre-flight adds it to the text estimate; without it a request carrying images is "
+            "reported unmeasured, never as fitting."
         ),
     )
     _add_decode_options(subparser)
@@ -438,7 +476,9 @@ def _metadata(
     """Build the metadata an inference request carries, every key stated.
 
     The run identity is derived from the program's own name (``llm.py``, ``batch_llm.py``), so a
-    batch's run id says which tool produced it unless the caller pinned one.
+    batch's run id says which tool produced it unless the caller pinned one. ``--image-tokens`` goes
+    in as metadata because that is where the library reads a page's cost from — a page measured
+    after the call cannot prevent the overflow it caused, so the caller states it beforehand.
     """
     document_id, run_id = _cli.identity_for(args, Path(parser.prog).stem, input_path)
     metadata: dict[str, Any] = {
@@ -450,7 +490,54 @@ def _metadata(
         metadata["output_dir"] = str(root)
     if getattr(args, "run_id", None):
         metadata["run_id"] = str(args.run_id)
+    if getattr(args, "image_tokens", None) is not None:
+        metadata["image_tokens"] = int(args.image_tokens)
     return metadata
+
+
+def _is_image(input_path: Path) -> bool:
+    """Return whether the input is the page itself rather than its extracted text."""
+    return input_path.suffix.lower() in IMAGE_SUFFIXES
+
+
+def _document(input_path: Path) -> str | None:
+    """Return the text the request carries, or ``None`` when the input is the page image.
+
+    A template with no ``<doc>`` renders with no document; one that asks for a document is refused
+    by the library rather than handed the image's bytes, which would send a model a prompt that
+    reads as if the page were empty — a different question.
+    """
+    return None if _is_image(input_path) else input_path.read_text(encoding="utf-8")
+
+
+def _images(
+    args: argparse.Namespace, parser: argparse.ArgumentParser, input_path: Path
+) -> list[str]:
+    """Return the images the call attaches, in the order they are sent.
+
+    An input that is itself an image is the first page; ``--image`` adds the pages beside it, which
+    is how a multi-page document is one image per page, in reading order, and how pixels are
+    attached to a text input (the strategy the library calls ``TEXT_PLUS_VLM``). A path that
+    cannot be read is a usage failure before anything is sent, so a run never describes a call it
+    could not make.
+
+    Args:
+        args: The parsed flags, carrying ``--image``.
+        parser: The parser to refuse an unreadable image through.
+        input_path: The run's input.
+
+    Returns:
+        The absolute image paths, in the order they are sent.
+    """
+    images: list[str] = []
+    if _is_image(input_path):
+        images.append(str(input_path))
+    for path in getattr(args, "image", None) or []:
+        candidate = Path(str(path)).expanduser()
+        if not candidate.is_file():
+            parser.error(f"--image {path}: not a readable file")
+        images.append(str(candidate.resolve()))
+    return images
 
 
 def _request(
@@ -471,8 +558,8 @@ def _request(
         provider=str(args.provider),
         model=str(args.model),
         template=str(args.template),
-        document=input_path.read_text(encoding="utf-8"),
-        images=[],
+        document=_document(input_path),
+        images=_images(args, parser, input_path),
         extra_context=_extra_context(args, parser),
         schema=None if args.schema is None else str(args.schema),
         options=_options(args, parser),
@@ -657,7 +744,11 @@ def _prompt(
     The request carries no output directory — there is no run to name one for — and it never reaches
     the processor: no provider is reached and nothing is published. The window it measures against is
     the one ``--context-window`` states, never a probe. The provider and the model are stated because
-    every inference command states them; what a render reads them for is exactly that window.
+    every inference command states them; what a render reads them for is exactly that window. The
+    images the call would attach are stated too — their paths, never their bytes — because a page
+    that would be sent is part of the ask a render is evidence about. The fit is the processor's own
+    verdict (:func:`~docflow.llm.primitives.context_verdict`), so a page whose cost nobody stated is
+    reported *unmeasured* rather than blessed as fitting.
     """
     del root
     request = _request(args, parser, input_path, None)
@@ -666,13 +757,21 @@ def _prompt(
     schema = primitives.load_schema(request.schema, assets)
     prompt = primitives.process_prompt(request, template, schema)
     window = primitives.stated_context_window(request)
+    verdict = primitives.context_verdict(
+        prompt.tokens,
+        window,
+        image_count=len(request.images),
+        image_tokens=primitives.image_tokens_for(request),
+    )
     return {
         "input": str(input_path),
         "prompt": prompt.text,
         "prompt_tokens": prompt.tokens,
         "truncated": prompt.truncated,
         "context_window": window,
-        "overflows": primitives.is_context_limit_exceeded(prompt.tokens, window),
+        "overflows": verdict == "exceeds",
+        "context_verdict": verdict,
+        "images": list(request.images),
     }
 
 
@@ -777,8 +876,18 @@ def _tokens(
     input_path: Path,
     root: Path,
 ) -> Payload:
-    """Count the input's tokens offline, and read the model's context window."""
+    """Count the input's tokens offline, and read the model's context window.
+
+    Text only: a page image has no offline token count. What a page costs is the model's own
+    reading, stated by the caller as ``metadata["image_tokens"]`` and weighed by the call's own
+    pre-flight — not a count this command can take.
+    """
     del root
+    if _is_image(input_path):
+        parser.error(
+            f"tokens: {input_path.name} is a page image and has no offline token count; "
+            "state metadata['image_tokens'] on the call to weigh it"
+        )
     text = input_path.read_text(encoding="utf-8")
     window = (
         int(args.context_window)

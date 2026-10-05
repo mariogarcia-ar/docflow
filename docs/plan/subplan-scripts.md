@@ -223,19 +223,31 @@ default model is the silent stand-in this project forbids:
 | Subcommand | Calls | Notes |
 |---|---|---|
 | `call` | `llm.process_llm_request` | one inference |
-| `prompt` | `llm.primitives.load_template` / `load_schema` / `process_prompt` | the prompt a `call` would send, rendered: no provider is reached and nothing is published, and the window it is measured against is the one `--context-window` states |
+| `prompt` | `llm.primitives.load_template` / `load_schema` / `process_prompt` / `context_verdict` | the prompt a `call` would send, rendered — with the pages it would attach and the processor's own fit verdict (`fits` / `exceeds` / `unmeasured`): no provider is reached and nothing is published, and the window it is compared against is the one `--context-window` states |
 | `node` | `llm.process_llm_node` | one node of the graph |
 | `graph` | `llm.process_llm_request` with `graph` set, or `execute_llm_graph` | the linear chain |
 | `resume` | `llm.process_llm_request` again, same `--run-id` and `--out` | the processor reuses a node whose `request_key` matches; re-invocation **is** the resume — there is no `resume_llm_graph` symbol to call |
 | `status` | `llm.primitives.load_graph_state` / `load_result` | reads `state.json` / `final_result.json` |
 | `models` | `llm.primitives.list_models`, `get_model_info`, `check_model_available` | inventory only, no generation |
-| `tokens` | `llm.primitives.count_tokens`, `get_context_window` | offline count; the window from the caller's `options["context_window"]` or the provider |
+| `tokens` | `llm.primitives.count_tokens`, `get_context_window` | offline count of a text input; the window from the caller's `options["context_window"]` or the provider. A page image is refused (`2`): `count_tokens` measures text, and what a page costs is the model's own reading, stated as `--image-tokens` |
 | `fake` | installs `tests/fakes/engines/fake_provider.py` at `docflow.llm.primitives` | first-class, not a hidden test flag: the scripted provider is what makes the graph and resume paths demonstrable with no model and no spent token |
 
 `--assets-dir` defaults to the fixture asset root `tests/fixtures/llm/` (templates and
 schemas) and the resolved value is printed; the library itself has **no** default for
 `metadata["assets_dir"]` and this tool does not invent one for the library, it states the
 bench's own root.
+
+**The input is the document, or the page.** An input that is text (`.txt`, `.md`) is read into
+`document`; an input that is an image **is** the page — the request attaches it and states no
+`document`, which is how the registry's `…_vision` templates (the ones with no `<doc>`) are driven
+from the same command as their text twins. The suffix decides, so no flag has to. `--image FILE` is
+repeatable and attaches pages *beside* the input, in the order written: one image per page, in
+reading order, which is also how pixels travel with a document's text (the strategy the library calls
+`TEXT_PLUS_VLM`). `--image-tokens N` states what one page costs — `metadata["image_tokens"]`, the key
+the pre-flight reads — so a call carrying images is reported `fits` / `exceeds` rather than
+`unmeasured`; the cost is stated before the call, because one measured after it cannot prevent the
+overflow it caused. `tokens` refuses an image input (`2`): `count_tokens` measures text, and what a
+page costs is the model's own reading.
 
 `--stream` is a *control option* on every inference subcommand, the batch tool included: it joins
 `options`, the processor reads it into the call, and the deltas are echoed to stderr under a
@@ -275,7 +287,7 @@ folder, dispatching through the same layers:
 | `batch_pdf.py` | `_pdf.py` | `.pdf` | `inspect` — flag-free, publishes nothing | — |
 | `batch_image.py` | `_image.py` | `.png .jpg .jpeg .tif .tiff .bmp` | `info` — flag-free, publishes nothing | — |
 | `batch_ocr.py` | `_ocr.py` | the image set, because the OCR processor's input *is* an image | `text` — flag-free, publishes the reading it reports as `text.txt` | — |
-| `batch_llm.py` | `_llm.py` | `.txt .md` | **none** — a subcommand is required | `status`, `models`, `fake`, `resume` |
+| `batch_llm.py` | `_llm.py` | `.txt .md`, and the image set — a page is an input too | **none** — a subcommand is required | `status`, `models`, `fake`, `resume` |
 
 The four rules the batch tools share:
 
@@ -406,6 +418,15 @@ Scenario: No inference without a stated provider and model
   When the command runs
   Then it exits with a usage error
   And no request is built and no provider is contacted
+
+Scenario: A page is the document, and its cost is the caller's to state
+  Given "scripts/tools/llm.py call" over an image input and a template that carries no "<doc>"
+  When the request is built
+  Then it carries the image and states no document
+  And a template that names "<doc>" over that input is refused with a typed "DEPENDENCY_ERROR"
+  And "--image" adds further pages in the order written, one image per page in reading order
+  And "--image-tokens N" is what makes the pre-flight report the call "fits" or "exceeds"
+  And without it the call is reported "unmeasured", never as fitting
 
 Scenario: A typed failure is reported, not raised
   Given "tests/fixtures/pdf/pdf_corrupt.pdf"
@@ -545,6 +566,17 @@ their own; they consume the ones the processors already ship.
    states — the double's own provenance test red, and the geometry-ordering tests red, because the
    double now reports the engine's `BOTTOMLEFT` instead of hiding it. Both restored by the inverse
    edit.
+11. **A page is the document, and a render never blesses one.** *Mutation, in five steps:* drop the
+   input-is-a-page branch from `_images`; then ignore `--image`; then spell the batch's input set as
+   the text one again; then drop `images` from `_prompt`'s payload; then disable `_tokens`'s refusal.
+   *Observed:* 1 red each — `test_llm_call_reads_a_page_image_as_the_document` (`images == []`),
+   `test_llm_call_attaches_the_flag_images_beside_the_text_input`, `test_batch_llm_walks_page_images_too`
+   (the corpus walks nothing), `test_llm_prompt_states_the_pages_a_call_would_attach` (`KeyError`),
+   and `test_llm_tokens_refuses_a_page_image` (the page is read as text: `UnicodeDecodeError`).
+   *Two more, on the verdict:* render with `is_context_limit_exceeded` instead of the processor's
+   `context_verdict`, then drop `--image-tokens` from `_metadata`. *Observed:* 1 red — the same page
+   test reports a page nobody priced as fitting, then ignores the price that was stated. All
+   restored by the inverse edit.
 
 Each invariant leaves the four-field record `docs/plan/README.md` §7 fixes (Invariant /
 Mutation / Observed failure / Restored green) in the root `README.md`, where `GEN-16` audits
@@ -754,6 +786,23 @@ to `var/batch_<processor>/<folder>/`, which is ignored too.
     reports `BOTTOMLEFT` and hands over `(l, b, r, t)`, with the fixtures still written top-down
     through `for_top_down_rect` — a double reporting top-down numbers is what let an inverted
     document pass every test.
+
+22. **The LLM bench takes a page as an input — RESOLVED (`SCR-05`, `SCR-15`), and it pays the row
+    the vision pass owed.** The input's suffix decides: text is read into `document`; an image is
+    attached as the page and no document is stated, so one command runs the registry's text flow and
+    its `…_vision` twin. `--image` adds pages beside the input (repeatable, in reading order) and
+    `--image-tokens` states one page's cost as `metadata["image_tokens"]`, which is where the
+    pre-flight reads it; `tokens` stays text-only and refuses a page rather than substituting a
+    count it cannot take, and `prompt` reports the processor's own `fits` / `exceeds` / `unmeasured`
+    verdict so a render about a page is not evidence about a different call. Both twins gain the
+    image suffixes, so a folder of pages is the same one command a folder of texts is. The
+    alternative — leaving the bench unable to send pixels and pointing the runbook at a scratch
+    probe — is what the vision pass left behind: `reopen-llm-call-vision-path.md` §8 named the gap
+    "a `wbs-scripts.md` row, named here and not moved". This is the move: two flags, one request
+    rule, two suffix sets. The `DOCFLOW_VLM_*` block stays unread on purpose (the bench states one
+    provider, one model and one option set per call, so a second block would make the same flags mean
+    two things depending on the input's suffix) — an open question for the plan owner, recorded in
+    the bitácora rather than decided here.
 
 **Stale documents this subplan creates or leaves (owner in parentheses)**
 

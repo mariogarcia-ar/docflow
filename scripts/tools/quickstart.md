@@ -264,16 +264,19 @@ default is a corpus of readable text files rather than a corpus of JSON.
 
 ## LLM / VLM — `llm.py` · `batch_llm.py`
 
-Inputs: `.txt` `.md`. `--assets-dir` is global and defaults to `tests/fixtures/llm/` (templates
-under `template/`, schemas under `schema/`); the resolved value is printed with every run. There is
-**no default provider and no default model** — omitting either is a usage error (`2`), never a
-substituted stand-in.
+Inputs: `.txt` `.md`, or a page image. `--assets-dir` is global and defaults to
+`tests/fixtures/llm/` (templates under `template/`, schemas under `schema/`); the resolved value is
+printed with every run. There is **no default provider and no default model** — omitting either is a
+usage error (`2`), never a substituted stand-in.
 
-**Known limitation.** The bench sends text, never pixels: the request it builds states `images=[]`,
-so the registry's vision steps (`extraction/invoice_vision*`, `review/invoice_vision*`) are not
-reachable from this CLI. The library carries them — `scripts/tmpref/image_prompt.py` drives them, and
-a caller reaching `docflow.llm` directly can too — and teaching this bench an `--image` flag is a
-`wbs-scripts.md` row rather than something to state here.
+**The input is the document, or the page.** A text input is read into `<doc>`; an input that is an
+image **is** the document — the call attaches the pixels and states no text, which is how the
+registry's vision steps (`extraction/invoice_vision*`, `review/invoice_vision*`) are driven. Nothing
+flags the difference: the input's own kind decides, so the same commands run both flows. `--image`
+attaches further pages *beside* the input, repeatable and in the order written, and `--image-tokens`
+states what one of them costs. A template that quotes a document the run does not carry is refused
+by the library rather than handed the image's bytes. `tokens` is the one text-only command: a page
+has no offline count, so it is refused (`2`) rather than counted as something it is not.
 
 | Subcommand | Needs | What it gives you |
 |---|---|---|
@@ -284,11 +287,12 @@ a caller reaching `docflow.llm` directly can too — and teaching this bench an 
 | `resume` | the same, plus the same `--run-id` and `--out` | re-invocation *is* the resume |
 | `status` | `--out` alone | the per-node states of a previous run |
 | `models` | `--provider` `--model` | inventory only, no generation |
-| `tokens` | `--provider` `--model` | offline count; the window comes from `--context-window` |
+| `tokens` | `--provider` `--model` | offline count of a text input — a page is refused; the window comes from `--context-window` |
 | `fake` | `--provider` `--model` `--task` `--template` `--run-id` | the chain under the scripted provider, twice under one pinned identity |
 
-`--schema`, `--context-window` and the repeatable `--option KEY=VALUE` and `--extra KEY=VALUE`
-pairs are optional on every inference subcommand. An `--option` value is read as JSON, so
+`--schema`, `--context-window`, `--image-tokens` and the repeatable `--option KEY=VALUE`,
+`--extra KEY=VALUE` and `--image FILE` flags are optional on every inference subcommand. An
+`--option` value is read as JSON, so
 `temperature=0` reaches the provider as the number `0` (a string is refused). `--extra` fills a
 template's `<extra:KEY>` placeholder, and `KEY=@FILE` reads the value from a file — how one step's
 saved answer reaches the next. A **review** fills two of them: the proposal it audits and the
@@ -296,14 +300,15 @@ reviewed step's own schema as `contract`
 (`--extra contract=@registry/schema/extraction/invoice.schema.json`), so each verdict is measured
 against that step's rules rather than against what looks plausible. `--run-id` is how a run is
 pinned — it is what makes `resume` a resume rather than a fresh call, and it is required by `fake`,
-whose whole point is showing a graph and its resume under one identity.
+whose whole point is showing a graph and its resume under one identity. `--image` and
+`--image-tokens` belong to the pixel flow, one section below.
 
 **`prompt` is the ask, not the answer.** It states the same request `call` does — the same template,
-schema, extras and asset root — and stops before the provider, printing the prompt a `call` would
-have sent, its token count, and whether that prompt is *known* to exceed the window
-`--context-window` states. Read `overflows` the way the processor reads it: `false` without a stated
-window means *unmeasured*, not *it fits* — a count with nothing to compare it against is not a fit,
-and a request carrying images whose cost the caller never stated is reported the same way rather than
+schema, extras, images and asset root — and stops before the provider, printing the prompt a `call`
+would have sent, the pages it would attach, its token count, and the processor's own verdict on that
+ask: `fits`, `exceeds`, or `unmeasured` (`context_verdict`, with `overflows` the `exceeds` case).
+Read it the way the processor reads it: `unmeasured` is not *it fits* — a prompt with no stated
+window, or a request carrying images whose cost nobody stated, is reported as unmeasured rather than
 blessed. Nothing is sent and nothing is written, so `--provider` and `--model` are stated only because
 every inference command states them; the window is what a render reads them for. It is the cheap check
 before a reasoning review: that prompt is minutes of a 12B model, and a window too small for it comes
@@ -514,84 +519,97 @@ last component. Watching a review happen instead of reading what it left is one 
 `--stream` to any of them and its thinking and its answer arrive on stderr while stdout and the two
 files stay the finished answer.
 
-### The same flow from the pixels — a different tool
+### The same flow from the pixels
 
 The nine commands above read *text*. The registry ships a **vision twin of every step** — a template
-that reads the page instead of the document (`extraction/invoice_vision*`, `review/invoice_vision*`,
-five steps and their reviewers) — and **this bench cannot drive them**: its input is a `.txt` or
-`.md`, and the request it builds states `images=[]`. Two things can, and neither is `llm.py`:
+that reads the page itself instead of the document (`extraction/invoice_vision*`,
+`review/invoice_vision*`, five steps and their reviewers) — and the same commands drive it: the input
+is the page image, so the call attaches the pixels and states no text, and a template carrying no
+`<doc>` resolves exactly as it does here. Nothing states the difference: the input's own kind decides.
 
-- **`scripts/tmpref/image_prompt.py`**, below. It is a scratch probe, not part of the bench — this
-  file describes what ships, and the probe is where a pipeline is *drawn* before it ships — but it
-  renders, calls and files an answer exactly as `llm.py` does, so its recipes read as the block above
-  does, with `--image` in place of the input file;
-- **the library**, whose `LLMInput` takes image *paths*. `registry/README.md` → *Chaining the steps*
-  is that form, and it states the two `metadata` keys a vision call can carry: `context_window` (the
-  window the pre-flight checks **and** asks the provider for) and `image_tokens` (what one image
-  costs, so the check compares a total rather than blessing a number it knows is too small).
+What changes is the identifiers and the window. A step's schema still compiles the answer's shape
+into the decoder's grammar, and a review still carries the proposal it audits — but a page costs
+thousands of prompt tokens no text measurement sees, so `--image-tokens` states what one image costs.
+Without it the pre-flight reports the call `unmeasured` instead of blessing a number it knows is too
+small; with it, `--context-window` is the window the check compares the total against **and** the one
+the call asks the provider for. The receipt is the one the text flow reads as
+`fixtures-txt/casos/<same id>.txt`, so the two paths answer about the same paper.
 
 ```bash
 IMG=tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg
 R=registry
+V1=qwen3-vl:8b      # reads the page image
+V2=ministral-3:8b   # reviews the vision reading
 
-# what the flow asks, without sending anything: the rendered prompt. No image is encoded.
-python scripts/tmpref/image_prompt.py --print-prompt \
-    --template $R/template/extraction/invoice_vision.md --image $IMG
+# what the flow asks, without sending anything and without encoding the image: the rendered prompt,
+# the page it would attach, and the processor's own verdict on the fit
+python scripts/tools/llm.py --assets-dir $R --json prompt $IMG \
+    --provider ollama --model $V1 --task extract \
+    --template extraction/invoice_vision --schema extraction/invoice_vision \
+    --context-window 16384 --image-tokens 2800 | jq '{images, prompt_tokens, context_verdict}'
 
 # 1 — the base reading, straight from the pixels: no document is stated, because the image is the
 #     document and the template carries no <doc>. The step's own schema compiles the answer's shape
 #     into the decoder's grammar, exactly as the text path's does.
-python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name reading \
-    --template $R/template/extraction/invoice_vision.md --image $IMG \
-    --schema $R/schema/extraction/invoice_vision.schema.json
+python scripts/tools/llm.py --assets-dir $R --out var/run/reading-vision call $IMG \
+    --provider ollama --model $V1 --task extract --name reading \
+    --template extraction/invoice_vision --schema extraction/invoice_vision \
+    --context-window 16384 --image-tokens 2800
 
 # 0 — the gate, 2 — the breakdown, 3 — the class, 4 — the line of business: same shapes, one page
-python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name detection \
-    --template $R/template/extraction/invoice_vision_deteccion.md --image $IMG \
-    --schema $R/schema/extraction/invoice_vision_detection.schema.json
+python scripts/tools/llm.py --assets-dir $R --out var/run/detection-vision call $IMG \
+    --provider ollama --model $V1 --task detection \
+    --template extraction/invoice_vision_deteccion --schema extraction/invoice_vision_detection \
+    --context-window 16384 --image-tokens 2800
 
-python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name desglose \
-    --template $R/template/extraction/invoice_vision_desglose.md --image $IMG \
-    --schema $R/schema/extraction/invoice_vision_desglose.schema.json
+python scripts/tools/llm.py --assets-dir $R --out var/run/desglose-vision call $IMG \
+    --provider ollama --model $V1 --task desglose \
+    --template extraction/invoice_vision_desglose --schema extraction/invoice_vision_desglose \
+    --context-window 16384 --image-tokens 2800
 
-python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name clasificacion \
-    --template $R/template/extraction/invoice_vision_clasificacion.md --image $IMG \
-    --schema $R/schema/extraction/invoice_vision_clasificacion.schema.json
+python scripts/tools/llm.py --assets-dir $R --out var/run/clasificacion-vision call $IMG \
+    --provider ollama --model $V1 --task clasificacion \
+    --template extraction/invoice_vision_clasificacion \
+    --schema extraction/invoice_vision_clasificacion \
+    --context-window 16384 --image-tokens 2800
 
-python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name rubro \
-    --template $R/template/extraction/invoice_vision_rubro.md --image $IMG \
-    --schema $R/schema/extraction/invoice_vision_rubro.schema.json --extra rubro=Restaurante
+python scripts/tools/llm.py --assets-dir $R --out var/run/rubro-vision call $IMG \
+    --provider ollama --model $V1 --task rubro \
+    --template extraction/invoice_vision_rubro --schema extraction/invoice_vision_rubro \
+    --extra rubro=Restaurante --context-window 16384 --image-tokens 2800
 
 # 5 — the review of step 1's answer, against the same page. The template names the proposal alone,
-#     so the schema is what says which fields are judged. A review carries the page *and* the
-#     proposal and the contract, so the window is stated here: the image is context, and
-#     Ollama's own default is smaller than the request.
-python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name review \
-    --template $R/template/review/invoice_vision.md --image $IMG \
-    --schema $R/schema/review/invoice_vision.schema.json \
-    --extra proposal=@var/tmp/reading.json \
-    --option num_ctx=16384 --option temperature=0.2 --timeout 300
+#     so the schema is what says which fields are judged. A review carries the page, the proposal
+#     and the contract, so its ask is the flow's largest.
+python scripts/tools/llm.py --assets-dir $R --out var/run/review-vision call $IMG \
+    --provider ollama --model $V2 --task review --name review \
+    --template review/invoice_vision --schema review/invoice_vision \
+    --extra proposal=@var/run/reading-vision/reading.json \
+    --extra contract=@registry/schema/extraction/invoice_vision.schema.json \
+    --context-window 16384 --image-tokens 2800 \
+    --option temperature=0.2 --option min_p=0.05
 
 # 6 — the breakdown of step 2, judged from the pixels by the criteria-bearing reviewer
-python scripts/tmpref/image_prompt.py --provider ollama --model qwen2.5vl:7b --name review-desglose \
-    --template $R/template/review/invoice_vision_desglose.md --image $IMG \
-    --schema $R/schema/review/invoice_vision_desglose.schema.json \
-    --extra proposal=@var/tmp/desglose.json \
-    --extra contract=@$R/schema/extraction/invoice_vision_desglose.schema.json \
-    --option num_ctx=16384 --option temperature=0.2 --timeout 300
+python scripts/tools/llm.py --assets-dir $R --out var/run/review-desglose-vision call $IMG \
+    --provider ollama --model $V2 --task review --name review-desglose \
+    --template review/invoice_vision_desglose --schema review/invoice_vision_desglose \
+    --extra proposal=@var/run/desglose-vision/invoice_vision_desglose.json \
+    --extra contract=@registry/schema/extraction/invoice_vision_desglose.schema.json \
+    --context-window 16384 --image-tokens 2800 \
+    --option temperature=0.2 --option min_p=0.05
 ```
 
-The receipt is the one the text flow reads as `fixtures-txt/casos/<same id>.txt`, so the two paths
-answer about the same paper; `--out` defaults to `var/tmp`, which is why the reviews read
-`@var/tmp/reading.json` where the block above read `@var/run/reading/invoice.json`. `--option
-num_ctx=…` is the probe's only spelling of the window: the probe builds the provider call itself and
-never reaches the processor's pre-flight, so `context_window` — the neutral key the library caller
-states — has no flag here.
+Every line is the same `call` the text block above runs, with the page in place of the document: the
+`<step>.json` / `<step>_full.json` pair lands under that step's `--out`, `--extra proposal=@…` reads
+the answer alone the step before wrote, and `--stream` watches any of them happen.
 
-The probe's own docstring carries the rest of its surface, and it is where the other half lives: a
-page carried *beside* its text — the strategy the library calls `TEXT_PLUS_VLM`, stated here as
-`--doc` plus `--image` — is nine more recipes over the same steps, plus the streaming switch and the
-multi-image form.
+The other half of the surface is the same flags. A page carried **beside** its text — the strategy
+the library calls `TEXT_PLUS_VLM` — is a text input with `--image` added; a document of several pages
+is one `--image` per page, in reading order, and `--image-tokens` then states what one page costs
+rather than what the set does. `batch_llm.py` walks `.txt`, `.md` **and** the image suffixes, so a
+folder of pages is one command over a corpus exactly as a folder of texts is. The library form —
+`LLMInput` with its `images` and the two `metadata` keys — is `registry/README.md` → *Chaining the
+steps*.
 
 ### A folder
 
@@ -606,9 +624,18 @@ python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos tokens \
     --provider ollama --model llama3.1 --context-window 4096
 python scripts/tools/batch_llm.py tests/fixtures-txt/casos prompt \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+# the same command over a folder of pages: each walked image is its own input's document. The
+# fixture template stands in for the registry's, because the scripted provider answers the simple
+# schema — against the registry, drop --fake and serve the vision model instead.
+python scripts/tools/batch_llm.py --fake --assets-dir tests/fixtures/llm tests/fixtures/image call \
+    --provider ollama --model qwen3-vl:8b --task read \
+    --template simple_read_pixels --schema simple
 ```
 
-Those are all five commands this tool offers.
+Those are all five commands this tool offers. The walk takes `.txt`, `.md` **and** the image
+suffixes, so a folder of pages runs a command exactly as a folder of texts does; `tokens` is the one
+exception, because a page has no offline count — state `--image-tokens` and let `call`'s pre-flight
+weigh it instead.
 
 This is the one batch tool with **no default command** — a command is required (`2` without one) —
 and it offers only `call`, `graph`, `node`, `tokens` and `prompt`. `status`, `models`, `fake` and

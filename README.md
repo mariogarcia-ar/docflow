@@ -166,8 +166,8 @@ is: it reaches the four processors only through their public contracts.
 | `batch_image.py` | `SCR-13` | the same seven over every image below a folder (`info` when none is stated) |
 | `ocr.py` | `SCR-04` | `run`, `text`, `mixed`, `md`, `json`, `tables`, `blocks`, `metrics` |
 | `batch_ocr.py` | `SCR-14` | the same eight over every image below a folder (`text` when none is stated, which publishes each input's `text.txt`) |
-| `llm.py` | `SCR-05` | `call`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
-| `batch_llm.py` | `SCR-15` | `call`, `graph`, `node`, `tokens` over every text below a folder — a command is **required**, and `--fake` installs the scripted provider |
+| `llm.py` | `SCR-05` | `call`, `prompt`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
+| `batch_llm.py` | `SCR-15` | `call`, `graph`, `node`, `tokens`, `prompt` over every text or page below a folder — a command is **required**, and `--fake` installs the scripted provider |
 | `workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 
 Each processor's two tools call one shared layer (`_pdf.py`, `_image.py`, `_ocr.py`, `_llm.py`)
@@ -574,9 +574,23 @@ restore re-measured:
 | The OCR bench's `text` publishes the reading it reports, under the name `run` gives it (`tests/test_lab_tools.py::test_ocr_text_publishes_the_reading_run_gives_the_same_name`) | the `write_text_atomic` call dropped from `_ocr._text` (`scripts/tools/_ocr.py`) | `pytest tests/test_lab_tools.py -q -k "same_name or shared_layer"` → **2 failed**: `FileNotFoundError` on `text.txt` — the run reported a text and published nothing, and the two tools' payloads gained an `output` key that pointed nowhere | inverse edit, then `pytest tests/test_lab_tools.py` → 111 passed |
 | One name means one reading — the artifact and the record of a `text` run may not disagree (`tests/test_lab_tools.py::test_ocr_text_publishes_the_reading_run_gives_the_same_name`) | `_ocr._text` publishing the engine's raw export (`extract_docling_text`) while reporting the normalized one | `pytest tests/test_lab_tools.py -q -k same_name` → 1 failed: `E AssertionError: assert 'Quarterly re...ledger   \n\n' == 'Quarterly re...ternal ledger'` — the file kept the trailing whitespace the processor's `run` strips, so one name held two readings | inverse edit, then `pytest tests/test_lab_tools.py` → 111 passed |
 
+And the page-input invariant of the bench revision (`SCR-05`, `SCR-15`; `subplan-scripts.md` §9,
+decision 22), same four-field shape. Seven mutations, each applied to `scripts/tools/_llm.py` or
+`scripts/tools/batch_llm.py` and restored by the exact inverse edit, with the restore re-measured
+(`git diff` showed only that pass's own edits after each one):
+
+| Invariant | Mutation | Observed failure | Restored green |
+|---|---|---|---|
+| A page input **is** the document — the request attaches the pixels and states no text (`tests/test_lab_tools.py::test_llm_call_reads_a_page_image_as_the_document`) | the input-is-a-page branch dropped from `_images` | `pytest tests/test_lab_tools.py -q -k llm_call_reads_a_page_image` → 1 failed: `E AssertionError: assert [] == ['…/66cd35e9-….jpg']` — the call carried no page | inverse edit, then `pytest tests/test_lab_tools.py` → 146 passed |
+| `--image` attaches the pages it names, in the order written (`tests/test_lab_tools.py::test_llm_call_attaches_the_flag_images_beside_the_text_input`) | the `--image` loop in `_images` emptied | `pytest tests/test_lab_tools.py -q -k llm_call_attaches_the_flag_images` → 1 failed: `E AssertionError: assert [] == ['…/66cd35e9-….jpg', '…/skewed_text.png']` | inverse edit, then `pytest tests/test_lab_tools.py` → 146 passed |
+| A folder of pages is a corpus of documents (`tests/test_lab_tools.py::test_batch_llm_walks_page_images_too`) | `batch_llm.SUFFIXES` spelled as the text set again | `pytest tests/test_lab_tools.py -q -k batch_llm_walks_page_images` → 1 failed: `E AssertionError: assert [] == ['page.png', 'receipt.jpg']` — the walk found nothing, so no call was made | inverse edit, then `pytest tests/test_lab_tools.py` → 146 passed |
+| A render states the pages it would attach (`tests/test_lab_tools.py::test_llm_prompt_states_the_pages_a_call_would_attach`) | `"images"` dropped from `_prompt`'s payload | `pytest tests/test_lab_tools.py -q -k llm_prompt_states_the_pages` → 1 failed: `E KeyError: 'images'` | inverse edit, then `pytest tests/test_lab_tools.py` → 146 passed |
+| `tokens` refuses a page instead of reading it as text (`tests/test_lab_tools.py::test_llm_tokens_refuses_a_page_image`) | the refusal's condition forced false | `pytest tests/test_lab_tools.py -q -k llm_tokens_refuses_a_page_image` → 1 failed: `E UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0` — the page's bytes read as a document | inverse edit, then `pytest tests/test_lab_tools.py` → 146 passed |
+| A render carries the processor's own verdict — a page nobody priced is `unmeasured`, never `fits` (`tests/test_lab_tools.py::test_llm_prompt_weighs_a_page_the_way_the_processor_does`) | `context_verdict` replaced by the text-only `is_context_limit_exceeded` | `pytest tests/test_lab_tools.py -q -k llm_prompt_weighs_a_page` → 1 failed: `E AssertionError: assert 'fits' == 'unmeasured'` | inverse edit, then `pytest tests/test_lab_tools.py` → 146 passed |
+| `--image-tokens` is the price the pre-flight reads (`tests/test_lab_tools.py::test_llm_prompt_weighs_a_page_the_way_the_processor_does`) | the `metadata["image_tokens"]` statement dropped from `_metadata` | `pytest tests/test_lab_tools.py -q -k llm_prompt_weighs_a_page` → 1 failed: `E AssertionError: assert 'unmeasured' == 'fits'` — the number the caller stated was thrown away | inverse edit, then `pytest tests/test_lab_tools.py` → 146 passed |
+
 **Never a silent stand-in.** No empty string, no `0`, no `[]`, no `None`-without-reason, and no
-default engine or threshold used in place of a real answer.
-**No processor imports another processor.** The orchestrator is the only component that
+default engine or threshold used in place of a real answer.**No processor imports another processor.** The orchestrator is the only component that
 composes them, and only through contracts.
 
 **No adapter reached from a port — there is no `ports/` / `adapters/` layer at all.** §9.1 of

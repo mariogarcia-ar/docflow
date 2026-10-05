@@ -180,6 +180,9 @@ SAMPLE_IMAGE = FIXTURES / "image" / "color_layout.png"
 SAMPLE_OCR = FIXTURES / "ocr" / "ocr_prepared_text_and_table.png"
 CASE_TEXT = sorted((FIXTURES_TXT / "casos").glob("*.txt"))[0]
 
+#: The page image the vision path reads: the receipt whose OCR text ``CASE_TEXT`` is the twin of.
+CASE_IMAGE = FIXTURES / "casos" / "66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg"
+
 
 def tool_module(name: str) -> Any:
     """Import one tool module by its namespace-package path.
@@ -1080,6 +1083,15 @@ def build_text_corpus(tmp_path: Path) -> Path:
     return corpus
 
 
+def build_page_corpus(tmp_path: Path) -> Path:
+    """Write a small corpus of page images and return the folder."""
+    corpus = tmp_path / "pages"
+    corpus.mkdir()
+    shutil.copy(CASE_IMAGE, corpus / "receipt.jpg")
+    shutil.copy(FIXTURES / "image" / "skewed_text.png", corpus / "page.png")
+    return corpus
+
+
 #: A token count with the window stated by the caller: the one LLM command that reaches no provider
 #: at all, which is what keeps these tests offline and independent of a served model.
 OFFLINE_TOKENS: tuple[str, ...] = (
@@ -1369,6 +1381,233 @@ def test_llm_prompt_weighs_the_ask_against_a_stated_window_and_probes_none(
     assert stated["context_window"] == 10
     assert stated["overflows"] is True
     assert fake.model_calls == []
+
+
+def test_llm_call_reads_a_page_image_as_the_document(
+    providers: Any, tmp_path: Path
+) -> None:
+    """An image input **is** the document: the pixels are attached and no text is stated.
+
+    The vision half of the registry — ``extraction/invoice_vision*`` and its reviewers — is made of
+    templates with no ``<doc>``, so the call has to carry the page and nothing else. The template
+    run here is the committed pixel fixture, the twin of ``simple_extract``: it says in its own text
+    that the page is the source.
+    """
+    fake = providers()
+    out = tmp_path / "run"
+
+    code = tool_module("llm").main(
+        [
+            "--out",
+            str(out),
+            "call",
+            str(CASE_IMAGE),
+            "--provider",
+            "ollama",
+            "--model",
+            "qwen2.5vl:7b",
+            "--task",
+            "vision",
+            "--template",
+            "simple_read_pixels",
+            "--schema",
+            "simple",
+            "--name",
+            "reading",
+        ]
+    )
+
+    assert code == 0
+    sent = fake.calls[-1]
+    assert sent.images == [str(CASE_IMAGE.resolve())]
+    assert "carries no text this request could quote" in sent.messages[0]["content"]
+    assert (out / "reading.json").is_file()
+
+
+def test_llm_call_refuses_a_page_for_a_template_that_asks_for_a_document(
+    providers: Any, tmp_path: Path
+) -> None:
+    """The page's bytes are never handed to ``<doc>``: the placeholder is refused, not filled.
+
+    A template that quotes a document is the text flow's, and running it over an image is a
+    caller's mistake. The library types it ``DEPENDENCY_ERROR`` before the provider is reached,
+    where rendering an empty document would have asked the model a different question.
+    """
+    fake = providers()
+    out = tmp_path / "run"
+
+    code = tool_module("llm").main(
+        [
+            "--out",
+            str(out),
+            "call",
+            str(CASE_IMAGE),
+            "--provider",
+            "ollama",
+            "--model",
+            "qwen2.5vl:7b",
+            "--task",
+            "extract",
+            "--template",
+            "simple_extract",
+            "--schema",
+            "simple",
+        ]
+    )
+
+    assert code == 1
+    assert fake.calls == []
+    assert not (out / "simple.json").exists()
+    full = json.loads((out / "simple_full.json").read_text(encoding="utf-8"))
+    assert full["status"] == "FAILED"
+    assert full["errors"][0]["type"] == "DEPENDENCY_ERROR"
+    assert "asks for a document" in full["errors"][0]["message"]
+
+
+def test_llm_call_attaches_the_flag_images_beside_the_text_input(
+    providers: Any, tmp_path: Path
+) -> None:
+    """``--image`` sends pixels *with* the document — the library's ``TEXT_PLUS_VLM`` call.
+
+    A page photographed beside its own OCR text is one call that carries both, and the order the
+    images are written in is the order they are attached. The template here carries ``<doc>``, so
+    the text reaching it is the proof that the document was read rather than replaced by a page.
+    """
+    fake = providers()
+    assets = tmp_path / "assets"
+    (assets / "template").mkdir(parents=True)
+    (assets / "template" / "page_and_text.md").write_text(
+        "text:\n<doc>\n", encoding="utf-8"
+    )
+    document = tmp_path / "case.txt"
+    document.write_text("the receipt's own OCR text", encoding="utf-8")
+    second_page = FIXTURES / "image" / "skewed_text.png"
+
+    code = tool_module("llm").main(
+        [
+            "--assets-dir",
+            str(assets),
+            "--out",
+            str(tmp_path / "run"),
+            "call",
+            str(document),
+            "--provider",
+            "ollama",
+            "--model",
+            "qwen2.5vl:7b",
+            "--task",
+            "vision",
+            "--template",
+            "page_and_text",
+            "--image",
+            str(CASE_IMAGE),
+            "--image",
+            str(second_page),
+        ]
+    )
+
+    assert code == 0
+    sent = fake.calls[-1]
+    assert "the receipt's own OCR text" in sent.messages[0]["content"]
+    assert sent.images == [str(CASE_IMAGE.resolve()), str(second_page.resolve())]
+
+
+def test_llm_prompt_states_the_pages_a_call_would_attach(
+    providers: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A render states the images it would send, and still reaches no provider.
+
+    The pixels are part of the ask, so a render that named no image would be evidence about a
+    different call than the one it claims to describe. The paths are stated; the bytes are never
+    read, which is what keeps a render free.
+    """
+    fake = providers()
+
+    code = tool_module("llm").main(
+        [
+            "--json",
+            "prompt",
+            str(CASE_IMAGE),
+            "--provider",
+            "ollama",
+            "--model",
+            "qwen2.5vl:7b",
+            "--task",
+            "vision",
+            "--template",
+            "simple_read_pixels",
+            "--schema",
+            "simple",
+        ]
+    )
+
+    rendered = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert rendered["images"] == [str(CASE_IMAGE.resolve())]
+    assert fake.calls == []
+
+
+def test_llm_prompt_weighs_a_page_the_way_the_processor_does(
+    providers: Any, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A render of a vision call carries the processor's own verdict, so a page is never blessed.
+
+    ``count_tokens`` measures text, and a page costs thousands of tokens no text measurement sees,
+    so a render comparing the prompt alone would report *it fits* for a call the processor refuses.
+    ``--image-tokens`` is the caller's measurement of one image; without it the verdict is
+    ``unmeasured`` — never ``fits`` — exactly as the pre-flight reports it.
+    """
+    fake = providers()
+    flags = [
+        "--json",
+        "prompt",
+        str(CASE_IMAGE),
+        "--provider",
+        "ollama",
+        "--model",
+        "qwen2.5vl:7b",
+        "--task",
+        "vision",
+        "--template",
+        "simple_read_pixels",
+        "--schema",
+        "simple",
+    ]
+
+    code = tool_module("llm").main([*flags, "--context-window", "4096"])
+
+    unstated = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert unstated["prompt_tokens"] < 4096
+    assert unstated["context_verdict"] == "unmeasured"
+    assert unstated["overflows"] is False
+
+    code = tool_module("llm").main(
+        [*flags, "--context-window", "4096", "--image-tokens", "2800"]
+    )
+
+    sized = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert sized["context_verdict"] == "fits"
+
+    code = tool_module("llm").main(
+        [*flags, "--context-window", "512", "--image-tokens", "2800"]
+    )
+
+    exceeding = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert exceeding["context_verdict"] == "exceeds"
+    assert exceeding["overflows"] is True
+    assert fake.calls == []
+
+
+def test_llm_tokens_refuses_a_page_image(capsys: pytest.CaptureFixture[str]) -> None:
+    """`tokens` counts text: a page has no offline count, and a substituted one is not an answer."""
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("llm").main([*OFFLINE_TOKENS, str(CASE_IMAGE)])
+
+    assert exit_info.value.code == 2
+    assert "no offline token count" in capsys.readouterr().err
 
 
 def test_llm_call_fills_named_extra_placeholders_from_a_flag_and_a_file(
@@ -1825,6 +2064,46 @@ def test_batch_llm_mirrors_the_folder_it_walked(
         record.parent.relative_to(out).as_posix() for record in out.rglob("tokens.json")
     ) == ["b", "sub/a"]
     assert "assets_dir:" in capsys.readouterr().err
+
+
+def test_batch_llm_walks_page_images_too(providers: Any, tmp_path: Path) -> None:
+    """A folder of pages runs the same command: each walked image is its own input's document.
+
+    The walk takes the LLM layer's whole input set, so the vision flow over a corpus is one command
+    exactly as the text flow is — and no ``--image`` is needed, because each input *is* the page it
+    is run over.
+    """
+    fake = providers()
+    corpus = build_page_corpus(tmp_path)
+    out = tmp_path / "mirror"
+
+    code = tool_module("batch_llm").main(
+        [
+            "--out",
+            str(out),
+            str(corpus),
+            "call",
+            "--provider",
+            "ollama",
+            "--model",
+            "qwen2.5vl:7b",
+            "--task",
+            "vision",
+            "--template",
+            "simple_read_pixels",
+            "--schema",
+            "simple",
+        ]
+    )
+
+    assert code == 0
+    assert sorted(Path(image).name for call in fake.calls for image in call.images) == [
+        "page.png",
+        "receipt.jpg",
+    ]
+    assert sorted(
+        record.parent.relative_to(out).as_posix() for record in out.rglob("simple.json")
+    ) == ["page", "receipt"]
 
 
 def test_batch_llm_requires_a_command(

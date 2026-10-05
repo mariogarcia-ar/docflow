@@ -7,7 +7,9 @@ code — lives in :mod:`scripts.tools._cli`, and the nine methods themselves liv
 that are about an input.
 
 ``--provider`` and ``--model`` are required on every inference subcommand: a default model is
-exactly the silent stand-in this project forbids. ``--stream`` reads the answer as it is written,
+exactly the silent stand-in this project forbids. The input is the document — or, when it is an
+image, the page itself: a vision call reads the pixels and states no text, and ``--image`` attaches
+further pages beside it. ``--stream`` reads the answer as it is written,
 echoing a reasoning model's trace and its answer to stderr while stdout stays the payload; the body
 the run records is the one a waiting call would have received. ``prompt`` states the same request
 and stops before the provider, so the rendered ask can be read — and its token count weighed

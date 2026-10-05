@@ -2795,3 +2795,98 @@ carries this recipe — which is why the bench's copy is the command sequence an
 second telling of the roles and the criteria — and its step 5 states `think=false` for a reasoning
 reviewer, which the observation above qualifies rather than contradicts: the brake is what empties
 the *breakdown* review, not the model's thinking as such.
+
+## 2026-10-05 — Phase 5 · the LLM bench takes a page as an input, and the runbook stops naming a probe
+
+**Delivered.** The gap `reopen-llm-call-vision-path.md` §8 named — *"`scripts/tools/_llm.py` states
+`images=[]`, so the vision steps are reachable from the library and not from the CLI. That is a
+`wbs-scripts.md` row, named here and not moved"* — is closed. An input's **kind** decides what the
+request carries, so one command drives the registry's text flow and its `…_vision` twin, and the
+quickstart's pixel section is `llm.py` commands instead of recipes for a scratch probe.
+
+| File | Change |
+|---|---|
+| `scripts/tools/_llm.py` | `IMAGE_SUFFIXES`; `_is_image` / `_document` / `_images`; `--image` and `--image-tokens` on every request subcommand; `_metadata` states `image_tokens`; `prompt` reports the pages **and** the processor's own `context_verdict`; `tokens` refuses a page |
+| `scripts/tools/batch_llm.py` | the walk takes the image suffixes too — each page is its own input's document |
+| `scripts/tools/llm.py` | the docstring's statement of what an input is |
+| `scripts/tools/quickstart.md` | the pixel flow rebuilt as `llm.py` commands, the input rule, the two flags, the `prompt` verdict, the page-corpus example — and no `scripts/tmpref` reference anywhere |
+| `scripts/tools/readme.md` | the same as reference: the input rule, `--image-tokens`, the `tokens` exception, the page corpus, and why the `DOCFLOW_VLM_*` block stays unread |
+| `.env.example` | the same non-read, with the reason the page input forces it to change |
+| `docs/plan/subplan-scripts.md` | §3.4 (the request rule, the two flags), §4 (the batch's inputs), §5 (a scenario), §6 (invariant 11), §9 (decision 22) |
+| `docs/plan/issues/wbs-scripts.md` | `SCR-05` / `SCR-15` re-scoped — never renumbered — with the third pass, the scenario and the tests |
+| `README.md` | the Lab tools rows for `llm.py` and `batch_llm.py` (the first was missing `prompt`), and the page-input invariant records |
+| `tests/test_lab_tools.py` | six glue tests and the page-corpus builder |
+
+**Why the suffix decides and no flag does.** A vision step's template carries no `<doc>`, and the
+page *is* what the call is about: `llm.py call <page>` is the same sentence as `llm.py call <text>`,
+which is what makes the two flows one command each rather than two surfaces. `--image` is left for
+what the input cannot state — the pages *beside* it, one per page in reading order, which is also how
+`TEXT_PLUS_VLM` travels — and the library does the attaching, so the bench never encodes a pixel.
+
+**A page is not priced by reading it.** `count_tokens` measures text and a page costs thousands of
+tokens no text measurement sees, so the bench cannot count one and must not pretend to. That is why
+`--image-tokens` exists as a *statement* (`metadata["image_tokens"]`, the key the pre-flight reads),
+why `tokens` refuses a page with a usage error instead of reading its bytes as text, and why `prompt`
+had to change: it compared the prompt alone and would have reported **fits** for a call the processor
+refuses. It now reports the processor's own `context_verdict`, so `unmeasured` stays visibly
+unmeasured. That correction is the one the pass found rather than planned — the render was written
+when a request could not carry an image at all.
+
+**Measured** (fixtures; no model served, `.env` bypassed):
+
+```
+batch_llm.py --fake --assets-dir tests/fixtures/llm tests/fixtures/image call \
+    --provider ollama --model qwen3-vl:8b --task read --template simple_read_pixels --schema simple
+          files: 4 · succeeded: 4 · failed: 0 — four pages, each its own input's document
+
+llm.py --assets-dir registry --json prompt casos/66cd35e9-….jpg … --template extraction/invoice_vision \
+    --schema extraction/invoice_vision --context-window 16384 --image-tokens 2800
+          images: [that page] · prompt_tokens: 615 · context_verdict: fits
+          (without --image-tokens: unmeasured — and 615 alone would have read as "fits")
+
+llm.py --assets-dir tests/fixtures/llm prompt <the same page> … --template simple_extract
+          ERROR DEPENDENCY_ERROR: the template asks for a document and the request carries none
+```
+
+The 615-token reading is the number `registry/README.md` records for the same page, and 615 + 2,800
+is what the registry's own `image_tokens` states — the bench and the library now agree about the same
+page without sharing a measurement.
+
+**Gate evidence.**
+
+```
+pytest                     825 passed
+ruff check .               All checks passed!
+ruff format --check .      1 file would be reformatted — the pre-existing registry/README.md
+                           block, present at HEAD and unrelated to this pass
+pylint src tests           10.00/10 — one message, the pre-existing pdf R0912
+```
+
+**Mutation evidence** (seven rows, each applied and restored by the inverse edit; the four-field
+records are in the root `README.md`).
+
+| Mutation | Observed failure | Restored |
+|---|---|---|
+| `_images`: drop the input-is-a-page branch | 1 red — `test_llm_call_reads_a_page_image_as_the_document`: `assert [] == ['…/66cd35e9-….jpg']` | green |
+| `_images`: empty the `--image` loop | 1 red — `test_llm_call_attaches_the_flag_images_beside_the_text_input` | green |
+| `batch_llm.SUFFIXES`: back to the text set | 1 red — `test_batch_llm_walks_page_images_too`: the walk finds nothing | green |
+| `_prompt`: drop `"images"` from the payload | 1 red — `KeyError: 'images'` | green |
+| `_tokens`: force the refusal false | 1 red — `UnicodeDecodeError`: the page's bytes read as a document | green |
+| `_prompt`: `context_verdict` → the text-only `is_context_limit_exceeded` | 1 red — `assert 'fits' == 'unmeasured'`: a page nobody priced is blessed | green |
+| `_metadata`: drop `--image-tokens` | 1 red — `assert 'unmeasured' == 'fits'`: the price the caller stated is thrown away | green |
+
+**Not done, and deliberately.**
+
+- **`scripts/tmp/` and `scripts/tmpref/` are left where they are.** They are the evidence of the two
+  vision passes (2026-10-03/04), and removing them is the plan owner's call. The runbook no longer
+  points at either, which was the defect: a document that describes what ships may not send a reader
+  to a scratch folder.
+- **The `DOCFLOW_VLM_*` block stays unread by the bench**, now for a stated reason rather than "the
+  bench sends no images": the bench states one provider, one model and one set of options per call,
+  and a page call is that same call with an image attached, so a second block would make the same
+  flags mean two things depending on the input's suffix. Whether a vision call should answer to
+  `DOCFLOW_VLM_TIMEOUT` instead of `DOCFLOW_LLM_TIMEOUT` is a **question for the plan owner**: the
+  two stages of `.env.example` predate a bench that can send pixels.
+- **No live model was reached in this pass.** The page path is proven against the scripted provider
+  and the committed assets; the registry recipe the quickstart now prints is the probe's own, whose
+  live run is recorded above (2026-10-04) and in `reopen-llm-call-vision-path.md` §9.

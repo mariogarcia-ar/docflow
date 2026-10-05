@@ -33,7 +33,7 @@ recorded as a gate.
 | `ocr.py` | `SCR-04` — the OCR processor's representations and its contract |
 | `batch_ocr.py` | `SCR-14` — the same eight methods over every image below a folder |
 | `llm.py` | `SCR-05` — one inference, the chain, the inventory and the scripted provider |
-| `batch_llm.py` | `SCR-15` — five of the same nine commands over every text below a folder |
+| `batch_llm.py` | `SCR-15` — five of the same nine commands over every text or page below a folder |
 | `workflow.py` | `SCR-06` — the orchestrator: plan, run, resume, force, skip, stop |
 
 A tool owns its subcommands, its flags and one handler per subcommand. Everything else — where a
@@ -100,7 +100,8 @@ This matters, and it is the one thing that surprises people:
   (`--allow-ocr`, `--allow-vlm`), the execution switches (`--reuse`, `--retry-failed`,
   `--start-from`, `--parallel-pages`, `--dry-run`) and `--fake-llm`.
 - **Subcommand flags go after it.** `--page`, `--dpi`, `--provider`, `--model`, `--task`,
-  `--template`, `--schema`, `--context-window`, `--option`, `--extra`, and each tool's own — on
+  `--template`, `--schema`, `--context-window`, `--option`, `--extra`, `--image`,
+  `--image-tokens`, and each tool's own — on
   `workflow.py` that is `--stages` (`force`, `skip`) and `--after` (`stop`).
 - **The input positional belongs to the subcommand**: `pdf.py inspect <input>`, while
   `--fixture <name>` is the global spelling of the same thing. Either works; if both are given,
@@ -296,13 +297,32 @@ silent stand-in this project forbids — the check is a post-parse refusal, whic
 | `resume` | the same call again, with the same `--run-id` and `--out` | re-invocation **is** the resume; there is no `resume_llm_graph` symbol |
 | `status` | `primitives.load_graph_state` / `load_result` | reads `state.json` and `final_result.json`; accepts `--out` alone |
 | `models` | `primitives.list_models`, `get_model_info`, `check_model_available` | inventory only, no generation |
-| `tokens` | `primitives.count_tokens`, `get_context_window` | offline count; the window comes from `--context-window` or the provider |
+| `tokens` | `primitives.count_tokens`, `get_context_window` | offline count of a **text** input; the window comes from `--context-window` or the provider. A page image is refused (`2`): what a page costs is the model's own reading, stated as `--image-tokens` |
 | `fake` | installs `tests/fakes/engines/fake_provider.py` at the provider seam | runs the chain twice under one pinned `--run-id`, so a graph and a resume are demonstrable with no model and no spent token |
 
 `--assets-dir` defaults to the fixture asset root `tests/fixtures/llm/` (templates under
 `template/`, schemas under `schema/`) — or to `DOCFLOW_ASSETS_DIR` when the configuration file
 states one — and the value used is printed. The library itself has **no** default for
 `metadata["assets_dir"]`, and does not read that file.
+
+**The input is the document, or the page.** An input that is text (`.txt`, `.md`) is read into
+`<doc>`; an input that is an image **is** the document — the request attaches the pixels and states
+no text, which is how the registry's vision steps (`extraction/invoice_vision*`,
+`review/invoice_vision*`, the templates that carry no `<doc>`) are driven from the same command as
+their text twins. The suffix decides, so nothing on the command line has to. `--image FILE` attaches
+further pages *beside* the input, repeatable and in the order written — one image per page, in
+reading order, which is also how pixels travel with a text document (the strategy the library calls
+`TEXT_PLUS_VLM`). Nothing is encoded here: the library attaches the paths, a path that cannot be
+read is a usage error before anything is sent, and a template that names `<doc>` over a page is
+refused by the library with a `DEPENDENCY_ERROR` rather than handed the image's bytes. `tokens` is
+the one command that does not take a page, for the reason below.
+
+**`--image-tokens N` states what one attached image costs.** `count_tokens` sees the prompt text
+only, and a page costs the model thousands of tokens on top of it, so the pre-flight adds the number
+the caller states — the `metadata["image_tokens"]` the library reads a page's cost from. A request
+carrying images whose cost nobody stated comes back `unmeasured`, never as fitting, and the cost has
+to be stated *before* the call: one discovered after it cannot prevent the overflow it caused. It is
+stated once per page, so a five-page document multiplies it by five rather than stating a total.
 
 **Two artifacts per `call`, keyed by the step.** The library names its own two files after the
 run directory alone (`state.json`, `final_result.json`), so two `call`s over the *same* input land
@@ -335,9 +355,12 @@ is one remedy and the bench's own flag; `--name review` is the smaller one — t
 suffix states the same step (`review.json` and `review` are one name).
 
 **`prompt` renders and stops.** It states the same request `call` does — the same asset root,
-template, schema and extras — and answers with the prompt a call would have sent, its token count
-and whether that count is *known* to exceed the window the caller stated. Read `overflows` the way
-the processor reads it: `false` with no window stated means *unmeasured*, not *it fits*. No provider
+template, schema, extras and images — and answers with the prompt a call would have sent, the paths
+of the pages it would attach, its token count and the processor's own verdict on the fit:
+`context_verdict` is `fits`, `exceeds` or `unmeasured`, with `overflows` the `exceeds` case. Read it
+the way the processor reads it: `unmeasured` is not *it fits* — a prompt with no stated window, or a
+request carrying images whose cost nobody stated, is reported as unmeasured rather than blessed. No
+provider
 is reached and no file is written, so
 the tool declares it report-only and the run header says so. That is why it is a command rather than
 a `--print-prompt` switch on `call`: what a run writes is a property of the command, not of a flag,
@@ -353,8 +376,11 @@ the file is not an artifact field, so without that line a takeover would be invi
 
 Two names are deliberately **not** read. `DOCFLOW_LLM_PROVIDER` and `DOCFLOW_LLM_MODEL` are ignored,
 because `--provider` and `--model` are required flags and a configuration file must not be able to
-become the default model this bench refuses to have. The `DOCFLOW_VLM_*` block is not read either —
-the bench sends no images — so it belongs to a library caller that states those values itself. The
+become the default model this bench refuses to have. The `DOCFLOW_VLM_*` block is not read either:
+the bench states one provider, one model and one set of options per call, and a page call is the same
+call with an image attached — so reading a second block would make the same flags mean two things
+depending on the input's suffix. The VLM names stay a library caller's, whose two stages really are
+two services. The
 **library** never reads the file at all, for the reason it has no default asset root: a request may
 not mean different things in two places.
 
@@ -447,7 +473,7 @@ python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matr
 | `batch_pdf.py` `SCR-12` | `_pdf.py` | `.pdf` | `inspect` | — |
 | `batch_image.py` `SCR-13` | `_image.py` | `.png .jpg .jpeg .tif .tiff .bmp` | `info` | — |
 | `batch_ocr.py` `SCR-14` | `_ocr.py` | the image set: the OCR input *is* an image | `text` — publishes the reading it reports as `text.txt` | — |
-| `batch_llm.py` `SCR-15` | `_llm.py` | `.txt .md` | **none** — a command is required | `status`, `models`, `fake`, `resume` |
+| `batch_llm.py` `SCR-15` | `_llm.py` | `.txt .md`, and the image set — a page is an input too | **none** — a command is required | `status`, `models`, `fake`, `resume` |
 
 ### The shape of a batch run
 
@@ -595,7 +621,8 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr metrics                    
 ### `batch_llm.py` — `SCR-15`
 
 `llm.py` over a folder: the same commands, mirrored under `var/batch_llm/<folder>/`, over `.txt`
-and `.md` inputs.
+and `.md` inputs and the image set, because a page is an input too — each walked image is its own
+input's document, exactly as each text file is.
 
 ```bash
 python scripts/tools/batch_llm.py tests/fixtures-txt/casos tokens \
@@ -604,6 +631,9 @@ python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos call \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
 python scripts/tools/batch_llm.py tests/fixtures-txt/casos call \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
+# a folder of pages: the same command, each image its own input's document
+python scripts/tools/batch_llm.py --fake --assets-dir tests/fixtures/llm tests/fixtures/image call \
+    --provider ollama --model qwen3-vl:8b --task read --template simple_read_pixels --schema simple
 ```
 
 - **Five of the nine commands**, and precisely the five whose answer is a property of the input:
@@ -619,6 +649,11 @@ python scripts/tools/batch_llm.py tests/fixtures-txt/casos call \
   token spent. The refusal on a missing `--provider`/`--model` stands either way.
 - **`--assets-dir`** is the same flag with the same default as `llm.py`, and the resolved value is
   stated in the run header, exactly as `llm.py` states it.
+- **A page is an input.** The walk takes the image suffixes as well, and each image is attached to
+  its own input's request as the document, so the registry's vision steps run over a corpus with the
+  same command their text twins do. `tokens` is the exception — a page has no offline count, so a
+  corpus that holds one is refused (`2`) — and `--image-tokens` with `call`'s pre-flight, not
+  `tokens`, is how a page is weighed.
 - **`--stream`** is the same switch as `llm.py`'s, on the same three inference commands. The walk is
   sequential, so an input's deltas arrive under that input's own header and never run into the next
   one's; the record filed for each input is the one a waiting call would have produced.
