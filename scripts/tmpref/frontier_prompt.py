@@ -124,6 +124,61 @@ endpoint above is DeepSeek's, and its own model reads text only:
     python scripts/tmpref/frontier_prompt.py --name reading-reasoning --doc $DOC \
         --model a-reasoning-frontier --timeout 600
 
+The layered flow is :mod:`md_prompt`'s eleven commands, one per step. Every one of them is a
+command above, one of the two below, or a command with nothing left to state — the flow is one call
+here, so a step is a field of that answer rather than a call of its own:
+
+    # 13. the gate — the flow's step 1, which refused a page by stopping the flow there. The gate is
+    #     a field of this answer instead, so a page that is not a document comes back **complete**
+    #     and schema-valid: `comprobante_valido` is "false", `motivo_rechazo` names why, every data
+    #     field from `tipo_comprobante` on is null, and the working notes say what was seen. There is
+    #     no early exit, so a refusal costs what a reading costs — the whole prompt is still sent,
+    #     and what is saved is the second call the layered flow would have made.
+    printf 'Hola Mario:\n\nTe paso el resumen de la reunion de ayer.\n\nSaludos,\nAna\n' > /tmp/a-message.txt
+    python scripts/tmpref/frontier_prompt.py --name refused --doc /tmp/a-message.txt --timeout 300
+    #     {"comprobante_valido":"false", …}, schema: conforms, exit 0
+
+    # 14. the review run twice, on two models — how the flow used its two reviewers. A reviewer
+    #     that is another model, and not the reader that wrote the proposal, audits instead of
+    #     agreeing with itself. Here the second reviewer is a flag, not a second prompt: the
+    #     criteria are written into the one review template, so both of them read the same one.
+    python scripts/tmpref/frontier_prompt.py --name review-auditor-a --doc $DOC \
+        --model reviewer-frontier-a --template $R/template/review/invoice.md \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading.json
+
+    python scripts/tmpref/frontier_prompt.py --name review-auditor-b --doc $DOC \
+        --model reviewer-frontier-b --template $R/template/review/invoice.md \
+        --schema $R/schema/review/invoice.schema.json \
+        --extra proposal=@var/tmp/reading.json
+
+    # 15. the sampling options the flow stated, sorted by what the dialect does with them.
+    #     `temperature` and `top_p` are fields of the OpenAI dialect the endpoint speaks, so they
+    #     reach the body and change the answer. The local daemon's own — `num_ctx`, `num_predict`,
+    #     `min_p`, `think` — are not translated by the seam: every option is spread into the body as
+    #     written, and a hosted endpoint ignores a field its dialect does not define, so stating one
+    #     there is silently without effect. `think=false` is lifted to the top of the body by the
+    #     local transport alone, so it brakes nothing here — the reasoning is chosen by the model
+    #     tag instead (recipe 12).
+    python scripts/tmpref/frontier_prompt.py --name reading-sampled --doc $DOC \
+        --option temperature=0 --option top_p=0.95 --timeout 300
+
+and what each of the eleven becomes:
+
+* **the ``--print-prompt`` over the gate template** → the ``--print-prompt`` above, over the
+  one-call extraction, which asks the gate in the same prompt.
+* **the gate, and the base reading it let through** → recipe 13, and the extraction above.
+* **the breakdown, the class and the line of business** → the extraction above: one command, one
+  answer carrying all of those steps' fields, with ``categoria_gasto`` decided in that same answer
+  so it can pick which quantity is in scope. The step that stated ``--extra rubro=Restaurante`` has
+  nothing left to state — the caller does not settle the line of business any more.
+* **the review, the ``--stream`` twin of that same review, and the two reviews of the breakdown** →
+  the review above, recipe 7, and recipe 14. The criteria are in the review template, so there is no
+  ``.reasoning.md`` twin to pick between, no ``--extra contract=`` to carry, and no step schema to
+  audit against; and the breakdown's own review has no counterpart at all, because there is no
+  per-step answer here to audit.
+* **the sampling options all four of those carried** → recipe 15.
+
 **Why the schema travels in the prompt.** The library's OpenAI-compatible transport sends
 ``response_format: {"type": "json_schema", …}`` whenever a call carries a schema. DeepSeek's
 documented JSON mode is ``{"type": "json_object"}``, and ``json_schema`` is not among the response

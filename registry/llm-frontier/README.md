@@ -165,6 +165,13 @@ library the same pair is `--assets-dir registry/llm-frontier --template ping --s
   the model answers about a page it never received. Check the `images` list in the rendered payload
   (the `prompt` subcommand prints it) before spending a token; the vision template is for a page
   input, and only for that.
+- **The local daemon's options are silently without effect.** `--option num_ctx=16384`,
+  `--option think=false` and their kin are Ollama's own: the seam spreads every option into the
+  OpenAI-compatible body exactly as written, so a hosted endpoint receives a field its dialect does
+  not define and ignores it. Nothing fails and nothing changes — only the dialect's own parameters
+  (`temperature`, `top_p`) do anything here. `think=false` is lifted to the top of the body by the
+  local transport alone, so a reasoning model on a hosted endpoint is switched by its model tag
+  rather than braked by an option.
 - **Structured output is the provider's promise, not ours.** `--schema` sends
   `response_format: json_schema`, so the endpoint has to accept it; Anthropic's own API is not wired
   into `PROVIDER_KINDS` and would have to go through its OpenAI-compatibility layer, untested. See
