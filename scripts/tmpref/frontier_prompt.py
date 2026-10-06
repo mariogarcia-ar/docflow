@@ -31,14 +31,15 @@ templates exist for.
 
 The one-call registry has one extraction and one review rather than one prompt per step, so the
 layered registry's step-and-review recipes collapse into the same four commands, each of them in
-both media. ``--provider``, ``--model`` and ``--base-url`` are the defaults stated at the top
-of this file, so a recipe over the page states the multimodal model it needs and nothing else — the
-endpoint above is DeepSeek's, and its own model reads text only:
+both media. ``--provider``, ``--model`` and ``--base-url`` are the defaults stated at the top of
+this file, and a page needs no other model than that default one — DeepSeek's ``deepseek-flash``
+reads the page as well as the text, down to naming the emitter's CUIT off it — so the four
+commands below run on the defaults, and ``--model`` is stated only to reach another endpoint
+(recipe 9):
 
     IMG=tests/fixtures/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.jpg
     DOC=tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt
     R=registry/llm-frontier
-    VLM=a-multimodal-frontier      # add --base-url <endpoint>/v1 when it is not the one above
 
     # 0. hello world: is the key, the endpoint and the model reachable at all? The registry ships a
     #    ping pair for exactly this question — one line in, that line echoed back out, one field in
@@ -60,15 +61,14 @@ endpoint above is DeepSeek's, and its own model reads text only:
     #    <doc>, so the pixels are the document, and the answer is checked against the schema here
     #    rather than by the endpoint.
     python scripts/tmpref/frontier_prompt.py --name reading-pixels --image $IMG \
-        --model $VLM --template $R/template/extraction/invoice_vision.md \
+        --template $R/template/extraction/invoice_vision.md \
         --schema $R/schema/extraction/invoice_vision.schema.json
 
     # 3. the same extraction with the page *beside* its text — the strategy the library calls
     #    TEXT_PLUS_VLM: the text template reads <doc>, the page rides beside it, and the pixels
     #    decide where the OCR garbles. Every step the layered registry asked on its own — the gate,
     #    the header, the breakdown, the line of business and its quantity — is asked in this call.
-    python scripts/tmpref/frontier_prompt.py --name reading-page --image $IMG --doc $DOC \
-        --model $VLM
+    python scripts/tmpref/frontier_prompt.py --name reading-page --image $IMG --doc $DOC
 
     # 4. the extraction over the text alone: the defaults are the text pair, so the document is the
     #    whole command and the model is this file's
@@ -77,7 +77,7 @@ endpoint above is DeepSeek's, and its own model reads text only:
     # 5. the review of 2's answer, judged against the same page. Only the proposal travels in: the
     #    criteria are written into the review prompt, so this review names no <contract>.
     python scripts/tmpref/frontier_prompt.py --name review-pixels --image $IMG \
-        --model $VLM --template $R/template/review/invoice_vision.md \
+        --template $R/template/review/invoice_vision.md \
         --schema $R/schema/review/invoice_vision.schema.json \
         --extra proposal=@var/tmp/reading-pixels.json
 
@@ -85,7 +85,7 @@ endpoint above is DeepSeek's, and its own model reads text only:
     #    least what the extractor saw, or a value read off the pixels is flagged as wrong by an
     #    auditor that never saw them
     python scripts/tmpref/frontier_prompt.py --name review-page --image $IMG --doc $DOC \
-        --model $VLM --template $R/template/review/invoice.md \
+        --template $R/template/review/invoice.md \
         --schema $R/schema/review/invoice.schema.json \
         --extra proposal=@var/tmp/reading-page.json
 
@@ -225,7 +225,8 @@ PROVIDER: Final[str] = "openai_compatible"
 BASE_URL: Final[str] = "https://api.deepseek.com"
 
 #: The model tag. ``deepseek-flash`` is the current one and ``deepseek-v4-pro`` its heavier
-#: sibling. Neither reads an image: for ``--image`` state a multimodal model instead.
+#: sibling; those two names are the only ones the API accepts. ``deepseek-flash`` reads an attached
+#: page as well as the text, so ``--image`` needs no model other than this default one.
 MODEL: Final[str] = "deepseek-flash"
 
 #: Paste the key here to run locally, or leave it empty and state :data:`API_KEY_ENV` — in the
