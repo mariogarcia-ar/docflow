@@ -1,6 +1,0 @@
-{
-  "reader.correct": false,
-  "reader.min_chars": 40,
-  "diagnosis.min_dpi": 150,
-  "image.legibility_threshold": 100.0
-}

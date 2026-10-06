@@ -1,0 +1,94 @@
+{
+  "type": "object",
+  "properties": {
+    "indicios_detectados": {"type": "string"},
+    "comprobante_valido": {
+      "type": "string",
+      "enum": ["true", "false"]
+    },
+    "motivo_rechazo": {"type": ["string", "null"]},
+    "tipo_comprobante": {
+      "type": ["string", "null"],
+      "enum": ["A", "B", "C", "090", "099", null]
+    },
+    "razon_social_emisor": {"type": ["string", "null"]},
+    "cuit_emisor": {"type": ["string", "null"]},
+    "fecha_emision": {"type": ["string", "null"]},
+    "nro_comprobante": {"type": ["string", "null"]},
+    "moneda": {
+      "type": ["string", "null"],
+      "enum": ["ARS", "USD", null]
+    },
+    "notas": {"type": ["string", "null"]},
+    "analisis_condicion_iva": {"type": "string"},
+    "subtotal": {"type": ["string", "null"]},
+    "iva": {"type": ["string", "null"]},
+    "impuestos_internos": {"type": ["string", "null"]},
+    "percepcion_iibb": {"type": ["string", "null"]},
+    "otros_impuestos": {"type": ["string", "null"]},
+    "monto_no_gravado": {"type": ["string", "null"]},
+    "importe_total_facturado": {"type": ["string", "null"]},
+    "condicion_impositiva_dominante": {
+      "type": ["string", "null"],
+      "enum": [
+        "Responsable Inscripto",
+        "Monotributo",
+        "Exento",
+        "No Categorizado",
+        "Consumidor Final",
+        null
+      ]
+    },
+    "alicuotas_detectadas": {"type": ["string", "null"]},
+    "analisis_evidencia_rubro": {"type": "string"},
+    "categoria_gasto": {
+      "type": ["string", "null"],
+      "enum": [
+        "Restaurante",
+        "Supermercado",
+        "Hospedaje",
+        "Combustible",
+        "Movilidad/Pasajes",
+        "Peajes",
+        "Herramientas",
+        "Otros",
+        null
+      ]
+    },
+    "descripcion": {"type": ["string", "null"]},
+    "centro_de_costo": {"type": ["string", "null"]},
+    "analisis_rubro_aplica": {"type": "string"},
+    "cantidad_comensales_personas": {"type": ["string", "null"]},
+    "cantidad_litros": {"type": ["string", "null"]}
+  },
+  "required": [
+    "indicios_detectados",
+    "comprobante_valido",
+    "motivo_rechazo",
+    "tipo_comprobante",
+    "razon_social_emisor",
+    "cuit_emisor",
+    "fecha_emision",
+    "nro_comprobante",
+    "moneda",
+    "notas",
+    "analisis_condicion_iva",
+    "subtotal",
+    "iva",
+    "impuestos_internos",
+    "percepcion_iibb",
+    "otros_impuestos",
+    "monto_no_gravado",
+    "importe_total_facturado",
+    "condicion_impositiva_dominante",
+    "alicuotas_detectadas",
+    "analisis_evidencia_rubro",
+    "categoria_gasto",
+    "descripcion",
+    "centro_de_costo",
+    "analisis_rubro_aplica",
+    "cantidad_comensales_personas",
+    "cantidad_litros"
+  ],
+  "additionalProperties": false
+}

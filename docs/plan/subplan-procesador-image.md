@@ -1,0 +1,318 @@
+# Subplan — procesador-image
+
+## 1. Objective
+
+Implement `procesador-image` (module `docflow.image`, physical path `src/docflow/image/`) as a single-responsibility processor whose only job is to **analyze, normalize and technically prepare images** for downstream processors. It turns one `ImageRequest` into one `ImageResult` by validating the input, computing technical metrics without mutating the source, producing a `normalized` representation plus optional `ocr_ready` and `vlm_ready` variants, classifying the image technically, validating the outputs, and atomically publishing everything inside the `image/` artifact namespace together with a `metadata.json`. A representation is published as `.png` unless the request states a `quality` factor, in which case the representations that keep the page's tone are published as `.jpg` (decision D-1/D-2 of `docs/feedback/image-quality-and-exposure.md`); the binarized variant is always `.png`. The image engine (OpenCV or Pillow) is encapsulated in `image/primitives/`. This processor is built standalone in Phase 1: it imports no other processor and makes no workflow decisions.
+
+## 2. Context (BA)
+
+**Responsibility.** `procesador-image` receives an image that has already been handed to it (a direct image, a PDF-rendered page, a previously extracted embedded image, or an explicit crop) and returns its technical analysis plus prepared variants. Its scope begins at `ImageRequest` and ends at `ImageResult`.
+
+**Does NOT:**
+- process PDFs (no splitting, no rendering, no page extraction);
+- run OCR;
+- call any LLM/VLM;
+- select the document source (`NATIVE_TEXT` / `OCR_TEXT` / `IMAGE`);
+- decide whether OCR or VLM is needed;
+- decide which variant is used downstream;
+- coordinate the workflow, or manage `skip`/`force`/`reuse`/`resume` (that belongs to the orchestrator's `StageExecution`);
+- modify the input image in place — the input is immutable.
+
+**Principle line.** It answers **“Given this image and this technical configuration, how can I analyze it and prepare it for later processing?”** — **not** “What should I do next with this image?” and **not** “Should I run OCR or VLM?”. Crucially, it never assumes the OCR-optimal image equals the VLM-optimal image: OCR may benefit from grayscale, deskew, binarization and high contrast, while a VLM must preserve color, layout and visual context.
+
+## 3. Design (SA)
+
+### Contract types
+
+**Input — `ImageRequest`**
+
+| Field | Type | Notes |
+|---|---|---|
+| `image_path` | `Path` | Existing source image; treated as immutable |
+| `output_dir` | `Path` | Root for the `image/` namespace |
+| `options` | `ImageOptions` | Normalized options, e.g. `normalize`, `prepare_for_ocr`, `prepare_for_vlm`, `correct_orientation`, `deskew`, `quality` (an encoder quality factor, or `None` for a lossless container) |
+| `context` | `ImageContext` | `document_id`, `page_number`, `workflow_run_id` — for correlation/tracing only, never workflow state |
+
+**Output — `ImageResult`**
+
+| Field | Type | Notes |
+|---|---|---|
+| `source` | `ImageSourceRef` | Reference to the original input |
+| `normalized` | `ArtifactRef` | `image/normalized.png`, or `image/normalized.jpg` when a quality factor was stated |
+| `variants` | `ImageVariants` | Optional `ocr_ready`, `vlm_ready` refs |
+| `metrics` | `ImageMetrics` | Input + output metrics |
+| `classification` | `ImageClassification` | `TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY` |
+| `transformations` | `list[str]` | Every transformation actually applied |
+| `validation` | `ImageValidation` | `VALID` / `LOW_QUALITY` / `INVALID_OUTPUT` / `UNSUPPORTED` / `ERROR` |
+| `artifacts` | `list[ArtifactRef]` | All files produced |
+| `metadata` | `ImageMetadata` | Version, libraries, input/output metrics, timing, context |
+| `status` | `str` | `"success"` on the happy path; a typed `ImageError` otherwise |
+
+**Supporting types.** `ImageMetrics` (`dimensions`, `resolution`, `format`, `size`, `quality{blur, sharpness, contrast, brightness, noise}`, `orientation`, `skew`, `text_regions[]`, `text_coverage`); `ImageError` (`type`, `message`, `recoverable`, `metadata`) with error kinds `INVALID_INPUT`, `UNSUPPORTED_FORMAT`, `DECODE_ERROR`, `TRANSFORMATION_ERROR`, `WRITE_ERROR`, `IO_ERROR`, `INTERNAL_ERROR`.
+
+### Artifact namespace
+
+The processor writes **only** inside `image/` and never touches `source/`, `render/`, `native_text/`, `ocr/`, or `llm/`:
+
+```
+image/
+├── normalized.png     # .jpg when a quality factor was stated
+├── ocr_ready.png      # optional, and always .png: its pipeline binarizes
+├── vlm_ready.png      # optional, and .jpg when a quality factor was stated
+└── metadata.json
+```
+
+The container is not a choice repeated at each call site: `representation_suffix(kind, quality)`
+owns the rule, and the artifact's name is composed from its answer — a consumer derives the MIME
+type from the suffix the artifact actually has.
+
+Publication is atomic: write to `image/.tmp/`, validate, then rename into place — a partially written artifact is never visible as valid.
+
+### Internal flow
+
+```mermaid
+flowchart TD
+    R[ImageRequest] --> V[validate_image_input]
+    V --> L[load_image]
+    L --> A[analyze_image]
+    A --> M[ImageMetrics]
+    M --> N[normalize_image]
+    N --> C[classify_image]
+    C --> P[prepare_variants]
+    P --> VO[validate_image_result]
+    VO --> PR[persist: .tmp → validate → rename]
+    PR --> OUT[ImageResult]
+```
+
+### Primitives
+
+Low-level functions that encapsulate the image library; none knows the document workflow and none decides OCR/VLM:
+
+- **Load/store:** `load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions`
+- **Convert:** `convert_image_format`, `resize_image`, `compress_image`, `convert_to_grayscale`
+- **Enhance:** `normalize_contrast`, `normalize_brightness`, `denoise_image`, `sharpen_image`, `binarize_image`
+- **Quality:** `calculate_blur_score`, `calculate_sharpness_score`, `calculate_contrast_score`, `calculate_brightness_score`, `calculate_noise_score`
+- **Orientation:** `detect_orientation`, `detect_skew_angle`, `rotate_image`, `deskew_image`
+- **Visual analysis:** `detect_text_regions`, `calculate_text_coverage`. `crop_region` and the
+  `image/regions/` namespace are deferred to the MVP gate (`# TODO: [MVP]`): nothing in the
+  Phase 1 pipeline asks for a crop, so a crop primitive would have no caller.
+
+### Engine encapsulation
+
+The image engine is **OpenCV** (Pillow as the documented alternative), as the idea's
+§"Implementaciones reemplazables" fixes. All engine access lives inside
+`image/primitives/`; no other processor, and never the orchestrator, touches the engine
+directly. The processor's public contract (`ImageRequest → procesador-image →
+ImageResult`) is engine-agnostic: replacing OpenCV with Pillow changes only `primitives/`,
+never the contract or the workflow. No engine is silently substituted.
+
+### Engine double (the test double)
+
+The only test double for OpenCV is an **in-memory fake injected at the `image/primitives/`
+functions** (`README.md` §9.7). We do not test OpenCV: no test invokes, imports or asserts
+it, and no test claims a value is the "right" blur, sharpness or contrast — those are the
+engine's readings, and the engine is not the deliverable.
+
+| | |
+|---|---|
+| **What the fake returns** | the engine's **native** output — decoded pixels (a small synthetic array) and raw score values (`blur`, `sharpness`, `contrast`, …). Never our `ImageResult`, and never the output of `analyze_image` / `normalize_image`: faking the translated result would delete the primitives' coverage, which is half the reason the double exists. |
+| **Location** | `tests/fakes/engines/fake_opencv.py` — in memory, no fixtures on disk. |
+| **Injection point** | the **`image/primitives/` functions** (`load_image`, the transformations) — the engine call itself, and nowhere higher. |
+| **How it is injected** | the fixture replaces the module attribute the seam resolves at call time — `monkeypatch.setattr("docflow.image.primitives.cv2", fake_opencv)`, where the fake is a **plain namespace** exposing only the attributes the seam uses (`imread`, `imwrite`, `cvtColor`, …), so the test never imports `cv2`. Importing `docflow.image.primitives` must succeed with OpenCV absent. |
+| **Failure modes** | the fake can raise `DECODE_ERROR` for an unreadable input, so the failure path of §6 is reachable with no engine installed. |
+
+**Our rules are tested against crafted metrics, not against the engine.** `IMG-09`'s
+`LOW_QUALITY` threshold is a unit test over an `ImageMetrics` object we construct: it is a
+rule of ours, and the test asserts the rule, not a reading.
+
+### Determinism class
+
+**Deterministic** — a pure function of (input bytes + normalized options + processor version + library versions): the same image, configuration and versions yield the same logical transformations. The processor normalizes options, applies only transformations justified by metrics + explicit configuration, records every transformation, keeps stable file names/formats, and stamps processor and library versions into `metadata.json`. It favors reproducibility but does not own global idempotency (that is the orchestrator's `processing_key`).
+
+### Error-handling posture
+
+Errors are classified technically into a typed `ImageError` with a `recoverable` flag and returned in the result — the processor never throws across the contract where a typed result is expected, and it never substitutes a silent stand-in (empty path, `0`, `[]`, default engine). Validation reports `VALID` / `LOW_QUALITY` / `INVALID_OUTPUT` / `UNSUPPORTED` / `ERROR` as *descriptive* states only; it never converts them into workflow actions. Atomic persistence guarantees a failed run leaves no partially valid artifact.
+
+## 4. Execution plan (PM)
+
+### WBS
+
+| ID | Task | Effort | Depends on |
+|---|---|---|---|
+| IMG-01 | Define contract dataclasses: `ImageRequest`, `ImageResult`, `ImageMetrics`, `ImageOptions`, `ImageClassification`, `ImageValidation`, `ImageError` (no defaults on required fields) | S | — |
+| IMG-02 | Implement the image-ops primitives skeleton in `image/primitives/` (OpenCV, Pillow fallback) | M | IMG-01 |
+| IMG-03 | Implement load/store primitives (`load_image`, `save_image`, `get_image_metadata`, `get_image_dimensions`) | S | IMG-02 |
+| IMG-04 | Implement analysis primitives (blur, sharpness, contrast, brightness, noise, orientation, skew, text regions/coverage) | M | IMG-03 |
+| IMG-05 | Implement transformation primitives (rotate, deskew, resize, grayscale, binarize, denoise, sharpen, contrast/brightness, format conversion/compression) | M | IMG-03 |
+| IMG-06 | Implement `analyze_image` → `ImageMetrics` (side-effect-free) | S | IMG-04 |
+| IMG-07 | Implement `normalize_image` + `prepare_normalized_image` (the exposure correction never darkens a page above the band) | M | IMG-05, IMG-06 |
+| IMG-08 | Implement `prepare_image_for_ocr` and `prepare_image_for_vlm` (distinct pipelines; the quality factor reaches the tone-preserving one only) | M | IMG-05, IMG-06 |
+| IMG-09 | Implement `classify_image` (`TEXT_IMAGE` / `VISUAL_IMAGE` / `MIXED_IMAGE` / `LOW_QUALITY`) | S | IMG-06 |
+| IMG-10 | Implement `validate_image_result` + typed `ImageError` classification | S | IMG-06 |
+| IMG-11 | Implement atomic persistence (`.tmp` → validate → rename) and `metadata.json` generation, including the stated quality factor in the recorded options | M | IMG-07, IMG-08, IMG-10 |
+| IMG-12 | Implement `process_image` entry point wiring the full flow | M | IMG-09, IMG-11 |
+| IMG-13 | Write happy-path + invariant tests; record mutation-falsification evidence | M | IMG-12, IMG-15 |
+| IMG-14 | Run the four QA gates clean | S | IMG-13 |
+| IMG-15 | In-memory OpenCV double (primitives injection) | S | IMG-02 |
+
+### Order / waves
+
+- **Wave 1 — Contracts & seam:** IMG-01 → IMG-02 → IMG-03.
+- **Wave 2 — Analysis:** IMG-04 ∥ IMG-05 (parallel after IMG-03) → IMG-06 — plus IMG-15 (the OpenCV double, which lets the whole processor be tested with no engine installed).
+- **Wave 3 — Outputs:** IMG-07, IMG-09, IMG-10 (after IMG-06) and IMG-08 (after IMG-05 and IMG-06); all four may proceed in parallel once their predecessors are green.
+- **Wave 4 — Publish:** IMG-11 → IMG-12.
+- **Wave 5 — Verify:** IMG-13 → IMG-14.
+
+## 5. Acceptance criteria
+
+```gherkin
+Scenario: Normalize a valid color input
+  Given a valid PNG at "render/page.png" and an ImageRequest with normalize=true
+  When process_image runs
+  Then "image/normalized.png" exists, "image/metadata.json" is valid,
+    status is "success", and transformations list every applied operation
+
+Scenario: A stated quality factor publishes the container it names
+  Given an ImageRequest with normalize=true, prepare_for_vlm=true and quality=85
+  When process_image runs
+  Then "image/normalized.jpg" and "image/vlm_ready.jpg" exist, "image/ocr_ready.png"
+    does not (or is .png when requested), and metadata.json records quality=85
+  And a quality outside the accepted band is refused with a typed error and no artifact
+
+Scenario: A page above the brightness band is reported and not darkened
+  Given a valid input whose measured brightness is above the band
+  When process_image runs
+  Then "image/normalized.png" carries the input's own contrast,
+    the transformations list does not include a brightness correction,
+    and the reading is still reported by validation
+
+Scenario: Prepare independent OCR and VLM variants
+  Given a document image and an ImageRequest with
+    prepare_for_ocr=true and prepare_for_vlm=true
+  When process_image runs
+  Then "image/ocr_ready.png" and "image/vlm_ready.png" are two distinct files
+    And each was written by its own pipeline (the VLM path never aliases the OCR path)
+    And the transformations each pipeline applied are recorded in metadata.json
+
+Scenario: Reject an invalid input with a typed error
+  Given a corrupt or unsupported file at "image_path"
+  When process_image runs
+  Then the result carries an ImageError with type DECODE_ERROR or UNSUPPORTED_FORMAT
+    and recoverable=false, and no partial artifact is published under "image/"
+
+Scenario: Leave the source untouched
+  Given any valid input whose bytes are hashed before processing
+  When process_image runs
+  Then the input file hash is unchanged and all outputs live under "image/"
+
+Scenario: No test reaches OpenCV
+  Given the in-memory OpenCV double
+  When the whole suite runs
+  Then every test of this processor passes with zero OpenCV invocations
+  And no test imports or asserts the engine
+```
+
+## 6. Test plan
+
+### One tier, no engine
+
+Every test of this module — the happy path, the three invariants, the classification vectors
+and the atomic-publication failure path — runs on the in-memory OpenCV double (placement and
+injection point in §3) and never reaches OpenCV. The suite must pass with no engine
+installed; there is no real tier, no marker and no skip rule (`README.md` §7, §9.7).
+
+**Happy-path test.** One test proves `ImageRequest → ImageResult` end-to-end using **real bytes from a small committed fixture**, with the engine call doubled: `normalized.png` exists, `metadata.json` is parseable and contains processor/library versions and the recorded transformations, `status == "success"`, and `classification` is one of the four defined values. It asserts **our** contract, never a claim about the engine's readings (`README.md` §9.7).
+
+**Invariant tests (each with the mutation that must break it):**
+
+1. **Input immutability** — the source file hash is identical before and after processing. *Mutation that breaks it:* make `save_image` write to `image_path` itself (overwrite in place); the test then observes a changed input hash/mtime.
+2. **OCR variant ≠ VLM variant** — `ocr_ready` and `vlm_ready` are independent files, each written by its own pipeline, and the transformations each one applied are recorded. *Mutation that breaks it:* make `prepare_image_for_vlm` alias/return the `ocr_ready` path; the test then observes identical paths or a transformation list that belongs to the other pipeline. The assertion is about **our** wiring, never about what the engine does to the pixels (`README.md` §9.7).
+3. **Namespace ownership** — every produced artifact (including `metadata.json`) resolves under the `image/` namespace and nothing is written to `source/`, `render/`, `native_text/`, `ocr/` or `llm/`. *Mutation that breaks it:* redirect `metadata.json` to the parent page directory; the test then finds a file outside `image/`.
+
+**Fixtures needed** (committed under `fixtures/image/`, named for the failure they provoke): `color_layout.png` (VLM variant keeps color), `skewed_text.png` (deskew/OCR pipeline), `embedded_logo.png` (embedded-image input), `corrupt.png` (decode error path).
+
+### Failure fixture, one bucket
+
+| Fixture | Bucket | Test mechanism |
+|---|---|---|
+| `corrupt.png` | **Injected** — no input reproduces the decode failure deterministically in a way we would assert | the double raises `DECODE_ERROR` for this input; never a live engine call and never an assertion about how the engine reports it |
+
+## 7. Definition of Ready / Definition of Done
+
+**Definition of Ready**
+- `ImageRequest` / `ImageResult` / `ImageMetrics` / `ImageError` fields are ratified against `docs/idea/procesador-image.md` and `docs/idea/readme.md`.
+- The image-ops primitives skeleton and the OpenCV-vs-Pillow choice are recorded (decision below).
+- The artifact namespace `image/` and atomic-publication rule are agreed.
+- Fixtures for the happy path and the three invariants exist.
+- The OpenCV double of §3 (`tests/fakes/engines/fake_opencv.py`, native pixels plus raw score values, injected at the `image/primitives/` functions) is agreed; `IMG-15` is a row in §4.
+
+**Definition of Done**
+- `process_image` maps `ImageRequest → ImageResult` with no import of any other processor module and no workflow decision inside the processor.
+- The **no-engine rule** holds: the whole suite passes with OpenCV absent, no test invokes, imports or asserts the engine, and the double is never reachable as a fallback (nothing under `src/docflow/` imports `tests/`).
+- Input image is immutable; outputs are published atomically under `image/` only.
+- OCR and VLM variants are produced independently (never assumed equal).
+- Each representation's container is the one the stated quality factor names, and the binarized variant is never lossy.
+- All shortcuts carry explicit `# TODO: [MVP]` or `# TODO: [RELEASE]` tags.
+- Each invariant test is proven to fail under its documented mutation, then restored green.
+- The four QA gates all pass:
+  - `pytest`
+  - `ruff check .`
+  - `ruff format --check .`
+  - `pylint src tests`
+
+## 8. Risks & mitigations
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| OpenCV/Pillow version drift changes metric values (blur, sharpness, noise) | Silent output differences downstream | Pin versions; stamp processor + library versions in `metadata.json`; deterministic thresholds |
+| Over-eager enhancement degrades information (e.g. binarization destroying color) | Wrong OCR/VLM inputs | Apply transformations only when justified by metrics + explicit options; record every transformation |
+| Assuming OCR image == VLM image | VLM loses color/layout context | Enforce independent `prepare_image_for_ocr` / `prepare_image_for_vlm` pipelines; invariant test guards it |
+| Partially written artifact seen as valid by the orchestrator | Reused corrupt outputs | Atomic publish (`.tmp` → validate → rename) |
+| A lossy container on a representation a consumer reads fine detail from | Degraded OCR or VLM input | The binarized variant is always lossless; the factor is the caller's explicit statement, refused when out of band, and recorded in `metadata.json` |
+| Scope creep into a full image-processing library | Over-engineering in PoC | Happy path only; tag shortcuts; primitives keep OpenCV/Pillow swappable |
+| No labelled golden set to judge "legibility" | Cannot prove quality objectively | Use technical thresholds + mutation-falsified invariants; defer golden set per general plan |
+
+## 9. Out of scope & resolved decisions
+
+**Out of scope (this subplan / Phase 1)**
+- PDF splitting, rendering and page extraction (owned by `procesador-pdf`).
+- OCR execution and LLM/VLM inference.
+- Source selection, skip/force/reuse/resume, and `processing_key` computation (owned by the orchestrator).
+- Explicit crops: `crop_region` and the `image/regions/` namespace (`# TODO: [MVP]`) — Phase 1
+  produces whole-image artifacts only, and no downstream consumer requests a region.
+- Multi-document corpus batching and distributed execution.
+- Labelled golden-set quality scoring (deferred per the general plan).
+
+**Resolved decisions**
+1. **Image-ops engine — RESOLVED: OpenCV** (Pillow as fallback), per the idea's
+   §"Implementaciones reemplazables"; encapsulated in `image/primitives/`.
+2. **Primary engine — RESOLVED:** OpenCV first, Pillow as the drop-in alternative behind
+   the same contract.
+3. **Module vs. sub-package — RESOLVED:** sub-package `image/` with
+   `primitives/` / `utils/` / `helpers/`, per the idea's §"Estructura del proyecto";
+   `utils/` and `helpers/` are reserved and stay empty in Phase 1, since a symbol belongs
+   there only when it has more than one caller.
+4. **Metric thresholds — RESOLVED for PoC.** Concrete numeric thresholds for
+   `LOW_QUALITY` classification and OCR binarization are explicit constants marked
+   `# TODO: [MVP]`; their exact values are fixed when IMG-06/IMG-08 start.
+5. **Naming mapping — RESOLVED:** code uses `docflow.image` (path `src/docflow/image/`) with the entry points the
+   idea names (`process_image`, `process_image_from_page`); the Spanish `procesador-image`
+   remains only as the idea document's title.
+6. **Whole-image only — RESOLVED for PoC:** no crop primitive and no `regions/` namespace in
+   Phase 1 (`# TODO: [MVP]`). `docs/idea/procesador-image.md` lists `crop_region`; dropping it
+   is a deliberate divergence, recorded for `GEN-17`.
+7. **A quality factor — RESOLVED 2026-09-30:** `ImageOptions.quality` is a required field with
+   no default. `None` publishes the lossless `.png`; `1..100` publishes the tone-preserving
+   representations as `.jpg`; `ocr_ready` is always lossless. The container is decided by
+   `representation_suffix(kind, quality)`, a factor out of band is refused rather than clamped,
+   and the factor is recorded in `metadata.json` and in the `processing_key`. It buys payload
+   bytes, **not** context tokens: `VLM_MAX_DIMENSION` is the token lever. Full record:
+   `docs/feedback/image-quality-and-exposure.md`.
+8. **Exposure correction — RESOLVED 2026-09-30:** the correction is **one-sided**. A page below
+   `BRIGHTNESS_MIN` is lifted to `BRIGHTNESS_TARGET`; a page above `BRIGHTNESS_MAX` is left
+   alone and merely reported by validation. The reading is the page's *mean*, and on a document
+   the mean is mostly ink coverage, so a sparse white page reads as washed out while its paper
+   is exactly what a reader wants. The primitive the correction is built on
+   (`normalize_brightness`) saturates at both ends and preserves the tone order — it does not
+   fold a negative shift, which `convertScaleAbs` did. Three of the six committed corpus pages
+   sat above the ceiling before this decision.

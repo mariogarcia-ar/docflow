@@ -1,0 +1,199 @@
+{
+  "assets": [
+    {
+      "key": "template/extraction/invoice.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_desglose.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_desglose.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/general.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/general.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_vision.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_vision.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_deteccion.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_deteccion.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_desglose.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_desglose.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_rubro.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_rubro.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_clasificacion.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_clasificacion.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_deteccion.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_deteccion.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_desglose.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_desglose.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_clasificacion.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_clasificacion.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_rubro.md",
+      "format": "text"
+    },
+    {
+      "key": "template/extraction/invoice_vision_rubro.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_vision_desglose.md",
+      "format": "text"
+    },
+    {
+      "key": "template/review/invoice_vision_desglose.reasoning.md",
+      "format": "text"
+    },
+    {
+      "key": "schema/extraction/invoice.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/review/invoice.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/review/invoice_desglose.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/review/general.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_detection.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_desglose.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_rubro.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_clasificacion.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/review/invoice_vision.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision_detection.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision_desglose.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision_clasificacion.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/extraction/invoice_vision_rubro.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    },
+    {
+      "key": "schema/review/invoice_vision_desglose.schema.json",
+      "format": "json",
+      "required_keys": ["type", "properties", "required"]
+    }
+  ]
+}

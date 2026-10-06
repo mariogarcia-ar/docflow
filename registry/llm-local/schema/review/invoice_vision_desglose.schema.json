@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "field_verdicts": {
+      "type": "array",
+      "minItems": 10,
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "analisis_condicion_iva",
+              "subtotal",
+              "iva",
+              "impuestos_internos",
+              "percepcion_iibb",
+              "otros_impuestos",
+              "monto_no_gravado",
+              "importe_total_facturado",
+              "condicion_impositiva_dominante",
+              "alicuotas_detectadas"
+            ]
+          },
+          "reason": {"type": "string"},
+          "verdict": {
+            "type": "string",
+            "enum": ["agree", "disagree", "uncertain", "ignored"]
+          },
+          "suggested_value": {"type": ["string", "null"]}
+        },
+        "required": ["field", "reason", "verdict", "suggested_value"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["field_verdicts"],
+  "additionalProperties": false
+}

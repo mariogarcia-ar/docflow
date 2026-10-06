@@ -1,0 +1,760 @@
+"""Tests for the OpenCV seam and the primitives that reach it (``IMG-02`` … ``IMG-08``).
+
+Every assertion here is about **our** translation: the facts we collect, the failures we type,
+the pipelines we compose and the artifacts we name. Nothing asserts what OpenCV computes — the
+double answers with arrays of its own (`README.md` §9.7), and where a reading is asserted it is
+over a synthetic array whose arithmetic a reader can check by hand.
+
+The double is installed for every test by the package's autouse fixture, so no case here can
+reach the library on the machine.
+"""
+
+from __future__ import annotations
+
+import struct
+from collections.abc import Callable, Sequence
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
+from docflow.image import (
+    ArtifactRef,
+    ImageDimensions,
+    ImageMetrics,
+    ImageOptions,
+    ImageQualityMetrics,
+    TextRegion,
+)
+from docflow.image.primitives import (
+    CONTRAST_MIN,
+    ImagePrimitiveError,
+    analyze_image,
+    binarize_image,
+    calculate_blur_score,
+    calculate_brightness_score,
+    calculate_contrast_score,
+    calculate_noise_score,
+    calculate_sharpness_score,
+    calculate_text_coverage,
+    classify_image,
+    compress_image,
+    convert_image_format,
+    convert_to_grayscale,
+    denoise_image,
+    deskew_image,
+    detect_orientation,
+    detect_skew_angle,
+    detect_text_regions,
+    flatten_illumination,
+    get_image_channels,
+    get_image_dimensions,
+    get_image_metadata,
+    image_engine_version,
+    load_image,
+    normalize_brightness,
+    normalize_contrast,
+    prepare_image_for_ocr,
+    prepare_image_for_vlm,
+    prepare_normalized_image,
+    resize_image,
+    rotate_image,
+    save_image,
+    sharpen_image,
+    upscale_image,
+)
+from docflow.image.primitives.composition import (
+    OCR_BLUR_LOW,
+    OCR_NOISE_HIGH,
+    choose_ocr_profile,
+)
+from tests.factories import build_image_options
+from tests.fakes.engines.fake_opencv import (
+    FAKE_ENGINE_VERSION,
+    FakeCVError,
+    FakeImage,
+    FakeOpenCV,
+)
+from tests.image.samples import COLOR_LAYOUT, CORRUPT, EMBEDDED_LOGO, build_options
+
+PAPER = 240.0
+INK = 30.0
+
+
+def uniform(width: int, height: int, level: float) -> FakeImage:
+    """Return a single-channel image of one grey level."""
+    return FakeImage([level] * (width * height), width, height, 1)
+
+
+def bars(
+    width: int,
+    height: int,
+    boxes: Sequence[tuple[int, int, int, int]],
+    *,
+    slope: float = 0.0,
+) -> FakeImage:
+    """Return a single-channel image with dark bars drawn on a light ground.
+
+    Args:
+        width: Image width in pixels.
+        height: Image height in pixels.
+        boxes: One ``(left, top, width, height)`` box per bar.
+        slope: Pixels the bar descends per column, which is what gives it a skew.
+    """
+    values = [PAPER] * (width * height)
+    for left, top, bar_width, bar_height in boxes:
+        for x in range(left, left + bar_width):
+            for y in range(top, top + bar_height):
+                shifted = round(y + (x - left) * slope)
+                if 0 <= x < width and 0 <= shifted < height:
+                    values[shifted * width + x] = INK
+    return FakeImage(values, width, height, 1)
+
+
+def png_geometry(path: Path) -> tuple[int, int]:
+    """Return the width and height a PNG's own header declares."""
+    data = path.read_bytes()
+    width, height = struct.unpack(">II", data[16:24])
+    return width, height
+
+
+def test_the_engine_is_named_and_its_version_comes_from_the_engine() -> None:
+    """The seam reads the version rather than defaulting one."""
+    assert image_engine_version() == FAKE_ENGINE_VERSION
+
+
+def test_an_absent_engine_is_reported_and_not_substituted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing library is an ``IO_ERROR``: the Pillow alternative is a swap, not a fallback.
+
+    The seam is pointed at a module that does not exist, which is what "the library is not
+    installed" looks like from inside it — and the double is removed, so the answer cannot come
+    from a patch either.
+    """
+    monkeypatch.setattr("docflow.image.primitives.cv2", None)
+    monkeypatch.setattr(
+        "docflow.image.primitives.ENGINE_MODULE", "docflow_absent_engine"
+    )
+
+    with pytest.raises(ImagePrimitiveError) as failure:
+        image_engine_version()
+
+    assert failure.value.error.type == "IO_ERROR"
+    assert failure.value.error.recoverable is False
+    assert failure.value.error.metadata["module"] == "docflow_absent_engine"
+
+
+def test_a_file_the_engine_cannot_decode_is_a_decode_error() -> None:
+    """``imread`` answers ``None`` instead of raising; that is refused, never passed on."""
+    with pytest.raises(ImagePrimitiveError) as failure:
+        load_image(CORRUPT)
+
+    assert failure.value.error.type == "DECODE_ERROR"
+    assert failure.value.error.recoverable is False
+
+
+def test_the_facts_come_from_the_file_and_the_decoded_array() -> None:
+    """Width and height are the ones the file declares; the size is the file's own."""
+    pixels = load_image(COLOR_LAYOUT)
+
+    facts = get_image_metadata(COLOR_LAYOUT, pixels)
+
+    assert (facts.width, facts.height) == png_geometry(COLOR_LAYOUT)
+    assert facts.channels == 3
+    assert facts.format == "png"
+    assert facts.size == COLOR_LAYOUT.stat().st_size
+    assert facts.resolution is None
+
+
+def test_the_dimensions_follow_the_engine_convention_and_not_ours() -> None:
+    """``shape`` is ``(height, width)``; the seam is the one place that is translated."""
+    colour = FakeImage([0.0] * (40 * 30 * 3), 40, 30, 3)
+    grey = FakeImage([0.0] * (40 * 30), 40, 30, 1)
+
+    assert get_image_dimensions(colour) == (40, 30)
+    assert get_image_channels(colour) == 3
+    assert get_image_dimensions(grey) == (40, 30)
+    assert get_image_channels(grey) == 1
+
+
+def test_a_write_the_engine_refuses_is_a_write_error(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """``imencode`` answers ``False`` instead of raising; that is refused too."""
+    opencv(write_failures={".png"})
+
+    with pytest.raises(ImagePrimitiveError) as failure:
+        save_image(uniform(8, 8, PAPER), tmp_path / "image" / "normalized.png")
+
+    assert failure.value.error.type == "WRITE_ERROR"
+    assert not (tmp_path / "image" / "normalized.png").exists()
+    assert not list(tmp_path.rglob("*.tmp"))
+
+
+def test_a_stated_quality_is_the_encoder_parameter_and_the_container(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """The factor the caller named reaches the encoder, and the caller's container is kept.
+
+    What is asserted is the format the seam named and the parameter it handed over — never
+    what the engine encodes, which is its own business and the double's synthetic bytes
+    (`README.md` §9.7). The bytes of a real JPEG are observed by hand on the lab bench.
+    """
+    fake = opencv()
+    pixels = load_image(EMBEDDED_LOGO)
+    metrics = analyze_image(pixels, get_image_metadata(EMBEDDED_LOGO, pixels))
+    destination = tmp_path / "vlm_ready.jpg"
+
+    published = prepare_image_for_vlm(
+        pixels, metrics, build_options(quality=85), destination
+    )
+
+    assert published.artifact.path == destination
+    assert published.artifact.format == "jpg"
+    assert published.artifact.size > 0
+    assert fake.writes == [(".jpg", [FakeOpenCV.IMWRITE_JPEG_QUALITY, 85])]
+
+
+def test_a_quality_outside_the_band_is_refused_and_never_reaches_the_encoder(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """An out-of-band factor is refused, not clamped into the encoder's own range."""
+    fake = opencv()
+    pixels = load_image(COLOR_LAYOUT)
+    metrics = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+
+    with pytest.raises(ImagePrimitiveError) as failure:
+        prepare_normalized_image(
+            pixels, metrics, build_options(quality=101), tmp_path / "normalized.jpg"
+        )
+
+    assert failure.value.error.type == "TRANSFORMATION_ERROR"
+    assert failure.value.error.metadata == {
+        "quality": 101,
+        "minimum": 1,
+        "maximum": 100,
+    }
+    assert fake.writes == []
+    assert not list(tmp_path.rglob("*"))
+
+
+def test_the_brightness_shift_keeps_the_tone_order_and_saturates(
+    opencv: Callable[..., FakeOpenCV],
+) -> None:
+    """A shift must preserve the tone order: the darkest ink never comes back lighter.
+
+    Mutation that must break this: shift with ``convertScaleAbs``, which answers
+    ``|value + delta|`` — every value below ``|delta|`` is mirrored around zero, so a dark page
+    comes out inverted (on the corpus: contrast 45.81 -> 17.04 and the ink lighter than the
+    paper).
+    """
+    opencv()
+    ramp = FakeImage([float(value) for value in range(0, 256, 17)], 16, 1, 1)
+
+    darkened = normalize_brightness(ramp, -100.0)
+
+    assert darkened.values == sorted(darkened.values)
+    assert darkened.values[0] == 0.0
+    assert normalize_brightness(uniform(4, 4, INK), -200.0).values == [0.0] * 16
+    assert normalize_brightness(uniform(4, 4, PAPER), 120.0).values == [255.0] * 16
+
+
+def test_a_white_page_is_left_alone_and_a_dark_one_is_lifted(tmp_path: Path) -> None:
+    """The pipeline applies the correction the policy asks for, and only then."""
+    pixels = load_image(COLOR_LAYOUT)
+    healthy = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+    options = ImageOptions(
+        normalize=True,
+        prepare_for_ocr=False,
+        prepare_for_vlm=False,
+        correct_orientation=False,
+        deskew=False,
+        quality=None,
+    )
+
+    def with_brightness(value: float) -> ImageMetrics:
+        """Return the measured record with its brightness reading replaced."""
+        return replace(healthy, quality=replace(healthy.quality, brightness=value))
+
+    white = prepare_normalized_image(
+        pixels, with_brightness(244.0), options, tmp_path / "white.png"
+    )
+    dark = prepare_normalized_image(
+        pixels, with_brightness(10.0), options, tmp_path / "dark.png"
+    )
+
+    assert not white.transformations
+    assert dark.transformations == ["normalize_brightness"]
+
+
+def test_the_engine_exception_maps_to_a_transformation_error(
+    opencv: Callable[..., FakeOpenCV],
+) -> None:
+    """``cv2.error`` is the one signal that carries a message, and it is kept."""
+    opencv(raises={"cvtColor": FakeCVError("bad depth")})
+
+    with pytest.raises(ImagePrimitiveError) as failure:
+        convert_to_grayscale(FakeImage([1.0] * (4 * 4 * 3), 4, 4, 3))
+
+    assert failure.value.error.type == "TRANSFORMATION_ERROR"
+    assert failure.value.error.metadata["engine_error"] == "bad depth"
+
+
+def test_a_target_size_that_is_not_a_size_is_refused() -> None:
+    """A zero-sized resize target is a caller error, not something to guess at."""
+    with pytest.raises(ImagePrimitiveError) as failure:
+        resize_image(uniform(8, 8, PAPER), 0, 8)
+
+    assert failure.value.error.type == "INVALID_INPUT"
+    assert failure.value.error.recoverable is False
+
+
+@pytest.mark.parametrize(
+    ("reader", "expected"),
+    [
+        (calculate_blur_score, 0.0),
+        (calculate_sharpness_score, 0.0),
+        (calculate_contrast_score, 0.0),
+        (calculate_noise_score, 0.0),
+        (calculate_brightness_score, 100.0),
+    ],
+)
+def test_the_readings_are_arithmetic_over_the_decoded_array(
+    reader: Callable[[FakeImage], float], expected: float
+) -> None:
+    """A flat image has no detail, no variation and no noise — arithmetic, not an opinion."""
+    assert reader(uniform(12, 12, 100.0)) == pytest.approx(expected)
+
+
+def test_a_detected_region_reports_the_ink_share_inside_its_own_box() -> None:
+    """The per-region reading is ours: inked pixels over the box's own area.
+
+    Two thin rules one line apart close into one region whose box also holds the paper between
+    them, so a reading that assumed a filled box would report a constant one, not a fraction.
+    """
+    canvas = bars(80, 40, [(20, 10, 40, 1), (20, 12, 40, 1)])
+
+    regions = detect_text_regions(canvas)
+
+    assert len(regions) == 1
+    assert regions[0].region_id == "region_001"
+    assert regions[0].text_coverage == pytest.approx(2 / 3, abs=0.1)
+
+
+def test_regions_come_back_in_reading_order() -> None:
+    """Top to bottom, then left to right: the order is ours, not the engine's."""
+    canvas = bars(120, 60, [(70, 30, 30, 8), (20, 5, 30, 8), (20, 30, 30, 8)])
+
+    regions = detect_text_regions(canvas)
+
+    assert [region.bbox[1] for region in regions] == sorted(
+        region.bbox[1] for region in regions
+    )
+    assert [region.region_id for region in regions] == [
+        f"region_{index:03d}" for index in range(1, len(regions) + 1)
+    ]
+    assert regions[1].bbox[0] < regions[2].bbox[0]
+
+
+def test_the_coverage_is_the_share_of_the_image_the_regions_occupy() -> None:
+    """The overall reading adds the detected boxes up, and clamps to the page."""
+    regions = detect_text_regions(bars(100, 50, [(10, 10, 40, 10)]))
+
+    coverage = calculate_text_coverage(regions, 100, 50)
+
+    assert 0.0 < coverage < 1.0
+    assert calculate_text_coverage([], 100, 50) == 0.0
+
+
+def test_an_image_with_no_ink_reports_no_orientation_and_no_skew() -> None:
+    """Absence is reported as absence: ``0`` would read as a measurement."""
+    blank = uniform(60, 40, PAPER)
+
+    assert detect_orientation(blank, 60, 40) is None
+    assert detect_skew_angle(blank) is None
+
+
+def test_content_that_contradicts_the_page_frame_needs_turning() -> None:
+    """The rotation is ours: content whose box contradicts the page's aspect was scanned sideways.
+
+    A portrait page whose ink is wide has been turned; a portrait page whose ink runs down the
+    page has not.
+    """
+    sideways = bars(40, 60, [(0, 20, 40, 8)])
+    upright = bars(40, 60, [(5, 5, 30, 40)])
+
+    assert detect_orientation(sideways, 40, 60) == 90
+    assert detect_orientation(upright, 40, 60) == 0
+
+
+def test_a_measured_skew_is_folded_into_a_signed_angle() -> None:
+    """The engine's ``0..90`` box angle becomes ``-45..45``; the convention is stated here."""
+    skewed = bars(160, 60, [(20, 10, 120, 4)], slope=0.2)
+
+    skew = detect_skew_angle(skewed)
+
+    assert skew is not None
+    assert 0.0 < skew <= 45.0
+
+
+def test_deskewing_turns_the_ink_without_resizing_the_frame() -> None:
+    """A correction is a real transformation, and the page's geometry is preserved."""
+    skewed = bars(160, 60, [(20, 10, 120, 4)], slope=0.2)
+    skew = detect_skew_angle(skewed)
+
+    corrected = deskew_image(skewed, skew or 0.0)
+
+    assert corrected.shape == skewed.shape
+    assert corrected.values != skewed.values
+
+
+def test_rotating_keeps_the_source_size_and_fills_with_paper() -> None:
+    """The engine's black border default is not ours: a page is white."""
+    corrected = rotate_image(uniform(20, 10, INK), 90.0)
+
+    assert corrected.shape == (10, 20)
+    assert max(corrected.values) == pytest.approx(255.0)
+
+
+def test_the_two_channel_layouts_convert_both_ways() -> None:
+    """Grey to colour and colour to grey, with no conversion reported when it already fits."""
+    colour = FakeImage([10.0, 20.0, 30.0] * (4 * 4), 4, 4, 3)
+    grey = convert_to_grayscale(colour)
+
+    assert grey.shape == (4, 4)
+    assert get_image_channels(convert_image_format(grey, "BGR")) == 3
+    assert convert_image_format(grey, "GRAY") is grey
+    assert convert_image_format(colour, "BGR") is colour
+
+
+def test_compression_names_the_quality_factor_it_asked_for(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """The quality is a caller's decision, handed to the encoder rather than defaulted."""
+    fake = opencv()
+    destination = tmp_path / "image" / "variant.jpg"
+
+    published = compress_image(uniform(8, 8, PAPER), destination, quality=71)
+
+    assert published.is_file()
+    assert fake.writes == [(".jpg", [FakeOpenCV.IMWRITE_JPEG_QUALITY, 71])]
+
+
+def test_every_transformation_still_produces_an_image() -> None:
+    """The enhance primitives are ours to call; each returns a usable image."""
+    grey = bars(60, 40, [(10, 10, 40, 6)])
+
+    for transformed in (
+        normalize_contrast(grey),
+        denoise_image(grey),
+        sharpen_image(grey),
+        flatten_illumination(grey),
+        convert_to_grayscale(grey),
+        binarize_image(grey, block_size=35, c=15.0),
+    ):
+        assert transformed.shape == grey.shape
+
+
+def test_the_upscale_scales_the_frame_by_the_factor_it_is_given() -> None:
+    """Growing is its own primitive: ``resize_image`` interpolates for shrinking, not for this."""
+    scaled = upscale_image(uniform(20, 10, PAPER), 2.5)
+
+    assert get_image_dimensions(scaled) == (50, 25)
+
+
+def test_a_factor_that_is_not_an_upscale_is_refused() -> None:
+    """A factor of one resamples the page for nothing; the caller states that by not calling."""
+    with pytest.raises(ImagePrimitiveError) as failure:
+        upscale_image(uniform(8, 8, PAPER), 1.0)
+
+    assert failure.value.error.type == "INVALID_INPUT"
+    assert failure.value.error.recoverable is False
+
+
+def test_a_binarization_block_that_is_not_an_odd_window_is_refused() -> None:
+    """The engine's own answer to an even block is its exception; a caller's error is not."""
+    grey = bars(60, 40, [(10, 10, 40, 6)])
+
+    with pytest.raises(ImagePrimitiveError) as failure:
+        binarize_image(grey, block_size=40, c=15.0)
+
+    assert failure.value.error.type == "INVALID_INPUT"
+    assert set(binarize_image(grey, block_size=41, c=8.0).values) <= {0.0, 255.0}
+
+
+def test_flattening_divides_the_page_by_its_own_background() -> None:
+    """The estimate is local: a dim side and a bright side both come back as paper.
+
+    Mutation that must break this: divide by the page's *mean* instead of by the local
+    background — the dim half then stays dim, which is the defect the flattening exists for.
+    """
+    assert flatten_illumination(uniform(8, 8, 120.0)).values == [255.0] * 64
+
+    rows = 8
+    shaded = FakeImage(
+        [level for _ in range(rows) for level in [120.0] * 30 + [240.0] * 30],
+        60,
+        rows,
+        1,
+    )
+
+    flattened = flatten_illumination(shaded)
+
+    assert flattened.values[5] == pytest.approx(255.0)
+    assert flattened.values[55] == pytest.approx(255.0)
+
+
+def metrics_with(metrics: ImageMetrics, **readings: float) -> ImageMetrics:
+    """Return the measured record with the named quality readings replaced."""
+    return replace(metrics, quality=replace(metrics.quality, **readings))
+
+
+@pytest.mark.parametrize(
+    ("readings", "expected_transformations", "expected_grid"),
+    [
+        (
+            {"brightness": 195.0, "contrast": 25.0},
+            ["convert_to_grayscale", "normalize_contrast", "binarize"],
+            (41, 8.0),
+        ),
+        (
+            {"noise": 7.0},
+            ["convert_to_grayscale", "denoise", "normalize_contrast", "binarize"],
+            (35, 15.0),
+        ),
+        (
+            {"contrast": 25.0},
+            ["convert_to_grayscale", "flatten_illumination", "binarize"],
+            (51, 10.0),
+        ),
+    ],
+)
+def test_each_profile_is_its_own_steps_and_its_own_binarization_grid(
+    opencv: Callable[..., FakeOpenCV],
+    tmp_path: Path,
+    readings: dict[str, float],
+    expected_transformations: list[str],
+    expected_grid: tuple[int, float],
+) -> None:
+    """The readings select the profile, and the profile's grid reaches the binarizer.
+
+    Mutation that must break this: hand ``binarize_image`` the frozen ``OCR_BINARIZE_*``
+    constants instead of the profile's — every page then records ``(35, 15.0)``, which is the
+    single-grid rule this replaces.
+    """
+    fake = opencv()
+    pixels = load_image(COLOR_LAYOUT)
+    healthy = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+
+    ocr = prepare_image_for_ocr(
+        pixels,
+        metrics_with(healthy, **readings),
+        build_image_options(),
+        tmp_path / "ocr_ready.png",
+    )
+
+    assert ocr.transformations == expected_transformations
+    assert fake.binarizations == [expected_grid]
+
+
+def test_small_letters_bring_the_upscale_before_the_binarization(
+    tmp_path: Path,
+) -> None:
+    """A page whose letters measure under the floor is scaled up; a larger one is not."""
+    pixels = load_image(COLOR_LAYOUT)
+    healthy = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+    twelve_px_letters = [
+        TextRegion(
+            region_id="region_001",
+            bbox=(10.0, 10.0, 60.0, 22.0),
+            text_coverage=0.5,
+        )
+    ]
+    small = replace(
+        healthy,
+        dimensions=ImageDimensions(width=1000, height=2000),
+        text_regions=twelve_px_letters,
+    )
+
+    ocr = prepare_image_for_ocr(
+        pixels, small, build_image_options(), tmp_path / "ocr_ready.png"
+    )
+
+    assert ocr.transformations == ["convert_to_grayscale", "upscale", "binarize"]
+    assert (ocr.artifact.width, ocr.artifact.height) == (320, 240)
+
+
+def test_a_profile_never_applies_a_correction_the_caller_did_not_ask_for(
+    tmp_path: Path,
+) -> None:
+    """The profile picks the enhancement; the frame corrections stay the caller's to state.
+
+    A leaning page is the case the temptation is real on: the skew selects the flattening
+    profile, and the deskew still waits for the option — the measurement and the option, never
+    the measurement alone.
+    """
+    pixels = load_image(COLOR_LAYOUT)
+    healthy = analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+    leaning = replace(healthy, skew=3.0)
+
+    assert choose_ocr_profile(leaning).name == "uneven_or_skewed"
+
+    unasked = prepare_image_for_ocr(
+        pixels,
+        leaning,
+        build_options(deskew=False, correct_orientation=False),
+        tmp_path / "ocr_ready.png",
+    )
+    asked = prepare_image_for_ocr(
+        pixels, leaning, build_options(deskew=True), tmp_path / "deskewed.png"
+    )
+
+    assert "deskew" not in unasked.transformations
+    assert "deskew" in asked.transformations
+
+
+def test_the_analysis_measures_the_image_without_mutating_it() -> None:
+    """``analyze_image`` is side-effect free: it reads the array and changes nothing."""
+    pixels = load_image(COLOR_LAYOUT)
+    before = list(pixels.values)
+    facts = get_image_metadata(COLOR_LAYOUT, pixels)
+
+    metrics = analyze_image(pixels, facts)
+
+    assert metrics.dimensions.width == facts.width
+    assert metrics.format == "png"
+    assert metrics.size == facts.size
+    assert metrics.resolution is None
+    assert metrics.text_regions
+    assert pixels.values == before
+
+
+def test_the_ocr_pipeline_binarizes_and_the_vlm_pipeline_keeps_the_colour(
+    tmp_path: Path,
+) -> None:
+    """The two variants are different representations, not one representation twice."""
+    pixels = load_image(COLOR_LAYOUT)
+    facts = get_image_metadata(COLOR_LAYOUT, pixels)
+    metrics = analyze_image(pixels, facts)
+    options = build_image_options()
+
+    ocr = prepare_image_for_ocr(pixels, metrics, options, tmp_path / "ocr_ready.png")
+    vlm = prepare_image_for_vlm(pixels, metrics, options, tmp_path / "vlm_ready.png")
+
+    assert ocr.artifact.path != vlm.artifact.path
+    assert ocr.artifact.path.read_bytes() != vlm.artifact.path.read_bytes()
+    assert ocr.transformations.count("binarize") == 1
+    assert "binarize" not in vlm.transformations
+    assert "convert_to_grayscale" in ocr.transformations
+
+
+def test_a_pipeline_applies_only_what_the_measurements_justify(tmp_path: Path) -> None:
+    """A page inside every profile band buys no enhancement at all.
+
+    The contrasts and the noise it trades on are the *profile's* bands
+    (:func:`choose_ocr_profile`), which are wider than the ``LOW_QUALITY`` floors: a page
+    between the two is legible and still gets the plain profile.
+    """
+    pixels = load_image(COLOR_LAYOUT)
+    facts = get_image_metadata(COLOR_LAYOUT, pixels)
+    healthy = analyze_image(pixels, facts)
+    metrics = ImageMetrics(
+        dimensions=healthy.dimensions,
+        resolution=healthy.resolution,
+        format=healthy.format,
+        size=healthy.size,
+        quality=ImageQualityMetrics(
+            blur=OCR_BLUR_LOW + 1.0,
+            sharpness=healthy.quality.sharpness,
+            contrast=CONTRAST_MIN * 4,
+            brightness=healthy.quality.brightness,
+            noise=OCR_NOISE_HIGH / 2.0,
+        ),
+        orientation=0,
+        skew=0.0,
+        text_regions=healthy.text_regions,
+        text_coverage=healthy.text_coverage,
+    )
+    options = ImageOptions(
+        normalize=True,
+        prepare_for_ocr=True,
+        prepare_for_vlm=True,
+        correct_orientation=False,
+        deskew=False,
+        quality=None,
+    )
+
+    assert choose_ocr_profile(metrics).name == "clean"
+
+    ocr = prepare_image_for_ocr(pixels, metrics, options, tmp_path / "ocr_ready.png")
+    vlm = prepare_image_for_vlm(pixels, metrics, options, tmp_path / "vlm_ready.png")
+
+    assert ocr.transformations == ["convert_to_grayscale", "binarize"]
+    assert not vlm.transformations
+
+
+def test_a_published_variant_carries_its_own_measurements(tmp_path: Path) -> None:
+    """What was published is measured, so the artifact's own readings are on record."""
+    pixels = load_image(COLOR_LAYOUT)
+    facts = get_image_metadata(COLOR_LAYOUT, pixels)
+    metrics = analyze_image(pixels, facts)
+
+    ocr = prepare_image_for_ocr(
+        pixels, metrics, build_image_options(), tmp_path / "ocr_ready.png"
+    )
+
+    assert isinstance(ocr.artifact, ArtifactRef)
+    assert ocr.artifact.kind == "ocr_ready"
+    assert ocr.artifact.size == ocr.artifact.path.stat().st_size
+    assert ocr.metrics.format == "png"
+
+
+def test_the_encoder_is_asked_for_the_artifact_format_and_never_for_the_path(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """The format the artifact was named with is what the engine is handed.
+
+    Mutation that must break this: call the engine with the path the publication writes
+    through (``normalized.png.tmp``) instead of the artifact's format. The engine reads the
+    format off the name, finds ``.tmp``, and refuses every artifact this processor publishes.
+    """
+    fake = opencv()
+
+    published = save_image(
+        load_image(EMBEDDED_LOGO), tmp_path / "image" / "normalized.png"
+    )
+
+    assert published.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert fake.writes == [(".png", [])]
+    assert not list(tmp_path.rglob("*.tmp"))
+
+
+def test_the_published_artifacts_are_real_decodable_files(
+    opencv: Callable[..., FakeOpenCV], tmp_path: Path
+) -> None:
+    """Whatever the engine wrote is what a reader gets: no mangle on the way to the name."""
+    fake = opencv()
+    destination = tmp_path / "image" / "normalized.png"
+
+    published = save_image(load_image(EMBEDDED_LOGO), destination)
+
+    assert published.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert "imencode" in fake.calls
+    assert not list(tmp_path.rglob("*.tmp"))
+
+
+def test_the_classification_of_a_measured_image_is_one_of_the_four() -> None:
+    """The end of the measurement chain, on a real fixture."""
+    pixels = load_image(COLOR_LAYOUT)
+
+    classification = classify_image(
+        analyze_image(pixels, get_image_metadata(COLOR_LAYOUT, pixels))
+    )
+
+    assert classification in {
+        "TEXT_IMAGE",
+        "VISUAL_IMAGE",
+        "MIXED_IMAGE",
+        "LOW_QUALITY",
+    }

@@ -11,26 +11,25 @@
 
 ```
 src/docflow/          the library (import name: `docflow`)
-  kernels/            K1-K8: orchestrator, pdf, image, ocr, llm.local, llm.frontier, store, registry
-  ports/              the five port interfaces (PdfSource, OcrEngine, LlmEngine, ArtifactStore, Registry)
-  adapters/           thin adapters behind the ports (Docling, pdftotext, Ollama, a provider SDK)
-  components/         the ten domain components (Stage 2)
-  kernel_cli/         the `docflow-kernel` lab surface — a package, never a kernel_cli.py module
-  cli.py              the `docflow` product surface
-  batch.py            batch input / mirrored output tree
+  pdf/                processor: Poppler, reached only from pdf/primitives/
+  image/              processor: OpenCV, reached only from image/primitives/
+  ocr/                processor: Docling, reached only from ocr/primitives/
+  llm/                processor: Ollama / vLLM / a hosted API, reached only from llm/primitives/
+  workflow/           the orchestrator — the only workflow-aware component
+  states.py           the shared stage-state vocabulary
+  identities.py       the three identities + the artifact metadata key set
+scripts/tools/        the lab bench: `_cli.py` + one thin CLI per processor (not a package)
 tests/                mirrors the `src/docflow` tree, one test module per source module
+var/                  lab-tool run output (var/tools/<tool>/) — never committed
 docs/                 the specification and the plans (read-only for code tasks)
-registry/             corpus assets: patterns, prompts, schemas, policies (Stage 3)
-descriptors/          pipeline descriptors (Stage 3)
-fixtures/             committed test fixtures, each named for the failure it provokes
 pyproject.toml        packaging, entry points, and all tool config (Ruff, Pylint, pytest, coverage)
 ```
 
 - **Package layout and tool config are owned by the Data layer** (`wbs.md` §8): `pyproject.toml`. If a task needs a new tool or dependency, add it there rather than creating a second config file.
-- **The artifacts name the module path, not the physical path.** Where a document writes `docflow/kernels/store.py`, the file lives at `src/docflow/kernels/store.py`. The `src/` prefix is the physical location and is not repeated in the docs.
+- **The artifacts name the module path, not the physical path.** Where a document writes `docflow/pdf/store.py`, the file lives at `src/docflow/pdf/store.py`. The `src/` prefix is the physical location and is not repeated in the docs.
 - **Installing:** `pip install -e ".[dev]"` for development. Running `pytest` needs no install — `pyproject.toml` puts `src` on the path.
-- **Two entry points, two audiences, never crossed:** `docflow` (product) and `docflow-kernel` (lab bench). `docflow run` never invokes `docflow-kernel`.
-- **Never commit:** the corpus (`documentos/`), run output (`out/`, `work/`), `.env`, and coverage/cache/build directories. `.gitignore` is the authority — read it before adding a file that looks like output.
+- **Two entry points, two audiences, never crossed:** the library (`src/docflow/`, imported as `docflow`) and the lab bench (`scripts/tools/`, invoked as `python scripts/tools/<name>.py`). There is no `docflow-kernel` console script and no `src/docflow/kernel_cli/`: `docs/plan/README.md` §9.1 resolved the layout, and §4.1 names `scripts/tools/` as the lab surface (`SCR-01`…`SCR-10`). The library never imports a tool.
+- **Never commit:** the corpus (`documentos/`), run output (`out/`, `var/`, `work/`), `.env`, and coverage/cache/build directories. `.gitignore` is the authority — read it before adding a file that looks like output.
 
 ## Language
 - Output, code, and docs: 100% English, regardless of input language (understand Spanish, respond in English).

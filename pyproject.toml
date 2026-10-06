@@ -1,131 +1,112 @@
+# Single tooling home for the whole project (`GEN-05`): pytest, ruff, pylint and coverage
+# all read their configuration from this file. Do not add a second setup.cfg, tox.ini or
+# pylintrc.
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "docflow"
-version = "0.0.1"
-description = "Library-first document extraction: extract structured data from a corpus and expose it for another system to consume."
-readme = "README.md"
-requires-python = ">=3.13"
-# No runtime dependencies for the *library*: Stage 1's boundary layer is pure
-# standard library. Each adapter declares its own engine (Docling, Ollama, a
-# provider SDK) when it lands — S1-T14, S1-T15, S1-T16.
-#
-# PyYAML is the one entry, and it belongs to the **lab surface**, not to the library.
-# The descriptor *format* is frozen by `plans/README.md` §3 as a `.yaml` file, while
-# the kernel layer may import no third party — so the reader lives in the composition
-# root (`docflow/kernel_cli/commands/descriptor.py`), behind the seam
-# `orchestrator.read_descriptor` takes, and this is that seam's dependency. A
-# hand-rolled subset parser was rejected: it would be real code with no owner, and it
-# would mis-read the thirteen pipeline descriptors `S3-T01` commits — dropping a stage
-# rather than refusing the document, which is a silent failure of exactly the kind
-# Stage 1 exists to prevent.
-#
-# TODO: [MVP] Move this behind a `[kernel-cli]` extra together with the `[dev]` note
-# below, so installing the library does not pull a parser only the bench needs.
-# TODO: [MVP] Pin the adapter dependencies once the K2-K6 adapters exist, and
-# split them into extras (a `[pdf]` extra that pulls poppler bindings, an `[ocr]`
-# extra for Docling) so installing the library does not force every engine.
+version = "0.0.0"
+description = "Modular document-processing pipeline: pdf, image, ocr and llm processors under one orchestrator."
+requires-python = ">=3.11"
 dependencies = [
-    "PyYAML>=6",
+    # The image processor's engine (`IMG-02`), a real pip dependency, unlike Poppler (a system
+    # package) and the provider SDKs (external services). `headless` is the server-side wheel:
+    # this pipeline decodes and prepares images and never opens a window. The pin is a range
+    # because the engine is the swappable half of `image/primitives/`; the version actually used
+    # is recorded in every artifact's metadata.
+    "opencv-python-headless>=5.0,<6",
+    # The OCR processor's engine (`OCR-02`) — the only OCR engine this project has, and never a
+    # user-selectable setting. The version recorded in every artifact's metadata is the one
+    # Docling itself reports; this pin is the range the seam was written against, and a bump is a
+    # re-check of `tests/fakes/engines/fake_docling.py` against the engine's shapes. The whole
+    # test suite runs without it installed: no test imports or invokes Docling.
+    "docling>=2.126,<3",
+    # The LLM provider seam's HTTP client (`LLM-09`). It is imported inside the call that needs
+    # it and never at module import time, so the suite still runs with no client installed and
+    # the "no engine loaded" guard still holds. Its version is recorded nowhere because it is
+    # ours, not the provider's — what lands in a request key is the *model's* version.
+    "httpx>=0.28,<1",
 ]
 
 [project.optional-dependencies]
-# The QA gates `.github/copilot-instructions.md` requires. All four are run in CI.
-# TODO: [MVP] Add `docflow-kernel` here as a `[dev]` extra so the lab surface is
-# not installed with the release package (`kernel-cli.md` §2, §10).
 dev = [
-    "pytest>=8",
-    "pytest-cov>=5",
-    "ruff>=0.6",
-    "pylint>=3",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.6.0",
+    "pylint>=3.2.0",
 ]
-
-# Fixed by `docs/artifacts/kernel-cli.md` §4 — two entry points, two audiences.
-# `docflow run` never invokes `docflow-kernel`.
-# TODO: [MVP] Both targets land later in Stage 1: `docflow.cli:main` is S1-T18
-# and `docflow.kernel_cli:main` is S1-T20. Declaring them here is what fixes the
-# names now; running them fails until those modules exist.
-[project.scripts]
-docflow = "docflow.cli:main"
-docflow-kernel = "docflow.kernel_cli:main"
-
-[tool.setuptools]
-package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-# Makes `pytest` work from a clean checkout with no install, and keeps working once
-# the package is installed with `pip install -e .`. Same effect, no step required.
-pythonpath = ["src"]
-addopts = "-ra --strict-markers"
-
-[tool.coverage.run]
-source = ["docflow"]
-branch = true
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "if TYPE_CHECKING:",
-    "raise NotImplementedError",
-]
-
+# ---------------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------------
 [tool.ruff]
 line-length = 88
-target-version = "py313"
-src = ["src", "tests"]
-# The specification lives in `docs/` and contains Python code blocks. Ruff parses
-# fenced code in Markdown, so without this exclusion `ruff format --check .` tries
-# to reformat the artifacts — editing a frozen specification as a side effect of
-# running the formatter.
-extend-exclude = ["docs/"]
+target-version = "py311"
+# docs/ holds the frozen specification, whose fenced Python blocks are not source: a
+# formatter that rewrites a frozen artifact is worse than one that skips it.
+exclude = ["docs", ".venv"]
 
 [tool.ruff.lint]
-# `I` is selected explicitly because the instructions require sorted imports and
-# Ruff's default set does not check them. `E`/`F`/`W` are the pyflakes +
-# pycodestyle core; `B`, `C4`, `SIM`, `RUF` are the bug-risk and simplification
-# families Pylint does not cover.
-select = ["E", "F", "W", "I", "B", "C4", "SIM", "RUF"]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+# `ruff format` owns line length; a long but unsplittable line is not a defect.
+ignore = ["E501"]
 
-ignore = [
-    # `ruff format` owns code line length and cannot split a long identifier, so
-    # E501 fires on the formatter's own output for long test names. Line length is
-    # enforced by the formatter, not by this rule.
-    "E501",
-    # Deliberately NOT selecting `UP`: its generics rule (UP046) demands PEP 695
-    # `class KernelResult[T]`, while `sad.md` §6 freezes the contract as
-    # `class KernelResult(Generic[T])`. The frozen artifact wins; the rule is not
-    # selected rather than the contract being changed.
-]
+[tool.ruff.format]
+quote-style = "double"
+docstring-code-format = false
 
+# ---------------------------------------------------------------------------------
+# Pylint
+# ---------------------------------------------------------------------------------
 [tool.pylint.main]
-py-version = "3.13"
-# `src` first so the package resolves without an install. `scripts/poc-flow-v2`
-# is the Fase A library the `tests/poc_flow_v2/` suite imports as `flow`; it is
-# not installed, so Pylint resolves it from here, exactly as `pytest` does
-# through its own conftest.
-source-roots = ["src", "scripts/poc-flow-v2"]
-ignore-paths = ["\\.venv/", "build/", "dist/"]
+py-version = "3.11"
+jobs = 0
+# docs/ contains the specification, not source.
+ignore-paths = ["^docs/"]
 
-[tool.pylint.reports]
-# A score is noise in a gate that must simply pass or fail.
-score = false
+[tool.pylint.messages_control]
+# `fixme` flags the `# TODO: [MVP]` / `# TODO: [RELEASE]` markers this project requires:
+# the markers are the deliverable, not the debt.
+disable = ["fixme"]
 
-[tool.pylint."messages control"]
-disable = [
-    # `fixme` flags the `# TODO: [MVP]` / `# TODO: [RELEASE]` markers that
-    # `.github/copilot-instructions.md` *requires* on every PoC shortcut. The check
-    # and the instruction contradict each other, so the check is off: the markers
-    # are the deliverable, not the debt.
-    "fixme",
-    # PoC keeps the package flat; a docstring on every module is a Release concern.
-    "missing-module-docstring",
-]
+[tool.pylint.design]
+# Contract and durable-state records are wide by design (docs/plan/subplan-*.md §3.1);
+# a `PDFPageResult` with twelve named fields is not a defect.
+max-attributes = 20
+max-args = 20
+max-positional-arguments = 20
 
 [tool.pylint.format]
-max-line-length = 88
+max-line-length = 100
+
+# ---------------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# Put src/ on the path so `pytest` runs from a clean checkout with no install step.
+pythonpath = ["src"]
+addopts = "-ra --strict-config --strict-markers"
+norecursedirs = [".git", ".venv", "docs", "out", "work"]
+
+# ---------------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------------
+[tool.coverage.run]
+branch = true
+source = ["src/docflow"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    # Phase 0 ships typed signatures that raise; a stub line is not a coverage target.
+    "raise NotImplementedError",
+]

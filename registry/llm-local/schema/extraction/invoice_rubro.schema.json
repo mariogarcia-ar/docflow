@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "analisis_rubro_aplica": {"type": "string"},
+    "cantidad_comensales_personas": {"type": ["string", "null"]},
+    "cantidad_litros": {"type": ["string", "null"]}
+  },
+  "required": [
+    "analisis_rubro_aplica",
+    "cantidad_comensales_personas",
+    "cantidad_litros"
+  ],
+  "additionalProperties": false
+}

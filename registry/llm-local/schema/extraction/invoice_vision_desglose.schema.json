@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "properties": {
+    "analisis_condicion_iva": {"type": "string"},
+    "subtotal": {"type": "string"},
+    "iva": {"type": "string"},
+    "impuestos_internos": {"type": "string"},
+    "percepcion_iibb": {"type": "string"},
+    "otros_impuestos": {"type": "string"},
+    "monto_no_gravado": {"type": "string"},
+    "importe_total_facturado": {"type": "string"},
+    "condicion_impositiva_dominante": {
+      "type": ["string", "null"],
+      "enum": [
+        "Responsable Inscripto",
+        "Monotributo",
+        "Exento",
+        "No Categorizado",
+        "Consumidor Final",
+        null
+      ]
+    },
+    "alicuotas_detectadas": {"type": "string"}
+  },
+  "required": [
+    "analisis_condicion_iva",
+    "subtotal",
+    "iva",
+    "impuestos_internos",
+    "percepcion_iibb",
+    "otros_impuestos",
+    "monto_no_gravado",
+    "importe_total_facturado",
+    "condicion_impositiva_dominante",
+    "alicuotas_detectadas"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,56 @@
+{
+  "type": "object",
+  "properties": {
+    "field_verdicts": {
+      "type": "array",
+      "minItems": 27,
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "indicios_detectados",
+              "comprobante_valido",
+              "motivo_rechazo",
+              "tipo_comprobante",
+              "razon_social_emisor",
+              "cuit_emisor",
+              "fecha_emision",
+              "nro_comprobante",
+              "moneda",
+              "notas",
+              "analisis_condicion_iva",
+              "subtotal",
+              "iva",
+              "impuestos_internos",
+              "percepcion_iibb",
+              "otros_impuestos",
+              "monto_no_gravado",
+              "importe_total_facturado",
+              "condicion_impositiva_dominante",
+              "alicuotas_detectadas",
+              "analisis_evidencia_rubro",
+              "categoria_gasto",
+              "descripcion",
+              "centro_de_costo",
+              "analisis_rubro_aplica",
+              "cantidad_comensales_personas",
+              "cantidad_litros"
+            ]
+          },
+          "reason": {"type": "string"},
+          "verdict": {
+            "type": "string",
+            "enum": ["agree", "disagree", "uncertain", "ignored"]
+          },
+          "suggested_value": {"type": ["string", "null"]}
+        },
+        "required": ["field", "reason", "verdict", "suggested_value"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["field_verdicts"],
+  "additionalProperties": false
+}
