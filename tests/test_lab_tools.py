@@ -2735,3 +2735,54 @@ def test_a_fixture_name_before_the_subcommand_resolves_out_loud(
     assert request.options.extract_images is True
     assert request.options.layout is True
     assert str(resolved.resolve()) in capsys.readouterr().err
+
+
+# --- The LLM credential names ---------------------------------------------------------------
+
+
+def test_a_named_provider_reads_its_own_credential_from_the_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """One ``.env`` may hold every hosted provider's key: a provider-scoped name is read for it."""
+    # pylint: disable=protected-access
+    # Reason: the credential lookup is the layer's own option assembler; driving it directly is
+    # what this case is about, and a public wrapper would be a second name for one behaviour.
+    env_file = tmp_path / ".env"
+    env_file.write_text("DEEPSEEK_API_KEY=provider-scoped\n", encoding="utf-8")
+    monkeypatch.delenv("DOCFLOW_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("DOCFLOW_ENV_FILE", str(env_file))
+
+    parser = tool_module("llm").build_parser()
+
+    def options_for(provider: str) -> dict[str, Any]:
+        args = parser.parse_args(
+            ["prompt", "a.txt", "--provider", provider, "--model", "m"]
+        )
+        return _llm._options(args, parser)
+
+    assert options_for("deepseek")["api_key"] == "provider-scoped"
+    assert "api_key" not in options_for("ollama")
+
+
+def test_the_neutral_credential_name_outranks_a_provider_scoped_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``DOCFLOW_LLM_API_KEY`` is the bench's own name: when it states something, it wins."""
+    # pylint: disable=protected-access
+    # Reason: same as the case above — the layer's option assembler is the unit under test.
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "DOCFLOW_LLM_API_KEY=neutral\nDEEPSEEK_API_KEY=provider-scoped\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("DOCFLOW_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("DOCFLOW_ENV_FILE", str(env_file))
+
+    parser = tool_module("llm").build_parser()
+    args = parser.parse_args(
+        ["prompt", "a.txt", "--provider", "deepseek", "--model", "m"]
+    )
+
+    assert _llm._options(args, parser)["api_key"] == "neutral"

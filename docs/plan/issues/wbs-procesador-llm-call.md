@@ -526,8 +526,8 @@ Added 2026-10-06, from the work order `docs/feedback/deepseek-provider-kind.md`.
 `scripts/tmpref/frontier_prompt.py` reaches DeepSeek by driving `docflow.llm.primitives` directly,
 with the schema inlined into the prompt and `response_format={"type": "json_object"}`; the bench
 reaches the same provider through `process_llm_request`, which sent `response_format: json_schema`.
-This pass closes that gap inside `llm/primitives/` and `llm/entrypoints.py`, and adds **no**
-`scripts/tools/**` line.
+This pass closes that gap inside `llm/primitives/` and `llm/entrypoints.py`; its first landing added
+**no** `scripts/tools/**` line, and the live run forced one follow-up below (§14.1).
 
 | Row | Deliverable |
 |---|---|
@@ -540,15 +540,29 @@ This pass closes that gap inside `llm/primitives/` and `llm/entrypoints.py`, and
 `LLM-09` are cited as predecessors, not changed: the placeholder rule and the generator resolution
 (`resolve_generator`, a schema outranks images) are untouched.
 
-**Evidence.** `pytest` green across `tests/llm` (10 new cases) · `ruff check .` · `ruff format
---check .` · `pylint src tests`. The bench's own operator docs moved with the library:
-`scripts/tools/quickstart.md` gained an *A hosted provider* scene carrying the `llm.py` and
-`batch_llm.py` DeepSeek commands (both run green on the render path, no token spent), and
-`.env.example` names `deepseek` in its accepted-provider list and its endpoint defaults. One
+**Evidence.** `pytest` green across `tests/llm` and `tests/test_lab_tools.py` (10 + 2 new cases) ·
+`ruff check .` · `ruff format --check .` · `pylint src tests`. The bench's own operator docs moved
+with the library: `scripts/tools/quickstart.md` gained an *A hosted provider* scene carrying the
+`llm.py` and `batch_llm.py` DeepSeek commands (both run green on the render path, no token spent),
+and `.env.example` names `deepseek` in its accepted-provider list and its endpoint defaults. One
 mutation falsified (mutate → observe red → restore → observe green): `STRUCTURED_MODES = {}` turns
 `structured_mode("deepseek")` back to `json_schema`, and four tests go red — the mode table, the
 prompt inlining, the wire body, and the entry-point prompt.
 
-**Not claimed.** Whether `deepseek-flash` appears in the endpoint's `GET /models` is not verified
-here (`models`' exact-string check is unchanged), and no live DeepSeek call is claimed: the
-transport is proven against the HTTP stub and the processor against the scripted fake.
+### 14.1 Follow-up — the credential name, forced by the live run
+
+The first live call returned `HTTP 401` (`Authentication Fails`): `.env` held the provider-scoped
+`DEEPSEEK_API_KEY` — the name the probe reads — while the bench read only the neutral
+`DOCFLOW_LLM_API_KEY`, so no credential was sent. This follow-up adds
+`primitives.PROVIDER_CREDENTIAL_ENV` (`deepseek` → `DEEPSEEK_API_KEY`) and a fallback in
+`_llm._options`: the neutral name wins when it states something, otherwise the provider's own name is
+read — so one file may hold every hosted provider's key. **The tool names no provider** (the table is
+the library's), and guard 3 (`test_no_tool_names_an_engine_or_a_provider_sdk`) stays green.
+
+Falsified: disabling the fallback turns the new credential test red (`KeyError: 'api_key'`); restored
+green. Live, after the fix: the same `call` returned `SUCCESS`, `schema_valid: true`, 5 940 tokens
+(1 082 reasoning), and published `invoice.json`, `invoice_full.json` and `final_result.json`.
+
+**Not claimed.** Whether `deepseek-flash` appears in the endpoint's `GET /models` is unverified
+(`models`' exact-string check is unchanged), and a per-id `get_model_info` on an endpoint that does
+not serve one is the plan's open Q3.

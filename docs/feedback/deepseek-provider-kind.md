@@ -251,10 +251,11 @@ new path). No template, no tool and no frozen formula changes, so rollback is a 
 
 ## 12. Applied (2026-10-06)
 
-Landed as `LLM-16`…`LLM-19` in `docs/plan/issues/wbs-procesador-llm-call.md` §14. **No
-`scripts/tools/**` line changed** — the claim of the plan holds, and `git diff --stat` is the gate.
+Landed as `LLM-16`…`LLM-19` in `docs/plan/issues/wbs-procesador-llm-call.md` §14. The first landing
+changed **no** `scripts/tools/**` line, and the live run forced one follow-up (WBS §14.1) — a
+provider-scoped credential fallback in `_llm._options`.
 
-One correction the implementation forced:
+Two corrections the implementation forced:
 
 - **§3.4 is narrower than written.** The plan listed five options to filter (`think`, `keep_alive`,
   `num_ctx`, `min_p`, `repeat_penalty`); the code filters three
@@ -262,11 +263,18 @@ One correction the implementation forced:
   deliberately kept: an OpenAI-compatible server (vLLM among them) may accept them as sampling
   parameters, and dropping a stated option would be its own silent stand-in. The subplan §3 option
   table was updated to match.
+- **§3.5's "the bench is untouched" was too strong.** The first live call returned `HTTP 401` because
+  `.env` held the provider-scoped `DEEPSEEK_API_KEY` and the bench read only the neutral
+  `DOCFLOW_LLM_API_KEY`. `primitives.PROVIDER_CREDENTIAL_ENV` (`deepseek` → `DEEPSEEK_API_KEY`) plus a
+  fallback in `_llm._options` fixed it; the tool still names no provider, so the bench's
+  provider-agnostic shape holds.
 
-**Evidence.** `pytest` green over `tests/llm` (10 new cases) · `ruff check .` · `ruff format
---check .` · `pylint src tests`. One mutation falsified (mutate → observe red → restore → observe
-green): `STRUCTURED_MODES = {}` turns `structured_mode("deepseek")` back to `json_schema` and four
-tests go red.
+**Evidence.** `pytest` green over `tests/llm` and `tests/test_lab_tools.py` (10 + 2 new cases) ·
+`ruff check .` · `ruff format --check .` · `pylint src tests`. Two mutations falsified (mutate →
+observe red → restore → observe green): `STRUCTURED_MODES = {}` turns `structured_mode("deepseek")`
+back to `json_schema` and four tests go red; disabling the credential fallback turns the new
+credential test red. A live `call` on `deepseek`/`deepseek-flash` returned `SUCCESS`,
+`schema_valid: true` and 5 940 tokens.
 
-**Not claimed.** No live DeepSeek call; `deepseek-flash`'s presence in the endpoint's `GET /models`
-is unverified, so `models`' exact-string check is unchanged (the plan's Q3).
+**Not claimed.** `deepseek-flash`'s presence in the endpoint's `GET /models` is unverified, and a
+per-id `get_model_info` on an endpoint that serves none is the plan's Q3.

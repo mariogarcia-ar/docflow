@@ -423,10 +423,24 @@ def _options(
     joining the table: it is a processor control, not a passthrough. ``--stream`` joins the options
     the same way, and the processor reads it out of them — one statement, one place.
 
+    The credential is the one option with a second, *provider-scoped* name in the file: when the
+    neutral ``DOCFLOW_LLM_API_KEY`` states nothing and the named provider has its own entry in
+    ``primitives.PROVIDER_CREDENTIAL_ENV`` (``deepseek`` → ``DEEPSEEK_API_KEY``), that name is read.
+    So one file may hold every hosted provider's key without them colliding, and a ``deepseek`` run
+    needs no ``--option api_key``. The tool names no provider: the table is the library's.
+
     Returns:
         The options, ready for the request.
     """
     options = _environment_options()
+    if CREDENTIAL_OPTION not in options:
+        credential_env = primitives.PROVIDER_CREDENTIAL_ENV.get(
+            str(getattr(args, "provider", "") or "")
+        )
+        if credential_env is not None:
+            stated = _cli.env_value(credential_env)
+            if stated is not None:
+                options[CREDENTIAL_OPTION] = stated
     options.update(_cli.option_values(args.option, parser, flag="--option"))
     if args.context_window is not None:
         options["context_window"] = int(args.context_window)

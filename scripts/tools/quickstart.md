@@ -349,16 +349,23 @@ measure against. State it once; `.env` is the place.
 
 `--provider` names the transport, and four names are one wire — `openai`, `openai_compatible`,
 `vllm` and `deepseek` all speak OpenAI chat-completions. `deepseek` is a named kind of it with its
-own endpoint, so a hosted run states the product rather than the URL:
+own endpoint, so a hosted run states the product rather than the URL. State the credential once in
+`.env` — `DOCFLOW_LLM_API_KEY=…`, or the provider's own name (`DEEPSEEK_API_KEY` for `deepseek`) —
+and the call carries no `--option api_key`:
 
 ```bash
 python scripts/tools/llm.py --assets-dir registry/llm-frontier \
     call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
     --provider deepseek --model deepseek-flash --task extract \
     --template extraction/invoice --schema extraction/invoice \
-    --context-window 64000 --option timeout=300 \
-    --option api_key="$DEEPSEEK_API_KEY"
+    --context-window 64000 --option timeout=300
 ```
+
+The credential is read from `<repo root>/.env`: the neutral `DOCFLOW_LLM_API_KEY` when it states
+something, otherwise the provider's own name — `DEEPSEEK_API_KEY` for `deepseek` — so one file may
+hold every provider's key. An exported variable beats the file and `--option api_key=…` beats both;
+with none of the three, the call is refused at the endpoint rather than sent with a guessed key
+(that refusal is the `HTTP 401` the typed error reports).
 
 `deepseek` reaches `https://api.deepseek.com` with **no** `--option base_url`; state one only to
 reach another endpoint (`--provider openai_compatible --option base_url=…`). Three things differ from

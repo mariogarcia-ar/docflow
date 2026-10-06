@@ -178,6 +178,12 @@ OPENAI_COMPATIBLE_BASE_URL: Final[str] = "http://localhost:8000/v1"
 DEEPSEEK_BASE_URL: Final[str] = "https://api.deepseek.com"
 OPENAI_COMPATIBLE_ENDPOINTS: Final[dict[str, str]] = {"deepseek": DEEPSEEK_BASE_URL}
 
+#: The environment-file name a hosted provider's credential is conventionally held under, so one
+#: ``.env`` may carry every provider's key without them colliding. The *library* never reads the
+#: environment — a caller states every value it sends — so this is only the *name* a caller's
+#: configuration layer looks up, after the neutral ``DOCFLOW_LLM_API_KEY``.
+PROVIDER_CREDENTIAL_ENV: Final[dict[str, str]] = {"deepseek": "DEEPSEEK_API_KEY"}
+
 #: The generator names :func:`docflow.llm.primitives.composition.resolve_generator` returns.
 GENERATORS: Final[tuple[str, ...]] = (
     "generate_text",
@@ -281,6 +287,7 @@ __all__ = [
     "OPENAI_COMPATIBLE_ENDPOINTS",
     "OUTPUT_DIR_KEY",
     "PRIMITIVE_NAMES",
+    "PROVIDER_CREDENTIAL_ENV",
     "PROVIDER_KINDS",
     "RETRYABLE_KINDS",
     "RUN_ID_KEY",

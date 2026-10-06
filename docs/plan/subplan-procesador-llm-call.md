@@ -579,5 +579,7 @@ pylint src tests
     without a stated `base_url`; it asks for its structure as a bare `{"type": "json_object"}` and
     the schema is inlined into the prompt (`LLM-16`…`LLM-18`), which keeps `openai`/`vllm` on the
     provider-native `json_schema` body and keeps every template unchanged. The local dialect's own
-    options are dropped from a hosted body (`LLM-19`). The bench is untouched: `llm.py` and
-    `batch_llm.py` carry the kind through `process_llm_request` with no provider-specific line.
+    options are dropped from a hosted body (`LLM-19`). The bench carries the kind through
+    `process_llm_request` with no provider-specific line; the one thing it gained is a
+    provider-*scoped credential* fallback (`PROVIDER_CREDENTIAL_ENV`, read by `_llm._options`), which
+    names no provider in the tool.
