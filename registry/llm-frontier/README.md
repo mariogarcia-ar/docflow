@@ -172,7 +172,8 @@ library the same pair is `--assets-dir registry/llm-frontier --template ping --s
   (`temperature`, `top_p`) do anything here. `think=false` is lifted to the top of the body by the
   local transport alone, so a reasoning model on a hosted endpoint is switched by its model tag
   rather than braked by an option.
-- **Structured output is the provider's promise, not ours.** `--schema` sends
-  `response_format: json_schema`, so the endpoint has to accept it; Anthropic's own API is not wired
-  into `PROVIDER_KINDS` and would have to go through its OpenAI-compatibility layer, untested. See
-  `../llm-local/README.md` → *Remote*.
+- **Structured output is per dialect.** `--schema` sends `response_format: json_schema` for
+  `openai`/`vllm`, so the endpoint has to accept it; `deepseek` — a named kind of the same
+  OpenAI-compatible transport — is asked for a bare `json_object` and carries the schema inlined in
+  the prompt instead. Anthropic's own API is not wired into `PROVIDER_KINDS` and would have to go
+  through its OpenAI-compatibility layer, untested. See `../llm-local/README.md` → *Remote*.

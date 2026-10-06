@@ -95,6 +95,15 @@ CONTROL_OPTIONS: Final[frozenset[str]] = frozenset(
     }
 )
 
+#: The option keys that belong to the *local* Ollama dialect alone. The OpenAI-compatible transport
+#: spreads every option into its body verbatim, so leaving one of these in would send a hosted
+#: endpoint a field its dialect does not define. ``min_p`` and ``repeat_penalty`` are deliberately
+#: absent: an OpenAI-compatible server may accept them as sampling parameters, and dropping a
+#: stated option would be its own silent stand-in.
+LOCAL_ONLY_OPTIONS: Final[frozenset[str]] = frozenset(
+    {"think", "keep_alive", "num_ctx"}
+)
+
 #: A run that was never asked to persist anything records this in its metadata, so "no files"
 #: reads as a decision rather than as a missing record.
 NOT_PERSISTED: Final[str] = "not-requested"
@@ -134,11 +143,22 @@ def _mint_run_id() -> str:
 
 
 def _provider_options(request: LLMInput) -> dict[str, Any]:
-    """Return the decoding options to pass through to the provider, our own keys removed."""
+    """Return the decoding options to pass through, our own and another dialect's keys removed.
+
+    A hosted provider of the OpenAI-compatible kind receives only the options its dialect defines;
+    the local daemon's own keys (``think``, ``keep_alive``, ``num_ctx``) are dropped when the
+    provider is not Ollama, because the transport would otherwise spread them into a body that has
+    no such fields.
+    """
+    local_only = (
+        frozenset()
+        if primitives.PROVIDER_KINDS.get(request.provider) == "ollama"
+        else LOCAL_ONLY_OPTIONS
+    )
     return {
         key: value
         for key, value in request.options.items()
-        if key not in CONTROL_OPTIONS
+        if key not in CONTROL_OPTIONS and key not in local_only
     }
 
 

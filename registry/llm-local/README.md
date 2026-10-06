@@ -601,16 +601,19 @@ python scripts/tools/llm.py --assets-dir registry/llm-local \
     --option api_key="$OPENAI_API_KEY"
 ```
 
-**DeepSeek** — OpenAI-compatible wire format:
+**DeepSeek** — the `deepseek` provider kind, at its own documented endpoint:
 
 ```bash
 python scripts/tools/llm.py --assets-dir registry/llm-local \
     call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
-    --provider openai_compatible --model deepseek-chat --task extract \
+    --provider deepseek --model deepseek-flash --task extract \
     --template extraction/invoice --schema extraction/invoice \
-    --option base_url=https://api.deepseek.com/v1 \
     --option api_key="$DEEPSEEK_API_KEY"
 ```
+
+`deepseek` runs on the OpenAI-compatible transport but asks for a bare `json_object` and carries the
+schema in the prompt; `openai` and `vllm` keep `response_format: json_schema`. The endpoint is the
+kind's own, so no `--option base_url` is needed — state one only to reach another endpoint.
 
 Before either of those, ask what the endpoint serves — `models` also runs `check_model_available`,
 an exact-string membership test, so a near-miss id fails there rather than in your first paying
@@ -619,8 +622,8 @@ call:
 ```bash
 python scripts/tools/llm.py --assets-dir registry/llm-local \
     models tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
-    --provider openai_compatible --model deepseek-chat \
-    --option base_url=https://api.deepseek.com/v1 --option api_key="$DEEPSEEK_API_KEY"
+    --provider deepseek --model deepseek-flash \
+    --option api_key="$DEEPSEEK_API_KEY"
 ```
 
 **Claude / Anthropic — not wired.** `anthropic` is absent from `PROVIDER_KINDS`, so the name is
@@ -669,10 +672,11 @@ python scripts/tools/llm.py --assets-dir registry/llm-local node <file.txt> \
   the CLI only when each named key is stated; a key the caller leaves out stops the run at load time
   with a `DEPENDENCY_ERROR` naming it, rather than rendering a proposal block that reads as empty.
   `workflow.py` still fills none of them, and its chain does not read this registry.
-- **`llm.py` cannot send images.** It hardcodes `images=[]`, so the vision steps — every
-  `extraction/invoice_vision*`, plus `review/invoice_vision*` — are not reachable from the CLI:
-  drive them from the library, as in *Chaining the steps* above. `workflow.py`'s `--allow-vlm` /
-  `--image-prepare-for-vlm` enable its own chain, and that chain does not read this registry.
+- **`llm.py` sends images.** An input that is itself an image is attached as the page and states no
+  text, and `--image` adds further pages beside a text input — so the vision steps
+  (`extraction/invoice_vision*`, `review/invoice_vision*`) are reachable from the CLI, one image per
+  page in reading order. `workflow.py`'s `--allow-vlm` / `--image-prepare-for-vlm` enable its own
+  chain, and that chain does not read this registry.
 - **`$comment` is not allowed in a schema.** The validator enforces a closed keyword set and sends
   the schema to the provider verbatim, where OpenAI's `strict: true` rejects unknown keywords; so
   the design notes that used to live in `$comment` are kept below instead. The enforced set is

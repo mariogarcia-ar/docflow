@@ -23,9 +23,9 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | Field | Value |
 |---|---|
 | Phase | 1 — processors, independently (parallel with `pdf`, `image`, `ocr`); the internal inference subgraph is a follow-up inside the same phase |
-| ID range | LLM-01 … LLM-15 |
-| # tasks | 15 |
-| Effort distribution | S ×3 (LLM-01, 02, 03) · M ×8 (LLM-04, 05, 06, 07, 08, 10, 14, 15) · L ×4 (LLM-09, 11, 12, 13) |
+| ID range | LLM-01 … LLM-19 |
+| # tasks | 19 |
+| Effort distribution | S ×7 (LLM-01, 02, 03, 16, 17, 18, 19) · M ×8 (LLM-04, 05, 06, 07, 08, 10, 14, 15) · L ×4 (LLM-09, 11, 12, 13) |
 | Critical path | `LLM-01 → LLM-02 → LLM-03 → LLM-06 → LLM-07 → LLM-08` (single-call chain) and `LLM-01 → LLM-06 → LLM-10 → LLM-11 → LLM-12 → LLM-13` (graph chain); the binding path ends at LLM-13 |
 | Definition of Done gate | `pytest` · `ruff check .` · `ruff format --check .` · `pylint src tests`, plus mutation-falsified invariant tests |
 
@@ -50,6 +50,10 @@ This document expands — never replaces — the subplan WBS. Every issue traces
 | LLM-13 | Node reuse on restart | L | 3 — Linear chain | LLM-12 | resume over the saved chain state: `REUSED` nodes, pending nodes executed | this file §LLM-13 | DONE |
 | LLM-14 | Per-field comparison + consolidation | M | 3 — Linear chain | LLM-12 | `compare_outputs` (`calculate_consensus` deferred); a per-field vector is compared field by field, never as one score | this file §LLM-14 | DONE |
 | LLM-15 | Usage, timing and context-window control | M | 2 — Single call | LLM-06 | `count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded`, `context_verdict`; the pre-flight counts a stated image cost and never reports a fit it cannot measure | this file §LLM-15 | DONE |
+| LLM-16 | Provider kind `deepseek` | S | 4 — Named hosted provider | LLM-09 | a `PROVIDER_KINDS` row, `DEEPSEEK_BASE_URL` and a per-provider default endpoint, so a hosted call needs no `base_url` | this file §14 | DONE |
+| LLM-17 | Structured mode per dialect | S | 4 — Named hosted provider | LLM-16 | `STRUCTURED_MODES`, `structured_mode()`; the OpenAI-compatible transport emits `{"type": "json_object"}` for that kind and `json_schema` otherwise | this file §14 | DONE |
+| LLM-18 | Inline the schema for `json_object` | S | 4 — Named hosted provider | LLM-17, LLM-04 | `inline_schema_block`, applied in `process_prompt`; the schema enters `request_key` through `rendered_prompt` and offline validation still runs | this file §14 | DONE |
+| LLM-19 | Hosted-body option hygiene | S | 4 — Named hosted provider | LLM-09 | the local dialect's own keys (`think`, `keep_alive`, `num_ctx`) are dropped from the OpenAI-compatible body | this file §14 | DONE |
 
 > The subplan records LLM-01, LLM-02 and LLM-03 as `S`; LLM-04 … LLM-08, LLM-10, LLM-14, LLM-15 as `M`; and LLM-09, LLM-11, LLM-12, LLM-13 as `L`.
 
@@ -317,6 +321,11 @@ flowchart LR
     LLM12 --> LLM13["LLM-13 Node reuse on restart"]
     LLM12 --> LLM14["LLM-14 Per-field comparison"]
     LLM06 --> LLM15["LLM-15 Usage, timing, context window"]
+    LLM09 --> LLM16["LLM-16 Provider kind deepseek"]
+    LLM09 --> LLM19["LLM-19 Hosted-body option hygiene"]
+    LLM16 --> LLM17["LLM-17 Structured mode per dialect"]
+    LLM04 --> LLM18["LLM-18 Inline the schema"]
+    LLM17 --> LLM18
 ```
 
 ## 5. Execution waves
@@ -326,6 +335,7 @@ flowchart LR
 | 1 — Contracts & primitives | LLM-01 → LLM-02 → LLM-03, LLM-04, LLM-05 | Phase 0 exit met; subplan §7 DoR satisfied | Contracts frozen, provider seam typed, deterministic fake provider and committed template/schema fixtures in place |
 | 2 — Single call | LLM-06 → LLM-07 → LLM-08; LLM-09 in parallel after LLM-02; LLM-15 in parallel after LLM-06 | Wave 1 green | One call round-trips `LLMInput → LLMResult` with schema validation, attempt history and token/context control; provider primitives implemented |
 | 3 — Linear chain | LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12 | Wave 2 green | The fixed chain executes, persists two files, resumes without re-calling a `REUSED` node and compares per field |
+| 4 — Named hosted provider | LLM-16, LLM-19 → LLM-17 → LLM-18 | Wave 2 green | `deepseek` resolves to its own endpoint; a `json_object` dialect carries the schema in the prompt while `openai`/`vllm` keep the provider-native `json_schema`; the bench is untouched |
 
 Each wave ends with the four QA gates green and its happy-path / invariant tests passing.
 
@@ -347,6 +357,7 @@ It is critical because the contracts (LLM-01) and the provider seam (LLM-02) pre
 | Invariant 2 — `request_key` determinism (mutation: add `run_id` / nonce to the hash) | LLM-05 | Must fail under mutation, then restore green |
 | Invariant 3 — downstream invalidation on force — deferred with the chain's dynamic machinery (`# TODO: [MVP]`) | LLM-13 | Lands with the deferred machinery; not part of the Phase 1 DoD |
 | Provider conformance (Ollama / OpenAI-compatible swap) | LLM-02, LLM-09 | Interface-conformance test over the interface only — never a live provider (`README.md` §9.7); typed `MODEL_UNAVAILABLE` on a missing model |
+| A `json_object` dialect carries the schema in the prompt, and the provider-native dialects keep `json_schema` (third pass) | LLM-16, LLM-17, LLM-18, LLM-19 | Engine-seam test (stub) plus composition/entry-point tests; mutation: `STRUCTURED_MODES = {}` turns four tests red |
 
 ## 8. Definition of Ready (per task)
 
@@ -508,3 +519,36 @@ window of 16 384 — while the same run's provider counted 3 316 prompt tokens a
 rather than shape an answer, but changing it moves which requests count as the same one. And the
 bench still cannot send an image (`scripts/tools/_llm.py` states `images=[]`) — a `wbs-scripts.md`
 row, named here and not moved.
+
+## 14. Third pass — a named hosted provider (`LLM-16` … `LLM-19`)
+
+Added 2026-10-06, from the work order `docs/feedback/deepseek-provider-kind.md`. The frontier probe
+`scripts/tmpref/frontier_prompt.py` reaches DeepSeek by driving `docflow.llm.primitives` directly,
+with the schema inlined into the prompt and `response_format={"type": "json_object"}`; the bench
+reaches the same provider through `process_llm_request`, which sent `response_format: json_schema`.
+This pass closes that gap inside `llm/primitives/` and `llm/entrypoints.py`, and adds **no**
+`scripts/tools/**` line.
+
+| Row | Deliverable |
+|---|---|
+| `LLM-16` | `PROVIDER_KINDS["deepseek"] = "openai_compatible"`, `DEEPSEEK_BASE_URL`, and a per-provider default endpoint (`OPENAI_COMPATIBLE_ENDPOINTS`). `--provider deepseek` needs no `base_url`; an endpoint the request states still wins |
+| `LLM-17` | `STRUCTURED_MODES` + `structured_mode(provider)`; the OpenAI-compatible transport emits `{"type": "json_object"}` for `deepseek` and keeps the provider-native `json_schema`/`strict` body for every other kind |
+| `LLM-18` | `inline_schema_block(prompt, schema)` applied in `process_prompt` when the dialect is `json_object`; the block is canonical JSON, is measured, and enters `request_key` through the existing `rendered_prompt` term — no new term, no new exclusion |
+| `LLM-19` | `LOCAL_ONLY_OPTIONS` (`think`, `keep_alive`, `num_ctx`) dropped from a non-Ollama body; the sampling parameters a hosted server may accept are kept |
+
+**Scope of the pass.** Four rows appended; no existing ID is renumbered or re-scoped. `LLM-04` and
+`LLM-09` are cited as predecessors, not changed: the placeholder rule and the generator resolution
+(`resolve_generator`, a schema outranks images) are untouched.
+
+**Evidence.** `pytest` green across `tests/llm` (10 new cases) · `ruff check .` · `ruff format
+--check .` · `pylint src tests`. The bench's own operator docs moved with the library:
+`scripts/tools/quickstart.md` gained an *A hosted provider* scene carrying the `llm.py` and
+`batch_llm.py` DeepSeek commands (both run green on the render path, no token spent), and
+`.env.example` names `deepseek` in its accepted-provider list and its endpoint defaults. One
+mutation falsified (mutate → observe red → restore → observe green): `STRUCTURED_MODES = {}` turns
+`structured_mode("deepseek")` back to `json_schema`, and four tests go red — the mode table, the
+prompt inlining, the wire body, and the entry-point prompt.
+
+**Not claimed.** Whether `deepseek-flash` appears in the endpoint's `GET /models` is not verified
+here (`models`' exact-string check is unchanged), and no live DeepSeek call is claimed: the
+transport is proven against the HTTP stub and the processor against the scripted fake.

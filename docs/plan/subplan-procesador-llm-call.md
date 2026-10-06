@@ -83,8 +83,8 @@ in the formula below):
 |---|---|---|---|
 | Transport | `api_key` | no | no — a credential |
 | | `timeout`, `max_attempts` | no | yes (open: §9 decision 10) |
-| Request-level | `think`, `keep_alive` | yes, lifted to the top of the Ollama body | yes — `think` changes the answer |
-| Decoding | everything else (`temperature`, `min_p`, `num_ctx`, …) | yes, inside the body's own options | yes |
+| Request-level | `think`, `keep_alive` | only to Ollama, lifted to the top of its body; dropped for a hosted dialect | yes — `think` changes the answer |
+| Decoding | everything else (`temperature`, `min_p`, `num_ctx`, …) | yes, inside the body's own options; a hosted dialect drops `num_ctx` and keeps the sampling parameters | yes |
 | Read here, also sent | `context_window` | yes, translated by the transport (§9 decision 7) | yes |
 | Read here, never sent | `max_prompt_tokens` | no | yes — it changes the prompt |
 | Read here, excluded | `stream` | yes, as the call's own field | no — a streamed answer is the same answer |
@@ -265,7 +265,9 @@ Provider engines live inside `llm/primitives/`, with primitive wrappers for:
 
 - **Ollama** (local);
 - **vLLM** (OpenAI-compatible local);
-- **hosted OpenAI-compatible API**.
+- **hosted OpenAI-compatible API**, named per product — `deepseek` is the first such kind,
+  reached at its own documented endpoint (`https://api.deepseek.com`) and needing no `base_url`
+  from the caller.
 
 No other processor, and never the orchestrator, reaches a provider directly, and the
 processor never imports another processor's module. The primitives expose the minimal
@@ -273,6 +275,14 @@ surface needed: `generate_text`, `generate_multimodal`, `generate_structured`,
 `list_models`, `check_model_available`, `get_context_window`. Providers are swappable
 behind the `LLMInput → LLMResult` contract — a different provider changes only
 `llm/primitives/`, never the contract or the workflow.
+
+**Structured output is per dialect, and stated in one place.** A provider that documents no
+schema is asked for a bare `{"type": "json_object"}` and the schema travels in the prompt instead:
+`process_prompt` inlines it (`inline_schema_block`), so it enters `request_key` through the
+existing `rendered_prompt` term — no new key term — and offline `validate_schema` still runs
+against the same loaded schema. Every other provider keeps the provider-native `json_schema`
+body. `structured_mode(provider)` states which, so a new dialect is one table row and no branch
+anywhere else.
 
 **Which of the three carries an image is resolved, not chosen.** A caller does not pick a
 generator: `resolve_generator(structured=…, multimodal=…)` states the rule, and a schema outranks
@@ -319,12 +329,19 @@ graph; a retry always preserves prior attempts (`LLMAttempt` history). Documenta
 | LLM-13 | Node reuse on restart: a `SUCCESS` node with a matching `request_key` is reused and only the pending nodes run (`request_graph_stop`, `SKIP` / `FORCE` / `INVALIDATE`, `invalidate_downstream_nodes` deferred, `# TODO: [MVP]`) | L | LLM-12 |
 | LLM-14 | Per-field comparison and consolidation: `compare_outputs` (`calculate_consensus` deferred, `# TODO: [MVP]`); a per-field vector is compared field by field, never as one score | M | LLM-12 |
 | LLM-15 | Usage, timing and context-window control (`count_tokens`, `truncate_to_token_limit`, `is_context_limit_exceeded`, `context_verdict`): the pre-flight counts a stated image cost, never reports a fit it cannot measure, and compares against the window the call asks for | M | LLM-06 |
+| LLM-16 | Provider kind `deepseek`: a `PROVIDER_KINDS` row + `DEEPSEEK_BASE_URL` + a per-provider default endpoint, so a hosted call needs no `base_url` | S | LLM-09 |
+| LLM-17 | Structured mode per dialect: `STRUCTURED_MODES` + `structured_mode()`; the OpenAI-compatible transport emits `{"type": "json_object"}` for that kind and the provider-native `json_schema` otherwise | S | LLM-16 |
+| LLM-18 | Inline the schema for the `json_object` dialect (`inline_schema_block`, applied in `process_prompt`): the schema enters `request_key` through `rendered_prompt`, and offline `validate_schema` still runs | S | LLM-17, LLM-04 |
+| LLM-19 | Hosted-body option hygiene: the local dialect's own keys (`think`, `keep_alive`, `num_ctx`) are dropped from the OpenAI-compatible body | S | LLM-09 |
 
 ### Waves
 
 - **Wave 1 (contracts & primitives):** LLM-01 → LLM-02 → LLM-03; LLM-04 and LLM-05 depend only on LLM-01 and run in parallel with the provider seam (LLM-02/LLM-03).
 - **Wave 2 (single call):** LLM-06 → LLM-07 → LLM-08; LLM-09 in parallel after LLM-02; LLM-15 also starts here (its only predecessor is LLM-06).
 - **Wave 3 (linear inference chain):** LLM-10, LLM-11 → LLM-12 → LLM-13; LLM-14 after LLM-12. LLM-15 is completed in Wave 2 by its declared dependency. The chain is fixed and sequential; the dynamic machinery is deferred (§9.6).
+- **Wave 4 (a named hosted provider — third pass, 2026-10-06):** LLM-16 and LLM-19 are independent
+  after LLM-09; LLM-17 after LLM-16; LLM-18 after LLM-17. The bench (`scripts/tools/`) changes
+  nothing — the rows are all inside `llm/primitives/` and `llm/entrypoints.py`.
 
 *(The pixel half — what `document`/`images` mean, the generator resolution, the option classes, the
 window the pre-flight checks, and a review's completeness — was reopened in the second pass of
@@ -557,3 +574,10 @@ pylint src tests
     timeout is not reusable under another. They bound an attempt and cannot change an answer,
     which argues they should not key it. Left open on purpose: changing it moves which requests
     count as the same request, and that is a re-use decision rather than a validation one.
+11. **A named hosted provider — RESOLVED (third pass, 2026-10-06):** `deepseek` is a provider kind
+    of the OpenAI-compatible transport (`PROVIDER_KINDS`), reached at its own documented endpoint
+    without a stated `base_url`; it asks for its structure as a bare `{"type": "json_object"}` and
+    the schema is inlined into the prompt (`LLM-16`…`LLM-18`), which keeps `openai`/`vllm` on the
+    provider-native `json_schema` body and keeps every template unchanged. The local dialect's own
+    options are dropped from a hosted body (`LLM-19`). The bench is untouched: `llm.py` and
+    `batch_llm.py` carry the kind through `process_llm_request` with no provider-specific line.

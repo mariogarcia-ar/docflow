@@ -102,6 +102,24 @@ PLACEHOLDER_PATTERN: Final[re.Pattern[str]] = re.compile(
     r"<extra:(?P<key>[A-Za-z_][A-Za-z0-9_]*)>|<extra>|<doc>|<schema>"
 )
 
+#: How a structured answer is asked for, per dialect. ``json_schema`` is the provider-native body
+#: that every OpenAI-compatible endpoint and Ollama's own ``format`` field understand;
+#: ``json_object`` is the bare object a dialect that documents no schema accepts, and the schema
+#: then has to travel inside the prompt instead. The key is the *provider*, not the transport:
+#: ``deepseek`` runs on the OpenAI-compatible transport and still asks for ``json_object``.
+JSON_SCHEMA_MODE: Final[str] = "json_schema"
+JSON_OBJECT_MODE: Final[str] = "json_object"
+STRUCTURED_MODES: Final[dict[str, str]] = {"deepseek": JSON_OBJECT_MODE}
+
+#: The block an inlined schema travels in and the instruction that closes it. It is appended
+#: *after* the template, so the last thing read is still the instruction to answer with the object
+#: alone — the closing is our own sentence rather than a phrase the template has to end with, which
+#: would be a library rule hidden in a data asset.
+SCHEMA_BLOCK_HEADING: Final[str] = (
+    "THE SCHEMA YOUR ANSWER MUST SATISFY (every field, in this order)"
+)
+SCHEMA_BLOCK_CLOSING: Final[str] = "Answer with the JSON object only."
+
 #: The metadata keys this processor reads. ``LLMInput`` carries no output directory, no asset
 #: root and no run identity, and none of the three may be guessed: the caller states them in
 #: ``metadata`` or the run reports that the dependency does not resolve. A guess would be exactly
@@ -632,6 +650,42 @@ def overflow_message(
     )
 
 
+def structured_mode(provider: str) -> str:
+    """Return how a structured answer is asked for from ``provider``.
+
+    Args:
+        provider: The provider name, as the request stated it.
+
+    Returns:
+        ``"json_object"`` for a dialect that asks for a bare object, ``"json_schema"`` otherwise.
+        The default is the provider-native body, so a provider absent from the table is unaffected.
+    """
+    return STRUCTURED_MODES.get(provider, JSON_SCHEMA_MODE)
+
+
+def inline_schema_block(prompt: str, schema: Mapping[str, Any]) -> str:
+    """Return ``prompt`` with the schema it must answer under stated inside it.
+
+    A ``json_object`` dialect carries no schema in the request, so the schema has to travel in the
+    instruction itself: it is appended after the rendered template, above a closing line that asks
+    for the object alone. The block is canonical JSON, so two equivalent schemas produce one block
+    and therefore one request key.
+
+    Args:
+        prompt: The rendered prompt.
+        schema: The schema the answer must satisfy.
+
+    Returns:
+        The prompt with the schema block appended.
+    """
+    block = (
+        f"{SCHEMA_BLOCK_HEADING}\n\n"
+        f"{canonical_json(dict(schema))}\n\n"
+        f"{SCHEMA_BLOCK_CLOSING}\n"
+    )
+    return f"{prompt}\n\n{block}"
+
+
 def process_prompt(
     request: LLMInput,
     template: str,
@@ -646,7 +700,8 @@ def process_prompt(
 
     Returns:
         The rendered prompt. It is truncated only when the caller stated
-        ``options["max_prompt_tokens"]``, and the truncation is recorded.
+        ``options["max_prompt_tokens"]``, and the truncation is recorded. A request for a dialect
+        that asks for a bare object gets the schema inlined, and the measurement counts it.
     """
     rendered = process_template(
         template,
@@ -654,6 +709,8 @@ def process_prompt(
         extra_context=request.extra_context,
         schema=schema,
     )
+    if schema is not None and structured_mode(request.provider) == JSON_OBJECT_MODE:
+        rendered = inline_schema_block(rendered, schema)
     limit = request.options.get(MAX_PROMPT_TOKENS_OPTION)
     if isinstance(limit, int) and not isinstance(limit, bool):
         truncated = truncate_to_token_limit(rendered, limit)

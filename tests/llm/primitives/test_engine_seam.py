@@ -23,6 +23,7 @@ import pytest
 
 from docflow.llm.primitives import (
     CONTENT_CHANNEL,
+    DEEPSEEK_BASE_URL,
     OLLAMA_BASE_URL,
     OPENAI_COMPATIBLE_BASE_URL,
     PRIMITIVE_NAMES,
@@ -189,6 +190,35 @@ def test_an_openai_compatible_call_posts_a_constrained_response_format(http) -> 
             "schema": {"type": "object"},
         },
     }
+
+
+def test_a_deepseek_call_is_reached_at_its_own_endpoint(http) -> None:
+    """The provider name carries its documented endpoint, so a hosted call needs no ``base_url``."""
+    client = http(body={"choices": [{"message": {"content": "{}"}}]})
+
+    generate_text(call(provider="deepseek"))
+
+    assert client.requests[0]["url"] == f"{DEEPSEEK_BASE_URL}/chat/completions"
+
+
+def test_a_stated_endpoint_still_outranks_the_provider_default(http) -> None:
+    """The default is a convention; the endpoint the request states wins."""
+    client = http(body={"choices": [{"message": {"content": "{}"}}]})
+
+    generate_text(call(provider="deepseek", base_url="http://host:9000/v1/"))
+
+    assert client.requests[0]["url"] == "http://host:9000/v1/chat/completions"
+
+
+def test_a_deepseek_structured_call_asks_for_a_bare_object(http) -> None:
+    """The dialect documents no schema, so the endpoint is asked for an object and the schema
+    travelled in the prompt instead (``process_prompt`` inlined it)."""
+    client = http(body={"choices": [{"message": {"content": "{}"}}]})
+
+    generate_structured(call(provider="deepseek", schema={"type": "object"}))
+
+    sent = client.requests[0]["json"]
+    assert sent["response_format"] == {"type": "json_object"}
 
 
 def test_a_credential_is_sent_as_a_header_and_never_into_the_body(http) -> None:

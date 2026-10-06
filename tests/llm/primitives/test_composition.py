@@ -25,6 +25,8 @@ from docflow.llm.primitives.composition import (
     CHAIN_DEPENDENCIES,
     DEFAULT_MAX_ATTEMPTS,
     INFERENCE_CHAIN,
+    SCHEMA_BLOCK_CLOSING,
+    SCHEMA_BLOCK_HEADING,
     assets_dir_for,
     attempt_validation_state,
     build_inference_plan,
@@ -37,6 +39,7 @@ from docflow.llm.primitives.composition import (
     find_reusable_node_result,
     image_tokens_for,
     increment_attempt,
+    inline_schema_block,
     input_hashes,
     is_context_limit_exceeded,
     is_node_reusable,
@@ -57,6 +60,7 @@ from docflow.llm.primitives.composition import (
     should_retry,
     stated_context_window,
     stated_model_version,
+    structured_mode,
     truncate_to_token_limit,
     typed_failure,
     validate_cached_result,
@@ -172,6 +176,45 @@ def test_the_same_inputs_render_the_same_prompt_twice() -> None:
 
     assert first.text == second.text
     assert first.tokens == second.tokens
+
+
+def test_structured_mode_is_provider_native_unless_the_table_says_otherwise() -> None:
+    """A provider absent from the table is asked for the native schema; ``deepseek`` is not."""
+    assert structured_mode("deepseek") == "json_object"
+    assert structured_mode("ollama") == "json_schema"
+    assert structured_mode("openai") == "json_schema"
+
+
+def test_a_json_object_dialect_carries_the_schema_inside_the_prompt() -> None:
+    """The dialect sends no schema, so the schema travels in the prompt — and it is measured."""
+    request = build_input(provider="deepseek")
+
+    rendered = process_prompt(request, "plain template", {"type": "object"})
+
+    assert rendered.text.startswith("plain template")
+    assert SCHEMA_BLOCK_HEADING in rendered.text
+    assert '{"type":"object"}' in rendered.text
+
+
+def test_a_provider_native_dialect_leaves_the_prompt_alone() -> None:
+    """Ollama and OpenAI are handed the schema on the wire, so the prompt is the template alone."""
+    schema = {"type": "object"}
+
+    assert (
+        process_prompt(build_input(provider="ollama"), "plain", schema).text == "plain"
+    )
+    assert (
+        process_prompt(build_input(provider="openai"), "plain", schema).text == "plain"
+    )
+
+
+def test_the_inlined_block_is_canonical_and_closes_with_the_instruction() -> None:
+    """Two equivalent schemas produce one block, and the last thing read is the instruction."""
+    prompt = inline_schema_block("ask", {"type": "object"})
+
+    assert prompt.startswith("ask")
+    assert prompt.rstrip().endswith(SCHEMA_BLOCK_CLOSING)
+    assert prompt == inline_schema_block("ask", {"type": "object"})
 
 
 def test_a_carriage_return_never_reaches_the_prompt_but_a_newline_does() -> None:

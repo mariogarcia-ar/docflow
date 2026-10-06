@@ -86,9 +86,14 @@ from docflow.llm.primitives.composition import (
     DEFAULT_TIMEOUT_SECONDS,
     IMAGE_TOKENS_KEY,
     INFERENCE_CHAIN,
+    JSON_OBJECT_MODE,
+    JSON_SCHEMA_MODE,
     OUTPUT_DIR_KEY,
     RUN_ID_KEY,
+    SCHEMA_BLOCK_CLOSING,
+    SCHEMA_BLOCK_HEADING,
     STREAM_OPTION,
+    STRUCTURED_MODES,
     assets_dir_for,
     attempt_validation_record,
     attempt_validation_state,
@@ -103,6 +108,7 @@ from docflow.llm.primitives.composition import (
     find_reusable_node_result,
     image_tokens_for,
     increment_attempt,
+    inline_schema_block,
     input_hashes,
     is_context_limit_exceeded,
     is_node_reusable,
@@ -122,6 +128,7 @@ from docflow.llm.primitives.composition import (
     should_retry,
     stated_context_window,
     stated_model_version,
+    structured_mode,
     truncate_to_token_limit,
     validate_cached_result,
 )
@@ -158,12 +165,18 @@ PROVIDER_KINDS: Final[dict[str, str]] = {
     "openai_compatible": "openai_compatible",
     "openai": "openai_compatible",
     "vllm": "openai_compatible",
+    "deepseek": "openai_compatible",
 }
 
 #: The documented default endpoint of each transport. A default *address* for a local daemon is a
 #: convention, not an answer, and it is recorded in the run's metadata so it is never hidden.
 OLLAMA_BASE_URL: Final[str] = "http://localhost:11434"
 OPENAI_COMPATIBLE_BASE_URL: Final[str] = "http://localhost:8000/v1"
+
+#: The default endpoint of each *hosted* provider of the OpenAI-compatible kind, when the request
+#: states none. A name absent here falls back to the local vLLM convention above.
+DEEPSEEK_BASE_URL: Final[str] = "https://api.deepseek.com"
+OPENAI_COMPATIBLE_ENDPOINTS: Final[dict[str, str]] = {"deepseek": DEEPSEEK_BASE_URL}
 
 #: The generator names :func:`docflow.llm.primitives.composition.resolve_generator` returns.
 GENERATORS: Final[tuple[str, ...]] = (
@@ -254,20 +267,27 @@ __all__ = [
     "ASSETS_DIR_KEY",
     "CHAIN_DEPENDENCIES",
     "CONTENT_CHANNEL",
+    "DEEPSEEK_BASE_URL",
     "DEFAULT_MAX_ATTEMPTS",
     "DEFAULT_TIMEOUT_SECONDS",
     "GENERATORS",
     "IMAGE_TOKENS_KEY",
     "INFERENCE_CHAIN",
+    "JSON_OBJECT_MODE",
+    "JSON_SCHEMA_MODE",
     "NON_RETRYABLE_KINDS",
     "OLLAMA_BASE_URL",
     "OPENAI_COMPATIBLE_BASE_URL",
+    "OPENAI_COMPATIBLE_ENDPOINTS",
     "OUTPUT_DIR_KEY",
     "PRIMITIVE_NAMES",
     "PROVIDER_KINDS",
     "RETRYABLE_KINDS",
     "RUN_ID_KEY",
+    "SCHEMA_BLOCK_CLOSING",
+    "SCHEMA_BLOCK_HEADING",
     "STREAM_OPTION",
+    "STRUCTURED_MODES",
     "THINKING_CHANNEL",
     "DeltaObserver",
     "LLMPrimitiveError",
@@ -298,6 +318,7 @@ __all__ = [
     "get_model_info",
     "image_tokens_for",
     "increment_attempt",
+    "inline_schema_block",
     "input_hashes",
     "is_context_limit_exceeded",
     "is_node_reusable",
@@ -325,6 +346,7 @@ __all__ = [
     "should_retry",
     "stated_context_window",
     "stated_model_version",
+    "structured_mode",
     "translate_provider_response",
     "truncate_to_token_limit",
     "typed_failure",
@@ -971,9 +993,12 @@ class OpenAICompatibleProvider(_HttpProvider):
     kind = "openai_compatible"
 
     def _base_url(self, subject: ProviderCall | ModelQuery) -> str:
-        """Return the endpoint for this subject."""
-        stated = subject.base_url
-        return OPENAI_COMPATIBLE_BASE_URL if not stated else str(stated).rstrip("/")
+        """Return the endpoint for this subject: the stated one, or the provider's own default."""
+        if subject.base_url:
+            return str(subject.base_url).rstrip("/")
+        return OPENAI_COMPATIBLE_ENDPOINTS.get(
+            subject.provider, OPENAI_COMPATIBLE_BASE_URL
+        )
 
     def _generate(self, call: ProviderCall, *, multimodal: bool) -> Mapping[str, Any]:
         """POST ``/chat/completions`` with an OpenAI-shaped body."""
@@ -993,14 +1018,20 @@ class OpenAICompatibleProvider(_HttpProvider):
             **call.options,
         }
         if call.schema is not None:
-            body["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "response",
-                    "strict": True,
-                    "schema": dict(call.schema),
-                },
-            }
+            if structured_mode(call.provider) == JSON_OBJECT_MODE:
+                # The dialect documents a bare object and no schema, so the schema travelled in
+                # the prompt instead (``process_prompt`` inlined it) and the endpoint is asked
+                # only for an object.
+                body["response_format"] = {"type": JSON_OBJECT_MODE}
+            else:
+                body["response_format"] = {
+                    "type": JSON_SCHEMA_MODE,
+                    "json_schema": {
+                        "name": "response",
+                        "strict": True,
+                        "schema": dict(call.schema),
+                    },
+                }
         url = f"{self._base_url(call)}/chat/completions"
         if call.stream:
             return _stream_json(url, body, call, self._consume_stream)

@@ -345,6 +345,42 @@ prompt's cost against that number *and* asks the provider for it (the Ollama tra
 understands — but only `--context-window` is what the pre-flight and `prompt`'s `overflows` field
 measure against. State it once; `.env` is the place.
 
+### A hosted provider
+
+`--provider` names the transport, and four names are one wire — `openai`, `openai_compatible`,
+`vllm` and `deepseek` all speak OpenAI chat-completions. `deepseek` is a named kind of it with its
+own endpoint, so a hosted run states the product rather than the URL:
+
+```bash
+python scripts/tools/llm.py --assets-dir registry/llm-frontier \
+    call tests/fixtures-txt/casos/66cd35e9-a0a2-4342-b4f9-4c7e7c39d6b0.txt \
+    --provider deepseek --model deepseek-flash --task extract \
+    --template extraction/invoice --schema extraction/invoice \
+    --context-window 64000 --option timeout=300 \
+    --option api_key="$DEEPSEEK_API_KEY"
+```
+
+`deepseek` reaches `https://api.deepseek.com` with **no** `--option base_url`; state one only to
+reach another endpoint (`--provider openai_compatible --option base_url=…`). Three things differ from
+an Ollama run and are worth reading before the first paying call:
+
+- **Structured output is per dialect.** `deepseek` is asked for a bare `json_object` and the schema
+  travels **inlined in the prompt** (`prompt` shows it there); `openai`/`vllm` keep
+  `response_format: json_schema`. Same `--schema`, different wire.
+- **The window is unknown off Ollama.** `get_context_window` answers `None` for every hosted kind, so
+  state `--context-window`; with none, `prompt` reports `unmeasured`, never `fits`.
+- **A reasoning tag needs a longer wait.** `deepseek-flash` thinks before it answers, so state
+  `--option timeout=300` (or more). The local daemon's own keys — `think`, `keep_alive`, `num_ctx` —
+  are dropped from a hosted body, so they cannot be handed over by mistake.
+
+The same commands run under `batch_llm.py`, one command over a folder:
+
+```bash
+python scripts/tools/batch_llm.py tests/fixtures-txt/casos --assets-dir registry/llm-frontier \
+    prompt --provider deepseek --model deepseek-flash --task extract \
+    --template extraction/invoice --schema extraction/invoice --context-window 64000
+```
+
 ### One file
 
 Three of the eight answer with no provider at all — the scripted chain, the state it leaves behind,

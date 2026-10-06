@@ -416,6 +416,45 @@ def test_the_window_the_pre_flight_checks_is_the_window_the_call_asks_for(
     )  # the transport's spelling, not this layer's
 
 
+def test_a_local_only_option_is_not_handed_to_a_hosted_provider(
+    provider: Callable[..., FakeProvider],
+) -> None:
+    """Ollama's own keys are dropped for a hosted dialect, which would spread them into its body."""
+    fake = provider()
+
+    process_llm_request(
+        build_input(
+            provider="deepseek",
+            options={"num_ctx": 8192, "think": False, "temperature": 0.1},
+        )
+    )
+
+    assert fake.calls[0].options == {"temperature": 0.1}
+
+
+def test_a_local_only_option_is_kept_for_the_local_daemon(
+    provider: Callable[..., FakeProvider],
+) -> None:
+    """The same keys are Ollama's own, so the local daemon still receives them."""
+    fake = provider()
+
+    process_llm_request(build_input(options={"num_ctx": 8192}))
+
+    assert fake.calls[0].options["num_ctx"] == 8192
+
+
+def test_a_deepseek_schema_travels_in_the_prompt_to_the_provider(
+    provider: Callable[..., FakeProvider],
+) -> None:
+    """The dialect sends no schema on the wire, so the call the provider receives carries it in
+    the prompt instead."""
+    fake = provider()
+
+    process_llm_request(build_input(provider="deepseek"))
+
+    assert primitives.SCHEMA_BLOCK_HEADING in fake.calls[0].messages[0]["content"]
+
+
 def test_a_page_image_reaches_the_call_and_keys_the_request(
     provider: Callable[..., FakeProvider], tmp_path: Path
 ) -> None:
