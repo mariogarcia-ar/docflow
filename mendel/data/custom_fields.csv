@@ -1,0 +1,2 @@
+companyCode,companyName,name,description,entityName,fieldNumber,fieldType,archived,enabled,selectorValidValues
+d24a9611-2a83-4760-af7e-5c66790aacee,"CVC SA",areas,,PERSON,1,SELECTOR,false,true,"[{""enabled"":true,""value"":""Ventas""},{""enabled"":true,""value"":""Taller""},{""enabled"":true,""value"":""Servicios""},{""enabled"":true,""value"":""Administración ""},{""enabled"":true,""value"":""Asesor ""}]"

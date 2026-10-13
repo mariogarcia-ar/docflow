@@ -1,0 +1,395 @@
+uniqueCode,name,goal,active,cycleType,expirationDate,personCode,personName,members,deleted
+88a2d657-585f-4f4a-94a0-99a236e30ee6,"Sucursal Rosario",10000000,true,RECURRING,,11ba121a-25b1-4185-a840-e81ecc466dfb,"Hugo Placido Stella",,false
+88a2d657-585f-4f4a-94a0-99a236e30ee6,"Sucursal Rosario",10000000,true,RECURRING,,f211f0f7-0ddc-42e8-be77-2945474f1295,"Nicolas Alfaro",,false
+8b43c605-e00f-480e-a7a7-9b82feb0f86a,"Rosario Compras",5000000,true,RECURRING,2026-03-01T02:59:59.000Z,f211f0f7-0ddc-42e8-be77-2945474f1295,"Nicolas Alfaro",,false
+85e3f945-6d42-4999-91cf-7595747701b1,"Sucursal Rosario Compras",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,f211f0f7-0ddc-42e8-be77-2945474f1295,"Nicolas Alfaro",,false
+ec94435d-f8cb-42c8-947a-2d2227583146,"Jose sanchez",500000,true,ONE_TIME,2026-05-01T02:59:59.000Z,37157595-be04-4b3b-82e4-c4c278b734b5,"Jose Sanchez",,false
+6c480571-ca3b-4efc-95b5-0535d2c7ec67,"Jose sanchez",500000,true,ONE_TIME,2026-03-21T02:59:59.000Z,37157595-be04-4b3b-82e4-c4c278b734b5,"Jose Sanchez",,false
+343135ac-f0b2-49ef-a6bd-c3c4c55fa496,"Jose Sanchez - Presupuesto Guardia Assitance",500000,true,ONE_TIME,2026-02-07T02:59:59.000Z,37157595-be04-4b3b-82e4-c4c278b734b5,"Jose Sanchez",,false
+f48c1d7d-1462-46ec-a6ec-7e58a9c0c367,"Jose sanchez",500000,true,ONE_TIME,2025-12-13T02:59:59.000Z,37157595-be04-4b3b-82e4-c4c278b734b5,"Jose Sanchez",,false
+d239fe64-cb01-4d2e-a08c-93e0e1e2aa82,"Ileana Scaglia - RRHH",500000,true,RECURRING,,53eee8b1-e17e-4402-8264-c8b9b79aebff,"Ileana Scaglia",,false
+b743d9c4-26ea-4563-a63f-8388829678ff,"Ileana Veronica Scaglia",100000,true,ONE_TIME,2026-03-14T02:59:59.000Z,53eee8b1-e17e-4402-8264-c8b9b79aebff,"Ileana Scaglia",,false
+a6f3b5d3-5472-46e2-b173-33702199af6d,"Casa Central",15000000,true,RECURRING,,53eee8b1-e17e-4402-8264-c8b9b79aebff,"Ileana Scaglia",,false
+b1385a45-d9db-4b96-a6a5-a7f40508f38f,"Ileana Scaglia",60000,true,ONE_TIME,2025-12-14T02:59:59.000Z,53eee8b1-e17e-4402-8264-c8b9b79aebff,"Ileana Scaglia",,false
+45fffbb3-0fc5-4b62-aa3a-cb298d3ec2dd,"Equipo 1",25000000,false,RECURRING,2025-11-01T02:59:59.000Z,53eee8b1-e17e-4402-8264-c8b9b79aebff,"Ileana Scaglia",,false
+e5fe1cd9-4c9e-4654-a811-e9e199cf8f8e,"Uso Motores 1",350000,true,ONE_TIME,2025-07-11T02:59:59.000Z,53eee8b1-e17e-4402-8264-c8b9b79aebff,"Ileana Scaglia",,false
+1ceb4e41-a8e4-4355-ac62-61a4609ee091,Gerencia,20000000,true,RECURRING,,03cd1cb1-b729-4729-90ab-82acbd4c5edf,"Martin Ojea Quintana",,false
+a6f3b5d3-5472-46e2-b173-33702199af6d,"Casa Central",15000000,true,RECURRING,,03cd1cb1-b729-4729-90ab-82acbd4c5edf,"Martin Ojea Quintana",,false
+493fd9a1-e0e7-4369-8ec7-53851d58b211,Gerencia,35000000,true,ONE_TIME,2026-08-27T02:59:59.000Z,03cd1cb1-b729-4729-90ab-82acbd4c5edf,"Martin Ojea Quintana",,false
+45fffbb3-0fc5-4b62-aa3a-cb298d3ec2dd,"Equipo 1",25000000,false,RECURRING,2025-11-01T02:59:59.000Z,03cd1cb1-b729-4729-90ab-82acbd4c5edf,"Martin Ojea Quintana",,false
+a9702731-89c7-44be-a923-f5d3e101eeae,"Sucursal Junin",5000000,true,RECURRING,,c62304a7-e5c3-4cb7-9e90-3904bb21742b,"Luciano Falabella",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,c62304a7-e5c3-4cb7-9e90-3904bb21742b,"Luciano Falabella",,false
+45fffbb3-0fc5-4b62-aa3a-cb298d3ec2dd,"Equipo 1",25000000,false,RECURRING,2025-11-01T02:59:59.000Z,c62304a7-e5c3-4cb7-9e90-3904bb21742b,"Luciano Falabella",,false
+45fffbb3-0fc5-4b62-aa3a-cb298d3ec2dd,"Equipo 1",25000000,false,RECURRING,2025-11-01T02:59:59.000Z,6402e523-9aa3-4012-8ab8-273d7b53d7f4,"Hernan Granzotto",,false
+45fffbb3-0fc5-4b62-aa3a-cb298d3ec2dd,"Equipo 1",25000000,false,RECURRING,2025-11-01T02:59:59.000Z,3a7f4cae-3035-48d3-9caa-6d288067ff57,"Silvana Schurig",,false
+d197b233-c6c4-4cff-bb9d-7ab82bc9d04f,Ventas,10000000,true,RECURRING,,0125cd7f-c0f2-46a7-9bd2-a070f3611b67,"Jorge Armando",,false
+ca1ea192-5c7c-41b7-ba2b-02b661cef762,"Venta y Traslado de Unidades",10000000,true,RECURRING,2026-03-01T02:59:59.000Z,0125cd7f-c0f2-46a7-9bd2-a070f3611b67,"Jorge Armando",,false
+a9702731-89c7-44be-a923-f5d3e101eeae,"Sucursal Junin",5000000,true,RECURRING,,789c7852-836f-49a8-8804-f996a1bda384,"Daiana Rastelli",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,789c7852-836f-49a8-8804-f996a1bda384,"Daiana Rastelli",,false
+45fffbb3-0fc5-4b62-aa3a-cb298d3ec2dd,"Equipo 1",25000000,false,RECURRING,2025-11-01T02:59:59.000Z,789c7852-836f-49a8-8804-f996a1bda384,"Daiana Rastelli",,false
+1ceb4e41-a8e4-4355-ac62-61a4609ee091,Gerencia,20000000,true,RECURRING,,97651146-2610-49af-bdc7-121f38f116cf,"Edgardo Barnetche",,false
+a6f3b5d3-5472-46e2-b173-33702199af6d,"Casa Central",15000000,true,RECURRING,,97651146-2610-49af-bdc7-121f38f116cf,"Edgardo Barnetche",,false
+493fd9a1-e0e7-4369-8ec7-53851d58b211,Gerencia,35000000,true,ONE_TIME,2026-08-27T02:59:59.000Z,97651146-2610-49af-bdc7-121f38f116cf,"Edgardo Barnetche",,false
+1ceb4e41-a8e4-4355-ac62-61a4609ee091,Gerencia,20000000,true,RECURRING,,893985c9-4f34-40c6-9442-1d71ab4e44f9,"Cristian Chianetta",,false
+a6f3b5d3-5472-46e2-b173-33702199af6d,"Casa Central",15000000,true,RECURRING,,893985c9-4f34-40c6-9442-1d71ab4e44f9,"Cristian Chianetta",,false
+493fd9a1-e0e7-4369-8ec7-53851d58b211,Gerencia,35000000,true,ONE_TIME,2026-08-27T02:59:59.000Z,893985c9-4f34-40c6-9442-1d71ab4e44f9,"Cristian Chianetta",,false
+45fffbb3-0fc5-4b62-aa3a-cb298d3ec2dd,"Equipo 1",25000000,false,RECURRING,2025-11-01T02:59:59.000Z,893985c9-4f34-40c6-9442-1d71ab4e44f9,"Cristian Chianetta",,false
+a8e7115d-b068-439e-8ae5-a319494a91b2,Gustavo,500000,true,ONE_TIME,2026-10-10T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+4d01f919-16ee-40bc-a240-b2b6fc133a9c,Gustavo,650000,true,ONE_TIME,2026-09-27T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+57b03eb7-ba6d-4e36-ae57-cd80991c6a0f,Gustavo,250000,true,ONE_TIME,2026-09-27T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+70258ffa-1eb7-4109-bf7c-245e2e67dfbd,Gustavo.,970000,true,ONE_TIME,2026-09-21T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+5a2b4f7d-c77e-41aa-87d2-3a864157c3a5,Gustavo,200000,true,ONE_TIME,2026-09-18T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+714c2a92-f7e4-49fd-b86a-38bacdabae8c,Gustavo,1100000,true,ONE_TIME,2026-08-23T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+ee970c31-f793-47df-95f6-bc450ba479fc,Gustavo,200000,true,ONE_TIME,2026-08-24T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+9c505686-daee-48a6-8e37-cc534d1b88d4,Gustavo,400000,true,ONE_TIME,2026-08-17T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+e3303363-932e-4662-8e68-f6451d34da21,Gustavo,950000,true,ONE_TIME,2026-08-08T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+b5434dc7-09ff-4f7a-bc83-1eef662b3b75,Gustavo,850000,true,ONE_TIME,2026-08-09T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+5a3e1c2d-149f-46dd-b8c2-fbedd6fe1b75,Gustavo,930000,true,ONE_TIME,2026-07-11T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+c0763dc5-c0de-46e9-94bd-7218f7214e39,Gustavo,190000,true,ONE_TIME,2026-06-28T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+9740c5e9-3f57-44e3-be96-6142ca09f30d,Gustavo,250000,true,ONE_TIME,2026-06-26T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+c4ee4e56-ac77-440d-b7cb-a9ae8af687f5,Gustavo,190000,true,ONE_TIME,2026-06-19T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+c1abd5c6-62a7-4e78-adbe-d4af4468cfd7,Gustavo,120000,true,ONE_TIME,2026-06-03T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+f9ddd012-d105-4a43-aaab-226095741858,Gustavo,100000,true,ONE_TIME,2026-05-29T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+21004ea1-3b20-4996-b879-7a5f470c8a19,Gustavo,85800,true,ONE_TIME,2026-05-29T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+70b4472e-c0f6-4101-865d-4252cbeb2085,Gustavo,350000,true,ONE_TIME,2026-05-23T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+1bc15b2f-bc14-4eeb-b0e2-61079b0b55a6,Gustavo,335000,true,ONE_TIME,2026-05-15T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+8eb33555-22db-4ecb-b50c-fc1fa8a475f8,Gustavo,110700,true,ONE_TIME,2026-05-15T02:59:59.000Z,375e8bc2-8b2d-4426-9fb2-3791e1cb2435,"Gustavo Ayala",,false
+d239fe64-cb01-4d2e-a08c-93e0e1e2aa82,"Ileana Scaglia - RRHH",500000,true,RECURRING,,437abbe3-72a3-43bb-8356-d6a3b5574ee9,"Lucia Trinidad Caputo",,false
+b743d9c4-26ea-4563-a63f-8388829678ff,"Ileana Veronica Scaglia",100000,true,ONE_TIME,2026-03-14T02:59:59.000Z,437abbe3-72a3-43bb-8356-d6a3b5574ee9,"Lucia Trinidad Caputo",,false
+d197b233-c6c4-4cff-bb9d-7ab82bc9d04f,Ventas,10000000,true,RECURRING,,095f8381-a403-4607-ba6a-9a80042cfd1e,"Diego José Vecchio",,false
+ca1ea192-5c7c-41b7-ba2b-02b661cef762,"Venta y Traslado de Unidades",10000000,true,RECURRING,2026-03-01T02:59:59.000Z,095f8381-a403-4607-ba6a-9a80042cfd1e,"Diego José Vecchio",,false
+361e9ad7-43f3-4ea6-9c00-d4ff466aceea,"Curso SCANIA semana 20-04",600000,true,ONE_TIME,2026-04-26T02:59:59.000Z,0de7bc5d-7e14-4a80-b747-98a779c8ad50,"Raúl Gabriel Garcia",,false
+9a113c80-ba76-4ba8-acaa-dba0389df095,"Sucursal Venado Tuerto",5000000,true,RECURRING,,4cad61d5-dbbc-4322-b968-3400215e042d,"Ignacio Anatelli",,false
+d197b233-c6c4-4cff-bb9d-7ab82bc9d04f,Ventas,10000000,true,RECURRING,,c10dc1a8-8a5a-4aeb-a9f0-25f48286f51a,"Claudio Marcelo Zvicer",,false
+93f8d5fa-1316-46ba-b08b-cd491b5a4124,"Claudio Marcelo Zvicer",500000,true,ONE_TIME,2026-01-01T02:59:59.000Z,c10dc1a8-8a5a-4aeb-a9f0-25f48286f51a,"Claudio Marcelo Zvicer",,false
+ca1ea192-5c7c-41b7-ba2b-02b661cef762,"Venta y Traslado de Unidades",10000000,true,RECURRING,2026-03-01T02:59:59.000Z,c10dc1a8-8a5a-4aeb-a9f0-25f48286f51a,"Claudio Marcelo Zvicer",,false
+dec70589-6e8d-4be1-a123-2bf7202e89e3,"Luis Lovizzio - compra baterías transit",250000,true,ONE_TIME,2026-05-22T02:59:59.000Z,307c468d-efcd-4796-afda-d665eccd7e70,"Luis Alberto Lovizzio",,false
+40ba94db-da71-4b96-a50d-2a2dd1b43f38,"Luis Lovizzio - Capacitación Frenos auxiliares",500000,true,ONE_TIME,2026-05-01T02:59:59.000Z,307c468d-efcd-4796-afda-d665eccd7e70,"Luis Alberto Lovizzio",,false
+9b001d5a-4a86-486b-9422-622ed21422f5,"Servicio kangoo Junin",300000,true,ONE_TIME,2026-02-25T02:59:59.000Z,307c468d-efcd-4796-afda-d665eccd7e70,"Luis Alberto Lovizzio",,false
+a9702731-89c7-44be-a923-f5d3e101eeae,"Sucursal Junin",5000000,true,RECURRING,,307c468d-efcd-4796-afda-d665eccd7e70,"Luis Alberto Lovizzio",,false
+144f3931-f33f-4425-b4c9-daf10f883fd4,"Luis Lovizzio",1000000,true,ONE_TIME,2025-12-01T02:59:59.000Z,307c468d-efcd-4796-afda-d665eccd7e70,"Luis Alberto Lovizzio",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,307c468d-efcd-4796-afda-d665eccd7e70,"Luis Alberto Lovizzio",,false
+88a2d657-585f-4f4a-94a0-99a236e30ee6,"Sucursal Rosario",10000000,true,RECURRING,,925598a7-7581-4eaa-ae10-e0e7283382bd,"Gerardo Damián Gonzalez",,false
+d197b233-c6c4-4cff-bb9d-7ab82bc9d04f,Ventas,10000000,true,RECURRING,,fceeca68-0c8f-4ebb-b372-eba67ce39d76,"Juan Jose Echaire",,false
+ca1ea192-5c7c-41b7-ba2b-02b661cef762,"Venta y Traslado de Unidades",10000000,true,RECURRING,2026-03-01T02:59:59.000Z,fceeca68-0c8f-4ebb-b372-eba67ce39d76,"Juan Jose Echaire",,false
+b61264f1-1608-44da-b5f0-ff70f97fbe27,Mantenimiento,300000,true,ONE_TIME,2026-03-28T02:59:59.000Z,355599df-6ec2-4df6-9578-85e1a84a2726,"Luis Gerardo Borello",,false
+9a113c80-ba76-4ba8-acaa-dba0389df095,"Sucursal Venado Tuerto",5000000,true,RECURRING,,355599df-6ec2-4df6-9578-85e1a84a2726,"Luis Gerardo Borello",,false
+9a113c80-ba76-4ba8-acaa-dba0389df095,"Sucursal Venado Tuerto",5000000,true,RECURRING,,fbea7d71-46ba-4709-9206-f6553bc60317,"David Rogelio Becerra",,false
+753d60d1-eb64-487f-ad28-fbd8dd2dbc32,"Tania Garberi, Certificación garantía",500000,true,ONE_TIME,2026-07-26T02:59:59.000Z,c43c2689-fe7b-43a6-a7f8-2790ccb86298,"Tania Magalí Garberi",,false
+9a113c80-ba76-4ba8-acaa-dba0389df095,"Sucursal Venado Tuerto",5000000,true,RECURRING,,e40a301f-3c4d-4748-8cbd-0c47cff98c2b,"Carolina Andrea Vinciguerra",,false
+3747ab65-a69d-4723-a589-3d33f8651171,"Jua Pablo Maldonado",260000,true,ONE_TIME,2026-08-12T02:59:59.000Z,f81837da-c689-4975-81a1-edf8640e0899,"Juan Pablo Maldonado",,false
+ef6bb167-e030-4349-ac8e-df931f9a0807,"Juan Pablo Maldonado",260000,true,ONE_TIME,2026-08-10T02:59:59.000Z,f81837da-c689-4975-81a1-edf8640e0899,"Juan Pablo Maldonado",,false
+ed71999e-e61c-442d-94e8-596f06ef3182,"Juan Pablo Maldonado",250000,true,ONE_TIME,2026-03-29T02:59:59.000Z,f81837da-c689-4975-81a1-edf8640e0899,"Juan Pablo Maldonado",,false
+cbdf6bda-2a26-480b-85b1-ed91f0920f91,"Juan Pablo Maldonado",110000,true,ONE_TIME,2026-03-08T02:59:59.000Z,f81837da-c689-4975-81a1-edf8640e0899,"Juan Pablo Maldonado",,false
+9a113c80-ba76-4ba8-acaa-dba0389df095,"Sucursal Venado Tuerto",5000000,true,RECURRING,,f81837da-c689-4975-81a1-edf8640e0899,"Juan Pablo Maldonado",,false
+903efe50-0f8b-486f-a171-3d59b4904500,"Viáticos capacitación Ailen Neri",500000,true,ONE_TIME,2026-10-19T02:59:59.000Z,ed7e38a8-dfaf-4e7d-87e6-efee78e8c73d,"Ailen Danei Lilian Neri",,false
+51b71dda-8e85-40c0-a513-4cc73880cf11,"Ailen Neri- Viaticos para Certificación",500000,true,ONE_TIME,2026-09-14T02:59:59.000Z,ed7e38a8-dfaf-4e7d-87e6-efee78e8c73d,"Ailen Danei Lilian Neri",,false
+78e7ee9c-b761-4eca-985e-2fb944d76705,"Ailen Neri",700000,true,ONE_TIME,2026-07-26T02:59:59.000Z,ed7e38a8-dfaf-4e7d-87e6-efee78e8c73d,"Ailen Danei Lilian Neri",,false
+88a2d657-585f-4f4a-94a0-99a236e30ee6,"Sucursal Rosario",10000000,true,RECURRING,,ed7e38a8-dfaf-4e7d-87e6-efee78e8c73d,"Ailen Danei Lilian Neri",,false
+07afac72-e68c-4042-bba8-5600e8706dd8,"Sebastian Guardia",300000,true,ONE_TIME,2025-12-11T02:59:59.000Z,05a690a4-3c5c-4556-aaf2-5044d94f844b,"Carlos Sebastián Guardia",,false
+0c02b599-e319-4a70-bfda-6196ee7cae0e,"Sebastian guardia",500000,true,ONE_TIME,2025-11-30T02:59:59.000Z,05a690a4-3c5c-4556-aaf2-5044d94f844b,"Carlos Sebastián Guardia",,false
+6578beae-a854-496a-b498-9bea14d205af,Chaperia,1000000,true,RECURRING,,05a690a4-3c5c-4556-aaf2-5044d94f844b,"Carlos Sebastián Guardia",,false
+c3439019-0431-4cdf-b395-4a6cd02ffba8,"Alquiler auto para Scania agroactiva",900000,true,ONE_TIME,2026-06-17T02:59:59.000Z,de1b8b77-5e15-4028-9d4c-f156df8e278e,"Juan Ignacio Gallego",,false
+d197b233-c6c4-4cff-bb9d-7ab82bc9d04f,Ventas,10000000,true,RECURRING,,de1b8b77-5e15-4028-9d4c-f156df8e278e,"Juan Ignacio Gallego",,false
+ca1ea192-5c7c-41b7-ba2b-02b661cef762,"Venta y Traslado de Unidades",10000000,true,RECURRING,2026-03-01T02:59:59.000Z,de1b8b77-5e15-4028-9d4c-f156df8e278e,"Juan Ignacio Gallego",,false
+17160a52-30c6-453d-acdf-da6bc2f208cc,"Sebastian Cordoba",450000,false,ONE_TIME,2026-08-15T02:59:59.000Z,a1438759-68cc-4427-8b59-4b5a8e7f2a53,"Sebastián Carlos Cordoba",,false
+ea61b081-cde8-47a6-b071-7a0f612c003c,"Sebastian Cordoba",400000,true,ONE_TIME,2026-03-05T02:59:59.000Z,a1438759-68cc-4427-8b59-4b5a8e7f2a53,"Sebastián Carlos Cordoba",,false
+88a2d657-585f-4f4a-94a0-99a236e30ee6,"Sucursal Rosario",10000000,true,RECURRING,,a1438759-68cc-4427-8b59-4b5a8e7f2a53,"Sebastián Carlos Cordoba",,false
+ca1ea192-5c7c-41b7-ba2b-02b661cef762,"Venta y Traslado de Unidades",10000000,true,RECURRING,2026-03-01T02:59:59.000Z,a1438759-68cc-4427-8b59-4b5a8e7f2a53,"Sebastián Carlos Cordoba",,false
+4a66b5c4-6300-48af-959e-eadf1a69d82a,"Hotel Venado Tuerto",105000,true,ONE_TIME,2026-09-18T02:59:59.000Z,8d86603d-8c48-43bd-a24a-e17d60d8e0f0,"Gianfranco Astorino",,false
+a6f3b5d3-5472-46e2-b173-33702199af6d,"Casa Central",15000000,true,RECURRING,,8d86603d-8c48-43bd-a24a-e17d60d8e0f0,"Gianfranco Astorino",,false
+a077c053-df24-4a90-a0bc-21c72c800e48,"Gianfranco Astorino - Visita Venado y Junin para colocar carteleria 50 aniversario",150000,true,ONE_TIME,2026-03-01T02:59:59.000Z,8d86603d-8c48-43bd-a24a-e17d60d8e0f0,"Gianfranco Astorino",,false
+6578beae-a854-496a-b498-9bea14d205af,Chaperia,1000000,true,RECURRING,,82c33585-e9be-4a92-9d88-cf291ae4bc73,"Gianni Miniello",,false
+18d3fdfe-8e6e-4ff5-a85a-b291b5fc9996,"Scuderi federico",500000,true,ONE_TIME,2026-10-10T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+dca0fd29-25bf-4b2b-9502-0490b6f47a41,"Scuderi federico",200000,true,ONE_TIME,2026-09-13T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+9f101326-b645-4ef0-b9b3-16cbf264f967,"Scuderi federico",50000,true,ONE_TIME,2026-09-10T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+2eb325e9-ad46-4203-8c83-bc3b89869ce8,"Federico Scuderi",500000,true,ONE_TIME,2026-09-06T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+e767657b-7526-436b-8cd3-cdcd8469e091,"Scuderi federico",500000,true,ONE_TIME,2026-09-04T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+8b8bf2f4-4d5b-4e19-a61f-96acb9d20e41,"Federico scuderi",600000,true,ONE_TIME,2026-08-16T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+4a47d079-9d30-4497-bd38-af32adab0e96,"Scuderi federico",500000,true,ONE_TIME,2026-07-18T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+f2d6b1f0-f3b3-4c4b-b062-c71b269cb179,"Scuderi - gastos guardia",500000,true,ONE_TIME,2026-06-27T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+ffc5672c-30fd-4162-b151-d3709bc7cb3f,"Scuderi federico-capasitacion",500000,true,ONE_TIME,2026-06-07T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+6e6d4b67-0c2c-4c8d-9821-813285a340ab,"Federico scuderi",500000,true,ONE_TIME,2026-05-29T02:59:59.000Z,11d181e5-2f5a-4ed9-a41a-610e4063911b,"Federico Agustin Scuderi",,false
+69707592-70d2-48dc-b5b0-52651f2223a8,"Ingani carlos andres",500000,true,ONE_TIME,2026-10-10T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+32b72fab-74e3-4cf4-ac2d-244f8e14796d,"Andres ingani",600000,true,ONE_TIME,2026-09-05T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+7141ea1d-67dd-4253-8150-9b2e6fdab232,"Andres ingani",600000,true,ONE_TIME,2026-08-08T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+9caacca0-3a06-4bf5-a62a-b37bc250e5d9,"Carlos andres ingani",500000,true,ONE_TIME,2026-07-11T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+92d7b15f-6417-4923-9646-ee28e46069c2,"Andres ingani",500000,true,ONE_TIME,2026-06-13T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+f9e286e4-5bcd-43cf-bd48-2c002683e057,"Ingani andres",500000,true,ONE_TIME,2026-05-16T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+ce75104c-a116-4054-a5eb-6a221c5a71db,"Andres ingani",600000,true,ONE_TIME,2026-05-11T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+368d398c-c6b6-40bb-a170-eabdf7a081cf,"Andres ingani",600000,true,ONE_TIME,2026-04-26T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+0f2dbfb0-7aae-45a4-838b-4594b995c4a4,"Andres ingani",500000,true,ONE_TIME,2026-04-18T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+2ba72cbf-f756-4aa6-8cf4-696f02719035,"Andres ingani",500000,true,ONE_TIME,2026-03-20T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+9f939bc7-818d-4673-a0b5-d880b36b0c1f,"Andres ingani - Guardia Assistance",500000,true,ONE_TIME,2026-02-27T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+518b0c13-07f2-4eeb-a86a-f9b52b4c8613,Andres,500000,true,ONE_TIME,2026-01-12T02:59:59.000Z,25aa09e7-2718-4cdb-8429-a50e8f46fe29,"Carlos Andres Ingani",,false
+25859e5c-9c44-4540-9b0f-8c3b7633ddf7,"Julián Persegani",500000,true,ONE_TIME,2026-10-10T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+cd798a1d-1df9-4a36-9c37-35b2e82ddcde,"Julian Persegani",50000,true,ONE_TIME,2026-09-24T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+c76412fd-fce2-41f5-bb75-978c31d15415,"Julian Persegani",50000,true,ONE_TIME,2026-09-15T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+4103103f-4a63-42fa-9417-e431d637956c,"Julián Persegani",500000,true,ONE_TIME,2026-09-11T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+23e57bbb-6b68-4a4d-b6d4-79ea225eeb8a,"Julián Persegani",50000,true,ONE_TIME,2026-08-19T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+e3d6c4b2-9236-4fa9-b741-682c76e4fcac,"Julian Persegani",100000,true,ONE_TIME,2026-08-15T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+5bc3b1bd-0c0c-4fd2-8000-d00356a5823b,"Julián Persegani",400000,true,ONE_TIME,2026-07-24T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+c61de145-23d2-4c6c-a4d7-32e2ed621199,"Julian Persegani",100000,true,ONE_TIME,2026-06-25T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+cc58888c-ca62-4915-b90c-8be100a6f719,"Julian Persegani",50000,true,ONE_TIME,2026-05-23T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+f83609f6-1057-43f4-89a5-4c4d5c935c17,"Julian Persegani",200000,true,ONE_TIME,2026-05-12T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+de20d372-97f1-4a07-8411-f0f3d02c7ef5,"Julián Persegani",500000,true,ONE_TIME,2026-05-05T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+7d711bf6-8d75-41cc-8ddf-4d1fa7d57c92,"Julián Persegani",500000,true,ONE_TIME,2026-04-13T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+fa77184b-b17f-44fe-ba98-f5e534aff834,"Julian Persegani",26000,true,ONE_TIME,2026-03-31T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+b91247f5-c381-4485-a478-d3bb51f5b0fb,"Julian Persegani",450000,true,ONE_TIME,2026-04-03T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+95a0232e-7da7-4610-98a4-76e96435e667,"Julian Persegani - Guardia Semanal",400000,true,ONE_TIME,2026-02-20T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+d88988c8-2735-4853-ace2-b52952fdc103,"Julian Persegani",400000,true,ONE_TIME,2025-12-01T02:59:59.000Z,366a1334-280e-49bc-adda-a472531b2ede,"Julian Persegani",,false
+78d80c30-6b19-4fc8-af9e-dee1b74d4c77,"Agustín garcia",300000,true,ONE_TIME,2026-09-24T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+796a0595-7122-4525-881e-e56b0bf0921c,"Agustín garcia",100000,true,ONE_TIME,2026-09-20T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+e45c0ec5-f2c4-4bee-ba42-be69d70fa16c,"Agustín García Asistencia",400000,true,ONE_TIME,2026-08-30T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+69dcb8f3-c0a3-4f45-a524-8a002b047749,"Agustín García semana de guardia",400000,true,ONE_TIME,2026-08-28T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+00bf0939-6bf0-4bb6-aa94-77bf88ce6a34,"Agustín García semana de guardia",350000,true,ONE_TIME,2026-06-19T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+6c28a555-56c8-4673-b5a3-31439f6c66e0,"Agustín García semana de guardia",350000,true,ONE_TIME,2026-06-05T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+9ac52530-6ae0-41a5-a544-0a4f3fda2362,"Agustín García semana de guardia",300000,true,ONE_TIME,2026-05-22T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+795013a5-9377-4321-b809-6db76a765502,"Agustin Garcia - Capacitación Frenos Electrónicos",300000,true,ONE_TIME,2026-04-25T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+df66c395-6cba-4811-9204-f111ed1c1eb9,"Agustín García - Semana de guardia",450000,true,ONE_TIME,2026-04-17T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+82eb2744-070d-44d5-811e-0fb6e55bc1b4,"Agustín García - Semana de guardia",400000,true,ONE_TIME,2026-04-03T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+c4201891-f101-4ddf-8416-25bdec2423d4,"Agustin Garcia - Semana de capacitación",400000,true,ONE_TIME,2026-03-21T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+d89bdf05-a683-45e7-9272-0b261c7f207b,"Agustín García - Semana de guardia",250000,true,ONE_TIME,2026-03-13T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+2f28e55e-f7c0-4d4f-8249-d106a4ac3b9e,"Agustín García - Semana de guardia",250000,true,ONE_TIME,2026-03-06T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+e65e0438-3af1-4cbb-b639-3892b44aecd6,"Agustín García - Servicio cosechadora",250000,true,ONE_TIME,2026-02-27T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+fd490492-8c46-4a0a-affe-f1ca3faf0279,"Agustín García - Semana de guardia",250000,true,ONE_TIME,2026-02-20T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+91a8d2c5-66fa-47e7-9a0a-82dc725b876b,"Agustin García - Guardia semanal",250000,true,ONE_TIME,2026-02-13T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+fefcdf8c-7fc5-4128-871b-7a73775427fb,"Agustín García - Semana de guardia",250000,true,ONE_TIME,2026-02-03T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+39579746-a909-42a4-b228-b6c9c922a472,"Agustín García - Guardia Semanal",250000,true,ONE_TIME,2026-01-13T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+9302233d-2d71-41a4-b352-66751ebc3dfa,"Agustín Garcia - Semana de Guardia",250000,true,ONE_TIME,2026-01-06T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+2f68f03b-21eb-4b98-ad57-cbd5325fc2ac,"Agustín García - Guardia semanal",250000,true,ONE_TIME,2025-12-16T02:59:59.000Z,7584120e-8a73-4be8-acd1-4c5d885db64b,"Braian Agustin Garcia",,false
+c119e659-24a5-441a-ab4a-178ebc982dc3,"Martin Fernandez",261953.1,true,ONE_TIME,2026-08-11T02:59:59.000Z,766063fd-9920-420c-977b-a308a1ef7ceb,"Martin Miguel Fernandez",,false
+1250b5f3-acc0-4ba9-a71d-1412ac4190c3,"Martin Fernandez - Mantenimiento kangoo AH559UK",280152,true,ONE_TIME,2026-05-05T02:59:59.000Z,766063fd-9920-420c-977b-a308a1ef7ceb,"Martin Miguel Fernandez",,false
+b1ae8564-f530-455f-a3f0-3f8ba3efdc92,"MARTIN FERNANDEZ - MANTENIMIENTO VEHICULO",280000,true,ONE_TIME,2026-01-07T02:59:59.000Z,766063fd-9920-420c-977b-a308a1ef7ceb,"Martin Miguel Fernandez",,false
+a9702731-89c7-44be-a923-f5d3e101eeae,"Sucursal Junin",5000000,true,RECURRING,,766063fd-9920-420c-977b-a308a1ef7ceb,"Martin Miguel Fernandez",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,766063fd-9920-420c-977b-a308a1ef7ceb,"Martin Miguel Fernandez",,false
+9e2ac56c-4df5-4571-a665-5108f351da86,"Cristian Gómez - Almuerzo carrocera",100000,true,ONE_TIME,2026-10-10T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+346dd143-63cd-44ad-be14-caf57d410acc,"Cristian Gómez - Almuerzo carrocera",150000,true,ONE_TIME,2026-10-03T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+f8fe86ee-bbfc-4996-99c0-d08b86910b75,"Cristian Gómez - Almuerzo carrocera",50000,true,ONE_TIME,2026-09-05T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+3b430edd-45c1-4e14-ac39-0f08a4109517,"Cristian Gómez - Almuerzo carrocera",100000,true,ONE_TIME,2026-08-29T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+0bae3848-9415-47a5-9302-29871bd4f739,"Cristian Gómez - Almuerzo carrocera",150000,true,ONE_TIME,2026-08-22T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+2ed5570e-d57b-4e23-a8c7-6dba9274af86,"Cristian Gomez - Almuerzo carrocera",200000,true,ONE_TIME,2026-07-01T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+3279c5b7-3bf8-4fd0-82b2-fd0f3593d53c,"Cristian Gomez - Almuerzo carrocera",100000,true,ONE_TIME,2026-06-03T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+c534eed4-26e8-42d9-af39-3b607997d1be,"Cristian Gómez - Almuerzo carrocera",150000,true,ONE_TIME,2026-05-30T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+e1cbb1b5-4a74-4875-889f-f1e06d60f7e8,"Cristian Gómez - Almuerzo carrocera",50000,true,ONE_TIME,2026-05-01T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+a3816901-30ad-452c-ac60-f30b51d778f8,"Cristian Gómez - Almuerzo carrocera",200000,true,ONE_TIME,2026-04-18T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+235d0707-7f08-4e51-b3ec-74a00d4daffe,"Cristian Gómez - Almuerzo carrocera",200000,true,ONE_TIME,2026-04-11T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+4c42f752-01b4-4a58-a6d5-6ec82e1c8141,"Cristian Gómez - Almuerzo carrocera",100000,true,ONE_TIME,2026-04-02T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+1a8e200f-f60b-4d91-8093-4be18b73bdc1,"Cristian Gómez - Almuerzo carrocera",150000,true,ONE_TIME,2026-03-28T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+da750f5f-89d9-421b-84c7-698547786606,"Cristian Gomez-Almuerzo carrocera",200000,true,ONE_TIME,2026-03-21T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+8efd1251-fd87-41f1-9c80-66951e49b7e5,"Cristian Gómez - Almuerzo carrocera",200000,true,ONE_TIME,2026-03-14T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+f6d09e34-8a84-4d01-bc6f-e9f79d0b8572,"Cristian Gómez - Almuerzo carrocera",200000,true,ONE_TIME,2026-03-07T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+2b3781ea-0f58-4312-9d4a-27efd1bb7777,"Cristian Gómez - Carrocera",200000,true,ONE_TIME,2026-02-28T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+df818f64-c0f9-4f17-96cc-08b70dec8752,"Cristian Gómez - Almuerzo Carrocera",200000,true,ONE_TIME,2026-02-21T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+451a6f93-f979-4e44-b0e8-a8741d464f05,"Cristian Gómez",200000,true,ONE_TIME,2026-02-14T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+df00e1e7-8e4a-43a6-b52d-ca9424841777,"Cristian Gómez",400000,true,ONE_TIME,2026-01-31T02:59:59.000Z,54c695e5-52d0-457b-b22c-595b3a96121d,"Cristian David Gomez",,false
+cdaa2afa-f1bb-4a20-8bf2-3963b40c46fc,"Jonathan vazquez",500000,true,ONE_TIME,2026-07-26T02:59:59.000Z,811d21ce-23d5-4da6-b0de-a22a69318d0c,"Jonathan Uriel Vazquez",,false
+353d4927-623a-4338-9db1-a78b8b30a8cf,Emanuel,500000,true,ONE_TIME,2026-10-02T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+ca10d623-331c-4609-bbce-7b7ba75e8b33,Emanuel,500000,true,ONE_TIME,2026-08-28T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+8f02c0f1-05d4-4c59-9fe0-71c8fe72f9c0,"Emanuel rivas",500000,true,ONE_TIME,2026-07-31T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+5b555861-99d8-40ed-bb3c-6932dedd594f,"Emanuel rivas",500000,true,ONE_TIME,2026-07-03T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+2dfeb379-480a-4c2c-8aab-7917373c4661,Emanuel,500000,true,ONE_TIME,2026-06-05T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+ba2fda36-45e9-4ed5-90b3-439ab00e4b6e,"Emanuel rivas",600000,true,ONE_TIME,2026-05-24T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+1f57ff01-0a48-416a-85ef-67f1063782ab,"Emanuel rivas",500000,true,ONE_TIME,2026-05-08T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+a2356efe-6ac1-4ad4-b3b4-c92378a1222f,"Emanuel rivas",500000,true,ONE_TIME,2026-04-11T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+14206eea-a4d2-4645-b5ca-1e655c0fe526,"Emanuel Rivas - Guardia Asistencias",500000,true,ONE_TIME,2026-03-13T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+9c570790-eabf-49b2-a286-2f3f280f992f,"Emanuel rivas",500000,true,ONE_TIME,2026-02-20T02:59:59.000Z,4ccf512a-484d-4998-a57b-d3c5a4741b41,"Emanuel Rivas",,false
+4f605b50-81ec-4aa8-9fdd-8e242edaf87e,"Cristian Robert",450000,true,ONE_TIME,2026-10-04T02:59:59.000Z,5bcbcb75-4d37-463d-b8c7-43ed9ba46206,"Cristian Eduardo Robert",,false
+c73da3b6-77dc-4110-a0ca-6033726ca0cf,"Cristian Robert",100000,true,ONE_TIME,2026-07-23T02:59:59.000Z,5bcbcb75-4d37-463d-b8c7-43ed9ba46206,"Cristian Eduardo Robert",,false
+930a2dc2-c974-43ee-9e52-ea14afd6a061,"Rosario Carroceras",3000000,true,RECURRING,,5bcbcb75-4d37-463d-b8c7-43ed9ba46206,"Cristian Eduardo Robert",,false
+6f5c06eb-848a-42db-a09f-12ca88e56154,"claudio varayand",100000,true,ONE_TIME,2026-08-29T02:59:59.000Z,5d49e941-06aa-4f53-b194-cc474a7e690e,"Claudio Alberto Varayand",,false
+aa46853a-d710-49a5-8469-66c07c5d576a,"claudio varayand",100000,true,ONE_TIME,2026-08-21T02:59:59.000Z,5d49e941-06aa-4f53-b194-cc474a7e690e,"Claudio Alberto Varayand",,false
+d8ff99aa-60e3-4c2d-8065-66eab60ff257,"claudio varayand",100000,true,ONE_TIME,2026-08-09T02:59:59.000Z,5d49e941-06aa-4f53-b194-cc474a7e690e,"Claudio Alberto Varayand",,false
+1f7ca0f6-3761-4205-ba50-1ab5712ded40,"claudio varayand",500000,true,ONE_TIME,2026-08-02T02:59:59.000Z,5d49e941-06aa-4f53-b194-cc474a7e690e,"Claudio Alberto Varayand",,false
+0da3157e-e6e6-46f8-9b33-c8596b9ee268,"claudio varayand",500000,true,ONE_TIME,2026-04-17T02:59:59.000Z,5d49e941-06aa-4f53-b194-cc474a7e690e,"Claudio Alberto Varayand",,false
+635d607e-5df4-410b-a651-f1dd01a87364,"Claudio Varayand - Guardia Assistance",500000,true,ONE_TIME,2026-03-06T02:59:59.000Z,5d49e941-06aa-4f53-b194-cc474a7e690e,"Claudio Alberto Varayand",,false
+464be421-827c-463e-86e1-4c85db59484e,"Claudio Varayand- Asistencia",100000,true,ONE_TIME,2026-02-27T02:59:59.000Z,5d49e941-06aa-4f53-b194-cc474a7e690e,"Claudio Alberto Varayand",,false
+7ca0a6bd-4986-4066-b46e-5725b98f409d,"Varayand Claudio",200000,true,ONE_TIME,2026-01-29T02:59:59.000Z,5d49e941-06aa-4f53-b194-cc474a7e690e,"Claudio Alberto Varayand",,false
+22d7abc7-2efe-4899-8fc7-ba311b3a5533,"Claudio Varayand - Guardia Assistance",400000,true,ONE_TIME,2026-01-25T02:59:59.000Z,5d49e941-06aa-4f53-b194-cc474a7e690e,"Claudio Alberto Varayand",,false
+88a2d657-585f-4f4a-94a0-99a236e30ee6,"Sucursal Rosario",10000000,true,RECURRING,,60de1a38-f428-4fb2-8700-9f259bb7f41d,"Hernan Javier Silva",,false
+e74ccd7e-9bbc-4162-ab49-3c783fc799c5,"Esteban Bucci",30000,true,ONE_TIME,2026-09-29T02:59:59.000Z,7bd39984-6c18-4247-9262-fbe5d68e9f5b,"Esteban José Bucci",,false
+f1382de7-27e8-48d6-9edf-140882e05c1f,"Esteban Bucci",500000,true,ONE_TIME,2026-09-19T02:59:59.000Z,7bd39984-6c18-4247-9262-fbe5d68e9f5b,"Esteban José Bucci",,false
+b5d0ed8a-a36d-4605-9bd6-53c1eca77f40,Bucci,200000,true,ONE_TIME,2026-07-09T02:59:59.000Z,7bd39984-6c18-4247-9262-fbe5d68e9f5b,"Esteban José Bucci",,false
+fcc51c04-bd34-4e1b-ba98-54f515238c3f,"Esteban Bucci - guardia",500000,true,ONE_TIME,2026-06-20T02:59:59.000Z,7bd39984-6c18-4247-9262-fbe5d68e9f5b,"Esteban José Bucci",,false
+bf12119b-e713-44a9-9e16-a937134d7ab1,"Fdderico Mangieri",400000,true,ONE_TIME,2026-10-16T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+adcc7956-4f46-46db-a060-a3de82410f1e,"Federico Mangieri",60000,true,ONE_TIME,2026-08-31T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+57235250-4008-4459-8ca2-2c086f7d497a,"Federico Mangieri",400000,true,ONE_TIME,2026-09-03T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+921ebca3-a225-4a75-bce4-77f05b095c04,"Federico Mangieri",300000,true,ONE_TIME,2026-08-14T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+ba2d9eef-5f53-4a39-90e4-50a15d07e8e4,"Federico Mangieri",300000,true,ONE_TIME,2026-07-21T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+e2ac8183-26e3-4c78-96c6-435a1b0e9f5b,"Federico Mangieri - Semana de guardia",500000,true,ONE_TIME,2026-05-01T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+d5063780-c380-446b-9fd2-d803c81ec086,"Federico Mangieri - curso PDE",300000,true,ONE_TIME,2026-04-16T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+ff36379d-1574-4ac0-8f40-a2e9cd050887,"Federico Mangieri guardia semanal",350000,true,ONE_TIME,2026-03-20T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+3623adec-ad7f-4bd0-865a-9f47744d1443,"Federico Mangieri - Guardia semanal",350000,true,ONE_TIME,2026-02-27T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+c8b699e2-0557-430b-a9bc-f69cd700d0c1,"Federico Mangieri semana de guardia",500000,true,ONE_TIME,2026-01-27T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+a0514c1b-11ba-448e-83bd-7fffe9db40d9,"Federico Mangieri - Semana de Guardia",300000,true,ONE_TIME,2025-12-30T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+4ead0811-8c6e-47f4-a7e8-160a7c532f3d,"Federico Mangieri - Capacitación Suspensión Electrónica",250000,true,ONE_TIME,2025-12-07T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+3a6fcc94-db19-4d17-b566-f032d450ce24,"Mangieri Federico",350000,true,ONE_TIME,2025-12-02T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,9097148c-52c5-46fc-9af3-ef1add1f0225,"Federico Daniel Mangieri",,false
+bbca6f47-fb2a-4873-8152-289f24db486d,"Semana de guardia BRAIAN POLICRITE",400000,true,ONE_TIME,2026-10-02T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+4d34adb1-d46d-4a71-9618-cf723599cf14,"Semana de guardia BRAIAN POLICRITE",400000,true,ONE_TIME,2026-09-11T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+18bb43d5-4112-4678-89bf-b1605339037c,"Braian Policrite",400000,true,ONE_TIME,2026-09-04T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+4dc21d70-31b4-4b9f-8cd5-05225e240b9d,"Braian Policrite",400000,true,ONE_TIME,2026-08-21T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+5ea2d8b5-d785-4606-869d-d954699640a0,"Braian Policrite semana de guardia",400000,true,ONE_TIME,2026-07-31T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+7c287a32-c710-4025-b431-cfae8e1ec430,"Capacitación Braian Policrite",400000,true,ONE_TIME,2026-05-30T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+1a2e6bf7-80a2-49f0-b52e-0565bda7a504,"Braian Policrite semana de guardia",400000,true,ONE_TIME,2026-05-29T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+fbbb274f-60f5-4bc3-9aa9-ee2bb02f75fe,"Braian Policrite guardia",300000,true,ONE_TIME,2026-05-15T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+eb8c5485-d479-46dd-81c1-684e41ecac3c,"Braian Policrite - Capacitación BCI",500000,true,ONE_TIME,2026-05-09T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+3299f82d-3524-461b-a7c8-9af632a1271d,"Braian Policrite - Semana de guardia",400000,true,ONE_TIME,2026-05-05T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+19eaa9d7-a2f0-48c6-8c18-42e248b51d6b,"Braian Policrite - Semana de guardia",700000,true,ONE_TIME,2026-04-24T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+27fc7edb-cfd8-4de2-b38e-5feafae7ddd8,"BRAIAN POLICRITE - Semana de guardia",400000,true,ONE_TIME,2026-03-26T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+1f90e8fa-7996-4b7d-af7d-4caca827edbc,"Braian Policrite semana de guardia",500000,true,ONE_TIME,2026-01-20T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+cbc006e5-8260-45d7-bd38-71edc9071ecb,"Braian Policrite - Guardia semanal",250000,true,ONE_TIME,2025-12-23T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+8c38a8e3-f72b-4193-97fd-b1f2e8226806,"Policrite Braian",250000,true,ONE_TIME,2025-12-03T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,91d40c7e-048a-477f-851c-44a80a2f3ebf,"Braian José Policrite",,false
+25cfb808-c0a3-456a-92da-edcef9b88424,"Luis martinez",500000,true,ONE_TIME,2026-09-18T02:59:59.000Z,b40135c0-c07d-473f-9e27-eee5e5bf8ee5,"Luis Alberto Martinez",,false
+c8970546-1357-4e64-8e4c-159fb4fe2894,"Luis martinez capacitacion xpi",500000,true,ONE_TIME,2026-09-06T02:59:59.000Z,b40135c0-c07d-473f-9e27-eee5e5bf8ee5,"Luis Alberto Martinez",,false
+d88afe27-55dc-4dbf-8d5f-4398c6dbf72b,"Luis martinez",500000,true,ONE_TIME,2026-08-14T02:59:59.000Z,b40135c0-c07d-473f-9e27-eee5e5bf8ee5,"Luis Alberto Martinez",,false
+ebdb40b2-c112-454b-ac38-f222f9c11cc6,"Luis martinez",500000,true,ONE_TIME,2026-07-17T02:59:59.000Z,b40135c0-c07d-473f-9e27-eee5e5bf8ee5,"Luis Alberto Martinez",,false
+8f39b36e-199e-4b3c-a8a9-fd42e8e9cd76,"Luis martinez",500000,true,ONE_TIME,2026-06-26T02:59:59.000Z,b40135c0-c07d-473f-9e27-eee5e5bf8ee5,"Luis Alberto Martinez",,false
+7e3705e2-2fbe-4359-b3a1-33c142a74db5,"Luis Martinez",500000,true,ONE_TIME,2026-05-29T02:59:59.000Z,b40135c0-c07d-473f-9e27-eee5e5bf8ee5,"Luis Alberto Martinez",,false
+2d80f64e-2da8-4a24-b2c2-58a825db9f0d,"Luis martinez",500000,true,ONE_TIME,2026-05-01T02:59:59.000Z,b40135c0-c07d-473f-9e27-eee5e5bf8ee5,"Luis Alberto Martinez",,false
+7a1e297d-ac17-4ff0-a809-ce3725d3e7d5,"Luis Martinez",500000,true,ONE_TIME,2026-04-03T02:59:59.000Z,b40135c0-c07d-473f-9e27-eee5e5bf8ee5,"Luis Alberto Martinez",,false
+920819f9-dbfa-45d4-acf2-394e79e69867,"Luis martinez",500000,true,ONE_TIME,2026-02-13T02:59:59.000Z,b40135c0-c07d-473f-9e27-eee5e5bf8ee5,"Luis Alberto Martinez",,false
+e11ba397-515f-447e-8c84-e14e7e65ad98,Guardias,300000,true,ONE_TIME,2026-10-09T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+777a36c8-813c-42d6-92e1-f92f035a6f4c,"Oscar Melcon",400000,true,ONE_TIME,2026-09-18T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+285d3f61-24fd-499e-ab29-120f47b2b00b,"Oscar Melcon",300000,true,ONE_TIME,2026-08-07T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+abb82cc1-d7f0-468e-b781-c0a9570e923f,"Oscar Melcon",300000,true,ONE_TIME,2026-07-26T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+718a3477-e662-44d2-a9a9-0c2602e1564d,"Oscar Melcon",60000,true,ONE_TIME,2026-07-19T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+b4c3054a-51c3-4113-a4cf-48b4fd556474,"Oscar melcon",250000,true,ONE_TIME,2026-07-17T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+a2306e29-ec0e-4fc5-b646-8355e263bfbe,"Oscar melcon",300000,true,ONE_TIME,2026-07-10T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+d0c08547-4e14-43ee-9bc4-60db6a237d47,"Oscar Melcon- capacitacion scania",300000,true,ONE_TIME,2026-07-04T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+e0a28279-3c55-4206-9178-8b2b244fa335,"Oscar melcon",50000,true,ONE_TIME,2026-06-28T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+4572fa3e-bda9-42e9-88f4-20388ba1511c,"Oscar melcon",50000,true,ONE_TIME,2026-06-24T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+2fcc8301-1cba-43d8-8c2a-e728f9c2f0b4,"Oscar melcon",30000,true,ONE_TIME,2026-06-24T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+2404f2d0-249b-467e-bb8b-80e0d193497e,"Oscar melcon - viaje a cliente cdc",250000,true,ONE_TIME,2026-06-18T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+1e17e90d-dabb-4ec5-a817-6493cd4dd20c,"Melcon Oscar",500000,true,ONE_TIME,2025-12-06T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5,"Mario Oscar Melcon",,false
+88bd350f-e8fe-4cf2-b1e3-8786bd0f1d2f,"Walter azcue",500000,true,ONE_TIME,2026-09-25T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+8d548d02-537f-4e8e-8a5d-29f3c845fbb7,Walter,600000,true,ONE_TIME,2026-09-21T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+36ecb74e-6888-4e7c-9dd8-6ca49d0001cd,"Walter azcúe",500000,true,ONE_TIME,2026-08-21T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+40c8f485-ad70-4923-a53b-75ef4dab1bb0,"Walter azcue",500000,true,ONE_TIME,2026-07-24T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+3e2397b5-7c9a-4610-875c-32f73862d643,"Walter Azcue",600000,true,ONE_TIME,2026-07-19T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+b89616bc-7857-4e87-b566-a68f0711b74c,Walter,500000,true,ONE_TIME,2026-06-19T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+7d72213a-3985-4cfb-ba45-1d075cc7ee46,Walter,500000,true,ONE_TIME,2026-05-22T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+d7f81029-1b8c-4c5a-8f72-6c7e25b96f37,"Walter azcue",600000,true,ONE_TIME,2026-05-02T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+d9f8118a-42a1-4799-b6d7-21d4a6774d49,"Walter azcue",500000,true,ONE_TIME,2026-04-24T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+7f60884c-ce11-4aa9-8fc6-c40791f537ee,"Walter azcúe - Guarda Semanal",500000,true,ONE_TIME,2026-03-27T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+69f34c43-3e5b-42d9-ae31-bd5a5429d70a,"Walter Azcue - Guardia Assistance",500000,true,ONE_TIME,2026-03-07T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+b7d05cd9-83ab-42ab-8773-05730d1c0649,"Walter Azcúe - Guardia Assistance",500000,true,ONE_TIME,2026-02-06T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+a4f968bd-7eba-4c84-8e80-4e81cd29cec6,"Walter Azcue",500000,true,ONE_TIME,2026-02-03T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+1b84ea27-bc30-4f9c-abcc-3bd403035859,Walter,500000,true,ONE_TIME,2026-01-20T02:59:59.000Z,99f0ac9c-d6e7-4695-a8cb-068c8e381a12,"Walter Damian Azcue",,false
+cc583620-c0e0-4f0b-a348-72b8368e4df5,Capacitacion,250000,true,ONE_TIME,2026-09-24T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+b8525649-9d34-46fe-9dcd-8f9f3db59c37,Guardia,400000,true,ONE_TIME,2026-09-22T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+c84b666f-370f-4709-a8cc-c662958f3c7c,Guardia,400000,true,ONE_TIME,2026-09-04T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+3075703e-cece-4cad-8911-dfdfb1d4aab6,"Motor super",350000,true,ONE_TIME,2026-07-18T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+fb076221-92b3-4d9f-b8cd-9a33947c9063,"Semana de guardia",400000,true,ONE_TIME,2026-07-17T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+fcbd436a-3e0a-4052-84fe-2d0d381f11bc,"Agustin lagrutta semana de guardia",400000,true,ONE_TIME,2026-07-03T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+a27a7872-96be-4838-b953-f821dc70436a,Capacitacion,250000,true,ONE_TIME,2026-05-30T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+96dfefab-9113-4111-bda6-edd606f49fb5,"Agustin Lagrutta - Semana de Guardia",500000,true,ONE_TIME,2026-05-12T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+4e7eaaa3-aa1b-4880-8a6a-d91b51d42b12,"Agustin Lagrutta - Capacitación Frenos auxiliares",500000,true,ONE_TIME,2026-05-01T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+d90819b7-bcd3-40de-a5a9-0eb676976881,"Agustin Lagrutta - Capacitación Frenos Electrónicos",500000,true,ONE_TIME,2026-04-25T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+bf6bccd0-e651-40c8-b458-99cc7e75b386,"Agustin Lagrutta - Semana de guardia",450000,true,ONE_TIME,2026-04-10T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+e58ed2b5-44da-4fb5-a43d-00287a9be300,"Aguistin Lagrutta",250000,true,ONE_TIME,2025-11-30T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,5bef963b-12cb-47d8-a35a-765e98e07fa8,"Agustin Lagrutta",,false
+0c99e35d-4e92-4270-84b5-d1aae46c6439,"Javier López",300000,true,ONE_TIME,2025-11-29T02:59:59.000Z,cf53631e-c46a-4356-bbad-12705b7510a9,"Javier Claudio Lopez",,false
+a926101f-b4f4-4bc5-a025-bc1c566709b9,"Alain Barron - Gastos Carrocera Troyano",55000,true,ONE_TIME,2026-10-11T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+c0a3263b-6106-4dd4-8579-df199a4a83a3,"Alain Barron - Gastos Carrocera Saldivia",100000,true,ONE_TIME,2026-10-08T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+27ba3989-489f-4079-9c25-5474de17b793,"Alain Barron - Guardia",500000,true,ONE_TIME,2026-09-26T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+11e2c009-e467-43b8-9e35-98ab1a80e4b2,"Alain Barron - Guardia",500000,true,ONE_TIME,2026-09-05T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+b194d6d7-f91d-4696-a79b-056d719d9bb7,"Alain Barron - Curso Mantenimiento",500000,true,ONE_TIME,2026-08-23T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+c563cb71-d5fa-4518-bf37-9f5279542d94,"Alain Barron - Guardia",500000,true,ONE_TIME,2026-08-15T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+279cd5ee-bbb6-496e-b723-d4ca9c207dab,"Alain Barron - Viaje a Bitton",80000,true,ONE_TIME,2026-08-02T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+19f5870e-346d-4519-8d24-c5ab897cd226,"Alain Barron - Curso Scania",500000,true,ONE_TIME,2026-07-19T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+65f571fd-88f9-42a8-b454-6795c5d94a35,"Alain Barron - Gastos Carrocera",400000,true,ONE_TIME,2026-07-12T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+7e362293-fc36-4dfd-a46f-751a4220201d,"Alain Barron - Scania Assitance",100000,true,ONE_TIME,2026-07-04T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+9d5e453c-434c-4344-9c35-3dd43e913ae4,"Alain Barron - Gastos Guardia",400000,true,ONE_TIME,2026-06-13T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+c81de047-ab99-4613-bff1-40151951dd4a,"Alain Barron - Gastos Carrocera",200000,true,ONE_TIME,2026-05-31T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+92736f08-bb4e-4266-9fca-3eecc54a5c20,"Alain Barron - Gastos Carrocera",100000,true,ONE_TIME,2026-05-23T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+d8ffea10-4692-4f96-8a13-a39774678fc3,"Alain Barron - Curso Bs As NTG",500000,true,ONE_TIME,2026-05-17T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+cada09e1-d5b5-41a0-99d5-208a680fc926,"Alain Barron",400000,true,ONE_TIME,2026-05-03T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+2eb5bcc2-a005-4dfa-bca5-2f3a66de4517,"Alain - Semana de Guardia",500000,true,ONE_TIME,2026-04-18T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+3df04214-d999-41c1-bf79-90aa5691aa50,"Alain Barron - Gastos Carrocera",150000,false,ONE_TIME,2026-04-12T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+9c8bc8a6-1c62-49e7-b574-5fb45fa73a43,"Alain Barron - Gastos Carrocera",150000,true,ONE_TIME,2026-04-04T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+ce3389ed-adaf-4a70-aa63-718c127c22a3,"Alain Barron - Gastos Carrocera",150000,true,ONE_TIME,2026-03-29T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+bcac5661-90e9-4d01-9d03-33c77a0f6210,"Alain Barron - Gastos Carrocera",200000,true,ONE_TIME,2026-03-22T02:59:59.000Z,e313eaf9-792b-4b40-8541-d67509944b9c,"Alain Santiago Barron",,false
+10374f9a-262c-4054-927b-3a99cf87c191,"Gustavo almada",500000,true,ONE_TIME,2026-09-19T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+42049377-6329-46ec-b468-9fcf128eb46c,"Gustavo almada",500000,true,ONE_TIME,2026-08-28T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+3ec5238a-cc58-4d26-8cba-c0d4005a178f,"Gustavo almada",500000,true,ONE_TIME,2026-08-22T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+f2473640-fd5c-400b-8203-fbf46054c955,"Gustavo almada",100000,true,ONE_TIME,2026-08-08T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+750dce24-5d6f-4d55-998d-14db3cdb2a99,"gustavo almada",500000,true,ONE_TIME,2026-08-01T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+8c4174ad-e42c-43f4-a25b-b3aa5b816e46,"Almada Gustavo",500000,false,ONE_TIME,,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+ed3f3879-1246-457c-bada-5c0487e737cd,"Gustavo Almada-Capacitacion Int - Sistema Eléctrico Camiones LPGRS (NTG)",500000,true,ONE_TIME,2026-05-17T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+0cb17b77-caa3-445d-b48b-47253c819004,"Gustavo Almada",400000,true,ONE_TIME,2026-05-09T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+574fd66b-7643-43cf-898c-a4a3039ffaeb,"Almada Gustavo",500000,true,ONE_TIME,2026-04-17T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+fc0c8a8e-5b6f-4a9c-a523-cc2556a276c1,"gustavo almada",400000,true,ONE_TIME,2026-03-15T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+e34cf5cb-3152-427f-9d81-c579d825e2ca,"Gustavo almada",400000,true,ONE_TIME,2026-01-18T02:59:59.000Z,fbb444b2-39a6-429e-9e12-9bce551aa74b,"Gustavo Ezequiel Almada",,false
+f1a8978f-5d3a-40df-93e1-e2d650bddbc5,"Flores Claudio",500000,true,ONE_TIME,2026-10-04T02:59:59.000Z,ffad3c5c-222e-49b2-ae14-980f589ba03d,"Claudio Omar Flores",,false
+3af7c3e7-a41f-4d1b-97c3-f55e35439182,"Flores Claudio tranef",80000,true,ONE_TIME,2026-09-03T02:59:59.000Z,ffad3c5c-222e-49b2-ae14-980f589ba03d,"Claudio Omar Flores",,false
+4a1c90cb-921e-4fe7-9bf9-74a0c1390b1f,"Claudio Flores",100000,true,ONE_TIME,2026-08-23T02:59:59.000Z,ffad3c5c-222e-49b2-ae14-980f589ba03d,"Claudio Omar Flores",,false
+48d5fa54-8b74-4289-9e6c-535bacad7812,"Claudio Flores asistencia",500000,true,ONE_TIME,2026-08-08T02:59:59.000Z,ffad3c5c-222e-49b2-ae14-980f589ba03d,"Claudio Omar Flores",,false
+0e731ec1-a8da-42f1-9198-82e544d0d684,"Claudio Flores asistencia",500000,true,ONE_TIME,2026-07-04T02:59:59.000Z,ffad3c5c-222e-49b2-ae14-980f589ba03d,"Claudio Omar Flores",,false
+5d98f0ec-a6cf-4846-a0b4-9088c2dfb4bd,"Asistencia Flores Claudio",500000,true,ONE_TIME,2026-05-23T02:59:59.000Z,ffad3c5c-222e-49b2-ae14-980f589ba03d,"Claudio Omar Flores",,false
+586d6d93-17fe-433b-a39a-a1def1566654,"Flores Claudio",500000,true,ONE_TIME,2026-03-29T02:59:59.000Z,ffad3c5c-222e-49b2-ae14-980f589ba03d,"Claudio Omar Flores",,false
+dfc75805-a443-43d4-8c5f-3994182a942b,"Flores Claudio",500000,true,ONE_TIME,2026-02-01T02:59:59.000Z,ffad3c5c-222e-49b2-ae14-980f589ba03d,"Claudio Omar Flores",,false
+a35211f4-6f93-4338-a561-95da6c03c786,"Claudio flores",500000,true,ONE_TIME,2025-12-06T02:59:59.000Z,ffad3c5c-222e-49b2-ae14-980f589ba03d,"Claudio Omar Flores",,false
+4faa5652-8cfc-464c-b745-7beeb0aaa3fa,Diego,600000,true,RECURRING,2026-10-31T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+6d084794-892a-4bbb-97c8-a5fb716997e0,Diego,500000,true,ONE_TIME,2026-10-16T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+11b0f38e-7fb0-407f-8af0-87eead8e5264,"Diego biton",600000.8,true,RECURRING,2026-09-15T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+1411509d-936c-47a7-b41b-f5907f386d47,Biton,500000,true,RECURRING,2026-08-31T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+b017c9e7-af1b-41ce-a5f5-2801eae30ac6,Diego,500000,true,ONE_TIME,2026-08-01T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+7fa737e5-396d-4186-9ef3-dd7c52257281,Diego,50000,true,ONE_TIME,2026-07-23T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+25f88705-8f6e-4a6e-88ce-6ec8374edc88,"Diego asistencia",500000,true,ONE_TIME,2026-06-12T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+662efe73-1d57-4434-bd55-6883d887a5c2,"Diego asistencia celulosa",100000,true,ONE_TIME,2026-06-04T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+057184d4-f04d-4edd-aefc-8d733f8d6bc8,"Diego ortelli- Capacitación Int - Motor 9 y 13 Litros_ES:",500000,true,ONE_TIME,2026-05-24T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+c537ae2e-27a0-438f-ac90-6ef6e62c3385,"Asistencia guardia diego",200000,true,ONE_TIME,2026-05-16T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+1ae9d5b5-15b6-4fb3-8589-30c01b9190dc,"Diego ortelli",500000,true,ONE_TIME,2026-05-16T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+9d722752-5302-4f03-bbd0-abc2a5059b8f,Diego,400000,true,ONE_TIME,2026-04-03T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+063f0b92-9576-45a1-91e0-85884e3233ec,"Diego Ortelli ' Guardia Semanal",400000,true,ONE_TIME,2026-02-20T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+e308676f-1de1-427e-b4d6-257ce8b08244,"Diego Ortelli - Guardia Assistance 2 al 12 de enero de 2026",500000,true,ONE_TIME,2026-01-10T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+a424641b-64a4-4db7-a73f-4290d979c355,"Diego Ortelli- Asistencia",500000,true,ONE_TIME,2025-12-27T02:59:59.000Z,da40dd93-a872-4356-913e-895f3b6afb60,"Diego Nicolas Ortelli",,false
+68fa75df-2cbd-4ab2-9d3f-2bd9d14f48c8,"Pablo Rivero",500000,true,ONE_TIME,2026-10-02T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+593e1546-1877-4d01-b935-478892e1b9cf,"Pablo Rivero",500000,true,ONE_TIME,2026-08-28T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+5853bf5e-029e-4668-b549-9742935d5779,"Pablo Rivero",500000,true,ONE_TIME,2026-08-21T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+4b9f471b-a7b2-47e4-97bf-cf8ae9c2f098,"Pablo Rivero",500000,true,ONE_TIME,2026-07-31T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+b7b7434a-fec8-4d6e-b909-2020944f63cd,Pablo,500000,true,ONE_TIME,2026-07-10T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+f692ad6d-0513-49b3-b6ae-51d22dec6e1b,"Pablo Rivero",150000,true,ONE_TIME,2026-06-26T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+84702258-c4a6-4cf3-9fcf-f2e657eb829c,"Pablo Rivero",500000,true,ONE_TIME,2026-06-05T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+5cb526e7-2c78-49ee-8400-938cdf3db6bc,"Pablo Rivero",500000,true,ONE_TIME,2026-04-24T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+2f65797d-ac91-4faf-8b7a-c3ad745bafce,"Pablo Rivero",500000,true,ONE_TIME,2026-04-10T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+751ac480-0d23-4a61-b32b-6e9d07534390,"Pablo Rivero",80000,true,ONE_TIME,2026-03-08T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+72a29404-3f53-40e9-8537-9d62e0815c2e,"Pablo Rivero",50000,true,ONE_TIME,2026-03-06T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+cff91255-407c-4c83-bb22-c49a2bc9f58b,"Asistencia servicio terminal 6",50000,true,ONE_TIME,2026-02-27T02:59:59.000Z,e24c0a2f-10bb-4a76-98bc-e22a84fec514,"Pablo Martin Rivero",,false
+e2c5c08e-b736-43c8-8062-501046c20c78,"Cardozo sebastian",500000,true,RECURRING,2026-03-03T02:59:59.000Z,d59f052d-76be-4ab6-8bbd-ba37c7f981dc,"Sebastian David Cardozo",,false
+42df4482-1ef8-4f2f-a820-beeba9956271,"Javier Leiker",500000,true,ONE_TIME,2026-10-04T02:59:59.000Z,e32af506-826f-49ed-a322-221d14d2d8ba,"Javier Leiker",,false
+2adc7971-d834-4899-80d2-2d3bc9cfefcb,"Javier Leiker",500000,true,ONE_TIME,2026-05-01T02:59:59.000Z,e32af506-826f-49ed-a322-221d14d2d8ba,"Javier Leiker",,false
+930a2dc2-c974-43ee-9e52-ea14afd6a061,"Rosario Carroceras",3000000,true,RECURRING,,e32af506-826f-49ed-a322-221d14d2d8ba,"Javier Leiker",,false
+46798228-beb6-49ca-9ecc-15d206cdde25,"Santiago acompañante de guardia",50000,true,ONE_TIME,2026-08-28T02:59:59.000Z,8dfcdf15-92bc-428f-89f1-3ede4b2b4e6b,"Santiago Von Pollackoff",,false
+7b70a75b-5a2a-4e52-910d-e09381cc9058,"Santiago Von Pollackoff",30000,true,ONE_TIME,2026-07-04T02:59:59.000Z,8dfcdf15-92bc-428f-89f1-3ede4b2b4e6b,"Santiago Von Pollackoff",,false
+1378ffaf-0524-4a93-9041-fb78db6598c0,"Santiago Von Pollackoff Semana de capacitacion",350000,true,ONE_TIME,2026-05-24T02:59:59.000Z,8dfcdf15-92bc-428f-89f1-3ede4b2b4e6b,"Santiago Von Pollackoff",,false
+54a7bbef-46e3-4057-8561-14072e719cd1,"Santiago Von Pollackoff - Capacitación Mantenimiento",350000,true,ONE_TIME,2026-04-12T02:59:59.000Z,8dfcdf15-92bc-428f-89f1-3ede4b2b4e6b,"Santiago Von Pollackoff",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,8dfcdf15-92bc-428f-89f1-3ede4b2b4e6b,"Santiago Von Pollackoff",,false
+e26ca140-0f3e-4c30-9439-d2f215b0c269,"Rodrigo Solis",250000,true,ONE_TIME,2025-11-30T02:59:59.000Z,14c2cc99-d65a-43ff-9e0f-d35683b8feda,"Rodrigo Alejandro Solis",,false
+d71fb059-89de-4d1e-87f2-39611622acf4,"Sucursal Junin",5000000,true,RECURRING,2026-01-01T02:59:59.000Z,14c2cc99-d65a-43ff-9e0f-d35683b8feda,"Rodrigo Alejandro Solis",,false
+d66c48ca-5b44-4275-8fa5-5cb121a41519,"ESPEJO RETROVISOR DERECHO AH559UN",86000,true,ONE_TIME,2026-07-24T02:59:59.000Z,faefb32b-dbac-46df-81db-60f886171213,"Franco Caviglia",,false
+beb61bec-cb6b-4848-97e1-5e5a1b46c8f5,"Franco Caviglia",100000,true,ONE_TIME,2026-06-26T02:59:59.000Z,faefb32b-dbac-46df-81db-60f886171213,"Franco Caviglia",,false
+88a2d657-585f-4f4a-94a0-99a236e30ee6,"Sucursal Rosario",10000000,true,RECURRING,,faefb32b-dbac-46df-81db-60f886171213,"Franco Caviglia",,false
+ca1ea192-5c7c-41b7-ba2b-02b661cef762,"Venta y Traslado de Unidades",10000000,true,RECURRING,2026-03-01T02:59:59.000Z,faefb32b-dbac-46df-81db-60f886171213,"Franco Caviglia",,false
+1ceb4e41-a8e4-4355-ac62-61a4609ee091,Gerencia,20000000,true,RECURRING,,b385c68d-10be-4693-8971-59b22f31f392,"Agustin Yeregui",,false
+a6f3b5d3-5472-46e2-b173-33702199af6d,"Casa Central",15000000,true,RECURRING,,b385c68d-10be-4693-8971-59b22f31f392,"Agustin Yeregui",,false
+493fd9a1-e0e7-4369-8ec7-53851d58b211,Gerencia,35000000,true,ONE_TIME,2026-08-27T02:59:59.000Z,b385c68d-10be-4693-8971-59b22f31f392,"Agustin Yeregui",,false
+142d35d4-9bd4-4ac4-8765-72c08efa487f,"Dante Moretti",300000,true,ONE_TIME,2026-09-29T02:59:59.000Z,1d4c0a83-859f-48a8-bd47-69c467a98d84,"Dante José Jorge Moretti",,false
+d197b233-c6c4-4cff-bb9d-7ab82bc9d04f,Ventas,10000000,true,RECURRING,,1d4c0a83-859f-48a8-bd47-69c467a98d84,"Dante José Jorge Moretti",,false
+740628c8-241f-436c-a0b6-b5a44fa9ebce,Joaquin,500000,true,ONE_TIME,2026-10-16T02:59:59.000Z,cf21aeae-87ec-4815-aef6-6807f63e68ee,"Joaquin Juan Cesar Espindola",,false
+786bb5d1-e8d3-401a-84fb-5ab2ab507d0b,"Joaquin espindola",500000,true,ONE_TIME,2026-09-11T02:59:59.000Z,cf21aeae-87ec-4815-aef6-6807f63e68ee,"Joaquin Juan Cesar Espindola",,false
+c82e16cf-03b7-4b82-a4f0-120dcc822d27,"Joaquin Espindola",600000,true,ONE_TIME,2026-05-02T02:59:59.000Z,cf21aeae-87ec-4815-aef6-6807f63e68ee,"Joaquin Juan Cesar Espindola",,false
+c6a6b25a-fbb3-43d3-8ae5-ab54d5311e43,"Joaquin Espindola",500000,true,ONE_TIME,2026-04-12T02:59:59.000Z,cf21aeae-87ec-4815-aef6-6807f63e68ee,"Joaquin Juan Cesar Espindola",,false
+e4089e9c-ea00-4209-b133-a81e87bf4cde,"Alex Ferreyra",500000,true,ONE_TIME,,446f4eae-0090-46d2-b685-310e7a71c8a4,"Alex Reinaldo Ferreyra",,false
+22d3a989-e0f7-4f81-a94e-7f424ffea02d,"Alex ferreyra-capacitacion mantenimiento",500000,true,ONE_TIME,2026-08-23T02:59:59.000Z,446f4eae-0090-46d2-b685-310e7a71c8a4,"Alex Reinaldo Ferreyra",,false
+46177de0-2ee6-46c0-8643-a00ddebc5a86,"Comida biton",50000,true,RECURRING,2026-10-07T02:59:59.000Z,a72a5fed-1677-421f-a908-cdae6f171fa0,"Agustin Felipe Franco",,false
+93e837d4-023b-4ab6-ad95-d78f90e374aa,"Comida biton",50000,true,DAY_RECURRING,2026-09-30T02:59:59.000Z,a72a5fed-1677-421f-a908-cdae6f171fa0,"Agustin Felipe Franco",,false
+285c5e1b-b5ee-43ba-8e39-fc330e9169c1,Guardia,500000,true,ONE_TIME,2026-09-26T02:59:59.000Z,a72a5fed-1677-421f-a908-cdae6f171fa0,"Agustin Felipe Franco",,false
+4f72850f-e509-4833-a379-b6b428b931fd,"Comida biton",60000,true,ONE_TIME,2026-09-13T02:59:59.000Z,a72a5fed-1677-421f-a908-cdae6f171fa0,"Agustin Felipe Franco",,false
+8b1e4b15-5324-44be-9ecf-4c5e4ef48c64,"Comida biton",60000,true,DAY_RECURRING,2026-09-03T02:59:59.000Z,a72a5fed-1677-421f-a908-cdae6f171fa0,"Agustin Felipe Franco",,false
+7dca959b-b9ff-4245-9d68-869bcc6e69d8,"Agustin franco-capacitacion mantenimiento bsas",500000,true,ONE_TIME,2026-08-23T02:59:59.000Z,a72a5fed-1677-421f-a908-cdae6f171fa0,"Agustin Felipe Franco",,false
+a6bc3b5d-8549-49b3-abfa-eebb940d07a3,"Lucas alonso-mes inducción",3000000,true,ONE_TIME,2026-10-13T02:59:59.000Z,1e79667a-d491-4e01-acd2-7e2186ef1d57,"Lucas Alonso",,false
+9a113c80-ba76-4ba8-acaa-dba0389df095,"Sucursal Venado Tuerto",5000000,true,RECURRING,,1e79667a-d491-4e01-acd2-7e2186ef1d57,"Lucas Alonso",,false

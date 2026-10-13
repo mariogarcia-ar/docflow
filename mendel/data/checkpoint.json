@@ -1,0 +1,259 @@
+{
+    "companies": {
+        "done": true,
+        "finishedAt": "2026-10-08T12:08:38+00:00",
+        "count": 1,
+        "checksum": null
+    },
+    "costCenters": {
+        "done": true,
+        "finishedAt": "2026-10-08T12:08:39+00:00",
+        "count": 7,
+        "checksum": null
+    },
+    "people": {
+        "done": true,
+        "finishedAt": "2026-10-08T12:08:40+00:00",
+        "count": 95,
+        "checksum": null
+    },
+    "customFields": {
+        "done": true,
+        "finishedAt": "2026-10-08T12:08:40+00:00",
+        "count": 1,
+        "checksum": null
+    },
+    "transactions": {
+        "lastMonth": "2026-10",
+        "months": {
+            "2025-01": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:41+00:00",
+                "count": 0
+            },
+            "2025-02": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:41+00:00",
+                "count": 0
+            },
+            "2025-03": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:42+00:00",
+                "count": 0
+            },
+            "2025-04": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:42+00:00",
+                "count": 0
+            },
+            "2025-05": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:43+00:00",
+                "count": 0
+            },
+            "2025-06": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:43+00:00",
+                "count": 0
+            },
+            "2025-07": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:44+00:00",
+                "count": 0
+            },
+            "2025-08": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:45+00:00",
+                "count": 16
+            },
+            "2025-09": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:46+00:00",
+                "count": 22
+            },
+            "2025-10": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:47+00:00",
+                "count": 49
+            },
+            "2025-11": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:50+00:00",
+                "count": 186
+            },
+            "2025-12": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:08:55+00:00",
+                "count": 350
+            },
+            "2026-01": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:00+00:00",
+                "count": 368
+            },
+            "2026-02": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:04+00:00",
+                "count": 286
+            },
+            "2026-03": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:09+00:00",
+                "count": 380
+            },
+            "2026-04": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:16+00:00",
+                "count": 544
+            },
+            "2026-05": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:22+00:00",
+                "count": 434
+            },
+            "2026-06": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:28+00:00",
+                "count": 427
+            },
+            "2026-07": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:34+00:00",
+                "count": 450
+            },
+            "2026-08": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:39+00:00",
+                "count": 456
+            },
+            "2026-09": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:46+00:00",
+                "count": 551
+            },
+            "2026-10": {
+                "done": true,
+                "finishedAt": "2026-10-08T12:09:47+00:00",
+                "count": 149
+            }
+        }
+    },
+    "budgets": {
+        "lastPersonIndex": 95,
+        "processed": [
+            "ddbd5ed2-5c97-42a9-8633-feebfb79d634",
+            "11ba121a-25b1-4185-a840-e81ecc466dfb",
+            "dc5e5662-c6c9-4d26-959a-5c2ed52c6399",
+            "b49ed756-20f8-41e9-8d8a-507f62726370",
+            "4b36f418-b4c7-4771-a7cf-4031103f2b2f",
+            "bddaeece-dcf3-4f34-b54d-7b07058cbaef",
+            "dc954bed-a5dd-435a-9292-f9ff688662f6",
+            "8a5f24a3-183e-4e53-a374-2ae34818c154",
+            "abe4c6f9-8993-4eca-845d-aec132580b6d",
+            "f211f0f7-0ddc-42e8-be77-2945474f1295",
+            "58edc741-e7dc-4a14-8302-b67d63862b21",
+            "11532109-1da4-49ba-9dcf-467ff15e327c",
+            "082bc354-579d-485a-88a7-d5e11642b7c0",
+            "1573f44a-d4ea-4c19-8a5b-b7db7d6066e9",
+            "2700b132-c05a-48ce-b1cb-62bfae82c20b",
+            "37157595-be04-4b3b-82e4-c4c278b734b5",
+            "48fbd058-a211-4298-b2d5-b0d042b1dc8f",
+            "6c950113-3d04-4efa-bf75-ab544a0f60c1",
+            "60f9189e-6e44-4b35-8fe5-596983531317",
+            "5696dd09-fe2b-4f0c-81bb-6867217279b4",
+            "97edb397-d85c-4213-983f-dc01a13b58b5",
+            "b3d61e43-6ec1-42f0-8ce7-119f7ee4cfe2",
+            "f91c27e9-5aea-484a-9054-0473a66d0908",
+            "f32e7ffd-6fc8-4cc7-ba5c-c507b2ac1271",
+            "f85c9c1c-ea6b-41f3-93e5-173d13d5207f",
+            "65671bfb-1f50-4b77-bfde-7de08dbfa7e5",
+            "8dd208ef-fbef-4a44-a88a-e42f447fcc18",
+            "53eee8b1-e17e-4402-8264-c8b9b79aebff",
+            "03cd1cb1-b729-4729-90ab-82acbd4c5edf",
+            "c62304a7-e5c3-4cb7-9e90-3904bb21742b",
+            "6402e523-9aa3-4012-8ab8-273d7b53d7f4",
+            "3a7f4cae-3035-48d3-9caa-6d288067ff57",
+            "4eeab0d1-ba77-42ca-8b52-0c7681f1030d",
+            "0125cd7f-c0f2-46a7-9bd2-a070f3611b67",
+            "789c7852-836f-49a8-8804-f996a1bda384",
+            "97651146-2610-49af-bdc7-121f38f116cf",
+            "893985c9-4f34-40c6-9442-1d71ab4e44f9",
+            "375e8bc2-8b2d-4426-9fb2-3791e1cb2435",
+            "437abbe3-72a3-43bb-8356-d6a3b5574ee9",
+            "095f8381-a403-4607-ba6a-9a80042cfd1e",
+            "0de7bc5d-7e14-4a80-b747-98a779c8ad50",
+            "4cad61d5-dbbc-4322-b968-3400215e042d",
+            "c10dc1a8-8a5a-4aeb-a9f0-25f48286f51a",
+            "307c468d-efcd-4796-afda-d665eccd7e70",
+            "925598a7-7581-4eaa-ae10-e0e7283382bd",
+            "fceeca68-0c8f-4ebb-b372-eba67ce39d76",
+            "355599df-6ec2-4df6-9578-85e1a84a2726",
+            "fbea7d71-46ba-4709-9206-f6553bc60317",
+            "c43c2689-fe7b-43a6-a7f8-2790ccb86298",
+            "e40a301f-3c4d-4748-8cbd-0c47cff98c2b",
+            "f81837da-c689-4975-81a1-edf8640e0899",
+            "ed7e38a8-dfaf-4e7d-87e6-efee78e8c73d",
+            "05a690a4-3c5c-4556-aaf2-5044d94f844b",
+            "44ec8695-a13f-4ed2-b22a-9cfe91150022",
+            "de1b8b77-5e15-4028-9d4c-f156df8e278e",
+            "a1438759-68cc-4427-8b59-4b5a8e7f2a53",
+            "8d86603d-8c48-43bd-a24a-e17d60d8e0f0",
+            "82c33585-e9be-4a92-9d88-cf291ae4bc73",
+            "11d181e5-2f5a-4ed9-a41a-610e4063911b",
+            "25aa09e7-2718-4cdb-8429-a50e8f46fe29",
+            "366a1334-280e-49bc-adda-a472531b2ede",
+            "7584120e-8a73-4be8-acd1-4c5d885db64b",
+            "766063fd-9920-420c-977b-a308a1ef7ceb",
+            "54c695e5-52d0-457b-b22c-595b3a96121d",
+            "6ab2f3f8-617c-491c-b3cc-cfddf3c08fc3",
+            "811d21ce-23d5-4da6-b0de-a22a69318d0c",
+            "4ccf512a-484d-4998-a57b-d3c5a4741b41",
+            "5bcbcb75-4d37-463d-b8c7-43ed9ba46206",
+            "5d49e941-06aa-4f53-b194-cc474a7e690e",
+            "60de1a38-f428-4fb2-8700-9f259bb7f41d",
+            "7bd39984-6c18-4247-9262-fbe5d68e9f5b",
+            "9097148c-52c5-46fc-9af3-ef1add1f0225",
+            "91d40c7e-048a-477f-851c-44a80a2f3ebf",
+            "b40135c0-c07d-473f-9e27-eee5e5bf8ee5",
+            "cec5e8f9-0bbf-43c1-8518-4e2c47b9bec5",
+            "99f0ac9c-d6e7-4695-a8cb-068c8e381a12",
+            "5bef963b-12cb-47d8-a35a-765e98e07fa8",
+            "cf53631e-c46a-4356-bbad-12705b7510a9",
+            "e313eaf9-792b-4b40-8541-d67509944b9c",
+            "fbb444b2-39a6-429e-9e12-9bce551aa74b",
+            "ffad3c5c-222e-49b2-ae14-980f589ba03d",
+            "da40dd93-a872-4356-913e-895f3b6afb60",
+            "e24c0a2f-10bb-4a76-98bc-e22a84fec514",
+            "d59f052d-76be-4ab6-8bbd-ba37c7f981dc",
+            "e32af506-826f-49ed-a322-221d14d2d8ba",
+            "8dfcdf15-92bc-428f-89f1-3ede4b2b4e6b",
+            "14c2cc99-d65a-43ff-9e0f-d35683b8feda",
+            "faefb32b-dbac-46df-81db-60f886171213",
+            "b385c68d-10be-4693-8971-59b22f31f392",
+            "1d4c0a83-859f-48a8-bd47-69c467a98d84",
+            "cf21aeae-87ec-4815-aef6-6807f63e68ee",
+            "446f4eae-0090-46d2-b685-310e7a71c8a4",
+            "a72a5fed-1677-421f-a908-cdae6f171fa0",
+            "1e79667a-d491-4e01-acd2-7e2186ef1d57",
+            "8997353a-3fbc-49a3-bf73-381d411d3ea2"
+        ],
+        "done": true,
+        "finishedAt": "2026-10-08T12:10:38+00:00"
+    },
+    "billingDocs": {
+        "lastBatchIndex": 47,
+        "done": true,
+        "finishedAt": "2026-10-08T12:11:36+00:00"
+    },
+    "files": {
+        "months": {
+            "2026-09": {
+                "done": true,
+                "finishedAt": "2026-10-09T10:53:49+00:00",
+                "fileCount": 616,
+                "lastPurchaseIndex": 0
+            }
+        },
+        "lastMonth": "2026-09"
+    }
+}
