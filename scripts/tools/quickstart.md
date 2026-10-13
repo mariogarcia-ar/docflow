@@ -4,9 +4,10 @@ The commands you actually type, one section per processor: first over **one file
 command over **a folder**. [`readme.md`](readme.md) is the full reference — every flag, every
 payload key, the boundary rules and the known limitations. This page is the short way in.
 
-Nine tools, two modes. Each processor's two tools call the **same** methods, so a subcommand
-behaves the same way in both and the batch adds a folder, a mirror and a summary — never a second
-implementation.
+Nine tools, two modes — plus one **domain** driver, `cli_invoice.py` (`SCR-19`), which runs the
+invoice flow's five extraction steps as a single command. Each processor's two tools call the
+**same** methods, so a subcommand behaves the same way in both and the batch adds a folder, a mirror
+and a summary — never a second implementation.
 
 | Processor | One file | A folder |
 |---|---|---|
@@ -15,6 +16,7 @@ implementation.
 | OCR | `ocr.py` | `batch_ocr.py` |
 | LLM / VLM | `llm.py` | `batch_llm.py` |
 | Workflow (orchestrator) | `workflow.py` | — no folder twin: a document request is not a folder of files |
+| Invoice flow (domain) | `cli_invoice.py` | — no folder twin: the flow runs over one paper, step by step |
 
 ## Before you start
 
@@ -658,6 +660,67 @@ rather than what the set does. `batch_llm.py` walks `.txt`, `.md` **and** the im
 folder of pages is one command over a corpus exactly as a folder of texts is. The library form —
 `LLMInput` with its `images` and the two `metadata` keys — is `registry/llm-local/README.md` → *Chaining the
 steps*.
+
+### The five extraction steps as one command — `cli_invoice.py`
+
+The five extraction `call`s above are a **flow**, and the flow is *data*: the registry already says
+which template, which schema and which extra each step reads. `cli_invoice.py` (`SCR-19`) is that
+table as a tool, so the identifiers are decided once instead of retyped per command — and the input's
+own kind still picks the pair, the text templates for a document and their vision twins for a page.
+
+```bash
+# the whole flow: five steps, in order, each under its own directory of the run root
+python scripts/tools/cli_invoice.py --out var/run/invoice flow INVOICE.txt \
+    --provider ollama --model gemma3:12b --rubro Restaurante
+# one step on its own — the gate is the cheap one to run first
+python scripts/tools/cli_invoice.py detection INVOICE.jpg \
+    --provider ollama --model qwen2.5vl:7b
+```
+
+A worked example, on a real receipt read from the pixels. The input is the operator's own corpus,
+which is why the run states it: `mendel/files` is a symlink to a local backup directory and
+`.gitignore` keeps it out of the repository, so put your own path where this one is.
+
+```bash
+python scripts/tools/cli_invoice.py --out var/run/invoice-mendel flow \
+    mendel/files/2026-10/F8DE1621/1df77011-74a3-4032-8011-5be5b4f836a1.jpg \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante
+```
+
+The receipt is a 793×1920 JPEG. All five steps came back `SUCCESS` with `schema_valid: true`, and
+each resolved to a `…_vision` identifier because the input *is* the page:
+
+| Step | Template the step read | What the answer said |
+|---|---|---|
+| `detection` | `extraction/invoice_vision_deteccion` | `comprobante_valido: "true"` — reported as `invoice_valid: true` |
+| `extract` | `extraction/invoice_vision` | `"ARCOS DORADOS ARGENTINA SOCIEDAD ANONIMA"`, CUIT `30-61025233-4`, `30/09/2026`, `05994-00000060`, `ARS`, tipo `A` |
+| `desglose` | `extraction/invoice_vision_desglose` | subtotal `19669,42` + IVA `4130,58` = total `23800,00`, `alicuotas_detectadas: "21"` |
+| `clasificacion` | `extraction/invoice_vision_clasificacion` | `categoria_gasto: "Restaurante"` |
+| `rubro` | `extraction/invoice_vision_rubro` | answered, with `cantidad_comensales_personas: null` |
+
+The breakdown adds up (`19669,42 + 4130,58 = 23800,00`), which is the reading a human can check at a
+glance. The two lines worth reading twice are honest ones: a 7B vision model found no diner count on
+a 1920-pixel photo, and `clasificacion` wrote its `analisis_evidencia_rubro` in English while the
+other four answered in Spanish. Neither is a tool fault — both are model behaviour the payload shows
+rather than hides.
+
+What the run leaves is one directory per step — a run directory is keyed by the input alone, so five
+steps over one paper would otherwise overwrite each other's `final_result.json`:
+
+```
+var/run/invoice-mendel/
+├── detection/{detection.json, detection_full.json, final_result.json}
+├── extract/…   desglose/…   clasificacion/…   rubro/…
+```
+
+`<step>.json` is the answer alone, the object a review reads back through
+`--extra proposal=@…`; `<step>_full.json` is the whole run. The flow's own payload lists every step
+with its status, its `parsed_response`, both identifiers it was run with and both artifact paths, and
+its `status` is `FAILED` as soon as any step failed. `--assets-dir` defaults to the committed
+`registry/llm-local`, because the identifiers are the registry's and not the fixture root's;
+`--fake` installs the committed scripted provider, so the flow's shape is demonstrable with no model
+served and no token spent. The four **review** steps are deliberately left out: which model judges
+which answer, and with which brake, is the operator's choice, not a property of the flow.
 
 ### A folder
 
