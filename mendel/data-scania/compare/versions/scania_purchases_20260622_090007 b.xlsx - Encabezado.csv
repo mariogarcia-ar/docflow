@@ -1,0 +1,12 @@
+Nro Encabezado,Tipo de Comprobante,id unico/para tener referencia al comprobante en el resumen,Origen de Fondos,Proveedor,Numero de Cupon de Tarjeta,Nro Comprobante,Fecha de creacion gasto,Fecha de confirmacion,Clasificador,Detalle,Moneda,Cotizacion Dolar,IVA %,Imp IVA,Imp Perc IVA,Imp IIBB BA,Imp IIBB CB,Total,Punto de Venta,CUIT,NETO,Nombre y apellido usuario,Email usuario,Sucursal/Unidad Negocio Mendel,Migracion Exitosa,Centro Costos,Concepto,IVA %,Imp IVA,IVA %,Imp IVA,Imp IIBB CABA,Imp IIBB SF,Otros impuestos,Monto no gravado
+2943,081,65c36510,Mendel Física,Shell el paso,176060,00049-00041985,2026-06-18,2026-06-18,Compras,Combustibles,PESOS,1,27%,0,0,0,0,118005.00,00049,20060443204,86479.88,Esteban José Bucci,ebucci@cvc-scania.com.ar,Rosario,TRUE,CC0005,7,21%,18160.78,10.5%,0,0,0,13421.52,0.00
+2951,081,c78d6262,Mendel Física,Estacion de Servicios,982690,00001-00000001,2026-06-11,2026-06-11,Compras,Nafta,PESOS,1,27%,0,0,0,0,51998.06,00001,30678774495,36369.85,Jorge Armando,jarmando@cvc-scania.com.ar,Casa Central,TRUE,CC0001,7,21%,7637.67,10.5%,0,0,0,7990.54,0.00
+2958,001,8c416f6c,Mendel Física,CVC SOCIEDAD ANONIMA,726467,00004-00002889,2026-06-17,2026-06-17,Compras,Almuerzo,PESOS,1,27%,0,0,0,0,19700.0,00004,30718696271,16237.88,Jorge Armando,jarmando@cvc-scania.com.ar,Casa Central,TRUE,CC0001,7,21%,3409.95,10.5%,0,0,0,0,0.00
+2959,001,487a1435,Mendel Física,AUTOPISTA GASTRONOMICA ROCA SO,145923,00004-00002890,2026-06-17,2026-06-17,Compras,Visita entrega demo sachetto,PESOS,1,27%,0,0,0,0,19700.0,00004,30718696271,16237.88,Sebastián Carlos Cordoba,scordoba@cvc-scania.com.ar,Casa Central,TRUE,CC0005,7,21%,3409.95,10.5%,0,0,0,52.17,0.00
+2966,081,4bd275b8,Mendel Física,POSTA DE FUNES S.A,930449,00011-00093924,2026-06-17,2026-06-17,Compras,Carga combustible AH559UN,PESOS,1,27%,0,0,0,0,92009.97,00011,30714287709,63173.52,Franco Caviglia,fcaviglia@cvc-scania.com.ar,Casa Central,TRUE,CC0005,7,21%,13266.44,10.5%,0,0,0,15570.01,0.00
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,16237.878,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,3409.954,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,52.17,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,,,,,,19700.002,,,,,,,,,,,,,,
