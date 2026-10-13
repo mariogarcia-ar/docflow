@@ -675,7 +675,18 @@ python scripts/tools/cli_invoice.py --out var/run/invoice flow INVOICE.txt \
 # one step on its own — the gate is the cheap one to run first
 python scripts/tools/cli_invoice.py detection INVOICE.jpg \
     --provider ollama --model qwen2.5vl:7b
+# and watch it happen: the model's thinking and its answer on stderr, the payload on stdout
+python scripts/tools/cli_invoice.py detection INVOICE.jpg \
+    --provider ollama --model qwen2.5vl:7b --stream
 ```
+
+`--stream` is the bench's own switch, registered on every command of this tool exactly as it is on
+`llm.py call` — it is the same flag because it is the same `call`. The deltas arrive on **stderr**
+under a `[thinking]` / `[content]` header while stdout stays the payload, so a run can be watched on
+a terminal and still piped to `jq`; the answer the run files is the one a waiting call would have
+received, because the switch is a decoding option and not part of the request key. On `flow` it is
+per step, so each step opens its own `[content]` line and a five-step run says which one is
+speaking.
 
 A worked example, on a real receipt read from the pixels. The input is the operator's own corpus,
 which is why the run states it: `mendel/files` is a symlink to a local backup directory and

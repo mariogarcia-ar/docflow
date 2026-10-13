@@ -487,7 +487,10 @@ python scripts/tools/cli_invoice.py --out var/run/invoice-page detection tests/f
 `--assets-dir` defaults to the committed `registry/llm-local`, because the flow's identifiers are
 the registry's and not the fixture root's. `--fake` installs the committed scripted provider, so the
 flow's shape is demonstrable with no model served; the scripted answer must satisfy the step's own
-schema, or the step is reported `FAILED` and the flow exits `1`.
+schema, or the step is reported `FAILED` and the flow exits `1`. `--stream` watches a step as it
+answers — the model's thinking and its answer on stderr under a `[thinking]` / `[content]` header,
+stdout still the payload — and it is the bench's own switch, so on `flow` each of the five steps
+opens its own header.
 
 **One directory per step.** A run directory is keyed by the input alone, so five steps over one
 document would overwrite each other's `final_result.json`. Each step therefore writes under
