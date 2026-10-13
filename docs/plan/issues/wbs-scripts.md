@@ -379,6 +379,20 @@ hand (`SCR-07`) and recorded as an observation, never as a gate.
 - **Evidence / DoD:** The revision itself, in the same commit as the code it describes; the reversal recorded in the bitácora with `docs/feedback/batch-mode-across-processors.md` as the winning decision.
 - **Tags:** —
 
+### SCR-19 — The invoice flow: `_invoice.py` and `cli_invoice.py`
+
+- **Type:** Feature (bench)
+- **Effort:** M
+- **Wave:** 6 — The first domain caller
+- **Depends on:** SCR-15
+- **Blocks:** —
+- **Objective:** Give the bench one tool that runs the invoice flow the registry already ships as data — the five extraction steps, in order, over one paper — so the five `llm.py call` invocations the runbook spells out become one command without the flow's identifiers being retyped or re-decided.
+- **Scope / Deliverables:** `scripts/tools/_invoice.py` — the step table (name, task, text and vision template/schema pair, required extra keys), `build_subcommands`, `validate_flags`, `COMMANDS` and the per-step artifact directories; `scripts/tools/cli_invoice.py` — the parser, `--assets-dir` (defaulting to `registry/llm-local`), `--fake` and one handler per command; the two small public seams in `_llm.py` (`add_inference_arguments(..., identifiers=False)` and `is_image`) that let a second caller reuse the bench's flags and its text-or-page rule; the guard test's tool set, `subplan-scripts.md` §1/§3.1/§3.2/§3.4/§3.5/§4/§9 and the root `README.md` table.
+- **Out of bounds:** No new contract, no option type, no engine or provider SDK named, no default provider or model, no review steps (the registry's `review/invoice*` assets are a later question), no stop-on-invalid gate, and no edit to the library: a step is the bench's own `call`.
+- **Acceptance criteria:** Every command names the registry identifiers of §3.4's map; a text input selects the text pair and a page selects its vision twin; the flow files one directory per step and reports the gate's verdict as `invoice_valid`; `--provider`/`--model` and `--rubro` are refused before the header when missing; the flow test goes red when a step's identifier or its order is mutated.
+- **Evidence / DoD:** The five new tests in `tests/test_lab_tools.py` (flow order and artifacts, the gate's verdict, the vision twin, the pre-header refusals) green, the four gates clean, and the two mutation observations recorded with the task.
+- **Tags:** —
+
 ## 4. Dependency graph
 
 ```mermaid
@@ -422,6 +436,7 @@ flowchart LR
 | 3 — Verify | SCR-07 ∥ SCR-08 | Wave 2 green | The hand run is recorded with real output and real hashes; the six guards and the glue tests are green with no engine, and the four invariants are mutation-falsified |
 | 4 — Close | SCR-09 → SCR-10 | Wave 3 green | The four gates are clean; the two remaining stale citations are reconciled in one pass and the sweep is recorded |
 | 5 — Batch mode | SCR-11 → SCR-12 → (SCR-13 ∥ SCR-14 ∥ SCR-15) → (SCR-16 ∥ SCR-17) → SCR-18 | Wave 4 green, so the tools and the convention are settled — a layer extracted before SCR-09 would be a layer over moving code | Each processor's two tools call one layer; the four batch tools share `_batch.py` and contain no walk, mirror, summary or exit code of their own; the hand run is recorded; the plan and the root `README.md` agree with the tree |
+| 6 — The first domain caller | SCR-19 | SCR-15 closed, so the LLM bench's `call` and its flags are settled — a flow built over a moving `call` would re-decide the request | The flow's identifiers are a table, every step is the bench's own `call`, no engine or SDK is named and no default provider or model is substituted |
 
 ## 6. Critical path
 

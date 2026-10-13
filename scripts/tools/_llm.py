@@ -234,17 +234,26 @@ def _add_decode_options(subparser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_request_arguments(subparser: argparse.ArgumentParser) -> None:
+def _add_request_arguments(
+    subparser: argparse.ArgumentParser, *, identifiers: bool = True
+) -> None:
     """Add the flags that state the request the layer builds.
 
     They are the flags of the *request*, not of a transport: a command that renders and stops
     states the same ones a command that sends does, which is what makes the render trustworthy.
+
+    Args:
+        subparser: The subcommand parser to extend.
+        identifiers: Whether to register ``--task``, ``--template`` and ``--schema``. A caller that
+            fixes the three itself — a step of a named flow, whose identifiers are its own table's —
+            turns them off rather than shipping three flags it would overwrite.
     """
     subparser.add_argument("--provider", help="Provider name; required.")
     subparser.add_argument("--model", help="Model name; required.")
-    subparser.add_argument("--task", help="The task to perform; required.")
-    subparser.add_argument("--template", help="Template identifier; required.")
-    subparser.add_argument("--schema", help="Schema identifier, or omit for none.")
+    if identifiers:
+        subparser.add_argument("--task", help="The task to perform; required.")
+        subparser.add_argument("--template", help="Template identifier; required.")
+        subparser.add_argument("--schema", help="Schema identifier, or omit for none.")
     subparser.add_argument(
         "--extra",
         action="append",
@@ -275,9 +284,21 @@ def _add_request_arguments(subparser: argparse.ArgumentParser) -> None:
     _add_decode_options(subparser)
 
 
-def _add_inference_arguments(subparser: argparse.ArgumentParser) -> None:
-    """Add the request flags and the stream switch a command that reaches a provider states."""
-    _add_request_arguments(subparser)
+def add_inference_arguments(
+    subparser: argparse.ArgumentParser, *, identifiers: bool = True
+) -> None:
+    """Add the request flags and the stream switch a command that reaches a provider states.
+
+    Public because a second caller drives the same call: a layer that fixes the template and the
+    schema itself — the invoice flow's — states the flags that reach the provider from here, so
+    the two verbs cannot drift apart in a flag. Such a caller passes ``identifiers=False``.
+
+    Args:
+        subparser: The subcommand parser to extend.
+        identifiers: Whether to register the three flags that select the step. See
+            :func:`_add_request_arguments`.
+    """
+    _add_request_arguments(subparser, identifiers=identifiers)
     subparser.add_argument(
         "--stream",
         action="store_true",
@@ -326,7 +347,7 @@ def build_subcommands(
         # provider simply never streams.
         parser.set_defaults(stream=False)
         if name in ("call", "graph", "resume", "fake"):
-            _add_inference_arguments(parser)
+            add_inference_arguments(parser)
             if name == "call":
                 parser.add_argument(
                     "--name",
@@ -340,7 +361,7 @@ def build_subcommands(
         elif name == "prompt":
             _add_request_arguments(parser)
         elif name == "node":
-            _add_inference_arguments(parser)
+            add_inference_arguments(parser)
             parser.add_argument("--node", default="node", help="Node identifier.")
         elif name in ("models", "tokens"):
             _add_model_arguments(parser)
@@ -509,8 +530,13 @@ def _metadata(
     return metadata
 
 
-def _is_image(input_path: Path) -> bool:
-    """Return whether the input is the page itself rather than its extracted text."""
+def is_image(input_path: Path) -> bool:
+    """Return whether the input is the page itself rather than its extracted text.
+
+    Public because the decision is the *input's*, not this layer's: a caller that fixes its own
+    template pair has to pick the text pair or the vision pair by the same rule, and a second copy
+    of the rule is a second place for the two to disagree.
+    """
     return input_path.suffix.lower() in IMAGE_SUFFIXES
 
 
@@ -521,7 +547,7 @@ def _document(input_path: Path) -> str | None:
     by the library rather than handed the image's bytes, which would send a model a prompt that
     reads as if the page were empty — a different question.
     """
-    return None if _is_image(input_path) else input_path.read_text(encoding="utf-8")
+    return None if is_image(input_path) else input_path.read_text(encoding="utf-8")
 
 
 def _images(
@@ -544,7 +570,7 @@ def _images(
         The absolute image paths, in the order they are sent.
     """
     images: list[str] = []
-    if _is_image(input_path):
+    if is_image(input_path):
         images.append(str(input_path))
     for path in getattr(args, "image", None) or []:
         candidate = Path(str(path)).expanduser()
@@ -897,7 +923,7 @@ def _tokens(
     pre-flight — not a count this command can take.
     """
     del root
-    if _is_image(input_path):
+    if is_image(input_path):
         parser.error(
             f"tokens: {input_path.name} is a page image and has no offline token count; "
             "state metadata['image_tokens'] on the call to weigh it"

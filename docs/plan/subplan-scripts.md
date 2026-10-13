@@ -4,7 +4,7 @@
 
 Ship **five thin operator CLIs**, one per processor plus the orchestrator, that exercise the
 finished library by hand against the committed fixtures under `tests/fixtures/` and
-`tests/fixtures-txt/`:
+`tests/fixtures-txt/`, plus the domain driver `SCR-19` adds on top of them:
 
 | Tool | Task | Exposes |
 |---|---|---|
@@ -13,6 +13,7 @@ finished library by hand against the committed fixtures under `tests/fixtures/` 
 | `scripts/tools/ocr.py` | `SCR-04` | `run`, `text`, `mixed`, `md`, `json`, `tables`, `blocks`, `metrics` |
 | `scripts/tools/llm.py` | `SCR-05` | `call`, `prompt`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `scripts/tools/workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
+| `scripts/tools/cli_invoice.py` | `SCR-19` | `detection`, `extract`, `desglose`, `clasificacion`, `rubro`, `flow` |
 
 The deliverable is a **caller**, not a component: each tool parses arguments, builds a real
 contract object, calls the library's public entry point (or one named primitive, on the lab
@@ -20,6 +21,12 @@ bench) and prints what came back. It adds **no** contract, no option type, no tr
 and no default. Deleting `scripts/` leaves the library and its tests untouched — that is the
 property `SCR-08` asserts, and it is the whole reason these files may import a processor's
 internals at all.
+
+**`cli_invoice.py` is the one exception to the one-per-processor shape**, and it is a caller all
+the same: `SCR-19` adds a *domain* driver that runs the invoice flow the registry already ships as
+data, through the LLM bench's own `call`. It reaches no engine, adds no contract and states no
+default model, and its steps are a table (`_invoice.py`) rather than code that reimplements
+anything.
 
 **Why a tool and not a test.** The suite proves *our* code against in-memory doubles and, by
 rule, never reaches an engine (`docs/plan/README.md` §9.7). A tool is the only surface where a
@@ -80,7 +87,9 @@ scripts/tools/
 ├── batch_ocr.py    SCR-14
 ├── llm.py          SCR-05
 ├── batch_llm.py    SCR-15
-└── workflow.py     SCR-06
+├── workflow.py     SCR-06
+├── _invoice.py     the invoice flow's command layer (SCR-19) — also not a tool
+└── cli_invoice.py  SCR-19
 ```
 
 `_cli.py` is justified by the five callers rule this repository already applies to
@@ -108,6 +117,12 @@ Filename convention: a tool is `<name>.py` with a lowercase name; a leading unde
 a module that is not a tool. The guard test enumerates the set, so a sixteenth module is a plan
 revision and not a surprise.
 
+**The domain layer (`SCR-19`).** `_invoice.py` is a layer of the same shape with a different
+reason: it has one caller, and what it holds is not a second copy of `_llm.py` but a *table* — the
+invoice flow's five steps, in order, with the text and vision identifiers each is reached by. It
+registers its own commands and dispatches them to `_llm.COMMANDS["call"]`, so a step adds no
+request-building code and the bench stays the only thing that speaks to a provider.
+
 ### 3.2 The three boundaries (and the one deliberate exception)
 
 1. **Calls, never reimplements.** `pdf.py split` calls `split_pdf`; it does not shell out to
@@ -124,10 +139,12 @@ their own processor's `primitives/` and drive one named primitive. That is what 
 forbidden to do. The exception sits on the **layer**, not on the tool: after `SCR-11`…`SCR-15` each
 single-file tool imports only `_cli` and its own layer, so the tool's source names no primitive
 either — a stronger position than the one this subplan was frozen with, and the same one, since the
-layer is what does the driving. **`workflow.py` is excluded from the exception**: it is bound by the
-same prohibition the orchestrator is, and reaches the four processors only through their public
-contracts. `_batch.py` and `_cli.py` are not covered by the exception at all: neither reaches a
-primitive, and neither may.
+layer is what does the driving. `cli_invoice.py` follows the same rule one layer further out: it
+imports `_cli` and `_invoice.py`, and reaches `_llm.py` only for the flags it reuses, the scripted
+provider its `--fake` installs and the header it states. **`workflow.py` is excluded from the
+exception**: it is bound by the same prohibition the orchestrator is, and reaches the four
+processors only through their public contracts. `_batch.py` and `_cli.py` are not covered by the
+exception at all: neither reaches a primitive, and neither may.
 
 ### 3.3 Invocation, output and exit codes
 
@@ -314,6 +331,19 @@ The four rules the batch tools share:
 A batch tool does not re-declare a payload, a flag or an artifact path: a method's payload lives in
 its layer, and the frame files it as `<command>.json` beside whatever the method published.
 
+**`cli_invoice.py` (`SCR-19`)** — one command per step, plus the flow. Each row is one call to
+`_llm.COMMANDS["call"]` with the identifiers of :data:`_invoice.STEPS` stated for it; the caller
+supplies only the flags that reach the provider.
+
+| Subcommand | Calls | Notes |
+|---|---|---|
+| `detection` | `_llm.COMMANDS["call"]` with `extraction/invoice_deteccion` + `extraction/invoice_detection` | the gate: the answer states `comprobante_valido`, which the payload reports as `invoice_valid` |
+| `extract` | … with `extraction/invoice` + `extraction/invoice` | the base reading the reviews judge |
+| `desglose` | … with `extraction/invoice_desglose` + `extraction/invoice_desglose` | items and amounts |
+| `clasificacion` | … with `extraction/invoice_clasificacion` + `extraction/invoice_clasificacion` | the receipt class |
+| `rubro` | … with `extraction/invoice_rubro` + `extraction/invoice_rubro` | `--rubro` is required; the template's `<extra:rubro>` reads it |
+| `flow` | every step above, in order | one directory per step under the run root; `--rubro` is required |
+
 ### 3.5 The fixture map (what the bench actually runs on)
 
 | Tool | Roots and cases |
@@ -322,6 +352,7 @@ its layer, and the frame files it as `<command>.json` beside whatever the method
 | `image.py` | `tests/fixtures/image/{color_layout,skewed_text,embedded_logo}.png`; `tests/fixtures/image/corrupt.png` (typed failure); the real scans in `tests/fixtures/{casos,chicos,negativos,otros,grandes,blur}/` |
 | `ocr.py` | `tests/fixtures/ocr/ocr_prepared_text_and_table.png`; `tests/fixtures/ocr/ocr_blank.png` (a blank page is data: `text=""`, `EMPTY`) |
 | `llm.py` | `tests/fixtures/llm/template/simple_extract.md`, `tests/fixtures/llm/schema/simple.schema.json`; the text inputs in `tests/fixtures-txt/**` (`casos/`, `chicos/`, `negativos/`, `pdf_aptos_layout/`) |
+| `cli_invoice.py` | `registry/llm-local/{template,schema}/extraction/invoice*` (the five steps and their vision twins, the tool's own default asset root); `tests/fixtures-txt/casos/*.txt` (the text flow) and `tests/fixtures/casos/*.jpg` (the vision twin, the same receipt) |
 | `workflow.py` | `tests/fixtures/pdf/pdf_sample_text.pdf` (native text, OCR skipped); `tests/fixtures/matrix/{page.png,scan150.pdf,three-invoices.pdf}` (multi-page, scanned, mixed); `tests/fixtures/negativos/*.pdf` (documents that legitimately produce no usable extraction) |
 
 `tests/fixtures-txt/` mirrors `tests/fixtures/` by **UUID**: `casos/<uuid>.pdf` and
@@ -361,6 +392,7 @@ converted) and `tests/fixtures-txt/casos` (three texts, answered two ways: `--fa
 | SCR-16 | The batch sections of `scripts/tools/readme.md`: pairing, mirror, defaults, exit codes | S | SCR-12 |
 | SCR-17 | Hand run of the four batch tools over the fixture folders, recorded in the bitacora | M | SCR-13, SCR-14, SCR-15 |
 | SCR-18 | This revision: §3.1/§3.4/§4/§5/§6/§9, the WBS issue file, and the root `README.md` table | S | SCR-17 |
+| SCR-19 | `scripts/tools/_invoice.py` and `cli_invoice.py` — the invoice flow, the first domain caller of the bench | M | SCR-15 |
 
 ### 4.2 Order / waves
 
@@ -672,6 +704,17 @@ bench does it once for everyone. The reversal is scoped to the four processors' 
 committed fixture roots and any folder a caller names — and does **not** reintroduce
 `documentos/`: the corpus stays out of the repository (`.gitignore`), and a batch run over it writes
 to `var/batch_<processor>/<folder>/`, which is ignored too.
+
+**Added by this revision (`SCR-19`).** A sixteenth module joins `scripts/tools/`: `_invoice.py`
+and its caller `cli_invoice.py`, the first *domain* driver of the bench. The five processor tools
+each expose one processor; this one exposes a *flow* — the invoice steps the registry already ships
+as data (`extraction/invoice_deteccion`, `extraction/invoice`, `…_desglose`, `…_clasificacion`,
+`…_rubro`, with the `_vision` twin of each for a page) — and it does so by calling the LLM bench's
+own `call`, so the "a tool is a caller" boundary of §3.2 is untouched: no engine is named, no
+contract is added, no default model is substituted, and the step table, not code, says which
+identifier each step reads. The bullet above that deferred domain-specific invoice rules to the
+Release gate stands for the *library*; what this revision admits is a bench tool that composes the
+registry's data, and the guard test's tool set is updated to enumerate it.
    §"Lab tools" and the `/var/` ignore rule; `_`-prefixed modules are not tools.
 2. **A tool is a caller, not a component — RESOLVED:** the three boundaries of §3.2 hold, and
    `SCR-08` asserts them rather than promising them.

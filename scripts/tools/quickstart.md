@@ -555,6 +555,11 @@ Those nine commands, run against a daemon serving those three tags, all came bac
 not a refusal: it is a typed `INVALID_JSON` over an empty answer, and the remedy is an option, not a
 retry.
 
+The five **extraction** steps are also one command, with their identifiers already decided:
+`python scripts/tools/cli_invoice.py flow <input> --provider P --model M --rubro <line of business>`
+(`SCR-19`). The four reviews stay separate `call`s on purpose: which model judges which answer, and
+with which brake, is the operator's choice and not a property of the flow.
+
 Every line above is the same `call`: what differs is the template, the schema and the extras. Each
 step writes two files beside the run's own — `<step>.json`, the answer alone, and `<step>_full.json`,
 the whole run — under the `--out` that step was given, named after `--name` or after the schema's

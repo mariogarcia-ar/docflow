@@ -1,7 +1,8 @@
 # Lab tools (`scripts/tools/`)
 
 Five thin operator CLIs — one per processor plus the orchestrator — that exercise the finished
-library by hand against the committed fixtures.
+library by hand against the committed fixtures, plus one **domain** driver (`cli_invoice.py`,
+`SCR-19`) that runs the invoice flow's five steps over one paper.
 
 This directory is the **lab bench**, not the library. It is not packaged, it registers no
 console script, and nothing under `src/docflow/` imports it. Deleting `scripts/` leaves the
@@ -26,6 +27,7 @@ recorded as a gate.
 | `_image.py` | the image bench's **command layer**: the seven methods. Not a tool — `image.py` and `batch_image.py` both call it |
 | `_ocr.py` | the OCR bench's **command layer**: the eight methods. Not a tool — `ocr.py` and `batch_ocr.py` both call it |
 | `_llm.py` | the LLM bench's **command layer**: the nine methods. Not a tool — `llm.py` and `batch_llm.py` both call it |
+| `_invoice.py` | the **invoice flow**'s command layer: the five steps, in order, with the text and vision identifiers each is reached by. Not a tool — `cli_invoice.py` calls it |
 | `pdf.py` | `SCR-02` — the PDF processor's primitives and its contract, one file per run |
 | `batch_pdf.py` | `SCR-12` — the same eight methods over every PDF below a folder, one record per input |
 | `image.py` | `SCR-03` — the image processor's pipelines and its contract, one file per run |
@@ -35,6 +37,7 @@ recorded as a gate.
 | `llm.py` | `SCR-05` — one inference, the chain, the inventory and the scripted provider |
 | `batch_llm.py` | `SCR-15` — five of the same nine commands over every text or page below a folder |
 | `workflow.py` | `SCR-06` — the orchestrator: plan, run, resume, force, skip, stop |
+| `cli_invoice.py` | `SCR-19` — the invoice flow: the registry's five steps over one paper, text or page |
 
 A tool owns its subcommands, its flags and one handler per subcommand. Everything else — where a
 run writes, how an input resolves, the header, the printers, the exit code — comes from `_cli`,
@@ -42,7 +45,7 @@ its processor's methods come from that processor's layer, and a batch tool's wal
 from `_batch`. Adding a tool for a sixth processor means writing its parser and its handlers, and
 nothing else.
 
-The set of **modules** here is asserted by `tests/test_lab_tools.py` guard 1: `_cli.py`, `_batch.py`, the per-processor layers and the tools, and no other `.py` file. `subplan-scripts.md` §3.1 fixed the original set at `_cli.py` plus five tools; the batch tools, the shared folder frame and the layers that keep them from duplicating their single-file twins are the `SCR-11`…`SCR-18` plan revision that followed, and a module beyond that is the next one, not a surprise.
+The set of **modules** here is asserted by `tests/test_lab_tools.py` guard 1: `_cli.py`, `_batch.py`, the per-processor layers and the tools, and no other `.py` file. `subplan-scripts.md` §3.1 fixed the original set at `_cli.py` plus five tools; the batch tools, the shared folder frame and the layers that keep them from duplicating their single-file twins are the `SCR-11`…`SCR-18` plan revision that followed, `cli_invoice.py` and its `_invoice.py` layer are `SCR-19`, and a module beyond that is the next revision, not a surprise.
 
 ---
 
@@ -448,6 +451,50 @@ The request must be **complete**: `options["output_dir"|"pdf"|"image"|"ocr"|"llm
 `--fake-llm` installs the scripted provider at the LLM processor's seam, reached dynamically
 (`importlib`), below the orchestrator's frontier — which is what lets a whole document run be
 demonstrated with no model.
+
+---
+
+### `cli_invoice.py` — `SCR-19`
+
+The first *domain* tool: where the nine above each expose one processor, this one runs the invoice
+flow the registry ships as **data** — five extraction steps, in order, over one paper. It owns no
+request of its own: every step is `llm.py`'s `call`, reached through the shared layer `_invoice.py`,
+with the step's template, schema and task stated by the table rather than by the caller.
+
+| Subcommand | The step | Answers |
+|---|---|---|
+| `detection` | `extraction/invoice_deteccion` + `extraction/invoice_detection` | is the paper a receipt at all? The payload reports the verdict as `invoice_valid` |
+| `extract` | `extraction/invoice` + `extraction/invoice` | the base reading the reviews judge |
+| `desglose` | `extraction/invoice_desglose` + `extraction/invoice_desglose` | the breakdown of items and amounts |
+| `clasificacion` | `extraction/invoice_clasificacion` + `extraction/invoice_clasificacion` | the receipt class |
+| `rubro` | `extraction/invoice_rubro` + `extraction/invoice_rubro` | the line of business; `--rubro` is **required** |
+| `flow` | all five, in the order above | the whole flow; `--rubro` is **required** |
+
+```bash
+# one step, over a receipt's extracted text (the registry is the tool's default asset root)
+python scripts/tools/cli_invoice.py detection tests/fixtures-txt/casos/<uuid>.txt \
+    --provider ollama --model gemma3:12b
+
+# the whole flow: five steps, each under its own directory of the run root
+python scripts/tools/cli_invoice.py --out var/run/invoice flow tests/fixtures-txt/casos/<uuid>.txt \
+    --provider ollama --model gemma3:12b --rubro Restaurante
+
+# the same flow from the pixels: a page image is the input, and the vision twin of each step is used
+python scripts/tools/cli_invoice.py --out var/run/invoice-page detection tests/fixtures/casos/<uuid>.jpg \
+    --provider ollama --model qwen3-vl:8b
+```
+
+`--assets-dir` defaults to the committed `registry/llm-local`, because the flow's identifiers are
+the registry's and not the fixture root's. `--fake` installs the committed scripted provider, so the
+flow's shape is demonstrable with no model served; the scripted answer must satisfy the step's own
+schema, or the step is reported `FAILED` and the flow exits `1`.
+
+**One directory per step.** A run directory is keyed by the input alone, so five steps over one
+document would overwrite each other's `final_result.json`. Each step therefore writes under
+`<run root>/<step>/`: `<step>.json` is the answer alone — the object a review reads back — and
+`<step>_full.json` is the whole run. The flow's own payload lists every step with its status, its
+`parsed_response`, both identifiers it was run with and both artifact paths, and its `status` is
+`FAILED` as soon as any step failed.
 
 ---
 

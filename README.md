@@ -59,7 +59,7 @@ would be a silent stand-in, which this project forbids at every stage.
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
-| 5 — lab tools | one operator CLI per processor, and a folder twin for each | `SCR-01`…`SCR-18` |
+| 5 — lab tools | one operator CLI per processor, and a folder twin for each | `SCR-01`…`SCR-19` |
 
 ---
 
@@ -169,6 +169,7 @@ is: it reaches the four processors only through their public contracts.
 | `llm.py` | `SCR-05` | `call`, `prompt`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `batch_llm.py` | `SCR-15` | `call`, `graph`, `node`, `tokens`, `prompt` over every text or page below a folder — a command is **required**, and `--fake` installs the scripted provider |
 | `workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
+| `cli_invoice.py` | `SCR-19` | `detection`, `extract`, `desglose`, `clasificacion`, `rubro`, `flow` — the registry's invoice flow, through `_invoice.py` |
 
 Each processor's two tools call one shared layer (`_pdf.py`, `_image.py`, `_ocr.py`, `_llm.py`)
 and the four batch tools share the folder frame `_batch.py`, so the batch adds a suffix set, a layer
@@ -181,6 +182,13 @@ and `--model` on every inference subcommand, because a default model is exactly 
 stand-in this project forbids. Its `fake` subcommand is first-class, not a hidden test flag:
 the deterministic fake provider is what makes the graph and resume paths demonstrable without
 a model or a spent token.
+
+`cli_invoice.py` is the **tenth** and the first *domain* caller: where the nine above each
+exercise one processor, it runs the invoice flow the registry already ships as data — five
+extraction steps (validity, the base reading, the breakdown, the class, the line of business), in
+order, over one paper, with the text twin chosen for a text input and the vision twin for a page.
+Its steps live in a shared layer, `_invoice.py`, which fixes the identifiers and the order and
+reaches the LLM bench's own `call` for everything else. Adding it is the plan revision `SCR-19`.
 
 Two subcommands that were drafted here are **dropped**: `image.py crop` has no `crop_region`
 to call (`subplan-procesador-image.md` §9.6 defers it) and `ocr.py diff` would compare two

@@ -61,6 +61,7 @@ TOOLS = (
     "llm",
     "batch_llm",
     "workflow",
+    "cli_invoice",
 )
 TOOL_FILES = {
     "_cli.py",
@@ -69,6 +70,7 @@ TOOL_FILES = {
     "_image.py",
     "_ocr.py",
     "_llm.py",
+    "_invoice.py",
     *(f"{tool}.py" for tool in TOOLS),
 }
 
@@ -138,6 +140,14 @@ DOCUMENTED_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
         "skip",
         "stop",
         "context",
+    ),
+    "cli_invoice": (
+        "detection",
+        "extract",
+        "desglose",
+        "clasificacion",
+        "rubro",
+        "flow",
     ),
 }
 
@@ -241,7 +251,7 @@ def test_no_module_under_src_imports_the_test_tree() -> None:
 
 
 @pytest.mark.parametrize(
-    "tool", ("_cli", "_batch", "_pdf", "_image", "_ocr", "_llm", *TOOLS)
+    "tool", ("_cli", "_batch", "_pdf", "_image", "_ocr", "_llm", "_invoice", *TOOLS)
 )
 def test_no_tool_names_an_engine_or_a_provider_sdk(tool: str) -> None:
     """A tool's source names no engine binary, engine module or provider SDK."""
@@ -343,6 +353,7 @@ REPORT_ONLY: dict[str, tuple[str, ...]] = {
     "llm": ("prompt", "node", "status", "models", "tokens"),
     "batch_llm": (),
     "workflow": ("plan", "status", "context"),
+    "cli_invoice": (),
 }
 
 
@@ -2181,6 +2192,214 @@ def test_batch_llm_keeps_going_when_the_provider_refuses(
     assert "ERROR PROVIDER_ERROR" in printed
     assert "failed: 2" in printed
     assert not list(out.rglob("tokens.json"))
+
+
+# --- The invoice flow: the registry's five steps over one paper ----------------------
+
+#: One answer per step, each satisfying that step's own schema, scripted in :data:`STEPS` order so
+#: a flow run consumes them in the order it runs the steps. Stated here rather than derived from the
+#: registry: a table read back from the code it guards proves nothing about it.
+INVOICE_ANSWERS = (
+    json.dumps(
+        {
+            "indicios_detectados": "factura",
+            "comprobante_valido": "true",
+            "motivo_rechazo": None,
+        }
+    ),
+    json.dumps(
+        {
+            "tipo_comprobante": "A",
+            "razon_social_emisor": "Proveedor SA",
+            "cuit_emisor": "30712345678",
+            "fecha_emision": "2026-01-05",
+            "nro_comprobante": "0001-00000001",
+            "moneda": "ARS",
+            "notas": None,
+        }
+    ),
+    json.dumps(
+        {
+            "analisis_condicion_iva": "Responsable Inscripto",
+            "subtotal": "1000.00",
+            "iva": "210.00",
+            "impuestos_internos": "0",
+            "percepcion_iibb": "0",
+            "otros_impuestos": "0",
+            "monto_no_gravado": "0",
+            "importe_total_facturado": "1210.00",
+            "condicion_impositiva_dominante": "Responsable Inscripto",
+            "alicuotas_detectadas": "21",
+        }
+    ),
+    json.dumps(
+        {
+            "analisis_evidencia_rubro": "el texto menciona un restaurante",
+            "categoria_gasto": "Restaurante",
+            "descripcion": "Almuerzo de trabajo",
+            "centro_de_costo": None,
+        }
+    ),
+    json.dumps(
+        {
+            "analisis_rubro_aplica": "el comprobante es de un restaurante",
+            "cantidad_comensales_personas": "4",
+            "cantidad_litros": None,
+        }
+    ),
+)
+
+#: The flow's own order and its text identifiers, restated on purpose: a step that is renamed,
+#: reordered or pointed at another asset reddens this test rather than the registry.
+INVOICE_FLOW = (
+    ("detection", "extraction/invoice_deteccion", "extraction/invoice_detection"),
+    ("extract", "extraction/invoice", "extraction/invoice"),
+    ("desglose", "extraction/invoice_desglose", "extraction/invoice_desglose"),
+    (
+        "clasificacion",
+        "extraction/invoice_clasificacion",
+        "extraction/invoice_clasificacion",
+    ),
+    ("rubro", "extraction/invoice_rubro", "extraction/invoice_rubro"),
+)
+
+
+def test_invoice_flow_runs_the_five_steps_in_order_and_files_each_answer(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One ``flow`` runs the registry's five steps, in order, each under its own directory.
+
+    A run directory is keyed by the input alone, so five steps over one document would overwrite
+    each other's ``final_result.json`` and answer file. Each step therefore writes under
+    ``<root>/<step>/``, and the validity the gate answered is read out of the run's own payload.
+    """
+    providers(answers=INVOICE_ANSWERS)
+    out = tmp_path / "flow"
+
+    code = tool_module("cli_invoice").main(
+        [
+            "--json",
+            "--out",
+            str(out),
+            "flow",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "gemma3:12b",
+            "--rubro",
+            "Restaurante",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert [
+        (step["step"], step["template"], step["schema"]) for step in payload["steps"]
+    ] == [*INVOICE_FLOW]
+    assert payload["invoice_valid"] is True
+    for step, _, _ in INVOICE_FLOW:
+        answer = json.loads((out / step / f"{step}.json").read_text(encoding="utf-8"))
+        assert answer == next(
+            report["parsed_response"]
+            for report in payload["steps"]
+            if report["step"] == step
+        )
+
+
+def test_invoice_detection_answers_whether_the_paper_is_a_receipt(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The gate's own command reports the verdict its answer states, and nothing it did not."""
+    providers(answers=[INVOICE_ANSWERS[0]])
+    out = tmp_path / "detection"
+
+    code = tool_module("cli_invoice").main(
+        [
+            "--json",
+            "--out",
+            str(out),
+            "detection",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "gemma3:12b",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["invoice_valid"] is True
+    assert payload["schema"] == "extraction/invoice_detection"
+    assert json.loads(
+        (out / "detection" / "detection.json").read_text(encoding="utf-8")
+    ) == {
+        "indicios_detectados": "factura",
+        "comprobante_valido": "true",
+        "motivo_rechazo": None,
+    }
+
+
+def test_invoice_flow_reads_the_vision_twin_when_the_input_is_a_page(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A page drives the vision pair: same step, the template that reads the pixels.
+
+    The vision templates carry no ``<doc>``, so a step that resolved the text pair over an image
+    would be refused by the library instead of answering. Reaching the provider at all is what
+    proves the twin was selected, and the payload's own record of the identifiers says which.
+    """
+    providers(answers=[INVOICE_ANSWERS[0]])
+    out = tmp_path / "page"
+
+    code = tool_module("cli_invoice").main(
+        [
+            "--json",
+            "--out",
+            str(out),
+            "detection",
+            str(CASE_IMAGE),
+            "--provider",
+            "ollama",
+            "--model",
+            "qwen3-vl:8b",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["template"] == "extraction/invoice_vision_deteccion"
+    assert payload["schema"] == "extraction/invoice_vision_detection"
+    assert payload["invoice_valid"] is True
+
+
+@pytest.mark.parametrize(
+    ("command", "stated", "missing"),
+    (
+        ("flow", ("--provider", "ollama", "--model", "gemma3:12b"), "--rubro"),
+        ("rubro", ("--provider", "ollama", "--model", "gemma3:12b"), "--rubro"),
+        ("detection", (), "--provider"),
+    ),
+)
+def test_invoice_refuses_a_missing_flag_before_the_header(
+    command: str,
+    stated: tuple[str, ...],
+    missing: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A command that cannot run refuses through ``argparse``, before it announces itself.
+
+    The refusal is the parser's own usage error: no header is printed for a run that cannot start,
+    and no payload is printed for one.
+    """
+    with pytest.raises(SystemExit) as exit_info:
+        tool_module("cli_invoice").main([command, str(CASE_TEXT), *stated])
+
+    assert exit_info.value.code == 2
+    captured = capsys.readouterr()
+    assert missing in captured.err
+    assert captured.out == ""
 
 
 # --- SCR-01 unit tests: the shared plumbing -----------------------------------------
