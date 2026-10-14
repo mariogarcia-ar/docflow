@@ -529,6 +529,8 @@ python scripts/tools/batch_ocr.py tests/fixtures/ocr        # two images, both c
 python scripts/tools/batch_llm.py --fake tests/fixtures-txt/casos call \
     --provider ollama --model llama3.1 --task extract --template simple_extract --schema simple
 python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matrix split
+python scripts/tools/cli_batch_invoice.py --out var/run/invoice-2025-08 mendel/files/2025-08 flow \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante   # a month: one invoice.json per receipt
 ```
 
 | Tool | Layer it dispatches through | Inputs it takes | Command with none stated | Commands it does not offer |

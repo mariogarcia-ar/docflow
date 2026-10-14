@@ -757,24 +757,35 @@ the folder and runs `flow` on every image below it. The subcommand is **required
 model or line of business is defaulted — and `flow` is the only one offered, because only the flow
 files a reading.
 
+A worked example, over one month of the operator's own corpus — ten receipts, one per folder.
+`mendel/files` is a symlink to a local backup directory and `.gitignore` keeps it out of the
+repository, so put your own path where this one is:
+
 ```bash
-python scripts/tools/cli_batch_invoice.py --out var/run/invoice-corpus <RECEIPTS> flow \
+# a month at a time: ten receipts, one per folder, ten readings
+python scripts/tools/cli_batch_invoice.py --out var/run/invoice-2025-08 mendel/files/2025-08 flow \
     --provider ollama --model qwen2.5vl:7b --rubro Restaurante
 ```
 
-Each reading is filed **beside its receipt**, so the folder holds one receipt per subfolder (the
-mendel corpus' `2026-10/<folder>/<uuid>.jpg` layout is exactly this):
+Each reading is filed **beside its receipt**, so the folder holds one receipt per subfolder — which
+is exactly how this corpus is laid out. The `.md` and `_pipeline.json` files the same folders hold
+are **not** inputs: the walk takes image suffixes only.
 
 ```
-<RECEIPTS>/
-├── F8DE1621/{1df77011-….jpg, invoice.json}      # one receipt, and its reading beside it
-├── F8DE1622/{…jpg, invoice.json}
-└── …
+mendel/files/2025-08/                             # the corpus: one receipt per folder
+├── 2D2C9343/{2991f57d-….jpg, invoice.json}       # the image, and its reading beside it
+├── 2E1F7D6C/{deddaca4-….jpg, invoice.json}
+└── …                                             # ten folders in all
 
-var/run/invoice-corpus/                          # --out: the mirror, not the reports
-├── F8DE1621/{flow.json, detection/…, extract/…, …}
+var/run/invoice-2025-08/                          # --out: the mirror, not the reports
+├── 2D2C9343/2991f57d-…/{flow.json, detection/…, extract/…, …}
 └── …
 ```
+
+The run reported `files: 10`, `succeeded: 10`, `failed: 0` — all ten read `SUCCESS` with
+`schema_valid: true` — and took about ten minutes, a minute per receipt. The second pass over the
+same folder returned all ten readings from disk in **0.1 seconds**, because every one was already
+beside its receipt.
 
 A second walk over the same folder reaches no model — every reading is already beside its receipt —
 so a corpus is bought once and re-read for free. Two receipts in **one** folder cannot each own an
