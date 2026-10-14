@@ -492,15 +492,21 @@ answers — the model's thinking and its answer on stderr under a `[thinking]` /
 stdout still the payload — and it is the bench's own switch, so on `flow` each of the five steps
 opens its own header.
 
-**One directory per step, and one unified report.** A run directory is keyed by the input alone, so
-five steps over one document would overwrite each other's `final_result.json`. Each step therefore
-writes under `<run root>/<step>/`: `<step>.json` is the answer alone — the object a review reads
-back — and `<step>_full.json` is the whole run. Beside those directories the flow files
-`invoice.json` at the run root: the input, the flow's `status` and the gate's `invoice_valid`, then
-one section per step — `deteccion`, `extraccion`, `desglose`, `clasificacion`, `rubro` — each
+**One directory per step, and one unified report beside the input.** A run directory is keyed by the
+input alone, so five steps over one document would overwrite each other's `final_result.json`. Each
+step therefore writes under `<run root>/<step>/`: `<step>.json` is the answer alone — the object a
+review reads back — and `<step>_full.json` is the whole run. Beside the directories the flow files
+`invoice.json` **next to the input**: the input, the flow's `status` and the gate's `invoice_valid`,
+then one section per step — `deteccion`, `extraccion`, `desglose`, `clasificacion`, `rubro` — each
 holding that step's answer alone, so the whole reading is one file. The flow's own payload lists
 every step with its status, its `parsed_response`, both identifiers it was run with and both artifact
 paths, names the report under `report`, and its `status` is `FAILED` as soon as any step failed.
+
+**The report is the flow's cache.** Because it sits beside the input, a second `flow` over the same
+paper finds it, returns the whole reading with `reused: true` and runs no step — the five steps are
+bought once per receipt, not once per invocation. Delete the file to force a fresh reading. A file
+that is there but is not a JSON object is reported as a typed `INTERNAL_ERROR` rather than silently
+overwritten: a report the operator filed is not the tool's to discard.
 
 ---
 

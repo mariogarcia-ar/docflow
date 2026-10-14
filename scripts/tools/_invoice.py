@@ -18,11 +18,14 @@ would overwrite the first. Each step therefore writes under ``<root>/<step>/``: 
 the answer alone — the object a later step or a review reads back — and ``<step>_full.json`` is the
 whole run, exactly the pair :func:`_llm._publish_step_artifacts` files, keyed by the step's name.
 
-**And one unified report.** Five directories are five answers to hunt down, so the flow also files
-one ``invoice.json`` at the run root: a header — the input, the flow's status and the gate's verdict
-— then one section per step, keyed by :attr:`Step.section` and holding that step's answer alone.
-The reader who wants the whole reading opens one file; the reader who wants one step's run opens the
-step's own directory.
+**And one unified report, beside the input.** Five directories are five answers to hunt down, so the
+flow also files one ``invoice.json`` next to the paper it read: a header — the input, the flow's
+status and the gate's verdict — then one section per step, keyed by :attr:`Step.section` and holding
+that step's answer alone. Filing it there is what makes it the flow's cache: a run that finds the
+report already beside the input reads it back instead of buying the reading again, so the five steps
+run once per paper and never twice. This is the one place a bench artifact forms beside its input on
+purpose — the reading belongs to the receipt, not to the run directory — and ``--out`` still holds
+the per-step records the report summarizes.
 
 **Validity is a step, not a score.** ``detection`` answers whether the paper is a receipt at all,
 and its own field says so; :func:`validity` reads that field and nothing else. A step that produced
@@ -32,12 +35,16 @@ no answer states ``None``, never a verdict the model did not give.
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Final, NamedTuple
 
 import _cli
 import _llm
+
+from docflow.llm.contracts import LLMError
+from docflow.llm.primitives.errors import LLMPrimitiveError
 
 #: What one method returns: the payload its caller prints, or writes beside the artifacts.
 Payload = dict[str, Any]
@@ -57,8 +64,11 @@ VALIDITY_FIELD: Final[str] = "comprobante_valido"
 #: The command that runs every step, in :data:`STEPS` order.
 FLOW: Final[str] = "flow"
 
-#: The unified report the flow files at the run root: the header, then one section per step.
+#: The unified report the flow files beside the input: the header, then one section per step.
 REPORT_FILE: Final[str] = "invoice.json"
+
+#: The key a flow payload states to say whether it produced the report or read it back from disk.
+REUSED: Final[str] = "reused"
 
 
 class Step(NamedTuple):
@@ -404,18 +414,76 @@ def _unified_report(
     }
 
 
+def report_path(input_path: Path) -> Path:
+    """Return where the flow files its report: beside the input, so the reading travels with it.
+
+    A receipt and its reading live in the same folder, which is what makes the report the flow's
+    own cache: the second run over the same paper reads the whole reading back instead of buying it
+    again. ``--out`` still holds the run's per-step artifacts; the report does not live there.
+
+    Args:
+        input_path: The run's input.
+
+    Returns:
+        The report's path: ``invoice.json`` beside the input.
+    """
+    return input_path.parent / REPORT_FILE
+
+
+def existing_report(path: Path) -> Payload | None:
+    """Return the report already filed beside the input, or ``None`` when there is none.
+
+    The file's own presence is the cache signal; a file that is there but is not a JSON object is
+    an artifact the flow cannot read, and it says so rather than quietly overwriting it — a report
+    the operator filed is not the tool's to discard.
+
+    Args:
+        path: Where the report would be, as :func:`report_path` states.
+
+    Returns:
+        The report, or ``None`` when the file is absent.
+
+    Raises:
+        LLMPrimitiveError: The file exists but is not a JSON object.
+    """
+    if not path.is_file():
+        return None
+    failure: Exception | None = None
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        failure = error
+        report = None
+    if not isinstance(report, Mapping):
+        raise LLMPrimitiveError(
+            LLMError(
+                type="INTERNAL_ERROR",
+                message=f"the report beside the input is not a JSON object: {path}",
+                recoverable=False,
+                metadata={"path": str(path)},
+            )
+        ) from failure
+    return dict(report)
+
+
 def _flow(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
     input_path: Path,
     root: Path,
 ) -> Payload:
-    """Run every step, in order, and report the flow.
+    """Run every step, in order, and report the flow — or read the report already filed back.
 
     A step that returns a failed result does not end the run: the flow reports every step it ran,
-    and the status it carries is the one a caller's exit code reads. Beside the per-step
-    directories it files one unified report — ``invoice.json`` — at the run root.
+    and the status it carries is the one a caller's exit code reads. The reading is filed as one
+    ``invoice.json`` beside the input, and a run that finds it there does not run a step: it returns
+    the report it read, with :data:`REUSED` stated so a reader can tell a fresh reading from a cache
+    hit.
     """
+    path = report_path(input_path)
+    filed = existing_report(path)
+    if filed is not None:
+        return {**filed, "input": str(input_path), "report": str(path), REUSED: True}
     reports = [
         _step_report(
             step, _run_step(args, parser, input_path, root, step), root, input_path
@@ -441,7 +509,8 @@ def _flow(
         "steps": reports,
         "status": status,
         "invoice_valid": invoice_valid,
-        "report": str(_cli.write_payload(root / REPORT_FILE, report)),
+        "report": str(_cli.write_payload(path, report)),
+        REUSED: False,
     }
 
 

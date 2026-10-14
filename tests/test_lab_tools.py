@@ -2264,6 +2264,17 @@ INVOICE_FLOW = (
 )
 
 
+def _receipt_copy(tmp_path: Path) -> Path:
+    """Copy the fixture receipt into ``tmp_path`` so a run files its report there, not in the repo.
+
+    The flow files ``invoice.json`` beside its input, so a test that ran over the committed fixture
+    would write into the repository. The copy keeps the run's own directory under ``tmp_path``.
+    """
+    copied = tmp_path / CASE_TEXT.name
+    shutil.copy(CASE_TEXT, copied)
+    return copied
+
+
 def test_invoice_flow_runs_the_five_steps_in_order_and_files_each_answer(
     providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -2282,7 +2293,7 @@ def test_invoice_flow_runs_the_five_steps_in_order_and_files_each_answer(
             "--out",
             str(out),
             "flow",
-            str(CASE_TEXT),
+            str(_receipt_copy(tmp_path)),
             "--provider",
             "ollama",
             "--model",
@@ -2310,13 +2321,14 @@ def test_invoice_flow_runs_the_five_steps_in_order_and_files_each_answer(
 def test_invoice_flow_files_one_unified_report_with_one_section_per_step(
     providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """``flow`` files ``invoice.json`` at the run root: a header, then one section per step.
+    """``flow`` files ``invoice.json`` beside the input: a header, then one section per step.
 
     The report is the whole reading in one file, so its sections are keyed by the name a reader
     looks for and hold each step's answer alone. The section names are restated here rather than
     derived from :data:`_invoice.STEPS`: a step whose section drifts reddens this test.
     """
     providers(answers=INVOICE_ANSWERS)
+    receipt = _receipt_copy(tmp_path)
     out = tmp_path / "flow"
 
     code = tool_module("cli_invoice").main(
@@ -2325,7 +2337,7 @@ def test_invoice_flow_files_one_unified_report_with_one_section_per_step(
             "--out",
             str(out),
             "flow",
-            str(CASE_TEXT),
+            str(receipt),
             "--provider",
             "ollama",
             "--model",
@@ -2337,10 +2349,11 @@ def test_invoice_flow_files_one_unified_report_with_one_section_per_step(
 
     assert code == 0
     payload = json.loads(capsys.readouterr().out)
-    report_path = out / "invoice.json"
+    report_path = tmp_path / "invoice.json"
     assert payload["report"] == str(report_path)
+    assert payload["reused"] is False
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    assert report["input"] == str(CASE_TEXT)
+    assert report["input"] == str(receipt.resolve())
     assert report["status"] == "SUCCESS"
     assert report["invoice_valid"] is True
     sections = ("deteccion", "extraccion", "desglose", "clasificacion", "rubro")
@@ -2349,6 +2362,45 @@ def test_invoice_flow_files_one_unified_report_with_one_section_per_step(
     ] == [*sections]
     for section, answer in zip(sections, INVOICE_ANSWERS, strict=True):
         assert report[section] == json.loads(answer)
+
+
+def test_invoice_flow_reuses_the_report_filed_beside_the_input(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A second ``flow`` over the same paper reads the filed report back and runs no step.
+
+    Filing the report beside the input is what makes it the flow's cache: the second run finds it
+    and returns the whole reading with ``reused`` stated, instead of buying the same five answers a
+    second time. The provider's own call count is what proves no step ran again.
+    """
+    fake = providers(answers=INVOICE_ANSWERS)
+    receipt = _receipt_copy(tmp_path)
+    out = tmp_path / "flow"
+    stated = [
+        "--json",
+        "--out",
+        str(out),
+        "flow",
+        str(receipt),
+        "--provider",
+        "ollama",
+        "--model",
+        "gemma3:12b",
+        "--rubro",
+        "Restaurante",
+    ]
+
+    assert tool_module("cli_invoice").main(stated) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["reused"] is False
+    assert len(fake.calls) == len(INVOICE_ANSWERS)
+
+    assert tool_module("cli_invoice").main(stated) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["reused"] is True
+    assert len(fake.calls) == len(INVOICE_ANSWERS)
+    assert second["status"] == "SUCCESS"
+    assert second["deteccion"] == json.loads(INVOICE_ANSWERS[0])
 
 
 def test_invoice_detection_answers_whether_the_paper_is_a_receipt(

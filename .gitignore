@@ -54,3 +54,6 @@ env/
 
 *.log
 mendel/files
+
+
+!mendel/data/transactions.csv

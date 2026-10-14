@@ -715,13 +715,16 @@ a 1920-pixel photo, and `clasificacion` wrote its `analisis_evidencia_rubro` in 
 other four answered in Spanish. Neither is a tool fault — both are model behaviour the payload shows
 rather than hides.
 
-What the run leaves is one directory per step, plus one unified report at the run root — a run
-directory is keyed by the input alone, so five steps over one paper would otherwise overwrite each
-other's `final_result.json`:
+What the run leaves is a directory per step under `--out`, plus one unified report **beside the
+input** — a run directory is keyed by the input alone, so five steps over one paper would otherwise
+overwrite each other's `final_result.json`:
 
 ```
+mendel/files/2026-10/F8DE1621/
+├── 1df77011-…-5be5b4f836a1.jpg   # the receipt
+└── invoice.json                  # the unified report: header + one section per step
+
 var/run/invoice-mendel/
-├── invoice.json          # the unified report: header + one section per step
 ├── detection/{detection.json, detection_full.json, final_result.json}
 ├── extract/…   desglose/…   clasificacion/…   rubro/…
 ```
@@ -733,7 +736,14 @@ is not a verdict the model gave. `<step>.json` is the same answer on its own, th
 reads back through `--extra proposal=@…`; `<step>_full.json` is the whole run. The flow's own payload
 lists every step
 with its status, its `parsed_response`, both identifiers it was run with and both artifact paths, and
-its `status` is `FAILED` as soon as any step failed. `--assets-dir` defaults to the committed
+its `status` is `FAILED` as soon as any step failed.
+
+Filing the report beside the input is what makes it the flow's **cache**: a `flow` run that finds
+`invoice.json` next to the paper returns the whole reading back — with `reused: true` in its payload —
+instead of running the five steps again, so the reading is bought once per receipt and never twice.
+The worked example above took 45 seconds cold and 0.1 seconds on the second run. Delete the file to
+force a fresh reading; a file that is there but is not a readable JSON object is refused rather than
+silently overwritten. `--assets-dir` defaults to the committed
 `registry/llm-local`, because the identifiers are the registry's and not the fixture root's;
 `--fake` installs the committed scripted provider, so the flow's shape is demonstrable with no model
 served and no token spent. The four **review** steps are deliberately left out: which model judges
