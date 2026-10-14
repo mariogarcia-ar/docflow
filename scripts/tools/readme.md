@@ -492,12 +492,15 @@ answers — the model's thinking and its answer on stderr under a `[thinking]` /
 stdout still the payload — and it is the bench's own switch, so on `flow` each of the five steps
 opens its own header.
 
-**One directory per step.** A run directory is keyed by the input alone, so five steps over one
-document would overwrite each other's `final_result.json`. Each step therefore writes under
-`<run root>/<step>/`: `<step>.json` is the answer alone — the object a review reads back — and
-`<step>_full.json` is the whole run. The flow's own payload lists every step with its status, its
-`parsed_response`, both identifiers it was run with and both artifact paths, and its `status` is
-`FAILED` as soon as any step failed.
+**One directory per step, and one unified report.** A run directory is keyed by the input alone, so
+five steps over one document would overwrite each other's `final_result.json`. Each step therefore
+writes under `<run root>/<step>/`: `<step>.json` is the answer alone — the object a review reads
+back — and `<step>_full.json` is the whole run. Beside those directories the flow files
+`invoice.json` at the run root: the input, the flow's `status` and the gate's `invoice_valid`, then
+one section per step — `deteccion`, `extraccion`, `desglose`, `clasificacion`, `rubro` — each
+holding that step's answer alone, so the whole reading is one file. The flow's own payload lists
+every step with its status, its `parsed_response`, both identifiers it was run with and both artifact
+paths, names the report under `report`, and its `status` is `FAILED` as soon as any step failed.
 
 ---
 

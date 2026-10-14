@@ -715,17 +715,23 @@ a 1920-pixel photo, and `clasificacion` wrote its `analisis_evidencia_rubro` in 
 other four answered in Spanish. Neither is a tool fault — both are model behaviour the payload shows
 rather than hides.
 
-What the run leaves is one directory per step — a run directory is keyed by the input alone, so five
-steps over one paper would otherwise overwrite each other's `final_result.json`:
+What the run leaves is one directory per step, plus one unified report at the run root — a run
+directory is keyed by the input alone, so five steps over one paper would otherwise overwrite each
+other's `final_result.json`:
 
 ```
 var/run/invoice-mendel/
+├── invoice.json          # the unified report: header + one section per step
 ├── detection/{detection.json, detection_full.json, final_result.json}
 ├── extract/…   desglose/…   clasificacion/…   rubro/…
 ```
 
-`<step>.json` is the answer alone, the object a review reads back through
-`--extra proposal=@…`; `<step>_full.json` is the whole run. The flow's own payload lists every step
+`invoice.json` is the whole reading in one file: the input, the flow's `status` and the gate's
+`invoice_valid`, then one section per step — `deteccion`, `extraccion`, `desglose`, `clasificacion`,
+`rubro` — each holding that step's answer alone. A step that produced no answer states `null`, which
+is not a verdict the model gave. `<step>.json` is the same answer on its own, the object a review
+reads back through `--extra proposal=@…`; `<step>_full.json` is the whole run. The flow's own payload
+lists every step
 with its status, its `parsed_response`, both identifiers it was run with and both artifact paths, and
 its `status` is `FAILED` as soon as any step failed. `--assets-dir` defaults to the committed
 `registry/llm-local`, because the identifiers are the registry's and not the fixture root's;

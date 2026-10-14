@@ -18,6 +18,12 @@ would overwrite the first. Each step therefore writes under ``<root>/<step>/``: 
 the answer alone — the object a later step or a review reads back — and ``<step>_full.json`` is the
 whole run, exactly the pair :func:`_llm._publish_step_artifacts` files, keyed by the step's name.
 
+**And one unified report.** Five directories are five answers to hunt down, so the flow also files
+one ``invoice.json`` at the run root: a header — the input, the flow's status and the gate's verdict
+— then one section per step, keyed by :attr:`Step.section` and holding that step's answer alone.
+The reader who wants the whole reading opens one file; the reader who wants one step's run opens the
+step's own directory.
+
 **Validity is a step, not a score.** ``detection`` answers whether the paper is a receipt at all,
 and its own field says so; :func:`validity` reads that field and nothing else. A step that produced
 no answer states ``None``, never a verdict the model did not give.
@@ -51,12 +57,17 @@ VALIDITY_FIELD: Final[str] = "comprobante_valido"
 #: The command that runs every step, in :data:`STEPS` order.
 FLOW: Final[str] = "flow"
 
+#: The unified report the flow files at the run root: the header, then one section per step.
+REPORT_FILE: Final[str] = "invoice.json"
+
 
 class Step(NamedTuple):
     """One step of the flow: its identifiers, and the extra keys its template asks for.
 
     Attributes:
         name: The subcommand's name, and the stem of the two artifacts the step files.
+        section: The step's key in the unified report — the name a reader of ``invoice.json``
+            looks for, stated here so a step renamed in the flow keeps its section in step.
         task: The label recorded in the run; it never reaches the model.
         template: The text template's identifier under the asset root.
         schema: The text schema's identifier, which the answer's shape is compiled from.
@@ -66,6 +77,7 @@ class Step(NamedTuple):
     """
 
     name: str
+    section: str
     task: str
     template: str
     schema: str
@@ -80,6 +92,7 @@ class Step(NamedTuple):
 STEPS: Final[tuple[Step, ...]] = (
     Step(
         name=DETECTION,
+        section="deteccion",
         task="detection",
         template="extraction/invoice_deteccion",
         schema="extraction/invoice_detection",
@@ -88,6 +101,7 @@ STEPS: Final[tuple[Step, ...]] = (
     ),
     Step(
         name="extract",
+        section="extraccion",
         task="extract",
         template="extraction/invoice",
         schema="extraction/invoice",
@@ -96,6 +110,7 @@ STEPS: Final[tuple[Step, ...]] = (
     ),
     Step(
         name="desglose",
+        section="desglose",
         task="desglose",
         template="extraction/invoice_desglose",
         schema="extraction/invoice_desglose",
@@ -104,6 +119,7 @@ STEPS: Final[tuple[Step, ...]] = (
     ),
     Step(
         name="clasificacion",
+        section="clasificacion",
         task="clasificacion",
         template="extraction/invoice_clasificacion",
         schema="extraction/invoice_clasificacion",
@@ -112,6 +128,7 @@ STEPS: Final[tuple[Step, ...]] = (
     ),
     Step(
         name="rubro",
+        section="rubro",
         task="rubro",
         template="extraction/invoice_rubro",
         schema="extraction/invoice_rubro",
@@ -352,6 +369,41 @@ def _step_command(step: Step) -> Command:
     return command
 
 
+def _answers_by_step(reports: Iterable[Payload]) -> dict[str, Any]:
+    """Return each step's answer, keyed by the step's name."""
+    return {str(report["step"]): report.get("parsed_response") for report in reports}
+
+
+def _unified_report(
+    input_path: Path,
+    status: str,
+    invoice_valid: bool | None,
+    answers: Mapping[str, Any],
+) -> Payload:
+    """Return the one file that holds the whole reading: a header, then one section per step.
+
+    Each section is keyed by :attr:`Step.section` and holds that step's answer alone — the same
+    object its ``<step>.json`` holds — so a reader who wants the whole reading opens one file. A
+    step that produced no answer states ``None``, which is not a verdict the model gave.
+
+    Args:
+        input_path: The run's input.
+        status: The flow's own status, the one a caller's exit code reads.
+        invoice_valid: The gate's verdict, or ``None`` when the gate stated none.
+        answers: Each step's answer, keyed by the step's name.
+
+    Returns:
+        The report payload: the header, then one section per step in :data:`STEPS` order.
+    """
+    sections = {step.section: answers.get(step.name) for step in STEPS}
+    return {
+        "input": str(input_path),
+        "status": status,
+        "invoice_valid": invoice_valid,
+        **sections,
+    }
+
+
 def _flow(
     args: argparse.Namespace,
     parser: argparse.ArgumentParser,
@@ -361,7 +413,8 @@ def _flow(
     """Run every step, in order, and report the flow.
 
     A step that returns a failed result does not end the run: the flow reports every step it ran,
-    and the status it carries is the one a caller's exit code reads.
+    and the status it carries is the one a caller's exit code reads. Beside the per-step
+    directories it files one unified report — ``invoice.json`` — at the run root.
     """
     reports = [
         _step_report(
@@ -369,20 +422,26 @@ def _flow(
         )
         for step in STEPS
     ]
+    status = _flow_status(reports)
+    invoice_valid = validity(
+        next(
+            (
+                report["parsed_response"]
+                for report in reports
+                if report["step"] == DETECTION
+            ),
+            None,
+        )
+    )
+    report = _unified_report(
+        input_path, status, invoice_valid, _answers_by_step(reports)
+    )
     return {
         "input": str(input_path),
         "steps": reports,
-        "status": _flow_status(reports),
-        "invoice_valid": validity(
-            next(
-                (
-                    report["parsed_response"]
-                    for report in reports
-                    if report["step"] == DETECTION
-                ),
-                None,
-            )
-        ),
+        "status": status,
+        "invoice_valid": invoice_valid,
+        "report": str(_cli.write_payload(root / REPORT_FILE, report)),
     }
 
 

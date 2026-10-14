@@ -188,7 +188,10 @@ exercise one processor, it runs the invoice flow the registry already ships as d
 extraction steps (validity, the base reading, the breakdown, the class, the line of business), in
 order, over one paper, with the text twin chosen for a text input and the vision twin for a page.
 Its steps live in a shared layer, `_invoice.py`, which fixes the identifiers and the order and
-reaches the LLM bench's own `call` for everything else. Adding it is the plan revision `SCR-19`.
+reaches the LLM bench's own `call` for everything else. A `flow` run files each step's answer under
+its own directory and one unified report, `invoice.json`, at the run root — the input, the flow's
+status and the gate's verdict, then one section per step (`deteccion`, `extraccion`, `desglose`,
+`clasificacion`, `rubro`) holding that step's answer alone. Adding it is the plan revision `SCR-19`.
 
 Two subcommands that were drafted here are **dropped**: `image.py crop` has no `crop_region`
 to call (`subplan-procesador-image.md` §9.6 defers it) and `ocr.py diff` would compare two

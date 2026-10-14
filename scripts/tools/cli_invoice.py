@@ -8,6 +8,10 @@ live in :mod:`scripts.tools._invoice`; the frame — the output root, the header
 the exit code — is :mod:`scripts.tools._cli`, and the request itself is the bench's, reached in
 :mod:`scripts.tools._llm`. This file owns only its parser, its flags and one handler per command.
 
+**``flow`` files one unified report.** Beside the per-step directories it writes ``invoice.json`` at
+the run root: the input, the flow's status and the gate's verdict, then one section per step holding
+that step's answer alone. The step's own directory keeps the run; the report keeps the reading.
+
 **It adds a convention member on purpose.** ``scripts/tools/`` was pinned to the five processor
 benches plus their layers; this is the first *domain* caller of one of them, so its registration in
 the guard test and in ``subplan-scripts.md`` is the plan revision that admits it. It reaches the

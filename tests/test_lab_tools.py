@@ -2307,6 +2307,50 @@ def test_invoice_flow_runs_the_five_steps_in_order_and_files_each_answer(
         )
 
 
+def test_invoice_flow_files_one_unified_report_with_one_section_per_step(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``flow`` files ``invoice.json`` at the run root: a header, then one section per step.
+
+    The report is the whole reading in one file, so its sections are keyed by the name a reader
+    looks for and hold each step's answer alone. The section names are restated here rather than
+    derived from :data:`_invoice.STEPS`: a step whose section drifts reddens this test.
+    """
+    providers(answers=INVOICE_ANSWERS)
+    out = tmp_path / "flow"
+
+    code = tool_module("cli_invoice").main(
+        [
+            "--json",
+            "--out",
+            str(out),
+            "flow",
+            str(CASE_TEXT),
+            "--provider",
+            "ollama",
+            "--model",
+            "gemma3:12b",
+            "--rubro",
+            "Restaurante",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    report_path = out / "invoice.json"
+    assert payload["report"] == str(report_path)
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["input"] == str(CASE_TEXT)
+    assert report["status"] == "SUCCESS"
+    assert report["invoice_valid"] is True
+    sections = ("deteccion", "extraccion", "desglose", "clasificacion", "rubro")
+    assert [
+        key for key in report if key not in ("input", "status", "invoice_valid")
+    ] == [*sections]
+    for section, answer in zip(sections, INVOICE_ANSWERS, strict=True):
+        assert report[section] == json.loads(answer)
+
+
 def test_invoice_detection_answers_whether_the_paper_is_a_receipt(
     providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
