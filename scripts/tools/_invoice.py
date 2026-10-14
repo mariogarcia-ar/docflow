@@ -25,7 +25,8 @@ that step's answer alone. Filing it there is what makes it the flow's cache: a r
 report already beside the input reads it back instead of buying the reading again, so the five steps
 run once per paper and never twice. This is the one place a bench artifact forms beside its input on
 purpose — the reading belongs to the receipt, not to the run directory — and ``--out`` still holds
-the per-step records the report summarizes.
+the per-step records the report summarizes. The name is keyed by its folder, so the layout asks one
+receipt per folder: a report that reads a different paper is refused, not reused.
 
 **Validity is a step, not a score.** ``detection`` answers whether the paper is a receipt at all,
 and its own field says so; :func:`validity` reads that field and nothing else. A step that produced
@@ -36,7 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, NamedTuple
 
@@ -196,7 +197,12 @@ def validity(answer: Any) -> bool | None:
     return None if stated is None else str(stated).strip().lower() == "true"
 
 
-def build_subcommands(subparsers: Any) -> dict[str, argparse.ArgumentParser]:
+def build_subcommands(
+    subparsers: Any,
+    *,
+    input_argument: bool = True,
+    only: Sequence[str] | None = None,
+) -> dict[str, argparse.ArgumentParser]:
     """Register one subcommand per step, and the whole flow.
 
     A step states the flags a ``call`` states — the template, the schema and the task are the
@@ -206,24 +212,38 @@ def build_subcommands(subparsers: Any) -> dict[str, argparse.ArgumentParser]:
 
     Args:
         subparsers: The group :func:`_cli.build_parser` returned.
+        input_argument: Whether a subcommand takes the input positional. ``cli_invoice.py`` runs
+            one input, so it does; ``cli_batch_invoice.py`` takes a folder once and walks it, so
+            it does not.
+        only: The commands to register, when a caller offers a subset. A command left out is not
+            merely hidden — it is not registered, so naming it is a usage error.
 
     Returns:
         The subcommand parsers by name, for a caller that wants to reach one directly.
     """
     parsers: dict[str, argparse.ArgumentParser] = {}
-    for step in STEPS:
+    steps = tuple(step for step in STEPS if only is None or step.name in only)
+    for step in steps:
         subparser = _cli.add_subcommand(
-            subparsers, step.name, f"The {step.name} step of the invoice flow."
+            subparsers,
+            step.name,
+            f"The {step.name} step of the invoice flow.",
+            input_argument=input_argument,
         )
         _llm.add_inference_arguments(subparser, identifiers=False)
         _add_required_extras(subparser, (step,))
         parsers[step.name] = subparser
-    flow = _cli.add_subcommand(
-        subparsers, FLOW, "The whole flow: every step, in the flow's own order."
-    )
-    _llm.add_inference_arguments(flow, identifiers=False)
-    _add_required_extras(flow, STEPS)
-    parsers[FLOW] = flow
+    if only is None or FLOW in only:
+        flow = _cli.add_subcommand(
+            subparsers,
+            FLOW,
+            "The whole flow: every step, in the flow's own order.",
+            input_argument=input_argument,
+        )
+        _llm.add_inference_arguments(flow, identifiers=False)
+        # The flow runs every step whatever ``only`` left out, so its extras are the whole table's.
+        _add_required_extras(flow, STEPS)
+        parsers[FLOW] = flow
     return parsers
 
 
@@ -430,22 +450,37 @@ def report_path(input_path: Path) -> Path:
     return input_path.parent / REPORT_FILE
 
 
-def existing_report(path: Path) -> Payload | None:
+def _report_error(message: str, path: Path, **metadata: Any) -> LLMPrimitiveError:
+    """Return the typed failure a report the flow cannot use is raised as."""
+    return LLMPrimitiveError(
+        LLMError(
+            type="INTERNAL_ERROR",
+            message=message,
+            recoverable=False,
+            metadata={"path": str(path), **metadata},
+        )
+    )
+
+
+def existing_report(input_path: Path) -> Payload | None:
     """Return the report already filed beside the input, or ``None`` when there is none.
 
-    The file's own presence is the cache signal; a file that is there but is not a JSON object is
-    an artifact the flow cannot read, and it says so rather than quietly overwriting it — a report
-    the operator filed is not the tool's to discard.
+    The file's own presence is the cache signal, but it is trusted only as far as it can be: the
+    report records the input it read, so a file that is not a JSON object — or that reads a
+    *different* receipt — is refused rather than reused. The second is what keeps the layout's
+    premise honest: ``invoice.json`` is keyed by its folder, so two receipts sharing one folder
+    would alias each other's reading, and the mismatch is named here instead of answered silently.
 
     Args:
-        path: Where the report would be, as :func:`report_path` states.
+        input_path: The run's input, whose folder holds the report.
 
     Returns:
         The report, or ``None`` when the file is absent.
 
     Raises:
-        LLMPrimitiveError: The file exists but is not a JSON object.
+        LLMPrimitiveError: The file exists but is not this input's readable report.
     """
+    path = report_path(input_path)
     if not path.is_file():
         return None
     failure: Exception | None = None
@@ -455,14 +490,17 @@ def existing_report(path: Path) -> Payload | None:
         failure = error
         report = None
     if not isinstance(report, Mapping):
-        raise LLMPrimitiveError(
-            LLMError(
-                type="INTERNAL_ERROR",
-                message=f"the report beside the input is not a JSON object: {path}",
-                recoverable=False,
-                metadata={"path": str(path)},
-            )
+        raise _report_error(
+            f"the report beside the input is not a JSON object: {path}", path
         ) from failure
+    recorded = report.get("input")
+    if recorded != str(input_path):
+        raise _report_error(
+            f"the report beside the input was filed for another receipt: {path} "
+            f"records {recorded!r}, not {str(input_path)!r}",
+            path,
+            recorded_input=recorded,
+        )
     return dict(report)
 
 
@@ -481,7 +519,7 @@ def _flow(
     hit.
     """
     path = report_path(input_path)
-    filed = existing_report(path)
+    filed = existing_report(input_path)
     if filed is not None:
         return {**filed, "input": str(input_path), "report": str(path), REUSED: True}
     reports = [

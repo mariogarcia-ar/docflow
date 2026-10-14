@@ -1,8 +1,10 @@
 # Lab tools (`scripts/tools/`)
 
 Five thin operator CLIs — one per processor plus the orchestrator — that exercise the finished
-library by hand against the committed fixtures, plus one **domain** driver (`cli_invoice.py`,
-`SCR-19`) that runs the invoice flow's five steps over one paper.
+library by hand against the committed fixtures, plus two **domain** drivers for the invoice flow:
+`cli_invoice.py` (`SCR-19`) runs its five steps over one paper, and `cli_batch_invoice.py`
+(`SCR-20`) runs the same flow over every receipt below a folder, filing one `invoice.json` beside
+each.
 
 This directory is the **lab bench**, not the library. It is not packaged, it registers no
 console script, and nothing under `src/docflow/` imports it. Deleting `scripts/` leaves the
@@ -27,7 +29,7 @@ recorded as a gate.
 | `_image.py` | the image bench's **command layer**: the seven methods. Not a tool — `image.py` and `batch_image.py` both call it |
 | `_ocr.py` | the OCR bench's **command layer**: the eight methods. Not a tool — `ocr.py` and `batch_ocr.py` both call it |
 | `_llm.py` | the LLM bench's **command layer**: the nine methods. Not a tool — `llm.py` and `batch_llm.py` both call it |
-| `_invoice.py` | the **invoice flow**'s command layer: the five steps, in order, with the text and vision identifiers each is reached by. Not a tool — `cli_invoice.py` calls it |
+| `_invoice.py` | the **invoice flow**'s command layer: the five steps, in order, with the text and vision identifiers each is reached by, and the report the flow files beside the input. Not a tool — `cli_invoice.py` and `cli_batch_invoice.py` both call it |
 | `pdf.py` | `SCR-02` — the PDF processor's primitives and its contract, one file per run |
 | `batch_pdf.py` | `SCR-12` — the same eight methods over every PDF below a folder, one record per input |
 | `image.py` | `SCR-03` — the image processor's pipelines and its contract, one file per run |
@@ -38,6 +40,7 @@ recorded as a gate.
 | `batch_llm.py` | `SCR-15` — five of the same nine commands over every text or page below a folder |
 | `workflow.py` | `SCR-06` — the orchestrator: plan, run, resume, force, skip, stop |
 | `cli_invoice.py` | `SCR-19` — the invoice flow: the registry's five steps over one paper, text or page |
+| `cli_batch_invoice.py` | `SCR-20` — the same flow over every receipt below a folder, one `invoice.json` beside each |
 
 A tool owns its subcommands, its flags and one handler per subcommand. Everything else — where a
 run writes, how an input resolves, the header, the printers, the exit code — comes from `_cli`,
@@ -45,7 +48,7 @@ its processor's methods come from that processor's layer, and a batch tool's wal
 from `_batch`. Adding a tool for a sixth processor means writing its parser and its handlers, and
 nothing else.
 
-The set of **modules** here is asserted by `tests/test_lab_tools.py` guard 1: `_cli.py`, `_batch.py`, the per-processor layers and the tools, and no other `.py` file. `subplan-scripts.md` §3.1 fixed the original set at `_cli.py` plus five tools; the batch tools, the shared folder frame and the layers that keep them from duplicating their single-file twins are the `SCR-11`…`SCR-18` plan revision that followed, `cli_invoice.py` and its `_invoice.py` layer are `SCR-19`, and a module beyond that is the next revision, not a surprise.
+The set of **modules** here is asserted by `tests/test_lab_tools.py` guard 1: `_cli.py`, `_batch.py`, the per-processor layers and the tools, and no other `.py` file. `subplan-scripts.md` §3.1 fixed the original set at `_cli.py` plus five tools; the batch tools, the shared folder frame and the layers that keep them from duplicating their single-file twins are the `SCR-11`…`SCR-18` plan revision that followed, `cli_invoice.py` and its `_invoice.py` layer are `SCR-19`, `cli_batch_invoice.py` is `SCR-20`, and a module beyond that is the next revision, not a surprise.
 
 ---
 
@@ -513,9 +516,10 @@ overwritten: a report the operator filed is not the tool's to discard.
 ## Commands over a folder (batch)
 
 The same commands over a corpus: the folder positional names a folder, and every file below it
-that matches the tool's suffixes is an input. There are four of them, one per processor — the
-orchestrator has no folder twin, because a document request is not a folder of files — and each is
-the *same* method the per-file tool calls, dispatched through the same layer.
+that matches the tool's suffixes is an input. There are five: the four processors' own, and
+`cli_batch_invoice.py` for the invoice flow. The orchestrator has no folder twin, because a
+document request is not a folder of files. Each is the *same* method the per-file tool calls,
+dispatched through the same layer.
 
 ```bash
 python scripts/tools/batch_pdf.py tests/fixtures/pdf        # the four committed samples
@@ -533,6 +537,14 @@ python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matr
 | `batch_image.py` `SCR-13` | `_image.py` | `.png .jpg .jpeg .tif .tiff .bmp` | `info` | — |
 | `batch_ocr.py` `SCR-14` | `_ocr.py` | the image set: the OCR input *is* an image | `text` — publishes the reading it reports as `text.txt` | — |
 | `batch_llm.py` `SCR-15` | `_llm.py` | `.txt .md`, and the image set — a page is an input too | **none** — a command is required | `status`, `models`, `fake`, `resume` |
+| `cli_batch_invoice.py` `SCR-20` | `_invoice.py` | the image set — a receipt is a page | **none** — a command is required | the five steps (`detection`, `extract`, `desglose`, `clasificacion`, `rubro`) |
+
+**The invoice flow's folder twin differs in two ways.** It offers only `flow`, because only the
+flow files the per-image reading; and it files that reading **beside each receipt**, not under the
+mirror — that is what makes it the flow's cache, so a second walk reaches no model. `--out` still
+names the mirror root for the per-step artifacts and the `flow.json` record. The report's name is
+keyed by its folder, so the layout asks **one receipt per folder**: a report that reads a different
+paper is refused rather than reused.
 
 ### The shape of a batch run
 

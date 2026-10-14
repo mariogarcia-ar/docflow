@@ -14,6 +14,7 @@ finished library by hand against the committed fixtures under `tests/fixtures/` 
 | `scripts/tools/llm.py` | `SCR-05` | `call`, `prompt`, `node`, `graph`, `resume`, `status`, `models`, `tokens`, `fake` |
 | `scripts/tools/workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 | `scripts/tools/cli_invoice.py` | `SCR-19` | `detection`, `extract`, `desglose`, `clasificacion`, `rubro`, `flow` |
+| `scripts/tools/cli_batch_invoice.py` | `SCR-20` | `flow` (the whole flow over every receipt below a folder) |
 
 The deliverable is a **caller**, not a component: each tool parses arguments, builds a real
 contract object, calls the library's public entry point (or one named primitive, on the lab
@@ -26,7 +27,9 @@ internals at all.
 the same: `SCR-19` adds a *domain* driver that runs the invoice flow the registry already ships as
 data, through the LLM bench's own `call`. It reaches no engine, adds no contract and states no
 default model, and its steps are a table (`_invoice.py`) rather than code that reimplements
-anything.
+anything. `SCR-20` adds its folder twin, `cli_batch_invoice.py`: the same flow over every receipt
+below a folder, one `invoice.json` beside each — the fifth caller of `_batch.py`'s frame, and the
+first *domain* one.
 
 **Why a tool and not a test.** The suite proves *our* code against in-memory doubles and, by
 rule, never reaches an engine (`docs/plan/README.md` §9.7). A tool is the only surface where a
@@ -89,7 +92,8 @@ scripts/tools/
 ├── batch_llm.py    SCR-15
 ├── workflow.py     SCR-06
 ├── _invoice.py     the invoice flow's command layer (SCR-19) — also not a tool
-└── cli_invoice.py  SCR-19
+├── cli_invoice.py  SCR-19
+└── cli_batch_invoice.py  SCR-20
 ```
 
 `_cli.py` is justified by the five callers rule this repository already applies to
@@ -393,6 +397,7 @@ converted) and `tests/fixtures-txt/casos` (three texts, answered two ways: `--fa
 | SCR-17 | Hand run of the four batch tools over the fixture folders, recorded in the bitacora | M | SCR-13, SCR-14, SCR-15 |
 | SCR-18 | This revision: §3.1/§3.4/§4/§5/§6/§9, the WBS issue file, and the root `README.md` table | S | SCR-17 |
 | SCR-19 | `scripts/tools/_invoice.py` and `cli_invoice.py` — the invoice flow, the first domain caller of the bench | M | SCR-15 |
+| SCR-20 | `scripts/tools/cli_batch_invoice.py` — the invoice flow over a folder, one `invoice.json` per receipt, reusing a filed reading instead of buying it again | M | SCR-19 |
 
 ### 4.2 Order / waves
 
@@ -642,8 +647,9 @@ and patching the wrong one would leave the tool's own copy in place and pass eit
 
 **Definition of Done**
 
-- The fifteen modules of §3.1 exist at the paths it fixes, and the tool set is exactly those
-  fifteen: `_cli.py`, `_batch.py`, the four processor layers, and the nine tools.
+- The eighteen modules of §3.1 exist at the paths it fixes, and the tool set is exactly those
+  eighteen: `_cli.py`, `_batch.py`, the five bench layers (`_pdf.py`, `_image.py`, `_ocr.py`,
+  `_llm.py`, `_invoice.py`), and the eleven tools.
 - Every subcommand in §3.4 calls the symbol the table names; no tool contains a transformation,
   a retry, a cache, a fallback or a default engine/provider/model/DPI/threshold. A batch tool
   additionally contains no walk, mirror, summary or exit-code computation of its own: those are
@@ -715,6 +721,20 @@ contract is added, no default model is substituted, and the step table, not code
 identifier each step reads. The bullet above that deferred domain-specific invoice rules to the
 Release gate stands for the *library*; what this revision admits is a bench tool that composes the
 registry's data, and the guard test's tool set is updated to enumerate it.
+
+**Added by this revision (`SCR-20`).** A seventeenth module, `cli_batch_invoice.py`, joins
+`scripts/tools/`: the folder twin of `cli_invoice.py`, built entirely on `_batch.py`'s frame, so
+the walk, the mirror, the per-input record, the summary and the exit code are the four processor
+batch tools' own. Two things are its own. It registers **one** command — `flow` — because only the
+flow files the per-image reading, so the five step commands are not registered at all and naming
+one is a usage error; and the reading is filed **beside each receipt**, not under the mirror, which
+is what makes it the flow's cache: a second walk returns every reading the first one already bought
+and reaches no model. `--out` therefore names the mirror root for the per-step artifacts and the
+batch record; the reports go beside the inputs. The name is keyed by its folder, so the layout asks
+one receipt per folder, and a report that reads a different paper is refused rather than reused.
+The subcommand is **required**, as on `batch_llm.py`: `--provider`, `--model` and `--rubro` are
+never defaulted, so there is no flag-free method to fall back on.
+
    §"Lab tools" and the `/var/` ignore rule; `_`-prefixed modules are not tools.
 2. **A tool is a caller, not a component — RESOLVED:** the three boundaries of §3.2 hold, and
    `SCR-08` asserts them rather than promising them.

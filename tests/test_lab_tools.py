@@ -62,6 +62,7 @@ TOOLS = (
     "batch_llm",
     "workflow",
     "cli_invoice",
+    "cli_batch_invoice",
 )
 TOOL_FILES = {
     "_cli.py",
@@ -76,7 +77,13 @@ TOOL_FILES = {
 
 #: The tools whose input is a folder. Their documented invocation names the folder *and* the
 #: command, so a probe that passes only one of the two proves nothing about the other.
-BATCH_TOOLS = ("batch_pdf", "batch_image", "batch_ocr", "batch_llm")
+BATCH_TOOLS = (
+    "batch_pdf",
+    "batch_image",
+    "batch_ocr",
+    "batch_llm",
+    "cli_batch_invoice",
+)
 
 DOCUMENTED_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
     "pdf": (
@@ -149,6 +156,7 @@ DOCUMENTED_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
         "rubro",
         "flow",
     ),
+    "cli_batch_invoice": ("flow",),
 }
 
 #: The engine binaries a tool must never name: naming one would mean it had started
@@ -354,6 +362,7 @@ REPORT_ONLY: dict[str, tuple[str, ...]] = {
     "batch_llm": (),
     "workflow": ("plan", "status", "context"),
     "cli_invoice": (),
+    "cli_batch_invoice": (),
 }
 
 
@@ -2401,6 +2410,140 @@ def test_invoice_flow_reuses_the_report_filed_beside_the_input(
     assert len(fake.calls) == len(INVOICE_ANSWERS)
     assert second["status"] == "SUCCESS"
     assert second["deteccion"] == json.loads(INVOICE_ANSWERS[0])
+
+
+# --- The invoice flow over a folder: ``cli_batch_invoice.py`` --------------------------
+
+#: The flags every ``cli_batch_invoice flow`` run states, restated per test below.
+BATCH_INVOICE_FLAGS = (
+    "--provider",
+    "ollama",
+    "--model",
+    "qwen2.5vl:7b",
+    "--rubro",
+    "Restaurante",
+)
+
+
+def _receipt_at(path: Path) -> Path:
+    """Copy the fixture receipt to ``path``, creating its folder, and return the resolved path.
+
+    The flow files ``invoice.json`` beside its input, so each receipt gets its own folder — the
+    layout the tool asks for, and the one that keeps two receipts from aliasing one report.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(CASE_IMAGE, path)
+    return path.resolve()
+
+
+def test_batch_invoice_files_one_report_beside_each_receipt(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One walk runs the flow per receipt and files each reading beside it.
+
+    Each receipt is in its own folder, so the ``invoice.json`` beside it is that receipt's reading.
+    The mirror under ``--out`` keeps the batch record beside the run's per-step artifacts.
+    """
+    providers(answers=[*INVOICE_ANSWERS, *INVOICE_ANSWERS])
+    corpus = tmp_path / "corpus"
+    receipts = [
+        _receipt_at(corpus / "F8DE1621" / "a.jpg"),
+        _receipt_at(corpus / "F8DE1622" / "b.jpg"),
+    ]
+    out = tmp_path / "mirror"
+
+    code = tool_module("cli_batch_invoice").main(
+        ["--json", "--out", str(out), str(corpus), "flow", *BATCH_INVOICE_FLAGS]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["files"] == 2
+    assert payload["succeeded"] == 2
+    assert payload["failed"] == 0
+    for folder, stem, receipt in (
+        ("F8DE1621", "a", receipts[0]),
+        ("F8DE1622", "b", receipts[1]),
+    ):
+        report = json.loads(
+            (receipt.parent / "invoice.json").read_text(encoding="utf-8")
+        )
+        assert report["status"] == "SUCCESS"
+        assert report["input"] == str(receipt)
+        assert report["clasificacion"] == json.loads(INVOICE_ANSWERS[3])
+        assert (out / folder / stem / "flow.json").is_file()
+
+
+def test_batch_invoice_reuses_the_reports_it_already_filed(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A second walk reaches no model: every receipt already has its reading beside it."""
+    fake = providers(answers=[*INVOICE_ANSWERS, *INVOICE_ANSWERS])
+    corpus = tmp_path / "corpus"
+    _receipt_at(corpus / "F8DE1621" / "a.jpg")
+    _receipt_at(corpus / "F8DE1622" / "b.jpg")
+    out = tmp_path / "mirror"
+    stated = ["--json", "--out", str(out), str(corpus), "flow", *BATCH_INVOICE_FLAGS]
+
+    assert tool_module("cli_batch_invoice").main(stated) == 0
+    json.loads(capsys.readouterr().out)
+    assert len(fake.calls) == 2 * len(INVOICE_ANSWERS)
+
+    assert tool_module("cli_batch_invoice").main(stated) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["succeeded"] == 2
+    assert len(fake.calls) == 2 * len(INVOICE_ANSWERS)
+
+
+def test_batch_invoice_counts_a_failed_receipt_and_keeps_walking(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One receipt with no answer is counted, and the walk still covers the rest.
+
+    The second receipt is left unscripted, so its steps answer something that does not satisfy the
+    schemas and the flow reports ``FAILED``. The run completes over both inputs and exits ``1``.
+    """
+    providers(answers=INVOICE_ANSWERS)
+    corpus = tmp_path / "corpus"
+    _receipt_at(corpus / "F8DE1621" / "a.jpg")
+    _receipt_at(corpus / "F8DE1622" / "b.jpg")
+    out = tmp_path / "mirror"
+
+    code = tool_module("cli_batch_invoice").main(
+        ["--json", "--out", str(out), str(corpus), "flow", *BATCH_INVOICE_FLAGS]
+    )
+
+    assert code == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["files"] == 2
+    assert payload["succeeded"] == 1
+    assert payload["failed"] == 1
+    assert [entry["status"] for entry in payload["results"]] == ["SUCCESS", "FAILED"]
+
+
+def test_batch_invoice_refuses_two_receipts_sharing_one_folder(
+    providers: Any, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Two receipts in one folder cannot each own ``invoice.json``, so the second says so.
+
+    The report is keyed by its folder, so the second receipt would otherwise reuse the first's
+    reading. The mismatch is refused and counted rather than answered with another paper's reading.
+    """
+    providers(answers=[*INVOICE_ANSWERS, *INVOICE_ANSWERS])
+    corpus = tmp_path / "corpus"
+    _receipt_at(corpus / "a.jpg")
+    _receipt_at(corpus / "b.jpg")
+    out = tmp_path / "mirror"
+
+    code = tool_module("cli_batch_invoice").main(
+        ["--out", str(out), str(corpus), "flow", *BATCH_INVOICE_FLAGS]
+    )
+
+    assert code == 1
+    printed = capsys.readouterr().out
+    assert "succeeded: 1" in printed
+    assert "failed: 1" in printed
+    assert "filed for another receipt" in printed
 
 
 def test_invoice_detection_answers_whether_the_paper_is_a_receipt(

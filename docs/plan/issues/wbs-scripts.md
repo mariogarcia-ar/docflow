@@ -393,6 +393,20 @@ hand (`SCR-07`) and recorded as an observation, never as a gate.
 - **Evidence / DoD:** The five new tests in `tests/test_lab_tools.py` (flow order and artifacts, the gate's verdict, the vision twin, the pre-header refusals) green, the four gates clean, and the two mutation observations recorded with the task.
 - **Tags:** —
 
+### SCR-20 — The invoice flow over a folder: `cli_batch_invoice.py`
+
+- **Type:** Feature (bench)
+- **Effort:** M
+- **Wave:** 7 — The invoice flow over a folder
+- **Depends on:** SCR-19
+- **Blocks:** —
+- **Objective:** Give the bench the folder twin of `cli_invoice.py`: run the invoice flow over every receipt image below a folder and file one `invoice.json` beside each, so a corpus is read once and a second walk over it buys nothing.
+- **Scope / Deliverables:** `scripts/tools/cli_batch_invoice.py` — the parser (a required subcommand, `--assets-dir`, `--fake`) built on `_batch.py`'s frame, registering only `flow`; the `only`/`input_argument` parameters on `_invoice.build_subcommands`, which let the batch tool offer one command without a folder walk taking the single-file positional; the input-aware cache in `_invoice.existing_report`, which refuses a report filed for a different receipt; the guard test's tool set and registry maps, `subplan-scripts.md` §1/§3.1/§3.2/§4/§9 and the root `README.md` table.
+- **Out of bounds:** No new contract, no engine or provider SDK named, no default provider, model or line of business, no step command (only the flow files a reading), no parallelism (the walk stays serial and sorted), and no edit to the library: a receipt is the bench's own `flow`.
+- **Acceptance criteria:** One walk files one `invoice.json` beside each receipt and a `flow.json` record in the mirror; a second walk over the same folder reaches no model; a receipt whose steps fail is counted and the walk continues; two receipts in one folder are refused rather than aliased; `--provider`/`--model`/`--rubro` are refused before the header when missing; the guard test's tool set enumerates the new module.
+- **Evidence / DoD:** The four new tests in `tests/test_lab_tools.py` (one report per receipt, reuse, a counted failure, the shared-folder refusal) green, the four gates clean, and the mutation observation on the cache guard recorded with the task.
+- **Tags:** —
+
 ## 4. Dependency graph
 
 ```mermaid
@@ -437,6 +451,7 @@ flowchart LR
 | 4 — Close | SCR-09 → SCR-10 | Wave 3 green | The four gates are clean; the two remaining stale citations are reconciled in one pass and the sweep is recorded |
 | 5 — Batch mode | SCR-11 → SCR-12 → (SCR-13 ∥ SCR-14 ∥ SCR-15) → (SCR-16 ∥ SCR-17) → SCR-18 | Wave 4 green, so the tools and the convention are settled — a layer extracted before SCR-09 would be a layer over moving code | Each processor's two tools call one layer; the four batch tools share `_batch.py` and contain no walk, mirror, summary or exit code of their own; the hand run is recorded; the plan and the root `README.md` agree with the tree |
 | 6 — The first domain caller | SCR-19 | SCR-15 closed, so the LLM bench's `call` and its flags are settled — a flow built over a moving `call` would re-decide the request | The flow's identifiers are a table, every step is the bench's own `call`, no engine or SDK is named and no default provider or model is substituted |
+| 7 — The invoice flow over a folder | SCR-20 | SCR-19 closed, so the flow and the per-receipt cache it files are settled | The flow runs per receipt on `_batch.py`'s frame, one `invoice.json` is filed beside each, a second walk reaches no model, and the tool owns no walk, mirror, summary or exit code |
 
 ## 6. Critical path
 

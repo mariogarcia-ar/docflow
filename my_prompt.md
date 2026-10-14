@@ -42,3 +42,11 @@ python scripts/tools/pdf.py classify documento.pdf --page 1 --json
 python scripts/tools/batch_pdf.py tests/fixtures/pdf classify --page 1
 
 ```
+
+
+
+
+
+python scripts/tools/cli_invoice.py  flow \
+    mendel/files/2026-10/F8DE1621/1df77011-74a3-4032-8011-5be5b4f836a1.jpg \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante

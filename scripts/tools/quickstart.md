@@ -4,10 +4,11 @@ The commands you actually type, one section per processor: first over **one file
 command over **a folder**. [`readme.md`](readme.md) is the full reference — every flag, every
 payload key, the boundary rules and the known limitations. This page is the short way in.
 
-Nine tools, two modes — plus one **domain** driver, `cli_invoice.py` (`SCR-19`), which runs the
-invoice flow's five extraction steps as a single command. Each processor's two tools call the
-**same** methods, so a subcommand behaves the same way in both and the batch adds a folder, a mirror
-and a summary — never a second implementation.
+Nine tools, two modes — plus two **domain** drivers for the invoice flow: `cli_invoice.py`
+(`SCR-19`), which runs its five extraction steps over one paper, and `cli_batch_invoice.py`
+(`SCR-20`), which runs the same flow over every receipt below a folder. Each processor's two tools
+call the **same** methods, so a subcommand behaves the same way in both and the batch adds a folder,
+a mirror and a summary — never a second implementation.
 
 | Processor | One file | A folder |
 |---|---|---|
@@ -16,7 +17,7 @@ and a summary — never a second implementation.
 | OCR | `ocr.py` | `batch_ocr.py` |
 | LLM / VLM | `llm.py` | `batch_llm.py` |
 | Workflow (orchestrator) | `workflow.py` | — no folder twin: a document request is not a folder of files |
-| Invoice flow (domain) | `cli_invoice.py` | — no folder twin: the flow runs over one paper, step by step |
+| Invoice flow (domain) | `cli_invoice.py` | `cli_batch_invoice.py` — one receipt per folder, one `invoice.json` beside each |
 
 ## Before you start
 
@@ -748,6 +749,38 @@ silently overwritten. `--assets-dir` defaults to the committed
 `--fake` installs the committed scripted provider, so the flow's shape is demonstrable with no model
 served and no token spent. The four **review** steps are deliberately left out: which model judges
 which answer, and with which brake, is the operator's choice, not a property of the flow.
+
+### The invoice flow over a folder — `cli_batch_invoice.py`
+
+The same flow, one command *per receipt*, over a folder: `cli_batch_invoice.py` (`SCR-20`) walks
+the folder and runs `flow` on every image below it. The subcommand is **required** — no provider,
+model or line of business is defaulted — and `flow` is the only one offered, because only the flow
+files a reading.
+
+```bash
+python scripts/tools/cli_batch_invoice.py --out var/run/invoice-corpus <RECEIPTS> flow \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante
+```
+
+Each reading is filed **beside its receipt**, so the folder holds one receipt per subfolder (the
+mendel corpus' `2026-10/<folder>/<uuid>.jpg` layout is exactly this):
+
+```
+<RECEIPTS>/
+├── F8DE1621/{1df77011-….jpg, invoice.json}      # one receipt, and its reading beside it
+├── F8DE1622/{…jpg, invoice.json}
+└── …
+
+var/run/invoice-corpus/                          # --out: the mirror, not the reports
+├── F8DE1621/{flow.json, detection/…, extract/…, …}
+└── …
+```
+
+A second walk over the same folder reaches no model — every reading is already beside its receipt —
+so a corpus is bought once and re-read for free. Two receipts in **one** folder cannot each own an
+`invoice.json`, so the second is refused (counted `FAILED`, exit `1`) rather than silently reusing
+the first's reading. A failed receipt never ends the walk: the run covers every input and reports
+`succeeded`/`failed`.
 
 ### A folder
 

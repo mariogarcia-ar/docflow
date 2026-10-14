@@ -59,7 +59,7 @@ would be a silent stand-in, which this project forbids at every stage.
 | 2 — orchestrator | state, reuse, resume | `ORC-01`…`ORC-19` |
 | 3 — integration | source selection, end to end | `GEN-07`…`GEN-10` |
 | 4 — hardening | idempotency, atomicity, close-out | `GEN-11`…`GEN-20` |
-| 5 — lab tools | one operator CLI per processor, and a folder twin for each | `SCR-01`…`SCR-19` |
+| 5 — lab tools | one operator CLI per processor, and a folder twin for each | `SCR-01`…`SCR-20` |
 
 ---
 
@@ -170,6 +170,7 @@ is: it reaches the four processors only through their public contracts.
 | `batch_llm.py` | `SCR-15` | `call`, `graph`, `node`, `tokens`, `prompt` over every text or page below a folder — a command is **required**, and `--fake` installs the scripted provider |
 | `workflow.py` | `SCR-06` | `run`, `plan`, `status`, `resume`, `force`, `skip`, `stop`, `context` |
 | `cli_invoice.py` | `SCR-19` | `detection`, `extract`, `desglose`, `clasificacion`, `rubro`, `flow` — the registry's invoice flow, through `_invoice.py` |
+| `cli_batch_invoice.py` | `SCR-20` | `flow` over every receipt below a folder, one `invoice.json` beside each — the flow's folder twin, through `_invoice.py` |
 
 Each processor's two tools call one shared layer (`_pdf.py`, `_image.py`, `_ocr.py`, `_llm.py`)
 and the four batch tools share the folder frame `_batch.py`, so the batch adds a suffix set, a layer
@@ -194,6 +195,12 @@ flow's status and the gate's verdict, then one section per step (`deteccion`, `e
 `desglose`, `clasificacion`, `rubro`) holding that step's answer alone. Filed beside the receipt, the
 report doubles as the flow's cache: a second `flow` over the same paper reads it back (`reused: true`)
 instead of buying the reading again. Adding it is the plan revision `SCR-19`.
+
+`cli_batch_invoice.py` is the **eleventh** and the flow's folder twin: it runs the same flow over
+every receipt below a folder and files one `invoice.json` beside each, on `_batch.py`'s frame. It
+offers only `flow`, and because each reading sits beside its receipt, a second walk over the same
+folder reaches no model — the corpus is bought once and re-read for free. Adding it is the plan
+revision `SCR-20`.
 
 Two subcommands that were drafted here are **dropped**: `image.py crop` has no `crop_region`
 to call (`subplan-procesador-image.md` §9.6 defers it) and `ocr.py diff` would compare two
