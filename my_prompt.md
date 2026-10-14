@@ -45,6 +45,17 @@ python scripts/tools/batch_pdf.py tests/fixtures/pdf classify --page 1
 
 
 
+find mendel/files -type f -name "*.json" -delete
+find mendel/files -type f -name "*.md" -delete
+
+python scripts/tools/cli_batch_invoice.py  mendel/files/2025-08 flow \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante
+
+
+python scripts/tools/cli_batch_invoice.py  mendel/files/2025-08/2D2C9343 flow \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante
+
+
 
 
 python scripts/tools/cli_invoice.py  flow \
