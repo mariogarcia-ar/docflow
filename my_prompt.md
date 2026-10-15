@@ -1,3 +1,10 @@
+# mendel problemas
+- envia reporte con duplicaciones de comprobantes
+- no controla cuit 
+- no controla montos
+- no calcula bien los iva 
+- 
+
 # ollama ls
 
 NAME                    ID              SIZE      MODIFIED           
@@ -55,6 +62,15 @@ python scripts/tools/cli_batch_invoice.py  mendel/files/2025-08 flow \
 python scripts/tools/cli_batch_invoice.py  mendel/files/2025-08/2D2C9343 flow \
     --provider ollama --model qwen2.5vl:7b --rubro Restaurante
 
+
+python scripts/tools/cli_batch_invoice.py  mendel/files/2026-10/4AFC1FC3 flow \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante
+
+python scripts/tools/cli_batch_invoice.py  mendel/files/2026-10/6A719258 flow \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante --stream
+
+python scripts/tools/cli_batch_invoice.py  mendel/files/2026-10/5F1890A5 flow \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante --stream
 
 
 
