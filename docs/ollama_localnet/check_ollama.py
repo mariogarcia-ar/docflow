@@ -27,7 +27,7 @@ Examples:
 
     # extract data from an image (vision models: qwen2.5vl:3b, qwen2.5vl:7b, granite3.2-vision:2b)
     python check_ollama.py image invoice.jpg --model qwen2.5vl:7b --num-ctx 65536
-    python check_ollama.py image invoice.png --model qwen2.5vl:3b \\
+    python check_ollama.py image invoice.jpg --model qwen2.5vl:3b --num-ctx 65536 \
         --prompt "Return JSON with keys: invoice_number, date, total."
 
     # everything, including the image step
