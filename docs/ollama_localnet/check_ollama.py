@@ -7,7 +7,7 @@ Usage:
     python check_ollama.py image   IMAGE_PATH --model VISION_MODEL [--prompt "..."]
     python check_ollama.py all     [--image IMAGE_PATH --vision-model M]
 
-Host: --host or OLLAMA_HOST (default http://192.168.1.106:11434). Stdlib only.
+Host: --host or OLLAMA_HOST (default http://192.168.1.104:11434). Stdlib only.
 
 Examples:
     # list installed models
@@ -43,7 +43,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-DEFAULT_HOST = "http://192.168.1.106:11434"
+DEFAULT_HOST = "http://192.168.1.104:11434"
 DEFAULT_MODEL = "llama3.2:3b"
 TIMEOUT_S = 600  # TODO: [MVP] per-call timeout policy
 

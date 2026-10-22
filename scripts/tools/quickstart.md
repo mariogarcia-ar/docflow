@@ -793,15 +793,20 @@ tool that reaches a provider, one file or a folder:
 
 ```bash
 # one run: prefix the command
-DOCFLOW_LLM_BASE_URL=http://192.168.1.106:11434 python scripts/tools/cli_batch_invoice.py \
+DOCFLOW_LLM_NUM_CTX=16384 DOCFLOW_LLM_BASE_URL=http://192.168.1.104:11434 \
+    python scripts/tools/cli_batch_invoice.py \
     --out var/run/invoice-2025-08 mendel/files/2025-08 flow \
     --provider ollama --model qwen2.5vl:7b --rubro Restaurante
 # one receipt, same setting
-DOCFLOW_LLM_BASE_URL=http://192.168.1.106:11434 python scripts/tools/cli_invoice.py \
-    flow INVOICE.jpg --provider ollama --model qwen2.5vl:7b --rubro Restaurante
-# every run: one line in the repository's .env (a real variable wins over the file)
-echo 'DOCFLOW_LLM_BASE_URL=http://192.168.1.106:11434' >> .env
+DOCFLOW_LLM_NUM_CTX=16384 DOCFLOW_LLM_BASE_URL=http://192.168.1.104:11434 \
+    python scripts/tools/cli_invoice.py flow INVOICE.jpg --provider ollama --model qwen2.5vl:7b --rubro Restaurante
+# every run: set them once in the repository's .env (a real variable wins over the file)
+# — `cp .env.example .env` if you have none; the example documents both names
+printf 'DOCFLOW_LLM_BASE_URL=http://192.168.1.104:11434\nDOCFLOW_LLM_NUM_CTX=16384\n' >> .env
 ```
+
+A phone-sized photo (several MB) needs a bigger window than Ollama's default: without
+`DOCFLOW_LLM_NUM_CTX=16384` every step fails with `CONTEXT_OVERFLOW`.
 
 If the server is down, every step fails with `PROVIDER_ERROR: ollama could not be reached
 (Connection refused)` and the summary reads `failed: N` — check the server before the tool.

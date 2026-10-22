@@ -71,6 +71,10 @@ REPORT_FILE: Final[str] = "invoice.json"
 #: The key a flow payload states to say whether it produced the report or read it back from disk.
 REUSED: Final[str] = "reused"
 
+#: The status of a flow with a failed step. Its report is filed but never reused: a failure is not
+#: a reading, so the next run over the same receipt reads it again.
+FAILED_STATUS: Final[str] = "FAILED"
+
 
 class Step(NamedTuple):
     """One step of the flow: its identifiers, and the extra keys its template asks for.
@@ -366,7 +370,7 @@ def _flow_status(steps: list[Payload]) -> str:
     failed = any(
         _cli.exit_code_for(report["status"]) == _cli.FAILURE_EXIT for report in steps
     )
-    return "FAILED" if failed else "SUCCESS"
+    return FAILED_STATUS if failed else "SUCCESS"
 
 
 def _step_command(step: Step) -> Command:
@@ -516,11 +520,11 @@ def _flow(
     and the status it carries is the one a caller's exit code reads. The reading is filed as one
     ``invoice.json`` beside the input, and a run that finds it there does not run a step: it returns
     the report it read, with :data:`REUSED` stated so a reader can tell a fresh reading from a cache
-    hit.
+    hit. A filed report whose status is ``FAILED`` is not a hit: the flow runs again and overwrites it.
     """
     path = report_path(input_path)
     filed = existing_report(input_path)
-    if filed is not None:
+    if filed is not None and filed.get("status") != FAILED_STATUS:
         return {**filed, "input": str(input_path), "report": str(path), REUSED: True}
     reports = [
         _step_report(

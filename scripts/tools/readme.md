@@ -532,7 +532,8 @@ python scripts/tools/batch_pdf.py --no-recursive --out var/x tests/fixtures/matr
 python scripts/tools/cli_batch_invoice.py --out var/run/invoice-2025-08 mendel/files/2025-08 flow \
     --provider ollama --model qwen2.5vl:7b --rubro Restaurante   # a month: one invoice.json per receipt
 # the same, against an Ollama server elsewhere on the network (see "Remote Ollama server" below)
-DOCFLOW_LLM_BASE_URL=http://192.168.1.106:11434 python scripts/tools/cli_batch_invoice.py \
+DOCFLOW_LLM_NUM_CTX=16384 DOCFLOW_LLM_BASE_URL=http://192.168.1.104:11434 \
+    python scripts/tools/cli_batch_invoice.py \
     --out var/run/invoice-2025-08 mendel/files/2025-08 flow \
     --provider ollama --model qwen2.5vl:7b --rubro Restaurante
 ```
@@ -542,15 +543,20 @@ the `DOCFLOW_LLM_BASE_URL` setting: a real environment variable, or a line in th
 `.env`, with the process environment winning. Unset, the Ollama transport uses
 `http://localhost:11434`. The setting applies to every command that reaches a provider
 (`llm.py`, `batch_llm.py`, `cli_invoice.py`, `cli_batch_invoice.py`). A single run can also state it
-as `--option base_url=http://192.168.1.106:11434` where the tool offers `--option`.
+as `--option base_url=http://192.168.1.104:11434` where the tool offers `--option`.
 
 ```bash
 # one run
-DOCFLOW_LLM_BASE_URL=http://192.168.1.106:11434 python scripts/tools/cli_invoice.py flow receipt.jpg \
+DOCFLOW_LLM_NUM_CTX=16384 DOCFLOW_LLM_BASE_URL=http://192.168.1.104:11434 \
+    python scripts/tools/cli_invoice.py flow receipt.jpg \
     --provider ollama --model qwen2.5vl:7b --rubro Restaurante
-# every run: one line in .env
-echo 'DOCFLOW_LLM_BASE_URL=http://192.168.1.106:11434' >> .env
+# every run: set them once in .env (`cp .env.example .env` if you have none)
+printf 'DOCFLOW_LLM_BASE_URL=http://192.168.1.104:11434\nDOCFLOW_LLM_NUM_CTX=16384\n' >> .env
 ```
+
+A phone-sized photo (several MB) needs a bigger window than Ollama's default: without
+`DOCFLOW_LLM_NUM_CTX=16384` every step fails with `CONTEXT_OVERFLOW`. The setting follows the same
+rules as the endpoint (environment variable, or `.env`).
 
 A server that refuses the connection shows up as `PROVIDER_ERROR: ollama could not be reached
 (Connection refused)` in each step's `*_full.json` and as `failed: N` in the summary — check the
