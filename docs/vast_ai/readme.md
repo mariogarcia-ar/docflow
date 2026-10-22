@@ -1,4 +1,4 @@
-To stress-test Ollama with Locust, use the OpenAI-compatible endpoint (`/v1/chat/completions`) through your Cloudflare URL. The script selects one text fixture from `tests/fixtures-txt/pdf_aptos_layout` for each request and asks the model to summarize it in Spanish. Fixture contents are sent to the configured endpoint, so review them before running the test.
+To stress-test Ollama with Locust, use the OpenAI-compatible endpoint (`/v1/chat/completions`) through your Cloudflare URL. The script selects one text fixture from `tests/fixtures-txt/pdf_aptos_layout` for each request and asks the model to summarize it in Spanish. It assigns each request a unique ID and saves the response as `var/tools/locust/<request-key>.json`. Fixture contents are sent to the configured endpoint, so review them before running the test.
 Sigue estos pasos para configurarlo y ejecutarlo:
 
 1. Instalar Locust
