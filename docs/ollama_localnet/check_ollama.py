@@ -26,7 +26,7 @@ Examples:
     python check_ollama.py large --model granite4:3b --words 20000 --num-ctx 65536
 
     # extract data from an image (vision models: qwen2.5vl:3b, qwen2.5vl:7b, granite3.2-vision:2b)
-    python check_ollama.py image invoice.png --model qwen2.5vl:7b
+    python check_ollama.py image invoice.jpg --model qwen2.5vl:7b --num-ctx 65536
     python check_ollama.py image invoice.png --model qwen2.5vl:3b \\
         --prompt "Return JSON with keys: invoice_number, date, total."
 
@@ -108,7 +108,9 @@ def check_large(host: str, model: str, words: int, num_ctx: int) -> None:
     # TODO: [MVP] a prompt_eval_count near num_ctx means silent truncation; assert on it
 
 
-def check_image(host: str, model: str, image: Path, prompt: str) -> None:
+def check_image(
+    host: str, model: str, image: Path, prompt: str, num_ctx: int = 16384
+) -> None:
     """Send an image to a vision model through /api/chat and print the extracted data."""
     encoded = base64.b64encode(image.read_bytes()).decode()
     start = time.perf_counter()
@@ -119,10 +121,18 @@ def check_image(host: str, model: str, image: Path, prompt: str) -> None:
             "model": model,
             "stream": False,
             "format": "json",
+            "options": {"num_ctx": num_ctx},
             "messages": [{"role": "user", "content": prompt, "images": [encoded]}],
         },
     )
-    print(f"  [{model}] {time.perf_counter() - start:.1f}s wall")
+    print(
+        f"  [{model}] {time.perf_counter() - start:.1f}s wall, "
+        f"done_reason={reply.get('done_reason')}, "
+        f"prompt_tokens={reply.get('prompt_eval_count')}, "
+        f"output_tokens={reply.get('eval_count')}, num_ctx={num_ctx}"
+    )
+    if reply.get("done_reason") == "length":
+        print("  WARNING: output truncated (context full); raise --num-ctx")
     print(reply["message"]["content"])
 
 
@@ -142,6 +152,7 @@ def parse_args() -> argparse.Namespace:
     image = sub.add_parser("image")
     image.add_argument("image", type=Path)
     image.add_argument("--model", required=True)
+    image.add_argument("--num-ctx", type=int, default=16384)
     image.add_argument(
         "--prompt",
         default="Extract all visible fields (dates, names, totals) as a JSON object.",
@@ -172,7 +183,7 @@ def main() -> int:
         check_large(host, model, words, num_ctx)
     if args.cmd == "image":
         print("== image extraction")
-        check_image(host, args.model, args.image, args.prompt)
+        check_image(host, args.model, args.image, args.prompt, args.num_ctx)
     if args.cmd == "all" and args.image and args.vision_model:
         print("== image extraction")
         check_image(
