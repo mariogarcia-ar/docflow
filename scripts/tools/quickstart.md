@@ -787,6 +787,25 @@ The run reported `files: 10`, `succeeded: 10`, `failed: 0` — all ten read `SUC
 same folder returned all ten readings from disk in **0.1 seconds**, because every one was already
 beside its receipt.
 
+**Ollama on another machine.** There is no `--host` flag and `OLLAMA_HOST` is not read: the endpoint
+is the `DOCFLOW_LLM_BASE_URL` setting (unset, it is `http://localhost:11434`). It works for every
+tool that reaches a provider, one file or a folder:
+
+```bash
+# one run: prefix the command
+DOCFLOW_LLM_BASE_URL=http://192.168.1.106:11434 python scripts/tools/cli_batch_invoice.py \
+    --out var/run/invoice-2025-08 mendel/files/2025-08 flow \
+    --provider ollama --model qwen2.5vl:7b --rubro Restaurante
+# one receipt, same setting
+DOCFLOW_LLM_BASE_URL=http://192.168.1.106:11434 python scripts/tools/cli_invoice.py \
+    flow INVOICE.jpg --provider ollama --model qwen2.5vl:7b --rubro Restaurante
+# every run: one line in the repository's .env (a real variable wins over the file)
+echo 'DOCFLOW_LLM_BASE_URL=http://192.168.1.106:11434' >> .env
+```
+
+If the server is down, every step fails with `PROVIDER_ERROR: ollama could not be reached
+(Connection refused)` and the summary reads `failed: N` — check the server before the tool.
+
 A second walk over the same folder reaches no model — every reading is already beside its receipt —
 so a corpus is bought once and re-read for free. Two receipts in **one** folder cannot each own an
 `invoice.json`, so the second is refused (counted `FAILED`, exit `1`) rather than silently reusing
